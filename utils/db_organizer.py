@@ -58,15 +58,17 @@ class DBOrganizer:
         started = time.time()
         inserted = updated = failed = 0
 
-        logger.info(f"[DBOrganizer] Starting upsert for {market_name} — {len(records)} records")
+        logger.info(
+            f"[DBOrganizer] Starting upsert for {market_name} — {len(records)} records"
+        )
 
         for project in records:
             try:
                 with self.engine.begin() as conn:
-                    dev_id    = self._upsert_developer(conn, project)
+                    dev_id = self._upsert_developer(conn, project)
                     market_id = self._get_market_id(conn, project)
                     self._update_developer_grade(conn, dev_id, project)
-                    action    = self._upsert_project(conn, project, dev_id, market_id)
+                    action = self._upsert_project(conn, project, dev_id, market_id)
                     if action == "inserted":
                         inserted += 1
                     else:
@@ -80,11 +82,11 @@ class DBOrganizer:
 
         duration = int(time.time() - started)
         stats = {
-            "market":   market_name,
-            "total":    len(records),
+            "market": market_name,
+            "total": len(records),
             "inserted": inserted,
-            "updated":  updated,
-            "failed":   failed,
+            "updated": updated,
+            "failed": failed,
             "duration_seconds": duration,
         }
 
@@ -101,12 +103,15 @@ class DBOrganizer:
         dev_name = str(project.get("developer_name", "Unknown Developer")).strip()
         dev_norm = dev_name.lower()
 
-        row = conn.execute(text("""
+        row = conn.execute(
+            text("""
             INSERT INTO developers (name, name_normalized)
             VALUES (:name, :norm)
             ON CONFLICT (name_normalized) DO NOTHING
             RETURNING id
-        """), {"name": dev_name, "norm": dev_norm}).fetchone()
+        """),
+            {"name": dev_name, "norm": dev_norm},
+        ).fetchone()
 
         if row:
             return str(row[0])
@@ -120,7 +125,7 @@ class DBOrganizer:
     def _update_developer_grade(self, conn, developer_id: str | None, project: dict):
         if not developer_id:
             return
-        dev_lower  = str(project.get("developer_name", "")).lower()
+        dev_lower = str(project.get("developer_name", "")).lower()
         total_units = project.get("total_units", 0)
 
         grade = "C"
@@ -143,7 +148,7 @@ class DBOrganizer:
 
     def _get_market_id(self, conn, project: dict) -> str | None:
         locality = str(project.get("locality", "")).lower()
-        taluk    = str(project.get("taluk", "")).lower()
+        taluk = str(project.get("taluk", "")).lower()
 
         for market_name, keywords in MARKET_RERA_KEYWORDS.items():
             for kw in keywords:
@@ -173,25 +178,26 @@ class DBOrganizer:
         raw_data_json = json.dumps(project.get("raw_data", {}), default=str)
 
         params = {
-            "rera_number":    project.get("rera_number", ""),
-            "project_name":   project.get("project_name", ""),
-            "developer_id":   dev_id,
-            "market_id":      market_id,
-            "address":        project.get("address"),
-            "district":       project.get("district"),
-            "taluk":          project.get("taluk"),
-            "locality":       project.get("locality"),
-            "project_type":   project.get("project_type", "Residential"),
+            "rera_number": project.get("rera_number", ""),
+            "project_name": project.get("project_name", ""),
+            "developer_id": dev_id,
+            "market_id": market_id,
+            "address": project.get("address"),
+            "district": project.get("district"),
+            "taluk": project.get("taluk"),
+            "locality": project.get("locality"),
+            "project_type": project.get("project_type", "Residential"),
             "project_status": project.get("project_status"),
-            "total_units":    int(project.get("total_units", 0) or 0),
-            "sold_units":     int(project.get("sold_units", 0) or 0),
-            "unsold_units":   int(project.get("unsold_units", 0) or 0),
-            "possession_date":   _safe_date(project.get("possession_date")),
+            "total_units": int(project.get("total_units", 0) or 0),
+            "sold_units": int(project.get("sold_units", 0) or 0),
+            "unsold_units": int(project.get("unsold_units", 0) or 0),
+            "possession_date": _safe_date(project.get("possession_date")),
             "registration_date": _safe_date(project.get("registration_date")),
-            "raw_data":       raw_data_json,
+            "raw_data": raw_data_json,
         }
 
-        conn.execute(text("""
+        conn.execute(
+            text("""
             INSERT INTO rera_projects (
                 rera_number, project_name, developer_id, micro_market_id,
                 address, district, taluk, locality,
@@ -210,7 +216,7 @@ class DBOrganizer:
             ON CONFLICT (rera_number) DO UPDATE SET
                 project_name    = EXCLUDED.project_name,
                 developer_id    = COALESCE(EXCLUDED.developer_id, rera_projects.developer_id),
-                micro_market_id = COALESCE(EXCLUDED.micro_market_id, rera_projects.micro_market_id),
+                micro_market_id = EXCLUDED.micro_market_id,
                 project_status  = EXCLUDED.project_status,
                 total_units     = EXCLUDED.total_units,
                 sold_units      = EXCLUDED.sold_units,
@@ -220,7 +226,9 @@ class DBOrganizer:
                 last_scraped_at = NOW(),
                 data_source     = 'portal_scraped',
                 updated_at      = NOW()
-        """), params)
+        """),
+            params,
+        )
 
         return "updated" if existing else "inserted"
 
@@ -232,6 +240,7 @@ class DBOrganizer:
         Returns stats dict: {gv_inserted, gv_updated, reg_inserted, reg_failed}.
         """
         import time as _time
+
         started = _time.time()
         gv_inserted = gv_updated = reg_inserted = reg_failed = 0
 
@@ -271,11 +280,11 @@ class DBOrganizer:
 
         duration = int(_time.time() - started)
         stats = {
-            "market":       market_name,
-            "gv_inserted":  gv_inserted,
-            "gv_updated":   gv_updated,
+            "market": market_name,
+            "gv_inserted": gv_inserted,
+            "gv_updated": gv_updated,
             "reg_inserted": reg_inserted,
-            "reg_failed":   reg_failed,
+            "reg_failed": reg_failed,
             "duration_seconds": duration,
         }
         logger.info(
@@ -296,31 +305,35 @@ class DBOrganizer:
 
     def _upsert_guidance_value(self, conn, rec: dict, market_id: str | None) -> str:
         """Upsert one guidance value record. Returns 'inserted' or 'updated'."""
-        existing = conn.execute(text("""
+        existing = conn.execute(
+            text("""
             SELECT id FROM guidance_values
             WHERE micro_market_id = :mid
               AND locality = :locality
               AND property_type = :ptype
               AND effective_from = :eff
-        """), {
-            "mid":      market_id,
-            "locality": rec.get("locality", ""),
-            "ptype":    rec.get("property_type", "Residential"),
-            "eff":      _safe_date(rec.get("effective_from")) or "2024-04-01",
-        }).fetchone()
+        """),
+            {
+                "mid": market_id,
+                "locality": rec.get("locality", ""),
+                "ptype": rec.get("property_type", "Residential"),
+                "eff": _safe_date(rec.get("effective_from")) or "2024-04-01",
+            },
+        ).fetchone()
 
         params = {
-            "mid":      market_id,
+            "mid": market_id,
             "locality": rec.get("locality", ""),
-            "ptype":    rec.get("property_type", "Residential"),
-            "road":     rec.get("road_type", "Main Road"),
-            "psf":      float(rec.get("guidance_value_psf", 0) or 0),
-            "sqm":      round(float(rec.get("guidance_value_psf", 0) or 0) * 10.764, 2),
-            "eff":      _safe_date(rec.get("effective_from")) or "2024-04-01",
+            "ptype": rec.get("property_type", "Residential"),
+            "road": rec.get("road_type", "Main Road"),
+            "psf": float(rec.get("guidance_value_psf", 0) or 0),
+            "sqm": round(float(rec.get("guidance_value_psf", 0) or 0) * 10.764, 2),
+            "eff": _safe_date(rec.get("effective_from")) or "2024-04-01",
         }
 
         if existing:
-            conn.execute(text("""
+            conn.execute(
+                text("""
                 UPDATE guidance_values SET
                     guidance_value_psf    = :psf,
                     guidance_value_per_sqm = :sqm,
@@ -329,10 +342,13 @@ class DBOrganizer:
                   AND locality = :locality
                   AND property_type = :ptype
                   AND effective_from = :eff
-            """), params)
+            """),
+                params,
+            )
             return "updated"
         else:
-            conn.execute(text("""
+            conn.execute(
+                text("""
                 INSERT INTO guidance_values (
                     micro_market_id, locality, property_type, road_type,
                     guidance_value_psf, guidance_value_per_sqm, effective_from,
@@ -342,7 +358,9 @@ class DBOrganizer:
                     :psf, :sqm, :eff,
                     'portal_scraped'
                 )
-            """), params)
+            """),
+                params,
+            )
             return "inserted"
 
     # ── Kaveri — registrations ─────────────────────────────────────────────────
@@ -351,29 +369,30 @@ class DBOrganizer:
         """Insert one Kaveri registration. Skips on duplicate registration_number."""
         raw_json = json.dumps(rec.get("raw_data", {}), default=str)
         params = {
-            "reg_no":    rec.get("registration_number", ""),
-            "doc_no":    rec.get("document_number", ""),
-            "mid":       market_id,
-            "ptype":     rec.get("property_type", "Apartment"),
-            "pdesc":     rec.get("property_description", ""),
+            "reg_no": rec.get("registration_number", ""),
+            "doc_no": rec.get("document_number", ""),
+            "mid": market_id,
+            "ptype": rec.get("property_type", "Apartment"),
+            "pdesc": rec.get("property_description", ""),
             "area_sqft": float(rec.get("area_sqft", 0) or 0),
-            "area_sqm":  round(float(rec.get("area_sqft", 0) or 0) * 0.0929, 2),
-            "amt":       float(rec.get("transaction_amount", 0) or 0),
-            "gv":        float(rec.get("guidance_value", 0) or 0),
-            "stamp":     float(rec.get("stamp_duty_paid", 0) or 0),
-            "reg_fee":   float(rec.get("registration_fee", 0) or 0),
-            "buyer":     rec.get("buyer_name", ""),
-            "seller":    rec.get("seller_name", ""),
-            "survey":    rec.get("survey_number", ""),
-            "village":   rec.get("village", ""),
-            "hobli":     rec.get("hobli", ""),
-            "taluk":     rec.get("taluk", ""),
-            "district":  rec.get("district", ""),
-            "txn_date":  _safe_date(rec.get("transaction_date")),
-            "reg_date":  _safe_date(rec.get("registration_date")),
-            "raw":       raw_json,
+            "area_sqm": round(float(rec.get("area_sqft", 0) or 0) * 0.0929, 2),
+            "amt": float(rec.get("transaction_amount", 0) or 0),
+            "gv": float(rec.get("guidance_value", 0) or 0),
+            "stamp": float(rec.get("stamp_duty_paid", 0) or 0),
+            "reg_fee": float(rec.get("registration_fee", 0) or 0),
+            "buyer": rec.get("buyer_name", ""),
+            "seller": rec.get("seller_name", ""),
+            "survey": rec.get("survey_number", ""),
+            "village": rec.get("village", ""),
+            "hobli": rec.get("hobli", ""),
+            "taluk": rec.get("taluk", ""),
+            "district": rec.get("district", ""),
+            "txn_date": _safe_date(rec.get("transaction_date")),
+            "reg_date": _safe_date(rec.get("registration_date")),
+            "raw": raw_json,
         }
-        conn.execute(text("""
+        conn.execute(
+            text("""
             INSERT INTO kaveri_registrations (
                 registration_number, document_number,
                 micro_market_id,
@@ -398,14 +417,17 @@ class DBOrganizer:
                 CAST(:raw AS jsonb), 'portal_scraped'
             )
             ON CONFLICT DO NOTHING
-        """), params)
+        """),
+            params,
+        )
 
     # ── Run logging ────────────────────────────────────────────────────────────
 
     def _log_run(self, market_name: str, stats: dict):
         try:
             with self.engine.begin() as conn:
-                conn.execute(text("""
+                conn.execute(
+                    text("""
                     INSERT INTO agent_runs (
                         agent_name, task_type, micro_market, status,
                         records_inserted, records_updated, records_failed,
@@ -415,23 +437,26 @@ class DBOrganizer:
                         :inserted, :updated, :failed,
                         NOW()
                     )
-                """), {
-                    "market":   market_name,
-                    "inserted": stats.get("inserted", 0),
-                    "updated":  stats.get("updated", 0),
-                    "failed":   stats.get("failed", 0),
-                })
+                """),
+                    {
+                        "market": market_name,
+                        "inserted": stats.get("inserted", 0),
+                        "updated": stats.get("updated", 0),
+                        "failed": stats.get("failed", 0),
+                    },
+                )
         except Exception as exc:
             logger.warning(f"[DBOrganizer] Failed to log run to DB: {exc}")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+
 def _safe_date(val):
     """Return val if it looks like a date string, else None."""
     if not val:
         return None
     s = str(val).strip()
-    if len(s) >= 10 and s[4] == "-":   # YYYY-MM-DD prefix check
+    if len(s) >= 10 and s[4] == "-":  # YYYY-MM-DD prefix check
         return s[:10]
     return None

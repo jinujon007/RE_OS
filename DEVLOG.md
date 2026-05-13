@@ -367,6 +367,36 @@ Full data signals flow through pipeline for first time:
 
 ---
 
+### Phase 9 — data_source Migration + RERA Upsert Conflict Fix (2026-05-14 Session)
+**Date:** 2026-05-14 ~00:20 IST
+**Status:** ✅ Complete
+
+**Situation:**
+`data_source` existed in code/schema files but not yet applied to live DB container. Also, `rera_projects.micro_market_id` stayed NULL on conflict updates for existing rows, causing incomplete analyst aggregates for Yelahanka.
+
+**What was done:**
+- Applied live DB migration from `database/migrate_data_source.sql` into running Postgres container.
+- Ran migration with `psql -f /tmp/migrate_data_source.sql`.
+- Verified data provenance counts in SQL output after migration.
+- Fixed `ON CONFLICT` update in `utils/db_organizer.py` (`_upsert_project`) to assign market link directly on update path.
+
+**Files changed:**
+- `utils/db_organizer.py` — `micro_market_id` conflict update changed from `COALESCE(...)` to direct `EXCLUDED.micro_market_id` assignment.
+- `DEVLOG.md` — added Phase 9 entry.
+- `CHANGELOG.md` — session entries + handoff update.
+
+**Result:**
+Live DB now has `data_source` column on required tables with seeded provenance visible. Upsert path now writes `micro_market_id` from incoming record during conflict updates, unblocking full market linkage on rerun.
+
+**Runs in this phase (so far):**
+- Migration verify output:
+  - `rera_projects | seed_estimated | 8`
+  - `kaveri_registrations | seed_estimated | 15`
+  - `guidance_values | seed_estimated | 7`
+- Pipeline run pending next step.
+
+---
+
 ## Task Backlog
 
 Single source of truth for all open tasks is **`AGENTS.md`**. Do not maintain a parallel list here.

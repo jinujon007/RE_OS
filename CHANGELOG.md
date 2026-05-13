@@ -5,13 +5,13 @@
 
 ---
 
-## Current Handoff — Claude Code 2026-05-14
+## Current Handoff -- Roo 2026-05-14 00:22 IST
 
-**Status:** Complete
-**Last files touched:** `.clinerules` (new), `AGENTS.md` (backlog consolidated), `CLAUDE.md` (duplicate backlog removed), `CHANGELOG.md` (duplicate backlog removed), `DEVLOG.md` (duplicate backlog removed), `database/schema.sql` (`data_source` column added to 4 tables), `utils/db_organizer.py` (`data_source='portal_scraped'` on all inserts), `database/migrate_data_source.sql` (new migration for live DB)
-**State:** Pipeline functional. DB has 8 seed-estimated RERA rows + 10 seed-estimated Kaveri registrations. `data_source` migration not yet applied to live DB — run migration before next pipeline run.
-**Next action:** Apply migration: `docker compose cp database/migrate_data_source.sql re_os_db:/tmp/ && docker compose exec re_os_db psql -U re_os_user -d re_os -f /tmp/migrate_data_source.sql` — then run pipeline and verify CEO brief shows data source provenance.
-**Open question for Jinu:** Should the CEO brief explicitly say "based on seed_estimated data" until portal scrapers are live? Recommend yes.
+Status: in progress
+Last files touched: `database/migrate_data_source.sql` (applied to live DB), `utils/db_organizer.py` (P0 upsert conflict fix), `DEVLOG.md` (Phase 9 entry), `CHANGELOG.md` (this handoff + entries)
+State: DB migration applied and upsert fix done; pipeline run not executed yet in this session.
+Next action: Run `docker compose exec agents python crews/market_intel_crew.py --market Yelahanka` and review analyst + CEO output for complete linkage and `data_source` provenance.
+Open question for Jinu: None
 
 ---
 
@@ -37,6 +37,54 @@
 ---
 
 ## Session Log
+
+---
+
+### 2026-05-14 00:19 IST — DB: live migration — Apply data_source to running Postgres
+**Type:** Schema
+**Author:** Roo (Code mode)
+
+**Before:**
+Live DB missing `data_source` columns in runtime tables. Code expected `data_source` to exist.
+
+**After:**
+Executed:
+```bash
+docker compose cp database/migrate_data_source.sql postgres:/tmp/migrate_data_source.sql
+docker compose exec postgres psql -U re_os_user -d re_os -f /tmp/migrate_data_source.sql
+```
+Verification output:
+```
+rera_projects        | seed_estimated | 8
+kaveri_registrations | seed_estimated | 15
+guidance_values      | seed_estimated | 7
+```
+
+**Why:**
+Unblock pipeline consistency: schema + code must both include `data_source`.
+
+**Verified:** ✅ Yes
+
+---
+
+### 2026-05-14 00:20 IST — File: utils/db_organizer.py — P0 upsert micro_market_id fix
+**Type:** Bug Fix
+**Author:** Roo (Code mode)
+
+**Before:**
+```python
+micro_market_id = COALESCE(EXCLUDED.micro_market_id, rera_projects.micro_market_id)
+```
+
+**After:**
+```python
+micro_market_id = EXCLUDED.micro_market_id
+```
+
+**Why:**
+Conflict updates on existing `rera_projects` rows were not reliably assigning incoming market link; analyst aggregates missed rows with NULL `micro_market_id`.
+
+**Verified:** ✅ Yes — code line updated in `_upsert_project`.
 
 ---
 
