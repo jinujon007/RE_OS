@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLS Intelligence Operations Center</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0a0e1a;
+  color: #c9d1d9;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 13px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+.header {
+  background: #0f1520;
+  border-bottom: 2px solid #2a3a55;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+.logo {
+  font-family: 'Press Start 2P', cursive;
+  color: #f0a020;
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+.logo-sub {
+  font-family: 'Press Start 2P', cursive;
+  color: #484f58;
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+.health-bar {
+  display: flex;
+  gap: 16px;
+  margin-left: auto;
+  align-items: center;
+}
+.health-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: #8b949e;
+  font-family: 'Press Start 2P', cursive;
+}
+.health-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.health-dot.ok { background: #3fb950; }
+.health-dot.error { background: #f85149; }
+.health-dot.warn { background: #f0a020; }
+.health-dot.checking { background: #484f58; animation: pulse 1.5s ease-in-out infinite; }
+.clock {
+  font-family: 'Press Start 2P', cursive;
+  color: #484f58;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+/* ── Main Grid ── */
+.main-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 65% 35%;
+  grid-template-rows: 67% 33%;
+  gap: 2px;
+  padding: 2px;
+  overflow: hidden;
+  background: #0a0e1a;
+}
+
+/* ── Office Floor (top-left, spans 1 row) ── */
+.office-floor {
+  grid-column: 1;
+  grid-row: 1;
+  background: #0f1520;
+  border: 2px solid #2a3a55;
+  border-radius: 6px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 40% 60%;
+  grid-template-rows: 50% 50%;
+  gap: 12px;
+  overflow: hidden;
+}
+
+/* ── Office floor bottom row: Scout takes 70%, Processor 30% ── */
+.cabin.scout {
+  grid-column: 1;
+  grid-row: 2;
+}
+.cabin.processor {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+/* ── Infrastructure Panel (top-right, full height) ── */
+.infra-panel {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  background: #0f1520;
+  border: 2px solid #2a3a55;
+  border-radius: 6px;
+  padding: 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Live Feed (bottom-left, spans 1 row) ── */
+.live-feed {
+  grid-column: 1;
+  grid-row: 2;
+  background: #0f1520;
+  border: 2px solid #2a3a55;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Cabin Cards ── */
+.cabin {
+  background: #1a2235;
+  border: 2px solid #2a3a55;
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+.cabin:hover {
+  border-color: #3a5a85;
+}
+.cabin.active {
+  animation: border-pulse 2s ease-in-out infinite;
+}
+@keyframes border-pulse {
+  0%, 100% { border-color: #2a3a55; }
+  50% { opacity: 0.7; }
+}
+.cabin.ceo { border-color: #f0a020; }
+.cabin.ceo.active { box-shadow: 0 0 12px #f0a02040; }
+.cabin.scraper { border-color: #3a9fff; }
+.cabin.scraper.active { box-shadow: 0 0 12px #3a9fff40; }
+.cabin.analyst { border-color: #3fb950; }
+.cabin.analyst.active { box-shadow: 0 0 12px #3fb95040; }
+.cabin.processor { border-color: #6b7280; opacity: 0.6; }
+
+.cabin-badge {
+  font-family: 'Press Start 2P', cursive;
+  font-size: 9px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  text-align: center;
+  text-transform: uppercase;
+  align-self: flex-start;
+  background: #484f58;
+  color: #0a0e1a;
+}
+.cabin-badge.idle { background: #484f58; }
+.cabin-badge.working, .cabin-badge.scraping, .cabin-badge.analyzing, .cabin-badge.directing {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.cabin-badge.done { background: #3fb950; }
+.cabin-badge.failed { background: #f85149; }
+.cabin-badge.standby { background: #6b7280; font-style: italic; }
+.cabin-badge.offline { background: #484f58; }
+
+.cabin.ceo .cabin-badge.working,
+.cabin.ceo .cabin-badge.directing { background: #f0a020; }
+.cabin.scraper .cabin-badge.working,
+.cabin.scraper .cabin-badge.scraping { background: #3a9fff; }
+.cabin.analyst .cabin-badge.working,
+.cabin.analyst .cabin-badge.analyzing { background: #3fb950; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.cabin-name {
+  font-family: 'Press Start 2P', cursive;
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+.cabin.ceo .cabin-name { color: #f0a020; }
+.cabin.scraper .cabin-name { color: #3a9fff; }
+.cabin.analyst .cabin-name { color: #3fb950; }
+.cabin.processor .cabin-name { color: #6b7280; }
+
+.cabin-role {
+  font-size: 9px;
+  color: #6b7280;
+  font-style: italic;
+}
+
+.cabin-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+}
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot.green { background: #3fb950; }
+.status-dot.amber { background: #f0a020; animation: pulse 1.5s ease-in-out infinite; }
+.status-dot.red { background: #f85149; }
+.status-dot.grey { background: #484f58; }
+
+.cabin-last-action {
+  font-size: 9px;
+  color: #8b949e;
+  font-style: italic;
+  line-height: 1.4;
+  max-height: 40px;
+  overflow: hidden;
+}
+
+/* ── Scout Terminals ── */
+.scout-terminals {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.terminal-slot {
+  flex: 1;
+  background: #0f1520;
+  border: 1px solid #2a3a55;
+  border-radius: 4px;
+  padding: 6px;
+  font-size: 8px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+}
+.terminal-name {
+  font-family: 'Press Start 2P', cursive;
+  color: #484f58;
+  font-size: 7px;
+}
+.terminal-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #484f58;
+}
+.terminal-dot.active {
+  background: #3a9fff;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+/* ── Command Panel ── */
+.command-panel {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.2s ease;
+  margin-top: 8px;
+  padding-top: 0;
+  border-top: 1px solid transparent;
+}
+.command-panel.open {
+  max-height: 200px;
+  padding-top: 8px;
+  border-top-color: #2a3a55;
+}
+.command-input {
+  width: 100%;
+  background: #0f1520;
+  border: 1px solid #2a3a55;
+  color: #c9d1d9;
+  padding: 6px 8px;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 11px;
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
+.command-input::placeholder {
+  color: #484f58;
+}
+.command-btn {
+  background: #2a3a55;
+  border: 1px solid #3a5a85;
+  color: #c9d1d9;
+  padding: 6px 16px;
+  font-family: 'Press Start 2P', cursive;
+  font-size: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.command-btn:hover {
+  background: #3a5a85;
+}
+.command-response {
+  margin-top: 8px;
+  font-size: 9px;
+  color: #8b949e;
+  font-style: italic;
+  max-height: 80px;
+  overflow-y: auto;
+  line-height: 1.4;
+}
+
+/* ── Infrastructure Panel Sections ── */
+.infra-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.infra-title {
+  font-family: 'Press Start 2P', cursive;
+  font-size: 9px;
+  color: #7c3aed;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  border-bottom: 1px solid #2a3a55;
+  padding-bottom: 6px;
+}
+.infra-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  padding: 2px 0;
+}
+.infra-label { color: #6b7280; }
+.infra-value { color: #c9d1d9; }
+
+.run-item {
+  display: flex;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 9px;
+  border-bottom: 1px solid #1a2235;
+  align-items: center;
+}
+.run-market { width: 70px; color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; }
+.run-status.ok { color: #3fb950; }
+.run-status.fail { color: #f85149; }
+.run-status.run { color: #f0a020; }
+.run-dur { color: #6b7280; }
+.run-ts { color: #484f58; margin-left: auto; white-space: nowrap; font-size: 8px; }
+
+.report-select {
+  width: 100%;
+  background: #1a2235;
+  border: 1px solid #2a3a55;
+  color: #c9d1d9;
+  padding: 6px 8px;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 10px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+.report-content {
+  background: #0a0e1a;
+  border: 1px solid #2a3a55;
+  border-radius: 4px;
+  padding: 10px;
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow-y: auto;
+  color: #8b949e;
+}
+
+/* ── Live Feed ── */
+.feed-header {
+  background: #1a2235;
+  border-bottom: 2px solid #2a3a55;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.feed-title {
+  font-family: 'Press Start 2P', cursive;
+  font-size: 10px;
+  color: #f0a020;
+  letter-spacing: 1px;
+}
+.feed-controls {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+.feed-btn {
+  background: #0f1520;
+  border: 1px solid #2a3a55;
+  color: #8b949e;
+  padding: 4px 10px;
+  font-family: 'Press Start 2P', cursive;
+  font-size: 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.feed-btn:hover {
+  border-color: #3a5a85;
+  color: #c9d1d9;
+}
+.feed-btn.active {
+  border-color: #3fb950;
+  color: #3fb950;
+}
+
+.feed-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 14px;
+  line-height: 1.6;
+  font-size: 11px;
+}
+.log-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 1px 0;
+  animation: fade-in 0.3s ease;
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.log-line.error { color: #f85149; }
+.log-line.warn { color: #d29922; }
+.log-line.stage { color: #58a6ff; font-weight: bold; }
+.log-line.success { color: #3fb950; }
+.log-line.dim { color: #2d333b; }
+.log-line.default { color: #8b949e; }
+
+.empty-msg {
+  color: #484f58;
+  font-style: italic;
+  font-size: 10px;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a3a55; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3a5a85; }
+
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<div class="header">
+  <div>
+    <div class="logo">LLS OPS CENTER</div>
+    <div class="logo-sub">INTELLIGENCE OPERATIONS</div>
+  </div>
+  <div class="health-bar">
+    <div class="health-item"><span class="health-dot checking" id="health-db"></span><span>DB</span></div>
+    <div class="health-item"><span class="health-dot checking" id="health-redis"></span><span>REDIS</span></div>
+    <div class="health-item"><span class="health-dot checking" id="health-ollama"></span><span>OLLAMA</span></div>
+    <div class="health-item"><span class="health-dot checking" id="health-agents"></span><span>AGENTS</span></div>
+  </div>
+  <span class="clock" id="clock"></span>
+</div>
+
+<!-- ── MAIN GRID ── -->
+<div class="main-grid">
+
+  <!-- ── OFFICE FLOOR ── -->
+  <div class="office-floor">
+
+    <!-- CEO Cabin (top-left) -->
+    <div class="cabin ceo" id="cabin-ceo" onclick="toggleCommand('ceo')">
+      <div class="cabin-badge idle" id="badge-ceo">IDLE</div>
+      <div class="cabin-name">THE DIRECTOR</div>
+      <div class="cabin-role">Orchestrator</div>
+      <div class="cabin-status">
+        <span class="status-dot grey" id="dot-ceo"></span>
+        <span id="status-ceo">● OFFLINE</span>
+      </div>
+      <div class="cabin-last-action" id="action-ceo">Awaiting instructions...</div>
+      <div class="command-panel" id="cmd-ceo">
+        <input type="text" class="command-input" id="input-ceo" placeholder="→ type a command..." onkeypress="if(event.key==='Enter') sendCommand('ceo')">
+        <button class="command-btn" onclick="sendCommand('ceo')">SEND</button>
+        <div class="command-response" id="response-ceo"></div>
+      </div>
+    </div>
+
+    <!-- Analyst Cabin (top-right) -->
+    <div class="cabin analyst" id="cabin-analyst" onclick="toggleCommand('analyst')">
+      <div class="cabin-badge idle" id="badge-analyst">IDLE</div>
+      <div class="cabin-name">THE ANALYST</div>
+      <div class="cabin-role">Market Analyst</div>
+      <div class="cabin-status">
+        <span class="status-dot grey" id="dot-analyst"></span>
+        <span id="status-analyst">● OFFLINE</span>
+      </div>
+      <div class="cabin-last-action" id="action-analyst">Awaiting instructions...</div>
+      <div class="command-panel" id="cmd-analyst">
+        <input type="text" class="command-input" id="input-analyst" placeholder="→ type a command..." onkeypress="if(event.key==='Enter') sendCommand('analyst')">
+        <button class="command-btn" onclick="sendCommand('analyst')">SEND</button>
+        <div class="command-response" id="response-analyst"></div>
+      </div>
+    </div>
+
+    <!-- Scout Cabin (bottom, full width) -->
+    <div class="cabin scraper scout" id="cabin-scraper" onclick="toggleCommand('scraper')">
+      <div class="cabin-badge idle" id="badge-scraper">IDLE</div>
+      <div class="cabin-name">THE SCOUT</div>
+      <div class="cabin-role">Field Researcher</div>
+      <div class="cabin-status">
+        <span class="status-dot grey" id="dot-scraper"></span>
+        <span id="status-scraper">● OFFLINE</span>
+      </div>
+      <div class="cabin-last-action" id="action-scraper">Awaiting instructions...</div>
+      <div class="scout-terminals">
+        <div class="terminal-slot">
+          <div class="terminal-name">RERA</div>
+          <div class="terminal-dot" id="term-rera"></div>
+        </div>
+        <div class="terminal-slot">
+          <div class="terminal-name">LISTINGS</div>
+          <div class="terminal-dot" id="term-listings"></div>
+        </div>
+        <div class="terminal-slot">
+          <div class="terminal-name">KAVERI</div>
+          <div class="terminal-dot" id="term-kaveri"></div>
+        </div>
+      </div>
+      <div class="command-panel" id="cmd-scraper">
+        <input type="text" class="command-input" id="input-scraper" placeholder="→ type a command..." onkeypress="if(event.key==='Enter') sendCommand('scraper')">
+        <button class="command-btn" onclick="sendCommand('scraper')">SEND</button>
+        <div class="command-response" id="response-scraper"></div>
+      </div>
+    </div>
+
+    <!-- Processor Cabin (bottom-right, standby only) -->
+    <div class="cabin processor" id="cabin-processor">
+      <div class="cabin-badge standby" id="badge-processor">STANDBY</div>
+      <div class="cabin-name">THE PROCESSOR</div>
+      <div class="cabin-role">Document Handler</div>
+      <div class="cabin-status">
+        <span class="status-dot grey" id="dot-processor"></span>
+        <span id="status-processor">● STANDBY</span>
+      </div>
+      <div class="cabin-last-action" id="action-processor">On call...</div>
+    </div>
+
+  </div>
+
+  <!-- ── INFRASTRUCTURE PANEL ── -->
+  <div class="infra-panel">
+
+    <div class="infra-section">
+      <div class="infra-title">INFRASTRUCTURE</div>
+      <div class="infra-item">
+        <span class="infra-label">Postgres</span>
+        <span class="infra-value" id="infra-db">—</span>
+      </div>
+      <div class="infra-item">
+        <span class="infra-label">Redis</span>
+        <span class="infra-value" id="infra-redis">—</span>
+      </div>
+      <div class="infra-item">
+        <span class="infra-label">Ollama</span>
+        <span class="infra-value" id="infra-ollama">—</span>
+      </div>
+    </div>
+
+    <div class="infra-section">
+      <div class="infra-title">DATABASE</div>
+      <div class="infra-item">
+        <span class="infra-label">RERA Projects</span>
+        <span class="infra-value" id="db-rera">—</span>
+      </div>
+      <div class="infra-item">
+        <span class="infra-label">Listings</span>
+        <span class="infra-value" id="db-listings">—</span>
+      </div>
+      <div class="infra-item">
+        <span class="infra-label">Kaveri</span>
+        <span class="infra-value" id="db-kaveri">—</span>
+      </div>
+      <div class="infra-item">
+        <span class="infra-label">Guidance Values</span>
+        <span class="infra-value" id="db-gv">—</span>
+      </div>
+    </div>
+
+    <div class="infra-section">
+      <div class="infra-title">RECENT RUNS</div>
+      <div id="recent-runs">
+        <div class="empty-msg">No runs yet</div>
+      </div>
+    </div>
+
+    <div class="infra-section">
+      <div class="infra-title">LAST REPORT</div>
+      <select class="report-select" id="report-market" onchange="loadReport()">
+        <option value="yelahanka">Yelahanka</option>
+        <option value="devanahalli">Devanahalli</option>
+        <option value="hebbal">Hebbal</option>
+      </select>
+      <div class="report-content" id="report-content">
+        <span class="empty-msg">No report yet</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── LIVE FEED ── -->
+  <div class="live-feed">
+    <div class="feed-header">
+      <span class="feed-title">LIVE FEED</span>
+      <div class="feed-controls">
+        <button class="feed-btn active" id="autoscroll-btn" onclick="toggleAutoScroll()">AUTO-SCROLL</button>
+        <button class="feed-btn" onclick="clearFeed()">CLEAR</button>
+      </div>
+    </div>
+    <div class="feed-area" id="feed-area"></div>
+  </div>
+
+</div>
+
+<script>
+"use strict";
+
+// ── State ──
+let autoScroll = true;
+let openCommands = new Set();
+
+// ── Clock ──
+function tick() {
+  const now = new Date();
+  document.getElementById('clock').textContent = now.toLocaleString('en-IN', {
+    dateStyle: 'short',
+    timeStyle: 'medium',
+    hour12: false
+  });
+}
+tick();
+setInterval(tick, 1000);
+
+// ── Health Polling ──
+async function pollHealth() {
+  try {
+    const data = await fetch('/api/health').then(r => r.json());
+    document.getElementById('health-db').className = 'health-dot ' + (data.postgres || 'error');
+    document.getElementById('health-redis').className = 'health-dot ' + (data.redis || 'error');
+    document.getElementById('health-ollama').className = 'health-dot ' + (data.ollama || 'warn');
+    document.getElementById('health-agents').className = 'health-dot ' + (data.agents || 'error');
+    
+    document.getElementById('infra-db').textContent = data.postgres || 'error';
+    document.getElementById('infra-redis').textContent = data.redis || 'error';
+    document.getElementById('infra-ollama').textContent = data.ollama || 'warn';
+  } catch (e) {
+    ['db', 'redis', 'ollama', 'agents'].forEach(s => {
+      const el = document.getElementById('health-' + s);
+      if (el) el.className = 'health-dot error';
+    });
+  }
+}
+pollHealth();
+setInterval(pollHealth, 5000);
+
+// ── DB State Polling ──
+async function pollDbState() {
+  try {
+    const data = await fetch('/api/db/state').then(r => r.json());
+    if (data.error) return;
+
+    document.getElementById('db-rera').textContent = data.rera_projects ?? '—';
+    document.getElementById('db-listings').textContent = data.listings ?? '—';
+    document.getElementById('db-kaveri').textContent = data.kaveri_registrations ?? '—';
+    document.getElementById('db-gv').textContent = data.guidance_values ?? '—';
+
+    const runsEl = document.getElementById('recent-runs');
+    if (data.recent_runs?.length) {
+      runsEl.innerHTML = data.recent_runs.map(r => {
+        const dt = r.start_time
+          ? new Date(r.start_time).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', hour12: false })
+          : '—';
+        const sc = r.status === 'completed' ? 'ok' : r.status === 'running' ? 'run' : 'fail';
+        const dur = r.duration != null ? Math.round(r.duration) + 's' : '';
+        return `
+          <div class="run-item">
+            <span class="run-market">${r.market || 'all'}</span>
+            <span class="run-status ${sc}">${r.status || '—'}</span>
+            <span class="run-dur">${dur}</span>
+            <span class="run-ts">${dt}</span>
+          </div>`;
+      }).join('');
+    } else {
+      runsEl.innerHTML = '<div class="empty-msg">No runs yet</div>';
+    }
+  } catch (e) {
+    console.error('DB state poll error:', e);
+  }
+}
+pollDbState();
+setInterval(pollDbState, 30000);
+
+// ── Agent State Polling ──
+async function pollAgents() {
+  try {
+    const data = await fetch('/api/agents').then(r => r.json());
+    const agents = data.agents || data; // support both nested and top-level contracts
+
+    ['ceo', 'analyst', 'scraper'].forEach(agent => {
+      const state = agents[agent];
+      if (!state) {
+        updateAgent(agent, { state: 'offline', last_action: 'No connection' });
+        return;
+      }
+      updateAgent(agent, state);
+    });
+
+    // Scout terminals
+    if (agents.scraper?.terminals) {
+      ['rera', 'listings', 'kaveri'].forEach(t => {
+        const el = document.getElementById('term-' + t);
+        if (el) {
+          const terminalState = String(agents.scraper.terminals[t] || '').toLowerCase();
+          const active = terminalState === 'active' || terminalState === 'working';
+          el.className = 'terminal-dot' + (active ? ' active' : '');
+        }
+      });
+    } else if (agents.scraper?.state === 'working') {
+      // Fallback: detect from last_action
+      const action = (agents.scraper.last_action || '').toLowerCase();
+      ['rera', 'listings', 'kaveri'].forEach(t => {
+        const el = document.getElementById('term-' + t);
+        if (el) {
+          const active = action.includes(t);
+          el.className = 'terminal-dot' + (active ? ' active' : '');
+        }
+      });
+    } else {
+      // Idle
+      ['rera', 'listings', 'kaveri'].forEach(t => {
+        const el = document.getElementById('term-' + t);
+        if (el) el.className = 'terminal-dot';
+      });
+    }
+
+  } catch (e) {
+    // Offline
+    ['ceo', 'analyst', 'scraper'].forEach(agent => {
+      updateAgent(agent, { state: 'offline', last_action: 'Connection lost' });
+    });
+  }
+}
+
+function updateAgent(agent, state) {
+  const cabinEl = document.getElementById('cabin-' + agent);
+  const badgeEl = document.getElementById('badge-' + agent);
+  const dotEl = document.getElementById('dot-' + agent);
+  const statusEl = document.getElementById('status-' + agent);
+  const actionEl = document.getElementById('action-' + agent);
+
+  const st = state.state || 'offline';
+  const stLower = st.toLowerCase();
+
+  // Badge
+  let badgeText = st.toUpperCase();
+  let badgeClass = 'cabin-badge ' + stLower;
+  if (['working', 'scraping', 'analyzing', 'directing'].includes(stLower)) {
+    badgeClass = 'cabin-badge ' + stLower;
+  } else if (stLower === 'done') {
+    badgeClass = 'cabin-badge done';
+  } else if (stLower === 'failed') {
+    badgeClass = 'cabin-badge failed';
+  } else if (stLower === 'idle') {
+    badgeClass = 'cabin-badge idle';
+  } else {
+    badgeClass = 'cabin-badge offline';
+    badgeText = 'OFFLINE';
+  }
+  badgeEl.textContent = badgeText;
+  badgeEl.className = badgeClass;
+
+  // Active animation
+  if (['working', 'scraping', 'analyzing', 'directing'].includes(stLower)) {
+    cabinEl.classList.add('active');
+  } else {
+    cabinEl.classList.remove('active');
+  }
+
+  // Dot color
+  let dotClass = 'status-dot grey';
+  if (['working', 'scraping', 'analyzing', 'directing'].includes(stLower)) {
+    dotClass = 'status-dot amber';
+  } else if (stLower === 'done') {
+    dotClass = 'status-dot green';
+  } else if (stLower === 'failed') {
+    dotClass = 'status-dot red';
+  } else if (stLower === 'idle') {
+    dotClass = 'status-dot green';
+  }
+  dotEl.className = dotClass;
+
+  // Status text
+  statusEl.textContent = '● ' + st.toUpperCase();
+
+  // Last action
+  actionEl.textContent = state.last_action || 'Awaiting instructions...';
+}
+
+pollAgents();
+setInterval(pollAgents, 2000);
+
+// ── Command Panel Toggle ──
+function toggleCommand(agent) {
+  const panel = document.getElementById('cmd-' + agent);
+  if (openCommands.has(agent)) {
+    panel.classList.remove('open');
+    openCommands.delete(agent);
+  } else {
+    panel.classList.add('open');
+    openCommands.add(agent);
+    setTimeout(() => document.getElementById('input-' + agent).focus(), 200);
+  }
+}
+
+// ── Send Command ──
+async function sendCommand(agent) {
+  const input = document.getElementById('input-' + agent);
+  const responseEl = document.getElementById('response-' + agent);
+  const prompt = input.value.trim();
+  if (!prompt) return;
+
+  responseEl.textContent = 'Sending...';
+  input.value = '';
+
+  try {
+    const res = await fetch(`/api/agents/${agent}/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt })
+    });
+    const data = await res.json();
+    responseEl.textContent = data.details || data.action || 'Command sent';
+  } catch (e) {
+    responseEl.textContent = 'Error: ' + e.message;
+  }
+}
+
+// ── Report Loading ──
+async function loadReport() {
+  const market = document.getElementById('report-market').value;
+  const contentEl = document.getElementById('report-content');
+  contentEl.innerHTML = '<span class="empty-msg">Loading...</span>';
+  try {
+    const data = await fetch('/api/reports/' + market).then(r => r.json());
+    if (data.content) {
+      contentEl.textContent = data.content;
+    } else {
+      contentEl.innerHTML = '<span class="empty-msg">No report yet</span>';
+    }
+  } catch (e) {
+    contentEl.innerHTML = '<span class="empty-msg">Failed to load</span>';
+  }
+}
+loadReport();
+
+// ── Log Streaming (SSE) ──
+const feedArea = document.getElementById('feed-area');
+
+function classifyLog(line) {
+  const l = line.toLowerCase();
+  if (l.includes('error') || l.includes('exception') || l.includes('traceback')) return 'error';
+  if (l.includes('warning') || l.includes('warn')) return 'warn';
+  if (/stage [123]/i.test(l) || l.includes('re_os') || l.includes('pipeline')) return 'stage';
+  if (l.includes('done') || l.includes('upserted') || l.includes('success') ||
+      l.includes('complete') || l.includes('✓') || l.includes('inserted')) return 'success';
+  if (l.includes('───') || l.includes('===') || !line.trim()) return 'dim';
+  return 'default';
+}
+
+function appendLog(line) {
+  if (!line.trim()) return;
+  const el = document.createElement('div');
+  el.className = 'log-line ' + classifyLog(line);
+  el.textContent = line;
+  feedArea.appendChild(el);
+  if (autoScroll) feedArea.scrollTop = feedArea.scrollHeight;
+  while (feedArea.children.length > 800) feedArea.removeChild(feedArea.firstChild);
+}
+
+const evtSource = new EventSource('/api/logs/stream');
+evtSource.onmessage = e => {
+  try {
+    const line = JSON.parse(e.data);
+    appendLog(line);
+  } catch {
+    appendLog(e.data);
+  }
+};
+evtSource.onerror = () => {
+  console.warn('SSE connection error');
+};
+
+function clearFeed() {
+  feedArea.innerHTML = '';
+}
+
+function toggleAutoScroll() {
+  autoScroll = !autoScroll;
+  const btn = document.getElementById('autoscroll-btn');
+  btn.className = 'feed-btn' + (autoScroll ? ' active' : '');
+  if (autoScroll) feedArea.scrollTop = feedArea.scrollHeight;
+}
+
+</script>
+</body>
+</html>
