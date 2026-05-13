@@ -1,0 +1,96 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+
+    // ── Run all markets ───────────────────────────────────────────────────
+    {
+      "name": "🚀 Run All Markets",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/crews/market_intel_crew.py",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+
+    // ── Run a specific market ─────────────────────────────────────────────
+    {
+      "name": "🚀 Run: Yelahanka",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/crews/market_intel_crew.py",
+      "args": ["--market", "Yelahanka"],
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+    {
+      "name": "🚀 Run: Devanahalli",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/crews/market_intel_crew.py",
+      "args": ["--market", "Devanahalli"],
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+
+    // ── Debug current file ────────────────────────────────────────────────
+    {
+      "name": "🐛 Debug Current File",
+      "type": "python",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+
+    // ── Test scrapers standalone ──────────────────────────────────────────
+    {
+      "name": "🔍 Test RERA Scraper",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/scrapers/rera_karnataka.py",
+      "args": ["--market", "Yelahanka"],
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+    {
+      "name": "🔍 Test Listings Scraper",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/scrapers/listings_scraper.py",
+      "args": ["--market", "Yelahanka"],
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+
+    // ── Show run history ──────────────────────────────────────────────────
+    {
+      "name": "📋 Show Run History",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/config/run_logger.py",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    }
+  ]
+}

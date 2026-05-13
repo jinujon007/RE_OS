@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs & outputs (don't commit run data)
+logs/
+outputs/
+
+# Docker volumes
+postgres_data/
+ollama_data/
+
+# VS Code (keep .vscode committed so team shares settings)
+# .vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Obsidian local state
+.obsidian/
+
+# Claude Code local permissions (project settings.json is committed; local overrides are not)
+.claude/settings.local.json
+
+# Runtime crew output files (these are logs, not source)
+crew_error.txt
+crew_run.txt
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+.gstack/

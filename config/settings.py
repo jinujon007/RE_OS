@@ -1,0 +1,109 @@
+"""
+RE_OS — Central Configuration
+All environment variables and constants in one place.
+"""
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ── DATABASE ──────────────────────────────────────────────────────────────────
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://re_os_user:re_os_2024@localhost:5432/re_os"
+)
+
+# ── LLM ENGINES ───────────────────────────────────────────────────────────────
+# Tier 1 — Ollama: free, local, runs in Docker
+# Used by: Scraper, Parser, Organizer agents (structured extraction, no deep reasoning)
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+
+# Tier 1b — Cerebras: FREE, 1M tokens/day, 60-100k TPM, fastest inference available
+# No credit card. Instant API key. llama-3.3-70b at 1,800+ tok/s.
+# LIMIT: 8,192 token context cap — fine for Light + Analysis (structured tasks, short prompts)
+# Sign up: cloud.cerebras.ai
+CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
+CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
+CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "llama3.1-8b")
+
+# Tier 2 — Groq: free tier, 1,000 req/day, fast cloud inference
+# CEO uses llama-4-scout: 30,000 TPM (2.5× better than 70B's 12k)
+# Analyst uses llama-4-scout too — separate call, same 30k bucket shared with CEO
+# Sign up: console.groq.com — no card required for free tier
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_CEO_MODEL = os.getenv("GROQ_CEO_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+GROQ_ANALYST_MODEL = os.getenv("GROQ_ANALYST_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+GROQ_LIGHT_MODEL = os.getenv("GROQ_LIGHT_MODEL", "llama-3.1-8b-instant")
+
+# Tier 2b — Google AI Studio (Gemini): free tier
+# Gemma 3 27B: 15k TPM, 14,400 req/day — unlimited for practical purposes (Light fallback)
+# Gemini 2.5 Flash: 250k TPM, 20 req/day — huge context, CEO fallback
+# Sign up: aistudio.google.com → Get API Key (instant, free Google account)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_CEO_MODEL = os.getenv("GEMINI_CEO_MODEL", "gemini/gemini-2.5-flash")
+GEMINI_LIGHT_MODEL = os.getenv("GEMINI_LIGHT_MODEL", "gemini/gemma-3-27b-it")
+
+# Tier 2c — NVIDIA NIM: free tier, 40 req/min, phone verification required
+# Sign up: build.nvidia.com → API Keys
+NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+NVIDIA_CEO_MODEL = os.getenv("NVIDIA_CEO_MODEL", "meta/llama-3.1-405b-instruct")
+NVIDIA_ANALYST_MODEL = os.getenv("NVIDIA_ANALYST_MODEL", "nvidia/llama-3.1-nemotron-70b-instruct")
+NVIDIA_LIGHT_MODEL = os.getenv("NVIDIA_LIGHT_MODEL", "meta/llama-3.3-70b-instruct")
+
+# Tier 3 — OpenRouter: free tier backup (50 req/day base, 1,000/day with $10 lifetime topup)
+# All free models use the :free suffix
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
+
+# ── REDIS ────────────────────────────────────────────────────────────────────
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+
+# ── MARKETS ──────────────────────────────────────────────────────────────────
+TARGET_MARKETS = os.getenv("TARGET_MARKETS", "Yelahanka,Devanahalli,Hebbal").split(",")
+
+# RERA Karnataka district codes for search
+RERA_DISTRICT_MAP = {
+    "Bengaluru Urban": "BLR",
+    "Bengaluru Rural": "BLR_RURAL",
+}
+
+# Micro-market to RERA taluk/locality mapping
+MARKET_RERA_KEYWORDS = {
+    "Yelahanka": ["Yelahanka", "Yelahanka New Town", "Yelahanka Satellite Town"],
+    "Devanahalli": ["Devanahalli", "Kempegowda International Airport", "KIAL"],
+    "Hebbal": ["Hebbal", "Bellary Road", "Nagawara"],
+    "Jakkur": ["Jakkur", "Jakkur Plantation"],
+    "Thanisandra": ["Thanisandra", "Byrathi"],
+    "Whitefield": ["Whitefield", "ITPL", "Kadugodi"],
+    "Sarjapur Road": ["Sarjapur", "Sarjapura"],
+    "Electronic City": ["Electronic City", "Electronics City"],
+    "Bannerghatta Road": ["Bannerghatta", "JP Nagar"],
+    "Kanakapura Road": ["Kanakapura", "Kanakpura"],
+}
+
+# ── SCRAPING ─────────────────────────────────────────────────────────────────
+RERA_BASE_URL = "https://rera.karnataka.gov.in"
+KAVERI_BASE_URL = "https://kaveri.karnataka.gov.in"
+
+# Scraping intervals (seconds)
+RERA_SCRAPE_INTERVAL = int(os.getenv("RERA_SCRAPE_INTERVAL", "24")) * 3600
+LISTINGS_SCRAPE_INTERVAL = int(os.getenv("LISTINGS_SCRAPE_INTERVAL", "6")) * 3600
+
+# ── LOGGING ──────────────────────────────────────────────────────────────────
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# ── DEVELOPER GRADE CRITERIA ─────────────────────────────────────────────────
+# Grade A: 500+ units launched OR known national brand
+GRADE_A_DEVELOPERS = [
+    "prestige", "brigade", "sobha", "puravankara", "godrej",
+    "mahindra", "lodha", "dl", "dlf", "shapoorji", "embassy",
+    "mantri", "salarpuria", "total environment", "adarsh"
+]
+GRADE_A_MIN_UNITS = 500
+
+# Grade B: 100-499 units
+GRADE_B_MIN_UNITS = 100

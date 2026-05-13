@@ -1,0 +1,121 @@
+# RE_OS — Real Estate Intelligence OS
+# Multi-agent system: PostgreSQL+PostGIS | Ollama | Redis | Agent Crew
+# Boot: docker compose up -d
+
+services:
+
+  # ── DATABASE ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgis/postgis:15-3.3
+    container_name: re_os_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: re_os
+      POSTGRES_USER: re_os_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-re_os_2024}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U re_os_user -d re_os"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── LOCAL LLM ENGINE ──────────────────────────────────────────────────────
+  # Powers: Parser Agent, Organizer Agent, Analyst Agent (free, local)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: re_os_ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    # Uncomment below if you have an NVIDIA GPU (dramatically faster)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ── TASK QUEUE ────────────────────────────────────────────────────────────
+  # Agents communicate via Redis — CEO pushes tasks, workers consume
+  redis:
+    image: redis:7-alpine
+    container_name: re_os_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+  # ── AGENT CREW ────────────────────────────────────────────────────────────
+  # The multi-agent team: CEO + Scraper + Parser + Organizer + Analyst
+  agents:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: re_os_agents
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://re_os_user:${DB_PASSWORD:-re_os_2024}@postgres:5432/re_os
+      OLLAMA_BASE_URL: http://ollama:11434
+      REDIS_URL: redis://redis:6379
+      # API Keys from .env — Docker Compose picks these up automatically
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
+      CEREBRAS_MODEL: ${CEREBRAS_MODEL:-llama3.1-8b}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      TARGET_MARKETS: ${TARGET_MARKETS:-Yelahanka,Devanahalli,Hebbal}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./:/app
+      - ./outputs:/app/outputs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: tail -f /dev/null  # container stays alive; run crew manually via: docker compose exec agents python crews/market_intel_crew.py --market Yelahanka
+
+  # ── SCHEDULER ─────────────────────────────────────────────────────────────
+  # Runs scraping jobs on schedule — daily RERA refresh, hourly listing scan
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: re_os_scheduler
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://re_os_user:${DB_PASSWORD:-re_os_2024}@postgres:5432/re_os
+      OLLAMA_BASE_URL: http://ollama:11434
+      REDIS_URL: redis://redis:6379
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
+      CEREBRAS_MODEL: ${CEREBRAS_MODEL:-llama3.1-8b}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      TARGET_MARKETS: ${TARGET_MARKETS:-Yelahanka,Devanahalli,Hebbal}
+    volumes:
+      - ./:/app
+      - ./outputs:/app/outputs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: python config/scheduler.py
+
+volumes:
+  postgres_data:
+  ollama_data:
+  redis_data:

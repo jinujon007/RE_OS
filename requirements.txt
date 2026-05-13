@@ -1,0 +1,54 @@
+# Multi-agent orchestration
+crewai==0.80.0
+crewai-tools==0.17.0
+
+# LLM integrations — CrewAI 0.80+ uses LiteLLM internally (no LangChain needed)
+# crewai pulls in litellm automatically; openai/groq are used by litellm under the hood
+openai>=1.50.0,<2.0.0
+groq>=0.11.0
+
+# Database
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.35
+geoalchemy2==0.15.2
+
+# Web scraping
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.3.0
+selenium==4.25.0
+playwright==1.48.0
+httpx[http2]==0.27.2
+
+# Task queue
+redis==5.1.1
+rq==1.16.1
+
+# Scheduling
+apscheduler==3.10.4
+
+# Data processing
+pandas==2.2.3
+numpy==1.26.4
+
+# Geo utilities
+shapely==2.0.6
+pyproj==3.7.0
+
+# Utilities
+python-dotenv==1.0.1
+pydantic==2.9.2
+loguru==0.7.2
+tenacity>=8.1.0
+
+# Terminal output
+rich>=13.7.0
+
+# Future: workflow orchestration
+# prefect>=2.0.0
+
+# Future: DB migrations
+# alembic>=1.13.0
+
+# Future: dashboard
+# streamlit>=1.35.0

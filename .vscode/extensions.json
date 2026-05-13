@@ -1,0 +1,46 @@
+{
+  // RE_OS — Recommended VS Code Extensions
+  // Open command palette (Ctrl+Shift+P) → "Extensions: Show Recommended Extensions" → Install All
+  "recommendations": [
+    // ── Claude AI ─────────────────────────────────────────────────────────
+    "anthropic.claude-code",
+
+    // ── Python ────────────────────────────────────────────────────────────
+    "ms-python.python",
+    "ms-python.pylance",
+    "ms-python.black-formatter",
+    "ms-python.debugpy",
+
+    // ── Docker ────────────────────────────────────────────────────────────
+    "ms-azuretools.vscode-docker",
+    "ms-vscode-remote.remote-containers",      // code INSIDE the agents container
+
+    // ── Database (PostgreSQL) ──────────────────────────────────────────────
+    "cweijan.vscode-postgresql-client2",
+    "mtxr.sqltools",
+    "mtxr.sqltools-driver-pg",
+    "ckolkman.vscode-postgres",                // inline SQL results in editor
+
+    // ── API testing ───────────────────────────────────────────────────────
+    "rangav.vscode-thunder-client",            // test RERA POST endpoint, no Postman needed
+
+    // ── Data inspection ───────────────────────────────────────────────────
+    "ms-toolsai.datawrangler",                 // pandas DataFrame viewer
+    "ms-toolsai.jupyter",                      // exploratory SQL notebooks
+
+    // ── File helpers ──────────────────────────────────────────────────────
+    "mechatroner.rainbow-csv",
+    "zainchen.json",
+    "nickdemayo.vscode-json-editor",
+    "mikestead.dotenv",                        // .env syntax highlighting + key autocomplete
+
+    // ── Git ───────────────────────────────────────────────────────────────
+    "eamodio.gitlens",
+
+    // ── Quality of life ───────────────────────────────────────────────────
+    "christian-kohler.path-intellisense",
+    "usernamehw.errorlens",                    // inline errors on the offending line
+    "oderwat.indent-rainbow",                  // color-coded indentation (catches Python bugs fast)
+    "gruntfuggly.todo-tree"                    // tracks TODO/FIXME/HACK comments in sidebar
+  ]
+}
