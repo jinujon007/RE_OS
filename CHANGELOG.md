@@ -5,6 +5,16 @@
 
 ---
 
+## Current Handoff — Claude Code 2026-05-14
+
+**Status:** Complete
+**Last files touched:** `.clinerules` (new), `AGENTS.md` (backlog consolidated), `CLAUDE.md` (duplicate backlog removed), `CHANGELOG.md` (duplicate backlog removed), `DEVLOG.md` (duplicate backlog removed), `database/schema.sql` (`data_source` column added to 4 tables), `utils/db_organizer.py` (`data_source='portal_scraped'` on all inserts), `database/migrate_data_source.sql` (new migration for live DB)
+**State:** Pipeline functional. DB has 8 seed-estimated RERA rows + 10 seed-estimated Kaveri registrations. `data_source` migration not yet applied to live DB — run migration before next pipeline run.
+**Next action:** Apply migration: `docker compose cp database/migrate_data_source.sql re_os_db:/tmp/ && docker compose exec re_os_db psql -U re_os_user -d re_os -f /tmp/migrate_data_source.sql` — then run pipeline and verify CEO brief shows data source provenance.
+**Open question for Jinu:** Should the CEO brief explicitly say "based on seed_estimated data" until portal scrapers are live? Recommend yes.
+
+---
+
 ## How to Add an Entry
 
 ```
@@ -202,14 +212,9 @@ docker compose exec postgres psql -U re_os_user -d re_os -f /tmp/seed_kaveri_yel
 
 ---
 
-## Pending / In Progress
+## Task Backlog
 
-| # | Change | Status |
-|---|--------|--------|
-| 1 | Pipeline re-run with updated Kaveri dates → verify kaveri_transactions shows real PSF | Pending |
-| 2 | DEVLOG.md Phase 8 entry | Pending |
-| 3 | CEO report upgrade — 6-section structured brief (Phase 1 intelligence upgrade) | Planned |
-| 4 | Analyst agent — add 6 signals: velocity, momentum, delivery score, supply pressure, GV gap trend, launch lag | Planned |
+Single source of truth for all open tasks is **`AGENTS.md`**. Do not maintain a parallel list here.
 
 ---
 

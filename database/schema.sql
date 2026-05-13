@@ -130,6 +130,8 @@ CREATE TABLE rera_projects (
     raw_data JSONB,
     source_url TEXT,
     last_scraped_at TIMESTAMP,
+    data_source VARCHAR(20) NOT NULL DEFAULT 'seed_estimated'
+        CHECK (data_source IN ('portal_scraped', 'seed_estimated', 'manual_entry')),
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -199,6 +201,8 @@ CREATE TABLE listings (
     raw_rera_number VARCHAR(100),
 
     raw_data JSONB,
+    data_source VARCHAR(20) NOT NULL DEFAULT 'seed_estimated'
+        CHECK (data_source IN ('portal_scraped', 'seed_estimated', 'manual_entry')),
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
 
@@ -252,6 +256,8 @@ CREATE TABLE kaveri_registrations (
     registration_date DATE,
 
     raw_data JSONB,
+    data_source VARCHAR(20) NOT NULL DEFAULT 'seed_estimated'
+        CHECK (data_source IN ('portal_scraped', 'seed_estimated', 'manual_entry')),
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -271,6 +277,8 @@ CREATE TABLE guidance_values (
     effective_from DATE,
     effective_to DATE,
     source_document TEXT,
+    data_source VARCHAR(20) NOT NULL DEFAULT 'seed_estimated'
+        CHECK (data_source IN ('portal_scraped', 'seed_estimated', 'manual_entry')),
     created_at TIMESTAMP DEFAULT NOW()
 );
 

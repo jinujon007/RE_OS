@@ -297,33 +297,9 @@ Get-Content logs/crew.log -Wait -Tail 50
 
 ---
 
-## Immediate Next Steps (Prioritized)
+## Task Backlog
 
-### P0 — Get API keys for Cerebras + Gemini ✅ DONE (2026-05-13)
-Both keys confirmed in `.env`: `CEREBRAS_API_KEY` + `GEMINI_API_KEY` set.
-LLM routing now fully active: Cerebras handles Light + Analysis, Groq Scout handles CEO.
-
-**Next action — rerun pipeline and validate fresh output:**
-```powershell
-docker compose exec agents python crews/market_intel_crew.py --market Yelahanka
-```
-Watch `logs/crew.log` — should see `[Playwright] Intercepted N rows` + `[Router] LIGHT tier → Cerebras` + `[Checkpoint] Saved Yelahanka/rera_scraped`.
-
-### P1 — Fix RERA Scraper (live data) ✅ DONE (2026-05-13)
-Playwright AJAX interception implemented in `scrapers/rera_karnataka.py`. Dockerfile updated.
-Container already running with updated code in mounted volume; rebuild only needed if Dockerfile/requirements changed.
-
-### P2 — Fix schema bugs ✅ DONE (2026-05-13 session 3)
-`delay_months` uses immutable date arithmetic. `duration_seconds` is regular column. `v_market_brief` view added.
-
-### P3 — Implement Kaveri registrations scraper
-The `kaveri_registrations` table is seeded but the scraper is a placeholder (`GuidanceValueTool` returns a stub). This is the most valuable data source — actual transaction prices.
-
-### P4 — Build report output to file
-Currently the CEO final output prints to terminal. Wire it to save as `.txt` or `.html` in `outputs/{market}/intel_report_{timestamp}.txt` so Jinu can read it without being in the terminal.
-
-### P5 — Database seeding with real data
-Once RERA scraper works, run a full seed run to populate the DB with real project data. Until then, the Analyst agent queries return empty results.
+Single source of truth for all open tasks is **`AGENTS.md`**. Do not maintain a parallel list here.
 
 ---
 

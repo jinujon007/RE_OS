@@ -367,20 +367,9 @@ Full data signals flow through pipeline for first time:
 
 ---
 
-## Backlog — Phases Not Yet Started
+## Task Backlog
 
-| Phase | What | Priority | Blocker |
-|-------|------|----------|---------||
-| P-next-A | RERA portal selector calibration (Playwright returns 0 — portal structure changed) | P0 | Needs manual portal inspection |
-| P-next-B | Kaveri portal selector calibration (always unreachable) | P1 | Needs manual portal inspection |
-| P-next-C | CEO report upgrade — 6-section structured brief | P1 | — |
-| P-next-D | Analyst upgrade — 6 signals (velocity, momentum, delivery score, supply pressure, GV gap, launch lag) | P1 | — |
-| P-next-E | Fix analyst LLM loop — calls market_summary_query 4× per run | P2 | Prompt tightening |
-| P-next-F | Expand to Devanahalli + Hebbal markets | P2 | Yelahanka stable ✅ |
-| P-next-G | Listings scraper — 99acres + MagicBricks (Playwright) | P2 | — |
-| P-next-H | Fix `delay_months` generated column in schema.sql | P2 | Only fails on DB wipe |
-| P-next-I | Developer Intelligence module (Phase 2 per MASTER_PLAN) | P3 | — |
-| P-next-J | News Intelligence module (Phase 3 per MASTER_PLAN) | P3 | — |
+Single source of truth for all open tasks is **`AGENTS.md`**. Do not maintain a parallel list here.
 
 ---
 

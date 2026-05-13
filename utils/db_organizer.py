@@ -198,14 +198,14 @@ class DBOrganizer:
                 project_type, project_status,
                 total_units, sold_units, unsold_units,
                 possession_date, registration_date,
-                raw_data, last_scraped_at
+                raw_data, last_scraped_at, data_source
             ) VALUES (
                 :rera_number, :project_name, :developer_id, :market_id,
                 :address, :district, :taluk, :locality,
                 :project_type, :project_status,
                 :total_units, :sold_units, :unsold_units,
                 :possession_date, :registration_date,
-                CAST(:raw_data AS jsonb), NOW()
+                CAST(:raw_data AS jsonb), NOW(), 'portal_scraped'
             )
             ON CONFLICT (rera_number) DO UPDATE SET
                 project_name    = EXCLUDED.project_name,
@@ -218,6 +218,7 @@ class DBOrganizer:
                 possession_date = EXCLUDED.possession_date,
                 raw_data        = EXCLUDED.raw_data,
                 last_scraped_at = NOW(),
+                data_source     = 'portal_scraped',
                 updated_at      = NOW()
         """), params)
 
@@ -334,10 +335,12 @@ class DBOrganizer:
             conn.execute(text("""
                 INSERT INTO guidance_values (
                     micro_market_id, locality, property_type, road_type,
-                    guidance_value_psf, guidance_value_per_sqm, effective_from
+                    guidance_value_psf, guidance_value_per_sqm, effective_from,
+                    data_source
                 ) VALUES (
                     :mid, :locality, :ptype, :road,
-                    :psf, :sqm, :eff
+                    :psf, :sqm, :eff,
+                    'portal_scraped'
                 )
             """), params)
             return "inserted"
@@ -381,7 +384,7 @@ class DBOrganizer:
                 buyer_name, seller_name,
                 survey_number, village, hobli, taluk, district,
                 transaction_date, registration_date,
-                raw_data
+                raw_data, data_source
             ) VALUES (
                 :reg_no, :doc_no,
                 :mid,
@@ -392,7 +395,7 @@ class DBOrganizer:
                 :buyer, :seller,
                 :survey, :village, :hobli, :taluk, :district,
                 :txn_date, :reg_date,
-                CAST(:raw AS jsonb)
+                CAST(:raw AS jsonb), 'portal_scraped'
             )
             ON CONFLICT DO NOTHING
         """), params)
