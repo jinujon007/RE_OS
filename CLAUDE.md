@@ -152,6 +152,36 @@ docker compose build agents && docker compose up -d agents
 Get-Content logs/crew.log -Wait -Tail 50
 ```
 
+```powershell
+# ── AIDER (multi-file editor with automatic Gemini key rotation) ───────────
+# Always use the router — it picks the first Gemini key with available quota,
+# falls back to Groq Scout if all 4 keys are exhausted.
+
+# Standard launch (from RE_OS root):
+python scripts/aider_router.py
+# Shorthand:
+.\scripts\aider.ps1
+
+# Force a specific model (overrides router default):
+python scripts/aider_router.py --model gemini/gemini-2.5-flash
+python scripts/aider_router.py --model groq/meta-llama/llama-4-scout-17b-16e-instruct
+
+# Key slots live in .env — paste new keys into next empty slot:
+# GEMINI_API_KEY_1=...  (primary)
+# GEMINI_API_KEY_2=...  (backup 1)
+# GEMINI_API_KEY_3=...  (backup 2)
+# GEMINI_API_KEY_4=...  (backup 3)
+# GROQ_API_KEY=...      (final fallback — already set)
+
+# Inside Aider session:
+# /add <file>    — load file for editing
+# /ask <q>       — ask without editing
+# /undo          — undo last commit
+# /diff          — show pending changes
+# /exit          — quit
+# Full guide → TOOL_GUIDE.md § 5
+```
+
 ---
 
 ## Current State — Open Issues

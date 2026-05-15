@@ -54,20 +54,20 @@ from scrapers.scout_memory import ScoutMemory
 NEWS_QUERIES: dict[str, list[str]] = {
     "Yelahanka": [
         "Yelahanka real estate project launch Bangalore",
-        "Yelahanka property price 2025",
+        "Yelahanka property price 2026",
         "Yelahanka apartment new launch",
         "Kogilu Jakkur real estate project",
-        "North Bangalore new residential project 2025",
+        "North Bangalore new residential project 2026",
     ],
     "Devanahalli": [
         "Devanahalli real estate project launch",
-        "Devanahalli property prices 2025",
+        "Devanahalli property prices 2026",
         "Devanahalli BIAL aerospace park residential",
         "Bangalore airport zone property launch",
     ],
     "Hebbal": [
         "Hebbal real estate project launch",
-        "Hebbal property prices 2025",
+        "Hebbal property prices 2026",
         "Hebbal Nagawara Thanisandra new project",
     ],
 }
@@ -108,7 +108,7 @@ ARTICLES TEXT:
 
 # ── Google News RSS fetch ─────────────────────────────────────────────────────
 
-def _fetch_google_news_rss(query: str, days_back: int = 14) -> list[dict]:
+def _fetch_google_news_rss(query: str, days_back: int = 60) -> list[dict]:
     """
     Fetch Google News RSS for a query. Returns list of article dicts.
     No API key required — uses public RSS endpoint.
@@ -123,6 +123,7 @@ def _fetch_google_news_rss(query: str, days_back: int = 14) -> list[dict]:
     try:
         resp = requests.get(rss_url, headers=SCRAPE_HEADERS, timeout=15)
         if resp.status_code != 200:
+            logger.debug(f"[NewsScout] Google News RSS HTTP {resp.status_code} for '{query}'")
             return []
 
         root = ET.fromstring(resp.content)
@@ -131,17 +132,21 @@ def _fetch_google_news_rss(query: str, days_back: int = 14) -> list[dict]:
             return []
 
         cutoff = datetime.now() - timedelta(days=days_back)
+        total_items = 0
+        filtered_count = 0
         for item in channel.findall("item"):
+            total_items += 1
             title = item.findtext("title") or ""
             link = item.findtext("link") or ""
             pub_date_str = item.findtext("pubDate") or ""
             description = item.findtext("description") or ""
 
-            # Basic date filter (parse RFC 2822 date)
+            # Date filter (parse RFC 2822 date)
             try:
                 from email.utils import parsedate_to_datetime
                 pub_dt = parsedate_to_datetime(pub_date_str)
                 if pub_dt.replace(tzinfo=None) < cutoff:
+                    filtered_count += 1
                     continue
             except Exception:
                 pass
@@ -153,6 +158,13 @@ def _fetch_google_news_rss(query: str, days_back: int = 14) -> list[dict]:
                 "snippet": description,
                 "source": "google_news_rss",
             })
+
+        if filtered_count > 0:
+            logger.debug(
+                f"[NewsScout] Google News RSS '{query}': "
+                f"{total_items} items, {filtered_count} filtered (>{days_back}d old), "
+                f"{len(articles)} passed"
+            )
 
     except Exception as exc:
         logger.debug(f"[NewsScout] Google News RSS error for '{query}': {exc}")
@@ -170,6 +182,7 @@ def _fetch_et_realty(query: str, session: requests.Session) -> list[dict]:
     try:
         resp = session.get(url, timeout=15)
         if resp.status_code != 200:
+            logger.debug(f"[NewsScout] ET Realty HTTP {resp.status_code} for query '{query}'")
             return []
         soup = BeautifulSoup(resp.text, "lxml")
         items = soup.select(".eachStory, .story-box, article, .article-box")
@@ -306,7 +319,7 @@ class NewsScout:
         self.session = requests.Session()
         self.session.headers.update(SCRAPE_HEADERS)
 
-    def scout(self, days_back: int = 14) -> list[dict]:
+    def scout(self, days_back: int = 60) -> list[dict]:
         """
         Fetch articles from all sources for all market queries.
         Returns all news findings with is_new flag.
@@ -357,7 +370,7 @@ class NewsScout:
 
 # ── Standalone runner ─────────────────────────────────────────────────────────
 
-def scout_news(market: str, days_back: int = 14) -> list[dict]:
+def scout_news(market: str, days_back: int = 60) -> list[dict]:
     memory = ScoutMemory(market)
     scout = NewsScout(market, memory)
     findings = scout.scout(days_back=days_back)
@@ -395,8 +408,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="News Scout — property news intelligence")
     parser.add_argument("--market", default="Yelahanka",
                         choices=["Yelahanka", "Devanahalli", "Hebbal"])
-    parser.add_argument("--days", type=int, default=14,
-                        help="How many days back to search (default: 14)")
+    parser.add_argument("--days", type=int, default=60,
+                        help="How many days back to search (default: 60)")
     args = parser.parse_args()
     logger.add("logs/news_scout.log", rotation="10 MB")
     scout_news(args.market, days_back=args.days)

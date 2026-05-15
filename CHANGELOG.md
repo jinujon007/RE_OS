@@ -529,6 +529,21 @@ DEVLOG.md | Added new phase entry documenting CC1+CC2 backend delivery and valid
 
 ---
 
-*CHANGELOG — Last updated: 2026-05-14 IST*
+## Session — Claude 2026-05-15 (Phase 16 — Recovery + Protocol Hardening)
+
+CHANGELOG.md | Restored from git HEAD after Kilo Code (T-038) overwrote entire file with 1-line entry | Claude | 2026-05-15
+AGENTS.md | Kilo Code logging protocol: removed root CHANGELOG.md from Kilo Code mandate; kilo_logs/CHANGELOG.md is now Kilo Code's ONLY output file | Claude | 2026-05-15
+AGENTS.md | Added ⚠️ hard limit: Kilo Code must NOT write to root CHANGELOG.md; added to Key Files table | Claude | 2026-05-15
+scrapers/news_scout.py | Fixed days_back default 14→60 in _fetch_google_news_rss, scout(), scout_news(), argparse; added filtered-count logging; added ET Realty non-200 log; NEWS_QUERIES years 2025→2026 | Claude | 2026-05-15
+TASK_QUEUE.md | T-038 DONE, T-039 DONE, T-041 DONE, T-011 SKIP, T-012 SKIP, T-013 SKIP (→T-042), T-042 READY; all Kilo Code task specs updated to log to kilo_logs only | Claude | 2026-05-15
+kilo_logs/CHANGELOG.md | Created dedicated Kilo Code log; pre-populated Phase 15 entries T-001 through T-008 and T-038; T-039 findings added | Claude + Kilo Code | 2026-05-15
+DEVLOG.md | Phase 15 marked Complete; Phase 16 recovery entry added | Claude | 2026-05-15
+
+**T-039** | scrapers/developer_scout.py | Kilo Code diagnosed: keywords found, _clean_html likely filtering project names from nav/header; Brigade URL brigade.in/all-properties?city=bangalore, Prestige URL prestige.co.in/residential-projects/bangalore | Kilo Code + Claude | 2026-05-15
+
+---
+
+*CHANGELOG — Last updated: 2026-05-15 IST*
 *Update this file immediately after every code, DB, or config change.*
 *Before field required for all changes to existing code/data.*
+*Kilo Code: do NOT write to this file. Write to kilo_logs/CHANGELOG.md only.*

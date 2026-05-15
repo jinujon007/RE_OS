@@ -6,9 +6,50 @@ This is the single source of truth for all pending work. Every brain reads this 
 **How to use:**
 1. Scan the INDEX below — find the first `READY` row with your brain name
 2. Jump to that task's DETAIL SPEC (search for `## T-XXX`)
-3. Read the full spec. Execute exactly as written.
+3. Read the full spec. Note the **Recommended Model** line — set that model in Cline before starting.
 4. Mark DONE in this index. Write one line to CHANGELOG.md.
 5. Return to step 1.
+
+---
+
+## MODEL ROUTING — Which model for which task
+
+Never let Cline ask you to switch to Sonnet. Every task here is sized for a free model.
+**If Cline suggests Sonnet:** stop, check the task tier below, switch to the right free model first.
+**If Cline throws a tool-call error:** switch to Groq `llama-3.3-70b-versatile` — it handles tool calls most reliably of all free models.
+
+**How Cline model switching works:**
+Cline has two separate modes — Plan mode (thinks through the task) and Act mode (executes tool calls). You can set a different model for each. Every task spec has a `Plan:` and `Act:` line. You switch them manually in Cline before saying go.
+
+**Your available providers:**
+| Provider | What it routes to | Cost |
+|----------|------------------|------|
+| **Ollama** | Local models on your machine | Free, unlimited, slower |
+| **OpenRouter** | DeepSeek, Llama, Gemini Flash, etc. | Free tier |
+| **NinRouter** | NVIDIA models + Ollama + OpenRouter + OpenAI Codex | Codex = paid, rest free |
+| **Hugging Face** | HF-hosted models | Coming soon |
+
+**Model routing per task tier:**
+
+| Tier | What it involves | Plan Mode | Act Mode |
+|------|-----------------|-----------|----------|
+| **T0 — Read-only** | Read file, audit, no edits | Ollama (any local model) | Ollama (same) |
+| **T1 — Tiny edit** | 1–10 line change, exact spec given | OpenRouter free | OpenRouter free |
+| **T2 — Commands** | Docker exec, run script, verify | OpenRouter free | OpenRouter free |
+| **T3 — Code edit** | 10–50 lines, logic change, single file | NinRouter → Codex | OpenRouter free |
+| **T4 — Scraper/debug** | Fix scraper, HTML, multi-step debug | NinRouter → Codex | NinRouter → Codex |
+| **T5 — Architecture** | Multi-file, new feature | → Claude Code | Not a Cline task |
+
+**Why Plan ≠ Act for T3/T4:**
+Plan mode needs Codex to *understand* the codebase pattern and reason about the right fix. Act mode just needs to reliably write the file — OpenRouter free models handle that without burning Codex tokens.
+
+**Fallback:**
+- Ollama unavailable → OpenRouter free (T0)
+- OpenRouter rate-limited → Ollama local (T1/T2)
+- Codex quota → OpenRouter `deepseek/deepseek-v3:free` for Plan, OpenRouter free for Act
+
+**Kilo Code:** Uses its built-in free default for both modes. No switching needed. T0 tasks only.
+**If Cline suggests Sonnet:** wrong model set. Switch Plan → NinRouter Codex (T3/T4) or OpenRouter (T1/T2). Switch Act → OpenRouter free. Never need Sonnet.
 
 ---
 
@@ -16,21 +57,21 @@ This is the single source of truth for all pending work. Every brain reads this 
 
 | ID | Title | Brain | Status | Phase | Blocked By |
 |----|-------|-------|--------|-------|------------|
-| T-001 | Test news_scout.py standalone | Cline | READY | P1 | — |
-| T-002 | Test portal_scout.py standalone | Cline | READY | P1 | — |
-| T-003 | Test developer_scout.py standalone | Cline | READY | P1 | — |
-| T-004 | Test rera_detail_scout.py standalone | Cline | READY | P1 | — |
-| T-005 | Audit scout_memory.py dedup logic | Cline | READY | P1 | — |
-| T-006 | Schema audit — verify scout output tables | Cline | READY | P1 | — |
-| T-007 | Add httpx + price-parser + dateparser to requirements.txt | Cline | READY | P1 | — |
-| T-008 | Wire CEO output to file (intel_report_{ts}.txt) | Cline | READY | P1 | — |
-| T-009 | Fix DB upsert — micro_market_id not set in upsert_project | Cline | READY | P0 | — |
-| T-010 | Wire sentinel_agent into docker-compose healthcheck | Cline | READY | P1 | — |
-| T-011 | Fix errors found in news_scout (from T-001) | Cline | BLOCKED | P1 | T-001 |
-| T-012 | Fix errors found in portal_scout (from T-002) | Cline | BLOCKED | P1 | T-002 |
-| T-013 | Fix errors found in developer_scout (from T-003) | Cline | BLOCKED | P1 | T-003 |
-| T-014 | Fix errors found in rera_detail_scout (from T-004) | Cline | BLOCKED | P1 | T-004 |
-| T-015 | Rebuild agents container after requirements change | Cline | BLOCKED | P1 | T-007 |
+| T-001 | Test news_scout.py standalone | Cline | DONE | P1 | — |
+| T-002 | Test portal_scout.py standalone | Cline | DONE | P1 | — |
+| T-003 | Test developer_scout.py standalone | Cline | DONE | P1 | — |
+| T-004 | Test rera_detail_scout.py standalone | Cline | DONE | P1 | — |
+| T-005 | Audit scout_memory.py dedup logic | Cline | DONE | P1 | — |
+| T-006 | Schema audit — verify scout output tables | Cline | DONE | P1 | — |
+| T-007 | Add httpx + price-parser + dateparser to requirements.txt | Cline | DONE | P1 | — |
+| T-008 | Wire CEO output to file (intel_report_{ts}.txt) | Cline | DONE | P1 | — |
+| T-009 | Fix DB upsert — micro_market_id not set in upsert_project | Cline | DONE | P0 | — |
+| T-010 | Wire sentinel_agent into docker-compose healthcheck | Cline | BLOCKED | P1 | sentinel_agent.py healthcheck entrypoint |
+| T-011 | Fix news_scout empty results | Cline | SKIP | P1 | Superseded by T-041 |
+| T-012 | Fix errors found in portal_scout (from T-002) | Cline | SKIP | P1 | T-002 passed — no fix needed |
+| T-013 | Fix developer_scout Playwright 0 projects | Claude | SKIP | P1 | Superseded by T-042 |
+| T-014 | Fix rera_detail_scout — no checkpoint data | Claude | BLOCKED | P1 | T-040 |
+| T-015 | Rebuild agents container after requirements change | Cline | READY | P1 | — |
 | T-016 | Wire 4 scouts as tools in scraper_agent.py | Claude | BLOCKED | P1 | T-001,T-002,T-003,T-004 |
 | T-017 | Wire scout tools into crew Stage 1 (market_intel_crew.py) | Claude | BLOCKED | P1 | T-016 |
 | T-018 | Wire scout outputs into db_organizer.py | Cline | BLOCKED | P1 | T-016 |
@@ -53,6 +94,11 @@ This is the single source of truth for all pending work. Every brain reads this 
 | T-035 | Fix delay_months generated column in schema.sql | Cline | READY | P2 | — |
 | T-036 | Kaveri portal — diagnose unreachable URL | Cline | READY | P1 | — |
 | T-037 | Agent registry: create agents/registry/ + YAML schema | Claude | BLOCKED | P8 | T-022 |
+| T-038 | Diagnose news_scout.py — root cause for 0 articles | Kilo Code | DONE | P1 | — |
+| T-039 | Diagnose developer_scout.py — root cause for 0 projects | Kilo Code | DONE | P1 | — |
+| T-040 | Diagnose rera_detail_scout.py — checkpoint prerequisite | Kilo Code | READY | P1 | — |
+| T-041 | Fix news_scout empty results (after T-038 diagnosis) | Cline | DONE | P1 | — |
+| T-042 | Fix developer_scout Playwright failure (after T-039) | Claude | READY | P1 | — |
 
 ---
 
@@ -270,34 +316,25 @@ This is the single source of truth for all pending work. Every brain reads this 
 ---
 
 ## T-009 | Fix DB upsert — micro_market_id not set in upsert_project
-**Status:** READY
-**Brain:** Cline
+**Status:** DONE ✅
+**Brain:** Cline (fixed by Roo Code 2026-05-14 00:20 IST)
 **Phase:** P0
 **Blocked by:** —
 **Priority:** HIGH
 
-**What to do:**
-1. Read `utils/db_organizer.py` in full first
-2. Find the `_upsert_project` function (or whichever function handles `ON CONFLICT DO UPDATE` for rera_projects)
-3. Look at the `ON CONFLICT DO UPDATE SET` clause — check if `micro_market_id` is in the SET list
-4. If `micro_market_id` is missing from the SET clause, add it: `micro_market_id = EXCLUDED.micro_market_id`
-5. Save. Do not change any other logic.
-
-**Files to touch:** READ+WRITE — `utils/db_organizer.py`
-**Success check:** `micro_market_id = EXCLUDED.micro_market_id` is present in the ON CONFLICT SET clause
-**If the function doesn't exist or the structure is different:** Log what you found, mark NEEDS-CLARIFICATION
-
-**Changelog entry format:**
-`T-009 | utils/db_organizer.py | added micro_market_id to ON CONFLICT SET clause | Cline | YYYY-MM-DD HH:MM`
+**Resolution:** Fixed in CHANGELOG session 2026-05-14. `micro_market_id = EXCLUDED.micro_market_id` confirmed present in `utils/db_organizer.py` `_upsert_project` function. No action needed.
 
 ---
 
 ## T-010 | Wire sentinel_agent into docker-compose healthcheck
-**Status:** READY
+**Status:** BLOCKED (NEEDS-CLARIFICATION)
 **Brain:** Cline
 **Phase:** P1
-**Blocked by:** —
+**Blocked by:** sentinel_agent.py lacks health-check-compatible `__main__` entrypoint
 **Priority:** LOW
+**Task Tier:** T1 — Tiny edit (add healthcheck block to docker-compose.yml)
+**Plan mode:** OpenRouter → any free model (e.g., `deepseek/deepseek-chat-v3-0324:free`)
+**Act mode:** OpenRouter → same free model
 
 **What to do:**
 1. Read `docker-compose.yml` in full first
@@ -321,95 +358,103 @@ This is the single source of truth for all pending work. Every brain reads this 
 **Changelog entry format:**
 `T-010 | docker-compose.yml | added sentinel healthcheck to agents service | Cline | YYYY-MM-DD HH:MM`
 
+**Current state (2026-05-15):** healthcheck block added to `docker-compose.yml` agents service. `sentinel_agent.py` has no `if __name__ == "__main__":` block with exit-code behavior, so Docker healthcheck command is not yet valid for PASS/FAIL signaling.
+
 ---
 
-## T-011 | Fix errors found in news_scout (from T-001)
+## T-011 | Fix news_scout empty results
 **Status:** BLOCKED
 **Brain:** Cline
 **Phase:** P1
-**Blocked by:** T-001
+**Blocked by:** T-038 (diagnosis required before fix)
 **Priority:** HIGH
+**Task Tier:** T3 — Code edit (update URL or query params in news_scout.py)
+**Recommended Model:** OpenRouter `deepseek/deepseek-chat-v3-0324:free`
 
-**What to do:**
-This task is created after T-001 fails. When T-001 is marked DONE with status FAIL:
-1. Read T-001's changelog entry to get the exact error
-2. Read `scrapers/news_scout.py` in full
-3. Fix the specific error reported — ONLY that error, nothing else
-4. Common errors to expect:
-   - `ImportError: No module named 'httpx'` → add to requirements.txt (T-007 should handle this)
-   - `KeyError: 'GEMINI_API_KEY'` → key not in .env — check `.env` file, report to Jinu
-   - Playwright browser not found → run `docker compose exec agents playwright install chromium`
-   - RSS feed URL changed → update the hardcoded URL in news_scout.py
-5. After fix: re-run T-001's command and check if it now passes
+**Context:** T-001 ran successfully (no traceback) but returned 0 articles. Google News RSS and ET Realty both returned empty. T-038 will diagnose the exact URL/query issue. Once T-038 is DONE, read its CHANGELOG entry and apply the specific fix it identifies.
 
-**Files to touch:** READ+WRITE — `scrapers/news_scout.py` (only the specific error fix)
-**Success check:** Same command from T-001 now runs without the reported error
-**If error requires architecture change:** Mark NEEDS-CLARIFICATION for Claude review
+**What to do (after T-038 is DONE):**
+1. Read T-038's CHANGELOG entry to get the exact diagnosis
+2. Read `scrapers/news_scout.py` — find the RSS URL and ET Realty URL/query
+3. Apply only the fix described in T-038 findings (likely: update URL, fix market keyword substitution, or add search fallback)
+4. Re-run: `docker compose exec agents python scrapers/news_scout.py --market Yelahanka`
+5. Verify: at least 1 article returned
+
+**Files to touch:** READ+WRITE — `scrapers/news_scout.py`
+**Success check:** Command returns at least 1 article with no traceback
+**If fix requires architecture change:** Mark NEEDS-CLARIFICATION for Claude review
 
 **Changelog entry format:**
-`T-011 | scrapers/news_scout.py | fixed [error type]: [one-line description] | Cline | YYYY-MM-DD HH:MM`
+`T-011 | scrapers/news_scout.py | fixed [description of what was changed] | Cline | YYYY-MM-DD HH:MM`
 
 ---
 
 ## T-012 | Fix errors found in portal_scout (from T-002)
-**Status:** BLOCKED
+**Status:** SKIP — not needed
 **Brain:** Cline
 **Phase:** P1
-**Blocked by:** T-002
-**Priority:** HIGH
+**Blocked by:** T-002 passed — no fix required
+**Priority:** N/A
 
-**What to do:**
-Same pattern as T-011 but for `scrapers/portal_scout.py`.
-1. Read T-002's changelog entry to get the exact error
-2. Read `scrapers/portal_scout.py` in full
-3. Fix the specific error only
-4. Common portal scout errors:
-   - Playwright selector `[data-type="listing"]` → inspect real 99acres DOM and update selector
-   - Rate limiting → add a `time.sleep(2)` between requests
-   - No results (0 listings) → verify the search URL format for Yelahanka is correct
-5. Re-run T-002's command to verify fix
-
-**Files to touch:** READ+WRITE — `scrapers/portal_scout.py`
-**Success check:** Portal scout runs without traceback AND returns at least 1 listing
-**Changelog entry format:**
-`T-012 | scrapers/portal_scout.py | fixed [error type]: [one-line description] | Cline | YYYY-MM-DD HH:MM`
+**Resolution:** T-002 PASSED (Kilo Code 2026-05-15 16:22). 4 listings found. 99acres returned 403 and PropTiger 404 are portal-side blocks, not code bugs. No fix needed. MagicBricks + NoBroker are working sources.
 
 ---
 
-## T-013 | Fix errors found in developer_scout (from T-003)
+## T-013 | Fix developer_scout Playwright 0 projects
 **Status:** BLOCKED
-**Brain:** Cline
+**Brain:** Claude (reassigned from Cline — requires scraper architecture knowledge)
 **Phase:** P1
-**Blocked by:** T-003
+**Blocked by:** T-039
 **Priority:** HIGH
 
-Same pattern as T-011 but for `scrapers/developer_scout.py`. Read T-003 log, fix that specific error only, verify with same command.
+**Context:** T-003 returned 0 projects from Brigade/Prestige. Playwright found pages but the North Bengaluru keyword filter eliminated all results. This is either: wrong keywords, wrong Playwright selector, or the developer site structure changed. T-039 will diagnose. Claude reads T-039 findings and fixes.
+
+**What Claude does (after T-039 is DONE):**
+1. Read T-039 CHANGELOG entry (keyword list, selectors, URLs found)
+2. Read `scrapers/developer_scout.py` in full
+3. Likely fixes:
+   - Update North Bengaluru keyword list (e.g., "Yelahanka" not matching "North Bengaluru")
+   - Update Playwright selector if site DOM changed
+   - Add `--with-deps` Playwright step if browser is failing silently
+4. Re-run: `docker compose exec agents python scrapers/developer_scout.py --developer "Brigade,Prestige" --market Yelahanka`
+5. Verify: at least 1 project found
 
 **Changelog entry format:**
-`T-013 | scrapers/developer_scout.py | fixed [error type]: [one-line description] | Cline | YYYY-MM-DD HH:MM`
+`T-013 | scrapers/developer_scout.py | fixed [description] | Claude | YYYY-MM-DD HH:MM`
 
 ---
 
-## T-014 | Fix errors found in rera_detail_scout (from T-004)
+## T-014 | Fix rera_detail_scout — no checkpoint data
 **Status:** BLOCKED
-**Brain:** Cline
+**Brain:** Claude (reassigned from Cline — dependency issue, not a code bug)
 **Phase:** P1
-**Blocked by:** T-004
+**Blocked by:** T-040
 **Priority:** HIGH
 
-Same pattern as T-011 but for `scrapers/rera_detail_scout.py`. Read T-004 log, fix that specific error only.
+**Context:** T-004 returned 0 enriched records. Root cause: rera_detail_scout reads a checkpoint file from the main RERA scraper to get `detail_url` per project. That checkpoint didn't exist or had no `detail_url` field. This is a pipeline dependency issue, not a bug in rera_detail_scout itself. T-040 will confirm the exact checkpoint format. Claude then decides: seed the checkpoint, or restructure rera_detail_scout to read from DB instead.
+
+**What Claude does (after T-040 is DONE):**
+1. Read T-040 CHANGELOG entry (checkpoint path, format, and what produces it)
+2. Read `scrapers/rera_detail_scout.py` in full
+3. Decide fix approach:
+   - **Option A:** Ensure main RERA scraper runs first and produces checkpoint with `detail_url` — update pipeline Stage 1 order
+   - **Option B:** Modify rera_detail_scout to query `rera_projects.detail_url` from DB instead of checkpoint
+4. Implement chosen approach. Re-run T-004's command to verify.
 
 **Changelog entry format:**
-`T-014 | scrapers/rera_detail_scout.py | fixed [error type]: [one-line description] | Cline | YYYY-MM-DD HH:MM`
+`T-014 | scrapers/rera_detail_scout.py | fixed checkpoint dependency: [description] | Claude | YYYY-MM-DD HH:MM`
 
 ---
 
 ## T-015 | Rebuild agents container after requirements change
-**Status:** BLOCKED
+**Status:** READY
 **Brain:** Cline
 **Phase:** P1
-**Blocked by:** T-007
+**Blocked by:** — (T-007 completed by Kilo Code 2026-05-15)
 **Priority:** MEDIUM
+**Task Tier:** T2 — Docker commands (build + verify imports)
+**Plan mode:** OpenRouter → any free model
+**Act mode:** OpenRouter → same free model (reliable for terminal commands)
 
 **What to do:**
 1. Verify T-007 is marked DONE before running this
@@ -673,6 +718,9 @@ Full spec to be written by Claude after T-022.
 **Phase:** P2
 **Blocked by:** —
 **Priority:** LOW
+**Task Tier:** T0 — Read-only (verify current state, no edit needed yet)
+**Plan mode:** Ollama (any local model)
+**Act mode:** Ollama (same)
 
 **What to do:**
 1. Read `database/schema.sql` — find the `delay_months` column definition (~line 134)
@@ -695,6 +743,9 @@ Full spec to be written by Claude after T-022.
 **Phase:** P1
 **Blocked by:** —
 **Priority:** LOW
+**Task Tier:** T0 — Read-only + one command
+**Plan mode:** Ollama (any local model)
+**Act mode:** Ollama (same)
 
 **What to do:**
 1. Read `scrapers/kaveri_karnataka.py` — find the URL it tries to reach
@@ -723,13 +774,149 @@ Claude task. Create the agent registry folder, YAML schema, and `agents/agent_fa
 
 ---
 
+---
+
+## T-038 | Diagnose news_scout.py — root cause for 0 articles
+**Status:** DONE ✅ — diagnosed 2026-05-15 16:46 by Kilo Code. Root cause: days_back=14 cutoff eliminates all articles (newest=2026-04-03, 32d old). ET Realty returns 404. Both sources silent-fail. Fix applied in T-041 by Claude 2026-05-15.
+**Brain:** Kilo Code
+**Phase:** P1
+**Blocked by:** —
+**Priority:** HIGH
+**Task Tier:** T0 — Read-only (audit only, no edits)
+**Recommended Model:** Free default (Kilo Code built-in)
+
+**Context:** T-001 (run by Kilo Code 2026-05-15) returned 0 articles with no traceback. Google News RSS and ET Realty both returned empty. Need to understand WHY before Cline can fix in T-011.
+
+**What to do:**
+1. Read `scrapers/news_scout.py` — if file is >300 lines, note "FILE TOO LONG" and mark NEEDS-FIX
+2. Find and record:
+   - The exact RSS URL used (e.g., `https://news.google.com/rss/search?q=...`)
+   - How the market name (`Yelahanka`) is substituted into the URL or query
+   - The ET Realty URL/search endpoint used
+   - Whether there is any try/except that silently swallows errors (returns empty list instead of raising)
+   - Whether any function returns `[]` early if an API key is missing
+3. Do NOT fix anything — diagnose only
+
+**Files to touch:** READ ONLY — `scrapers/news_scout.py`
+**Success check:** You have answered all 5 questions above
+**If file is too long (>300 lines):** Stop. Write escalation note to `kilo_logs/CHANGELOG.md`. Change Brain → Cline, Status → READY in TASK_QUEUE.md.
+
+**Log findings to:** `kilo_logs/CHANGELOG.md` ONLY. Do NOT write to root `CHANGELOG.md`.
+**Log format:** `## T-038 | news_scout.py diagnosis | DONE | YYYY-MM-DD HH:MM` then bullet findings.
+
+---
+
+## T-039 | Diagnose developer_scout.py — root cause for 0 projects
+**Status:** READY
+**Brain:** Kilo Code
+**Phase:** P1
+**Blocked by:** —
+**Priority:** HIGH
+**Task Tier:** T0 — Read-only (audit only, no edits)
+**Recommended Model:** Free default (Kilo Code built-in)
+
+**Context:** T-003 returned 0 projects from Brigade/Prestige. Playwright ran successfully (no traceback) but North Bengaluru keyword filter eliminated all results. Need keyword list and selectors before Claude can fix in T-042.
+
+**What to do:**
+1. Read `scrapers/developer_scout.py` — if file is >300 lines, note "FILE TOO LONG" and mark NEEDS-FIX
+2. Find and record:
+   - The exact list of North Bengaluru keywords used to filter results (the keyword filter function/list)
+   - The Brigade website URL being scraped (exact URL)
+   - The Prestige website URL being scraped (exact URL)
+   - The Playwright CSS selector used to find project cards on these pages
+   - Whether there is a minimum match threshold (e.g., "must match 2 keywords") that is too strict
+3. Do NOT fix anything — diagnose only
+
+**Files to touch:** READ ONLY — `scrapers/developer_scout.py`
+**Success check:** You have found and logged all 5 items above
+**If file is too long (>300 lines):** Stop. Write escalation note to `kilo_logs/CHANGELOG.md`. Change Brain → Cline, Status → READY in TASK_QUEUE.md.
+
+**Log findings to:** `kilo_logs/CHANGELOG.md` ONLY. Do NOT write to root `CHANGELOG.md`.
+**Log format:** `## T-039 | developer_scout.py diagnosis | DONE | YYYY-MM-DD HH:MM` then bullet findings.
+
+---
+
+## T-040 | Diagnose rera_detail_scout.py — checkpoint prerequisite
+**Status:** READY
+**Brain:** Kilo Code
+**Phase:** P1
+**Blocked by:** —
+**Priority:** HIGH
+**Task Tier:** T0 — Read-only (audit only, no edits)
+**Recommended Model:** Free default (Kilo Code built-in)
+
+**Context:** T-004 returned 0 enriched records. CHANGELOG entry: "no RERA projects with detail_url in checkpoint". Need to understand what checkpoint rera_detail_scout reads, what format it expects, and what produces that checkpoint.
+
+**What to do:**
+1. Read `scrapers/rera_detail_scout.py` — if file is >300 lines, note "FILE TOO LONG" and mark NEEDS-FIX
+2. Find and record:
+   - The exact checkpoint file path it reads (e.g., `outputs/Yelahanka/rera_checkpoint.json`)
+   - What field name it looks for in each record (e.g., `detail_url`, `project_url`)
+   - Which scraper produces that checkpoint file (search for the same filename being written)
+   - Whether it can also read from the DB (does it import `psycopg2` or query `rera_projects`?)
+   - What it does when the checkpoint file is missing — does it error or silently return 0?
+3. Do NOT fix anything — diagnose only
+
+**Files to touch:** READ ONLY — `scrapers/rera_detail_scout.py`
+**Success check:** You have answered all 5 questions above
+**If file is too long (>300 lines):** Stop. Write escalation note to `kilo_logs/CHANGELOG.md`. Change Brain → Cline, Status → READY in TASK_QUEUE.md.
+
+**Log findings to:** `kilo_logs/CHANGELOG.md` ONLY. Do NOT write to root `CHANGELOG.md`.
+**Log format:** `## T-040 | rera_detail_scout.py diagnosis | DONE | YYYY-MM-DD HH:MM` then bullet findings.
+
+---
+
+## T-041 | Fix news_scout empty results
+**Status:** DONE ✅ — fixed 2026-05-15 by Claude. Changes: days_back default 14→60 in _fetch_google_news_rss(), scout(), scout_news(), argparse; added filtered-count logging; added ET Realty non-200 log; NEWS_QUERIES years 2025→2026.
+**Brain:** Claude (fix applied during review, not Cline)
+**Phase:** P1
+**Blocked by:** —
+**Priority:** HIGH
+**Task Tier:** T3 — Code edit (update URL or query params in news_scout.py)
+**Plan mode:** NinRouter → Codex (to reason about the right fix from T-038 diagnosis)
+**Act mode:** OpenRouter → free model (to write the file edit)
+
+**What to do (after T-038 is DONE):**
+1. Read T-038's CHANGELOG entry to get the exact diagnosis
+2. Read `scrapers/news_scout.py` — find the specific URL/query section identified in T-038
+3. Apply the targeted fix:
+   - If RSS URL is wrong: update the URL with correct Google News RSS format for Indian RE news
+   - If market name not substituting: fix the string format/substitution
+   - If silent fail swallowing error: add a `print(f"[news_scout] error: {e}")` before `return []`
+   - If API key causing early exit: add a fallback path that doesn't need the key
+4. Re-run: `docker compose exec agents python scrapers/news_scout.py --market Yelahanka`
+5. Verify: at least 1 article returned
+
+**Files to touch:** READ+WRITE — `scrapers/news_scout.py` (targeted fix only)
+**Success check:** Command returns ≥1 article with no traceback
+**If fix requires architecture change:** Mark NEEDS-CLARIFICATION for Claude
+
+**Changelog entry format:**
+`T-041 | scrapers/news_scout.py | fixed [what was changed]: [one line] | Cline | YYYY-MM-DD HH:MM`
+
+---
+
+## T-042 | Fix developer_scout Playwright failure
+**Status:** BLOCKED
+**Brain:** Claude
+**Phase:** P1
+**Blocked by:** T-039
+**Priority:** HIGH
+
+Claude task. After T-039 diagnosis: read T-039 CHANGELOG, read `scrapers/developer_scout.py` in full, fix the keyword filter or Playwright selector causing 0 results. Most likely: keyword list doesn't include "Yelahanka" / "yelahanka" case-insensitive, or selector is stale. Verify with: `docker compose exec agents python scrapers/developer_scout.py --developer "Brigade,Prestige" --market Yelahanka`
+
+**Changelog entry format:**
+`T-042 | scrapers/developer_scout.py | fixed [description] | Claude | YYYY-MM-DD HH:MM`
+
+---
+
 ## ADDING NEW TASKS
 
 When a review cycle reveals new work, Claude adds tasks here following the spec format above.
 Claude assigns the next available T-XXX number and inserts the row in the INDEX + writes the DETAIL SPEC.
 
-**Current last task ID: T-037**
-**Next task ID to use: T-038**
+**Current last task ID: T-042**
+**Next task ID to use: T-043**
 
 ---
 

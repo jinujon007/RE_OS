@@ -599,6 +599,68 @@ Scout system covers: RERA registry → RERA detail pages → 7 portals → 8 dev
 
 ---
 
+### Phase 15 — Scout Standalone Testing (T-001 through T-008, T-038)
+**Date:** 2026-05-15
+**Status:** ✅ Complete
+
+**Situation:**
+Phase 14 built 5 new scout modules. Phase 15 validates each scout runs independently before wiring into the crew pipeline. Run by Kilo Code (T0 read-only tasks).
+
+**Test results:**
+- T-001 FAIL (news_scout: 0 articles, no traceback) → root cause diagnosed in T-038
+- T-002 PASS (portal_scout: 4 listings — MagicBricks 1, NoBroker 3)
+- T-003 FAIL (developer_scout: 0 projects — North Bengaluru keyword filter too strict)
+- T-004 FAIL (rera_detail_scout: 0 enriched — checkpoint prerequisite not met)
+- T-005 DONE — scout_memory solid, flat-file storage, all 5 CID types, no bugs
+- T-006 DONE — 4 tables missing from schema: news_articles, developer_projects, rera_project_details, scout_memory
+- T-007 DONE — httpx/price-parser/dateparser already in requirements.txt
+- T-008 DONE — CEO file-write already implemented
+- T-038 DONE — T-001 root cause: days_back=14 too narrow (newest article 32d old) + ET Realty 404
+
+**Kilo Code incident:**
+After completing T-038, Kilo Code stopped. Last logged action was T-038 diagnosis. Root cause: unknown (likely context limit or confusion after writing verbose diagnosis). Kilo Code also overwrote root CHANGELOG.md (534 lines → 36-line T-038 dump). Both issues addressed in Phase 16.
+
+**Open from Phase 15:**
+- T-039 (developer_scout diagnosis) — still READY for Kilo Code
+- T-040 (rera_detail_scout checkpoint diagnosis) — still READY for Kilo Code
+- T-015 (container rebuild) — READY for Cline
+- T-035, T-036 — READY for Cline
+
+---
+
+### Phase 16 — Review Cycle + Kilo Code Incident Recovery (2026-05-15)
+**Date:** 2026-05-15
+**Status:** ✅ Complete
+
+**Situation:**
+After Phase 15, Kilo Code stopped responding after T-038. Investigation revealed: Kilo Code had overwritten root CHANGELOG.md (534-line authoritative log → 36-line T-038 spec dump). TASK_QUEUE.md was also not updated (T-038 still showed READY). T-039 and T-040 (Kilo Code T0 tasks) were not started.
+
+Additionally, news_scout.py had a root bug identified by T-038: days_back=14 eliminates all articles because Google News RSS only returns articles from the past 30-60 days, and the newest Yelahanka article was 32 days old.
+
+**What was done:**
+- Restored CHANGELOG.md from git (recovered 534 lines)
+- Added all Phase 15 entries in proper one-line format
+- Fixed `scrapers/news_scout.py`: days_back default 14→60 across all entry points; filter-count logging; ET Realty non-200 logging; NEWS_QUERIES years 2025→2026
+- Updated TASK_QUEUE.md: T-038 DONE, T-011 SKIP, T-041 DONE (fixed directly by Claude)
+- Created `kilo_logs/CHANGELOG.md` — Kilo Code's dedicated log file, pre-populated with all Phase 15 findings
+- Updated AGENTS.md: Kilo Code now has explicit 2-file logging protocol (kilo_logs/CHANGELOG.md for findings + 1-line entry in root CHANGELOG.md). Warning added against pasting task specs into logs.
+
+**Files changed:**
+- `CHANGELOG.md` — restored + Phase 15 + Phase 16 entries added
+- `scrapers/news_scout.py` — days_back fix + logging improvements
+- `TASK_QUEUE.md` — status updates for T-038, T-011, T-041
+- `kilo_logs/CHANGELOG.md` — NEW FILE
+- `AGENTS.md` — Kilo Code logging protocol update
+- `DEVLOG.md` — Phase 15 completion + Phase 16 entry
+
+**What's next:**
+- Kilo Code: T-039 (diagnose developer_scout keyword filter) and T-040 (diagnose rera_detail_scout checkpoint)
+- Cline: T-015 (container rebuild after requirements change), T-035 (schema delay_months), T-036 (Kaveri portal)
+- After T-039 done: Claude fixes T-042 (developer_scout keyword filter)
+- After T-040 done: Claude fixes T-014 (rera_detail_scout checkpoint dependency)
+
+---
+
 ## Ideas & Brainstorm Log
 
 > One entry per brainstorm session. Not implementation plans — raw thinking, evaluated ideas, arguments made, conclusions reached, and status. Future sessions pick up from here without re-deriving the same ground.
