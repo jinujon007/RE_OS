@@ -50,5 +50,9 @@ rich>=13.7.0
 # Future: DB migrations
 # alembic>=1.13.0
 
-# Future: dashboard
-# streamlit>=1.35.0
+# Dashboard
+flask>=3.0.0
+
+# Scout utilities (portal + news extraction)
+price-parser>=0.3.4
+dateparser>=1.2.0

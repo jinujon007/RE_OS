@@ -36,6 +36,13 @@ desktop.ini
 # Claude Code local permissions (project settings.json is committed; local overrides are not)
 .claude/settings.local.json
 
+# Aider AI chat history (local dev tool logs — not source)
+.aider.chat.history.md
+.aider.input.history
+
+# Kilo Code extension workspace (local dev tool state — not source)
+.kilo/
+
 # Runtime crew output files (these are logs, not source)
 crew_error.txt
 crew_run.txt

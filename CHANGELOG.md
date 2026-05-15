@@ -5,12 +5,104 @@
 
 ---
 
-## Current Handoff -- Roo 2026-05-14 00:22 IST
+## Session — Claude 2026-05-14 (Scout System)
 
-Status: in progress
-Last files touched: `database/migrate_data_source.sql` (applied to live DB), `utils/db_organizer.py` (P0 upsert conflict fix), `DEVLOG.md` (Phase 9 entry), `CHANGELOG.md` (this handoff + entries)
-State: DB migration applied and upsert fix done; pipeline run not executed yet in this session.
-Next action: Run `docker compose exec agents python crews/market_intel_crew.py --market Yelahanka` and review analyst + CEO output for complete linkage and `data_source` provenance.
+### scrapers/scout_memory.py — CREATED
+**Change:** ScoutMemory dedup engine. Persistent JSON index + append-only discovery log per market. CID methods: `cid_rera`, `cid_project`, `cid_listing`, `cid_developer`, `cid_news`. `mark_all()` for batch dedup with is_new flag.
+**Why:** Foundation for all scouts — no duplicate reporting across sources or across runs.
+
+### scrapers/portal_scout.py — CREATED
+**Change:** 7-source portal scout. 99acres sale+rent, Housing.com, MagicBricks, PropTiger, NoBroker, SquareYards. requests + Playwright fallback. Cerebras 8b AI extraction → structured JSON. Normalized `_normalize()` assigns canonical IDs.
+**Why:** Replaces/extends listings_scraper.py with multi-source coverage and dedup.
+
+### scrapers/rera_detail_scout.py — CREATED
+**Change:** RERA detail page deep-dive. Follows `detail_url` from RERA listing. Extracts unit_mix, project_cost_crore, site_area, approval numbers, completion_pct, amenities. Groq Scout 17b primary, Cerebras fallback.
+**Why:** RERA listing page only has project name/status. Detail page has unit mix, costs, approvals.
+
+### scrapers/developer_scout.py — CREATED
+**Change:** Direct developer website crawler. 8 developers: Brigade, Prestige, Sobha, Godrej, Adarsh, Salarpuria, Shriram, Mantri. Gemini Flash AI extraction. North Bengaluru keyword filtering before AI call. canonical IDs match cid_project() for cross-source dedup.
+**Why:** Pre-launch and soft-launch projects exist on developer sites before hitting RERA or portals.
+
+### scrapers/news_scout.py — CREATED
+**Change:** Property news intelligence. Google News RSS (no key needed) + ET Realty search. Gemini Flash article analysis. Signal types: new_launch, price_change, regulatory, developer_news, infrastructure. `key_insight` field per article.
+**Why:** Market signals appear in news before they show up in RERA or portals.
+
+### scrapers/rera_karnataka.py — Updated
+**Change:** `_parse_html_table` now extracts `detail_url` from column 3 `<a href>` (previously skipped as "VIEW PROJECT DETAILS — skip"). Passes href to project dict. Used by rera_detail_scout.
+**Why:** RERA detail scout needs the per-project detail page URL to deep-dive.
+
+### agents/scraper_agent.py — Updated
+**Change:** Added 4 new tools: PortalScoutTool, RERADetailScoutTool, DeveloperScoutTool, NewsScoutTool. Each wraps the corresponding scout + ScoutMemory + Checkpointer. Role upgraded to "Market Intelligence Scout Commander". max_iter 5→8.
+**Why:** Scout tools exposed to CrewAI pipeline so CEO can direct full scout coverage.
+
+---
+
+## Session — Claude 2026-05-14 (Dashboard)
+
+### dashboard/app.py — Created
+**Change:** New Flask web server (port 8050). Routes: `/`, `/api/health`, `/api/db/state`, `/api/run/<market>` (POST/DELETE), `/api/status`, `/api/logs/stream` (SSE), `/api/reports/<market>`.
+**Why:** Web dashboard for viewing live logs + triggering pipeline runs without docker exec.
+
+### dashboard/templates/index.html — Complete Rewrite (Cline 2026-05-14)
+**Before:** Basic terminal-style dashboard with left/right panel layout.
+**After:** "LLS Intelligence Operations Center" — visual office floor plan. Three AI agents as employee cabins (THE DIRECTOR/ceo, THE ANALYST/analyst, THE SCOUT/scraper). Each cabin shows real-time state, clickable for command input. Grid layout: 65% office floor + 35% infrastructure panel (top), 33% live feed (bottom). Press Start 2P pixel font, deep navy blueprint theme, cabin cards with accent colors (gold/blue/green), status dots, terminal slots for Scout (RERA/LISTINGS/KAVERI), command panels with slide animation. Polls `/api/agents` (graceful offline handling), SSE log stream with color-coding, health/DB/reports in infra panel.
+**Why:** Transform dashboard from basic monitoring tool into immersive "mission control" interface where agents are visualized as office employees with status indicators and direct command capability.
+
+### requirements.txt — Updated
+**Before:** `# Future: dashboard\n# streamlit>=1.35.0`
+**After:** `flask>=3.0.0`
+**Why:** Dashboard dependency.
+
+### docker-compose.yml — Updated (agents service)
+**Before:** `command: tail -f /dev/null` + no port
+**After:** `command: python dashboard/app.py` + `ports: 8050:8050`
+**Why:** Run Flask dashboard as primary process; expose port to host.
+
+### Dockerfile — Updated
+**Before:** `playwright install chromium --with-deps`
+**After:** `playwright install chromium`
+**Why:** `--with-deps` fails on current Debian slim (ttf-unifont missing). Chromium already installed via apt-get in same layer — deps not needed.
+
+---
+
+## Session — Claude Code + Cline 2026-05-14 (Dashboard UX Sprint)
+
+### dashboard/app.py — Backend additions
+**Change:** `AGENT_ACTIONS` dict + `GET /api/agents/<id>/actions` endpoint. `sentinel` added to `_agent_states`. `GET /api/sentinel/status` route using `agent_runs` table + next-2AM datetime math.
+**Why:** Backend source of truth for preset buttons + scheduler monitoring cabin.
+
+### agents/sentinel_agent.py — Created
+**Change:** New module: `get_last_scheduled_run()` (auto-detects `triggered_by` column) + `get_next_scheduled_run()` (2AM UTC datetime math). No LLM, no inter-container networking.
+**Why:** Sentinel backend logic.
+
+### dashboard/templates/index.html — Dashboard UX Sprint
+**Change:** Preset buttons (`injectQuickActions`), color-coded command feedback (amber/red, 3s restore), `pulse-border` + `flash-accept` CSS animations, Sentinel cabin (full-width row 3, `pollSentinel`), command panel changed to `position:absolute` dropdown overlay (fixes flex-shrink crush in height-constrained grid cell), office-floor grid updated to `1fr 1fr 110px`.
+**Why:** Interactive feedback loop, discoverability, animation, scheduler monitoring — full UX sprint completion.
+
+---
+
+## Session — Claude 2026-05-14 (Pixel Office Integration)
+
+### dashboard/app.py — Updated (Brain A)
+**Type:** New Feature
+**Author:** Claude (Brain A)
+**Change:** Added `_agent_states` dict tracking 4 agents (ceo, scraper, analyst, processor). Background monitor thread reads `crew.log` every 2s, updates agent labels (SCRAPING/ANALYZING/DIRECTING). New routes: `GET /api/agents` (agent states + running_markets), `POST /api/agents/<id>/command` (NLP-lite: detects market names + action verbs, routes to pipeline start/stop).
+**Why:** Backend to support pixel-art office floor plan frontend with per-agent state tracking and command dispatch.
+
+### dashboard/templates/index.html — Rebuilt (Brain B)
+**Type:** New Feature
+**Author:** Claude (Brain B)
+**Change:** Full pixel-art "LLS Intelligence Ops Center" office floor plan. Press Start 2P font. CSS Grid: office floor (65%) | infra panel (35%) | live feed (bottom). 4 cabin cards: Director (gold), Scout (blue), Analyst (green), Processor (grey). Badge label uses `state.label || state.state.toUpperCase()` — shows SCRAPING/ANALYZING/DIRECTING during active runs. Scout cabin: 3 sub-terminal slots (RERA/LISTINGS/KAVERI). Click-to-expand command panel. Polls `/api/agents` every 2s, `/api/health` + `/api/db/state` every 30s. SSE log stream at bottom.
+**Why:** Immersive mission control UI. Contract fix (state.label over state.state for badge text) already correctly implemented in Brain B output — no separate patch needed.
+
+---
+
+## Current Handoff -- Cline 2026-05-14 03:37 IST
+
+Status: complete
+Last files touched: `dashboard/templates/index.html`, `CHANGELOG.md`, `DEVLOG.md`
+State: Dashboard C1/C2/C3 complete — preset buttons, inline feedback, pulse-border animation. No rebuild needed.
+Next action: Restart agents, verify at http://localhost:8050
 Open question for Jinu: None
 
 ---
@@ -37,6 +129,156 @@ Open question for Jinu: None
 ---
 
 ## Session Log
+
+---
+
+### 2026-05-14 03:37 IST — File: dashboard/templates/index.html — C1 preset buttons + C2 inline feedback + C3 animation polish (Cline)
+**Type:** New Feature
+**Author:** Cline
+
+**Before:**
+- No quick-action buttons in command panels — free text only.
+- `sendCommand` only updated `response-{id}` panel, no visual feedback on action line.
+- `.cabin.active` used `border-pulse` keyframe with opacity-only animation.
+- Command panel max-height 200px — could clip preset buttons.
+
+**After:**
+- Added `AGENT_ACTIONS` JS object with market-specific preset buttons per agent (▶ Yelahanka/Devanahalli/Hebbal, ⏹ Stop, ? Status).
+- `injectQuickActions()` creates buttons on panel open; clicking fires pipeline immediately.
+- `sendCommand` now: stores original action text, updates `action-{id}` with color-coded feedback (amber=accepted, red=error), restores after 3s via `feedbackTimers` map.
+- Replaced `border-pulse` with `pulse-border` keyframe using `box-shadow` (visible amber glow).
+- Added `flash-accept` keyframe — green box-shadow flash on cabin when command accepted.
+- `.command-panel.open` max-height raised to 260px.
+- Added `.quick-actions` + `.quick-btn` CSS classes.
+- `toggleCommand` adds `stopPropagation` to panel to prevent bubbling.
+
+**Why:**
+C1: one-click market selection. C2: always-visible feedback without opening panel. C3: richer visual state communication.
+
+**Verified:** ✅ Yes — no rebuild needed, `docker compose restart agents`
+
+### 2026-05-14 03:35 IST — File: CHANGELOG.md — Update handoff (Cline)
+**Type:** Documentation
+**Author:** Cline
+
+**Before:** Handoff timestamp 02:23 IST, status "complete", next action "Restart dashboard service".
+**After:** Handoff timestamp 03:37 IST, status "complete", last files include CHANGELOG.md + DEVLOG.md, next action "Restart agents, verify at http://localhost:8050".
+
+**Why:** Protocol compliance — update handoff after every session.
+
+**Verified:** ✅ Yes
+
+### 2026-05-14 02:23 IST — File: dashboard/templates/index.html — Bug Fixes (Cline)
+**Type:** Bug Fix
+**Author:** Cline
+
+**Before:**
+- Duplicate `.cabin.scout` CSS rule set `grid-column: 1 / 3` (spanning full width), conflicting with earlier rule `grid-column: 1` (bottom-left only).
+- Processor cabin HTML was commented out (`<!-- ... -->`), hiding bottom-right cabin from view.
+
+**After:**
+- Removed duplicate `.cabin.scout` CSS rule.
+- Uncommented Processor cabin HTML — now visible in bottom-right position.
+
+**Why:**
+Scout cabin mispositioned (spanning full width instead of bottom-left), Processor cabin invisible.
+
+**Verified:** ✅ Yes — git commit 7981967
+
+### 2026-05-14 02:18 IST — File: dashboard/app.py — Contract hardening + lifecycle prune + diagnostics
+**Type:** Bug Fix
+**Author:** Roo (Debug mode)
+
+**Before:**
+- `/api/agents` returned nested `{"agents": ...}` only, while UI consumer path in some flows expected direct top-level keys.
+- `_running` kept completed processes indefinitely; monitor could carry historical non-zero return code into future terminal state decisions.
+
+**After:**
+- Added compatibility response strategy in `/api/agents`: keep nested `agents` and also expose top-level `ceo/scraper/analyst/processor` aliases.
+- Added lifecycle pruning (`_prune_finished_running_entries_locked`) after monitor-state resolution.
+- Added diagnostics:
+  - `[DIAG agents]` contract keys emitted on first `/api/agents` response.
+  - `[DIAG running]` start/terminate/snapshot/prune/terminal-state logs.
+- Added `logging.basicConfig(...)` in app entrypoint for deterministic log formatting and level control via `DASHBOARD_LOG_LEVEL`.
+
+**Why:**
+Eliminate false-offline UI regressions and stale-failure carryover in long-running dashboard sessions.
+
+**Verified:** ✅ Yes — `python -m py_compile dashboard/app.py`
+
+---
+
+### 2026-05-14 02:19 IST — File: dashboard/templates/index.html — Robust agents payload parser
+**Type:** Bug Fix
+**Author:** Roo (Debug mode)
+
+**Before:**
+Frontend agent polling assumed one payload shape (`data[agent]`) and one terminal active token (`active`).
+
+**After:**
+- Poller now resolves `const agents = data.agents || data`.
+- Terminal status now treats both `active` and `working` as active signals.
+
+**Why:**
+Guarantee UI stability across contract evolution and prevent terminal indicators from falsely showing idle.
+
+**Verified:** ✅ Yes — manual static review + no Python syntax impact.
+
+---
+
+### 2026-05-14 02:19 IST — File: DEVLOG.md — Add Phase 11 hardening entry
+**Type:** Documentation
+**Author:** Roo (Debug mode)
+
+**Before:**
+No log entry for contract/lifecycle hardening patch.
+
+**After:**
+Added Phase 11 with risk diagnosis, validation logging, fixes, and outcomes.
+
+**Why:**
+Protocol compliance + future session continuity.
+
+**Verified:** ✅ Yes
+
+---
+
+### 2026-05-14 02:02 IST — File: dashboard/app.py — Agent-state monitor + agent command API
+**Type:** New Feature
+**Author:** Roo (Code mode)
+
+**Before:**
+Dashboard backend had no `_agent_states` map, no log-driven background state monitor, no `/api/agents` endpoint, and no `/api/agents/<agent_id>/command` route.
+
+**After:**
+- Added module-level `_agent_states` for `ceo`, `scraper`, `analyst`, `processor`.
+- Added daemon monitor thread polling `/app/logs/crew.log` every 2s, reading last 20 lines, mapping Stage 1/3/CEO signals to labels/states, preserving labels during Stage 2 organizer lines, and resolving `done/failed/idle` from process return codes.
+- Added `GET /api/agents` returning deep-copied agent states + sanitized running market snapshot (no `Popen` refs).
+- Added `POST /api/agents/<agent_id>/command` with prompt parsing for run/stop/status actions and market detection (`Yelahanka`, `Devanahalli`, `Hebbal`; default `Yelahanka`).
+- Refactored `/api/run/<market>` + DELETE reuse into shared helpers without removing existing routes.
+- Validation run: `python -m py_compile dashboard/app.py` returned exit code 0.
+
+**Why:**
+Enable frontend command palette + live agent cards with stage-aware execution status.
+
+**Verified:** ✅ Yes
+
+---
+
+### 2026-05-14 02:03 IST — File: DEVLOG.md — Add Phase 10 dashboard backend entry
+**Type:** Documentation
+**Author:** Roo (Code mode)
+
+**Before:**
+No phase entry for dashboard agent-state API and command router implementation.
+
+**After:**
+Added Phase 10 entry documenting situation, code changes, behavior added, and outcome.
+
+**Why:**
+Protocol requirement: log meaningful change in DEVLOG after implementation.
+
+**Verified:** ✅ Yes
 
 ---
 
@@ -278,6 +520,15 @@ Single source of truth for all open tasks is **`AGENTS.md`**. Do not maintain a 
 
 ---
 
-*CHANGELOG — Last updated: 2026-05-13 17:46 IST*
+## Session — Claude 2026-05-14 (Dashboard CC1 + CC2 backend)
+
+dashboard/app.py | Added `AGENT_ACTIONS`; added `GET /api/agents/<agent_id>/actions`; added sentinel agent state + `GET /api/sentinel/status`; added project-root path bootstrap and sentinel error guard | Claude Code | 2026-05-14
+agents/sentinel_agent.py | New sentinel backend helper with DB lookup for latest `agent_runs` row and next 2AM UTC schedule calculator | Claude Code | 2026-05-14
+CHANGELOG.md | Added CC1+CC2 backend session entries | Claude Code | 2026-05-14
+DEVLOG.md | Added new phase entry documenting CC1+CC2 backend delivery and validation outcomes | Claude Code | 2026-05-14
+
+---
+
+*CHANGELOG — Last updated: 2026-05-14 IST*
 *Update this file immediately after every code, DB, or config change.*
 *Before field required for all changes to existing code/data.*

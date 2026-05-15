@@ -193,3 +193,61 @@ Temporary test file `test_cerebras.py` was deleted after verification.
 ---
 
 *Maintained by Cline agent — every change is intentional, every decision is documented.*
+
+---
+
+## Entry 2 — 2026-05-14 | Timebox: 02:20–02:24 IST
+
+### 🎯 Task Summary
+
+**User Request:** Review previous session's dashboard work, fix two bugs identified.
+
+**Bugs Found:**
+1. Duplicate `.cabin.scout` CSS rule — one set `grid-column: 1`, later one set `grid-column: 1 / 3` (spanning full width), causing Scout to misposition.
+2. Processor cabin HTML was commented out (`<!-- ... -->`), hiding bottom-right cabin entirely.
+
+---
+
+### 🔍 Phase 1 — Bug Identification
+
+Read `dashboard/templates/index.html` (full file, ~500 lines). Confirmed both bugs.
+
+---
+
+### 🔧 Phase 2 — Fixes Applied
+
+| Bug | Fix |
+|-----|-----|
+| Duplicate `.cabin.scout` CSS | Removed the conflicting rule that set `grid-column: 1 / 3` |
+| Processor cabin commented out | Removed `<!-- -->` comment delimiters around Processor cabin HTML |
+
+**Result:** Scout now bottom-left only, Processor visible bottom-right. 4-cabin layout correct.
+
+---
+
+### 🔄 Phase 3 — Git Commit
+
+```bash
+git add dashboard/templates/index.html
+git commit -m "fix dashboard: remove duplicate .cabin.scout CSS rule, uncomment Processor cabin"
+```
+**Commit:** `7981967` ✅
+
+---
+
+### 📝 Phase 4 — Logging
+
+- Added session log entry to `CHANGELOG.md` (Session Log section, top).
+- Updated handoff block in `CHANGELOG.md`.
+
+---
+
+### 📚 Summary
+
+| Artifact | Status |
+|----------|--------|
+| `dashboard/templates/index.html` | Fixed + committed |
+| `CHANGELOG.md` | Updated |
+| `.cline_logs/CHANGELOG.md` | This entry added |
+
+*Maintained by Cline agent — every change is intentional, every decision is documented.*

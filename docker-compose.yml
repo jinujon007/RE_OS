@@ -76,6 +76,8 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       TARGET_MARKETS: ${TARGET_MARKETS:-Yelahanka,Devanahalli,Hebbal}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8050:8050"
     volumes:
       - ./:/app
       - ./outputs:/app/outputs
@@ -84,7 +86,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
-    command: tail -f /dev/null  # container stays alive; run crew manually via: docker compose exec agents python crews/market_intel_crew.py --market Yelahanka
+    command: python dashboard/app.py  # dashboard at http://localhost:8050 — crew still runnable via: docker compose exec agents python crews/market_intel_crew.py --market Yelahanka
 
   # ── SCHEDULER ─────────────────────────────────────────────────────────────
   # Runs scraping jobs on schedule — daily RERA refresh, hourly listing scan

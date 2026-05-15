@@ -4,10 +4,18 @@ RE_OS — RERA Karnataka Scraper
 Pulls all registered projects from RERA Karnataka portal.
 URL: https://rera.karnataka.gov.in
 
-Strategy:
-- Primary: Playwright — intercepts DataTables AJAX response directly (bypasses JS rendering)
-- Fallback: POST to /getAllProjects API (sometimes works without JS)
-- Last resort: hardcoded sample data for pipeline testing
+Strategy (as of 2026-05-14 live inspection):
+  Portal form: POST /projectViewDetails with district + subdistrict (taluk)
+  Response: full HTML page, all rows rendered server-side (no JS required)
+  Parse: BeautifulSoup table extraction — no Playwright needed for listing
+
+Market → district/taluk mapping confirmed via live portal:
+  Yelahanka  → district="Bengaluru Urban",  subdistrict="Yelahanka"     (165 projects)
+  Hebbal     → district="Bengaluru Urban",  subdistrict="Bengaluru North" (734 projects)
+  Devanahalli→ district="Bengaluru  Rural", subdistrict="Devanahalli"   (317 projects)
+
+Note: listing page has project name, developer, RERA no, status, type, dates.
+      Unit counts and PSF require individual project detail pages (future phase).
 
 Run standalone: python scrapers/rera_karnataka.py --market Yelahanka
 """
@@ -25,24 +33,17 @@ import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import RERA_BASE_URL, MARKET_RERA_KEYWORDS
+from config.settings import MARKET_RERA_CONFIG
 
 
 class RERAKarnatakaScraper:
     """
-    Scrapes RERA Karnataka for project data.
-
-    The portal has multiple endpoints:
-    1. /projectView.do — project search page (HTML form)
-    2. /viewAllProjects — lists all projects (paginated)
-    3. Individual project pages — detailed project data
-
-    We target the search with locality keywords per micro-market.
+    Scrapes RERA Karnataka project listing via direct HTTP POST.
+    No Playwright or JS rendering required — portal returns server-side HTML.
     """
 
     BASE_URL = "https://rera.karnataka.gov.in"
-    SEARCH_URL = f"{BASE_URL}/viewAllProjects"
-    PROJECT_DETAIL_URL = f"{BASE_URL}/projectView.do"
+    SEARCH_URL = f"{BASE_URL}/projectViewDetails"
 
     HEADERS = {
         "User-Agent": (
@@ -52,342 +53,170 @@ class RERAKarnatakaScraper:
         ),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-IN,en;q=0.9",
-        "Referer": "https://rera.karnataka.gov.in/",
+        "Referer": "https://rera.karnataka.gov.in/viewAllProjects",
+        "Content-Type": "application/x-www-form-urlencoded",
     }
 
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update(self.HEADERS)
-        self.results = []
-        # Warm up Playwright on first use (avoids cold-start on first scrape)
-        self._playwright_available = None
 
     def scrape_market(self, market_name: str) -> list[dict]:
         """
-        Main entry point. Scrape all RERA projects for a given micro-market.
-        Returns list of normalized project dicts.
+        Main entry point. Returns list of normalized project dicts for the market.
+        Falls back to hardcoded sample data if portal unreachable.
         """
         logger.info(f"Starting RERA scrape for: {market_name}")
-        keywords = MARKET_RERA_KEYWORDS.get(market_name, [market_name])
 
-        all_projects = []
-        for keyword in keywords:
-            logger.info(f"  Searching keyword: '{keyword}'")
-            projects = self._search_by_locality(keyword)
-            all_projects.extend(projects)
-            time.sleep(2)
+        config = MARKET_RERA_CONFIG.get(market_name)
+        if not config:
+            logger.warning(f"  No RERA config for '{market_name}' — using fallback")
+            return self._fallback_rera_data(market_name)
 
-        # If portal returned nothing (blocked/changed), use fallback data
-        if not all_projects:
-            logger.warning(f"  RERA portal returned 0 results — using fallback sample data")
-            all_projects = self._fallback_rera_data(market_name)
+        projects = self._post_search(config["district"], config["subdistrict"], market_name)
+
+        if not projects:
+            logger.warning(f"  Portal returned 0 results — using fallback sample data")
+            return self._fallback_rera_data(market_name)
 
         # Deduplicate by RERA number
         seen = set()
         unique = []
-        for p in all_projects:
-            rn = p.get('rera_number', '')
+        for p in projects:
+            rn = p.get("rera_number", "")
             if rn and rn not in seen:
                 seen.add(rn)
+                unique.append(p)
+            elif not rn:
                 unique.append(p)
 
         logger.info(f"  Found {len(unique)} unique projects in {market_name}")
         return unique
 
-    def _search_by_locality(self, locality_keyword: str) -> list[dict]:
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    def _post_search(self, district: str, subdistrict: str, market_name: str) -> list[dict]:
         """
-        Search RERA Karnataka by locality keyword.
-        Primary: Playwright — intercepts DataTables AJAX call, captures raw JSON.
-        Fallback: direct POST to /getAllProjects (works without JS occasionally).
+        POST to /projectViewDetails and parse the HTML table response.
+        All rows are server-rendered — no JS interception needed.
         """
-        # Try Playwright first (handles JS-rendered portal)
-        projects = self._scrape_with_playwright(locality_keyword)
-        if projects:
-            return projects
+        payload = {
+            "project": "",
+            "firm": "",
+            "appNo": "",
+            "regNo": "",
+            "district": district,
+            "subdistrict": subdistrict,
+            "btn1": "Search",
+        }
 
-        # Fallback: direct POST (pre-JS portal behavior — sometimes still works)
-        logger.info(f"    Playwright returned 0 — trying direct POST fallback")
-        return self._scrape_via_post(locality_keyword)
-
-    def _scrape_with_playwright(self, locality_keyword: str) -> list[dict]:
-        """
-        Use Playwright to navigate the RERA portal, intercept the DataTables
-        AJAX response (/getAllProjects), and parse the JSON directly.
-        This is the most reliable method for JS-rendered portals.
-        """
         try:
-            from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
-        except ImportError:
-            logger.warning("    Playwright not installed — skipping")
+            resp = self.session.post(self.SEARCH_URL, data=payload, timeout=60)
+            resp.raise_for_status()
+
+            size_mb = len(resp.content) / 1024 / 1024
+            logger.info(f"  [POST] {district}/{subdistrict} → {resp.status_code}, {size_mb:.1f} MB")
+
+            return self._parse_html_table(resp.text, market_name)
+
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"  [POST] Request failed: {e}")
             return []
 
+    def _parse_html_table(self, html: str, market_name: str) -> list[dict]:
+        """
+        Parse the DataTables HTML response.
+        Table columns (by index):
+          0: S.NO
+          1: ACKNOWLEDGEMENT NO
+          2: REGISTRATION NO (RERA number)
+          3: VIEW PROJECT DETAILS (icon/link — capture href for detail scout)
+          4: PROMOTER NAME
+          5: PROJECT NAME
+          6: STATUS
+          7: DISTRICT
+          8: TALUK
+          9: PROJECT TYPE
+          10: APPROVED ON
+          11: PROPOSED COMPLETION DATE
+          12+: extension dates, certificates (skip for now)
+        """
+        soup = BeautifulSoup(html, "lxml")
+        rows = soup.select("table tbody tr")
+        logger.info(f"  [Parse] Found {len(rows)} rows in HTML table")
+
         projects = []
-        intercepted_data = []
+        now = datetime.now().isoformat()
 
-        try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    headless=True,
-                    args=[
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-gpu",
-                        "--disable-extensions",
-                    ],
-                )
-                context = browser.new_context(
-                    user_agent=self.HEADERS["User-Agent"],
-                    locale="en-IN",
-                )
-                page = context.new_page()
-                page.set_default_timeout(45_000)
+        for row in rows:
+            tds = row.select("td")
+            cells = [td.get_text(strip=True) for td in tds]
+            if len(cells) < 6:
+                continue
 
-                # Intercept the DataTables AJAX response
-                def capture_response(response):
-                    if "/getAllProjects" in response.url and response.status == 200:
-                        try:
-                            body = response.json()
-                            if "data" in body:
-                                intercepted_data.extend(body["data"])
-                                logger.info(
-                                    f"    [Playwright] Intercepted {len(body['data'])} rows "
-                                    f"(total_records={body.get('recordsTotal', '?')})"
-                                )
-                        except Exception:
-                            pass
+            # Skip header repeat rows (some tables duplicate headers in tbody)
+            if cells[0] == "S.NO" or cells[1] == "ACKNOWLEDGEMENT NO":
+                continue
 
-                page.on("response", capture_response)
+            rera_number = self._clean(cells[2]) if len(cells) > 2 else ""
+            ack_number = self._clean(cells[1]) if len(cells) > 1 else ""
 
-                logger.info(f"    [Playwright] Navigating to RERA portal …")
-                page.goto(
-                    "https://rera.karnataka.gov.in/viewAllProjects",
-                    wait_until="networkidle",
-                    timeout=60_000,
-                )
+            # Use ack number as fallback RERA id if registration not yet issued
+            project_id = rera_number or ack_number
 
-                # Look for locality/search input and fill it
-                locality_input = None
-                for selector in [
-                    "input[name='locality']",
-                    "input[placeholder*='ocality']",
-                    "#locality",
-                    "input[name*='locality']",
-                ]:
-                    try:
-                        el = page.locator(selector).first
-                        if el.count() > 0:
-                            locality_input = el
-                            break
-                    except Exception:
-                        continue
+            # Capture detail page URL from column 3 link (if present)
+            detail_url = ""
+            if len(tds) > 3:
+                link = tds[3].select_one("a[href]")
+                if link:
+                    href = link.get("href", "")
+                    if href.startswith("http"):
+                        detail_url = href
+                    elif href.startswith("/"):
+                        detail_url = self.BASE_URL + href
 
-                if locality_input:
-                    locality_input.fill(locality_keyword)
-                    logger.info(f"    [Playwright] Filled locality: '{locality_keyword}'")
-
-                    # Look for a search/submit button
-                    for btn_selector in [
-                        "button[type='submit']",
-                        "input[type='submit']",
-                        "button:has-text('Search')",
-                        "button:has-text('search')",
-                        "#searchBtn",
-                    ]:
-                        try:
-                            btn = page.locator(btn_selector).first
-                            if btn.count() > 0:
-                                btn.click()
-                                break
-                        except Exception:
-                            continue
-                else:
-                    # No locality field — the table may already be loaded, use DataTables search
-                    logger.info("    [Playwright] No locality input found — using DataTables global search")
-                    for dt_selector in ["input[type='search']", ".dataTables_filter input"]:
-                        try:
-                            el = page.locator(dt_selector).first
-                            if el.count() > 0:
-                                el.fill(locality_keyword)
-                                break
-                        except Exception:
-                            continue
-
-                # Wait for AJAX to complete
-                page.wait_for_timeout(4_000)
-
-                # If interception worked, we already have the data
-                if not intercepted_data:
-                    # Try scraping the rendered DOM as last resort before fallback
-                    projects.extend(self._extract_from_dom(page, locality_keyword))
-                else:
-                    for row in intercepted_data:
-                        parsed = self._parse_api_row(row)
-                        if parsed:
-                            projects.append(parsed)
-
-                browser.close()
-                logger.info(f"    [Playwright] Extracted {len(projects)} projects for '{locality_keyword}'")
-
-        except Exception as e:
-            logger.warning(f"    [Playwright] Error for '{locality_keyword}': {e}")
-
-        return projects
-
-    def _extract_from_dom(self, page, locality_keyword: str) -> list[dict]:
-        """Extract project rows from the rendered DOM when AJAX interception misses."""
-        projects = []
-        try:
-            # Wait for table rows
-            page.wait_for_selector("table tr", timeout=10_000)
-            rows = page.query_selector_all("table tbody tr")
-            logger.info(f"    [Playwright DOM] Found {len(rows)} rows in DOM")
-            for row in rows:
-                cells = row.query_selector_all("td")
-                texts = [self._clean(c.inner_text()) for c in cells]
-                if len(texts) >= 4:
-                    parsed = self._parse_html_row_texts(texts)
-                    if parsed:
-                        projects.append(parsed)
-        except Exception as e:
-            logger.debug(f"    DOM extraction failed: {e}")
-        return projects
-
-    @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=2, max=8))
-    def _scrape_via_post(self, locality_keyword: str) -> list[dict]:
-        """Direct POST to DataTables endpoint — pre-JS fallback."""
-        projects = []
-        try:
-            payload = {
-                "projectStatus": "",
-                "projectType": "",
-                "district": "Bangalore Urban",
-                "locality": locality_keyword,
-                "promoterName": "",
-                "projectName": "",
-                "draw": "1",
-                "start": "0",
-                "length": "100",
+            project = {
+                "rera_number": project_id,
+                "ack_number": ack_number,
+                "project_name": self._clean(cells[5]) if len(cells) > 5 else "",
+                "developer_name": self._clean(cells[4]) if len(cells) > 4 else "",
+                "project_status": self._clean(cells[6]) if len(cells) > 6 else "",
+                "district": self._clean(cells[7]) if len(cells) > 7 else "",
+                "locality": self._clean(cells[8]) if len(cells) > 8 else market_name,
+                "project_type": self._clean(cells[9]) if len(cells) > 9 else "Residential",
+                "approved_on": self._clean(cells[10]) if len(cells) > 10 else "",
+                "possession_date": self._clean(cells[11]) if len(cells) > 11 else "",
+                "detail_url": detail_url,
+                # Unit data not available on listing page — requires detail scout
+                "total_units": 0,
+                "sold_units": 0,
+                "unsold_units": 0,
+                "source": "rera_karnataka_live",
+                "scraped_at": now,
             }
-            resp = self.session.post(
-                f"{self.BASE_URL}/getAllProjects",
-                data=payload,
-                timeout=30,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                if "data" in data:
-                    for row in data["data"]:
-                        parsed = self._parse_api_row(row)
-                        if parsed:
-                            projects.append(parsed)
-                    logger.info(f"    [POST] Got {len(projects)} projects")
-        except (requests.exceptions.RequestException, json.JSONDecodeError, KeyError) as e:
-            logger.warning(f"    [POST] Failed for '{locality_keyword}': {e}")
+
+            if project["project_name"] or project["rera_number"]:
+                projects.append(project)
+
         return projects
 
-    def _parse_api_row(self, row) -> dict | None:
-        """Parse a row from the RERA API JSON response."""
-        try:
-            # RERA Karnataka API typically returns arrays or objects
-            # Adjust field names based on actual API response
-            if isinstance(row, list):
-                # Array format: [rera_no, name, promoter, district, status, units, ...]
-                return {
-                    "rera_number": self._clean(row[0] if len(row) > 0 else ''),
-                    "project_name": self._clean(self._strip_html(row[1] if len(row) > 1 else '')),
-                    "developer_name": self._clean(self._strip_html(row[2] if len(row) > 2 else '')),
-                    "district": self._clean(row[3] if len(row) > 3 else ''),
-                    "taluk": self._clean(row[4] if len(row) > 4 else ''),
-                    "locality": self._clean(row[5] if len(row) > 5 else ''),
-                    "project_status": self._clean(row[6] if len(row) > 6 else ''),
-                    "project_type": self._clean(row[7] if len(row) > 7 else 'Residential'),
-                    "total_units": self._to_int(row[8] if len(row) > 8 else 0),
-                    "sold_units": self._to_int(row[9] if len(row) > 9 else 0),
-                    "unsold_units": self._to_int(row[10] if len(row) > 10 else 0),
-                    "possession_date": self._clean(row[11] if len(row) > 11 else ''),
-                    "source": "rera_karnataka",
-                    "scraped_at": datetime.now().isoformat(),
-                }
-            elif isinstance(row, dict):
-                return {
-                    "rera_number": self._clean(
-                        row.get('reraNo') or row.get('rera_number') or
-                        row.get('registrationNo') or row.get('projectRno') or ''
-                    ),
-                    "project_name": self._clean(
-                        self._strip_html(row.get('projectName') or row.get('name') or '')
-                    ),
-                    "developer_name": self._clean(
-                        self._strip_html(row.get('promoterName') or row.get('developer') or '')
-                    ),
-                    "district": self._clean(row.get('district') or 'Bangalore Urban'),
-                    "taluk": self._clean(row.get('taluk') or ''),
-                    "locality": self._clean(row.get('locality') or row.get('projectLocality') or ''),
-                    "project_status": self._clean(row.get('projectStatus') or row.get('status') or ''),
-                    "project_type": self._clean(row.get('projectType') or 'Residential'),
-                    "total_units": self._to_int(row.get('totalUnits') or row.get('noOfUnits') or 0),
-                    "sold_units": self._to_int(row.get('soldUnits') or row.get('bookedUnits') or 0),
-                    "unsold_units": self._to_int(row.get('unsoldUnits') or row.get('availableUnits') or 0),
-                    "possession_date": self._clean(
-                        row.get('possessionDate') or row.get('completionDate') or ''
-                    ),
-                    "source": "rera_karnataka",
-                    "scraped_at": datetime.now().isoformat(),
-                    "raw_data": row,
-                }
-        except Exception as e:
-            logger.debug(f"    Parse error on row: {e}")
-        return None
-
-    def _parse_html_row(self, cells) -> dict | None:
-        """Parse a BS4 HTML table row (list of Tag objects) into a project dict."""
-        texts = [self._clean(c.get_text()) for c in cells]
-        return self._parse_html_row_texts(texts)
-
-    def _parse_html_row_texts(self, texts: list[str]) -> dict | None:
-        """Parse a list of cell text strings into a project dict."""
-        try:
-            rera_num = ''
-            for t in texts:
-                if re.match(r'PR[A-Z]*/KA/', t) or re.match(r'PRM/', t):
-                    rera_num = t
-                    break
-            if not rera_num:
-                return None
-            return {
-                "rera_number": rera_num,
-                "project_name": texts[1] if len(texts) > 1 else '',
-                "developer_name": texts[2] if len(texts) > 2 else '',
-                "locality": texts[3] if len(texts) > 3 else '',
-                "project_status": texts[4] if len(texts) > 4 else '',
-                "total_units": self._to_int(texts[5] if len(texts) > 5 else '0'),
-                "sold_units": self._to_int(texts[6] if len(texts) > 6 else '0'),
-                "source": "rera_karnataka_playwright",
-                "scraped_at": datetime.now().isoformat(),
-            }
-        except Exception:
-            return None
-
-    def _strip_html(self, text: str) -> str:
-        return BeautifulSoup(str(text), 'lxml').get_text()
-
-    def _clean(self, text) -> str:
-        return str(text).strip() if text else ''
-
-    def _to_int(self, value) -> int:
-        try:
-            return int(str(value).replace(',', '').strip())
-        except (ValueError, TypeError):
-            return 0
+    def _clean(self, text: str) -> str:
+        if not text:
+            return ""
+        # Collapse whitespace, strip newlines and status annotations
+        cleaned = re.sub(r"\s+", " ", str(text)).strip()
+        # Truncate long status strings (e.g. "WITHDRAWN\n\nAS PER ORDER...")
+        if len(cleaned) > 100:
+            cleaned = cleaned[:100].strip()
+        return cleaned
 
     def _fallback_rera_data(self, market_name: str) -> list[dict]:
         """
-        Realistic RERA fallback data for North Bengaluru markets.
-        Used when the portal is blocking scraping or has changed its API.
-        Source: publicly known RERA-registered projects in these micro-markets.
-        Mark source as 'fallback_sample' so analyst knows data is not live.
+        Fallback sample data when portal is unreachable.
+        source='fallback_sample' so analyst knows data is not live.
         """
         now = datetime.now().isoformat()
+        meta = {"district": "Bangalore Urban", "source": "fallback_sample", "scraped_at": now,
+                "note": "Live RERA portal blocked — sample data for pipeline testing"}
         data = {
             "Yelahanka": [
                 {"rera_number": "PRM/KA/RERA/1251/446/PR/180601/001792", "project_name": "Shriram Suhaana", "developer_name": "Shriram Properties", "locality": "Yelahanka", "project_status": "On-Going", "project_type": "Residential Apartment", "total_units": 648, "sold_units": 520, "unsold_units": 128, "possession_date": "2025-12-31"},
@@ -405,27 +234,23 @@ class RERAKarnatakaScraper:
             ],
         }
         projects = data.get(market_name, data.get("Yelahanka", []))
-        # Add metadata fields
         for p in projects:
-            p.update({"district": "Bangalore Urban", "source": "fallback_sample", "scraped_at": now,
-                       "note": "Live RERA portal blocked — sample data for pipeline testing"})
+            p.update(meta)
         return projects
 
     def save_to_json(self, projects: list, output_path: str):
-        """Save scraped data to JSON file for inspection."""
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             json.dump(projects, f, indent=2, default=str)
         logger.info(f"Saved {len(projects)} projects to {output_path}")
 
 
-def scrape_yelahanka():
-    """Convenience function — scrape Yelahanka and save to outputs."""
+def scrape_market_standalone(market_name: str = "Yelahanka"):
     scraper = RERAKarnatakaScraper()
-    projects = scraper.scrape_market("Yelahanka")
+    projects = scraper.scrape_market(market_name)
 
     output_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "outputs", "yelahanka"
+        "outputs", market_name.lower()
     )
     os.makedirs(output_dir, exist_ok=True)
 
@@ -433,37 +258,25 @@ def scrape_yelahanka():
     output_path = os.path.join(output_dir, f"rera_projects_{timestamp}.json")
     scraper.save_to_json(projects, output_path)
 
-    # Print summary
-    print(f"\n{'='*50}")
-    print(f"YELAHANKA — RERA SCRAPE COMPLETE")
-    print(f"{'='*50}")
-    print(f"Projects found: {len(projects)}")
-
+    print(f"\n{'='*55}")
+    print(f"RERA SCRAPE — {market_name.upper()}")
+    print(f"{'='*55}")
+    print(f"Projects found : {len(projects)}")
+    live = [p for p in projects if p.get("source") == "rera_karnataka_live"]
+    print(f"Live data      : {len(live)}  (fallback: {len(projects)-len(live)})")
+    print(f"Output         : {output_path}")
     if projects:
-        total_units = sum(p.get('total_units', 0) for p in projects)
-        sold_units = sum(p.get('sold_units', 0) for p in projects)
-        print(f"Total units:    {total_units:,}")
-        print(f"Sold units:     {sold_units:,}")
-        if total_units > 0:
-            print(f"Absorption:     {round(sold_units/total_units*100, 1)}%")
-        print(f"\nOutput:         {output_path}")
-        print(f"\nSample projects:")
-        for p in projects[:3]:
-            print(f"  • {p.get('rera_number')} | {p.get('project_name')} | {p.get('developer_name')}")
-
+        print(f"\nSample (first 5):")
+        for p in projects[:5]:
+            print(f"  {p.get('rera_number','N/A')[:40]:<42} | {p.get('project_name','')[:30]:<32} | {p.get('developer_name','')[:25]}")
     return projects
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RERA Karnataka Scraper")
-    parser.add_argument("--market", default="Yelahanka", help="Micro-market to scrape")
+    parser.add_argument("--market", default="Yelahanka",
+                        choices=["Yelahanka", "Devanahalli", "Hebbal"],
+                        help="Micro-market to scrape")
     args = parser.parse_args()
-
     logger.add("logs/rera_scraper.log", rotation="10 MB")
-
-    if args.market == "Yelahanka":
-        scrape_yelahanka()
-    else:
-        scraper = RERAKarnatakaScraper()
-        projects = scraper.scrape_market(args.market)
-        print(json.dumps(projects[:3], indent=2, default=str))
+    scrape_market_standalone(args.market)

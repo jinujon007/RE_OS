@@ -65,24 +65,33 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 # ── MARKETS ──────────────────────────────────────────────────────────────────
 TARGET_MARKETS = os.getenv("TARGET_MARKETS", "Yelahanka,Devanahalli,Hebbal").split(",")
 
-# RERA Karnataka district codes for search
-RERA_DISTRICT_MAP = {
-    "Bengaluru Urban": "BLR",
-    "Bengaluru Rural": "BLR_RURAL",
+# RERA Karnataka portal — confirmed live via browser inspection 2026-05-14
+# Form: POST https://rera.karnataka.gov.in/projectViewDetails
+# Fields: project, firm, appNo, regNo, district, subdistrict, btn1=Search
+# Response: server-rendered HTML, all rows in one response, no JS needed
+MARKET_RERA_CONFIG = {
+    "Yelahanka": {
+        "district": "Bengaluru Urban",
+        "subdistrict": "Yelahanka",
+        "expected_rows": 165,
+    },
+    "Hebbal": {
+        "district": "Bengaluru Urban",
+        "subdistrict": "Bengaluru North",
+        "expected_rows": 734,
+    },
+    "Devanahalli": {
+        "district": "Bengaluru  Rural",   # two spaces — exact portal value
+        "subdistrict": "Devanahalli",
+        "expected_rows": 317,
+    },
 }
 
-# Micro-market to RERA taluk/locality mapping
+# Legacy keyword map — kept for backwards compat, superseded by MARKET_RERA_CONFIG
 MARKET_RERA_KEYWORDS = {
     "Yelahanka": ["Yelahanka", "Yelahanka New Town", "Yelahanka Satellite Town"],
     "Devanahalli": ["Devanahalli", "Kempegowda International Airport", "KIAL"],
     "Hebbal": ["Hebbal", "Bellary Road", "Nagawara"],
-    "Jakkur": ["Jakkur", "Jakkur Plantation"],
-    "Thanisandra": ["Thanisandra", "Byrathi"],
-    "Whitefield": ["Whitefield", "ITPL", "Kadugodi"],
-    "Sarjapur Road": ["Sarjapur", "Sarjapura"],
-    "Electronic City": ["Electronic City", "Electronics City"],
-    "Bannerghatta Road": ["Bannerghatta", "JP Nagar"],
-    "Kanakapura Road": ["Kanakapura", "Kanakpura"],
 }
 
 # ── SCRAPING ─────────────────────────────────────────────────────────────────

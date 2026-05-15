@@ -16,7 +16,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Playwright — install its own Chromium (system Chromium is for Selenium only)
-RUN playwright install chromium --with-deps
+RUN playwright install chromium
 
 # App code
 COPY . .

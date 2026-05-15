@@ -416,7 +416,9 @@ class DBOrganizer:
                 :txn_date, :reg_date,
                 CAST(:raw AS jsonb), 'portal_scraped'
             )
-            ON CONFLICT DO NOTHING
+            ON CONFLICT (registration_number)
+            WHERE registration_number IS NOT NULL AND registration_number != ''
+            DO NOTHING
         """),
             params,
         )

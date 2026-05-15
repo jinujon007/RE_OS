@@ -40,7 +40,7 @@ from agents import (
     create_scraper_agent,
     create_analyst_agent,
 )
-from config.settings import TARGET_MARKETS, CEREBRAS_API_KEY
+from config.settings import TARGET_MARKETS
 from config.run_logger import RunLogger
 from config.checkpointer import Checkpointer
 from config.llm_router import _EXCLUDED
@@ -88,7 +88,7 @@ def _header(market_name: str, run_id: str):
     print(f"  Started : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*_WIDTH}")
     print(f"  PIPELINE: Scrape → (Python) Validate+DB → Analyse → CEO")
-    print(f"  LLMs    : Cerebras 70B (scraper) | Groq Scout (Analyst+CEO)")
+    print(f"  LLMs    : Cerebras 8b (scraper) | Groq Scout (Analyst+CEO)")
     print(f"{'='*_WIDTH}\n")
 
 
@@ -154,47 +154,68 @@ def _build_data_crew(market_name: str) -> Crew:
 def _build_intel_crew(market_name: str, db_stats: dict) -> Crew:
     analyst = create_analyst_agent()
     ceo = create_ceo_agent()
+    # CEO synthesizes in the intel crew — no re-delegation back to analyst
+    ceo.allow_delegation = False
 
     analyze = Task(
         description=(
-            f"Generate a complete market intelligence brief for: {market_name}. "
+            f"Generate a market intelligence brief for {market_name}.\n"
             f"This run wrote {db_stats.get('inserted', 0)} new + "
-            f"{db_stats.get('updated', 0)} updated RERA records to the DB. "
-            f"Steps: "
-            f"1. Call market_summary_query('{market_name}') — inventory stats from DB. "
-            f"2. Call competitor_analysis('{market_name}') — developer breakdown. "
-            f"3. Call generate_market_report with the summary data — formatted report. "
-            f"4. Add your read: absorption rate signal, dominant developer, "
-            f"   pricing white space where LLS could enter. "
-            f"Be specific. Real numbers. No vague observations.\n\n"
-            f"IMPORTANT FORMAT RULES for step 3 — generate_market_report:\n"
-            f"The Action Input must be a single key 'market_data_json' whose value is the "
-            f"COMPLETE JSON string returned by market_summary_query, with all quotes properly "
-            f"escaped for JSON.\n"
-            f"Correct example:\n"
-            f"Action: generate_market_report\n"
-            f'Action Input: {{"market_data_json": "{{\\"market\\": \\"{market_name}\\", \\"inventory\\": ...}}"}}\n'
-            f"WRONG (do NOT do this):\n"
-            f'Action Input: {{"market_data_json": "{{\\"market\\": \\"{market_name}\\"}}"}}\n'
-            f"Make sure the JSON is valid — use the exact string returned by market_summary_query."
+            f"{db_stats.get('updated', 0)} updated RERA records to the DB.\n\n"
+            f"STRICT TOOL CALL SEQUENCE — call each tool EXACTLY ONCE, in order:\n"
+            f"  Step 1: market_summary_query with input: {market_name}\n"
+            f"  Step 2: competitor_analysis with input: {market_name}\n"
+            f"  Step 3: generate_market_report with input: the exact JSON from Step 1\n"
+            f"  Step 4: Write Final Answer.\n\n"
+            f"DO NOT call any tool more than once. DO NOT call market_summary_query again "
+            f"after Step 1. Proceed directly from tool output to Final Answer.\n\n"
+            f"For generate_market_report, pass the JSON string from market_summary_query "
+            f"as the value of the key 'market_data_json'.\n\n"
+            f"After the formatted report, add your analyst read:\n"
+            f"- Absorption signal (what rate means for the market)\n"
+            f"- Supply pressure (months of inventory remaining at current velocity)\n"
+            f"- GV gap signal (market vs circle rate — what it means for LLS land cost)\n"
+            f"- Dominant developer and their positioning\n"
+            f"- Pricing white space where LLS could enter\n"
+            f"- Data quality note: state if data is LIVE or FALLBACK SAMPLE"
         ),
         expected_output=(
-            "Complete intelligence report: inventory overview (projects/units/absorption/psf), "
-            "top 5 projects, developer scorecard, risk flags, 3-sentence analyst read."
+            "Formatted market brief with: inventory overview, top 5 projects, developer scorecard, "
+            "risk flags, 5-signal analyst read (absorption, supply pressure, GV gap, "
+            "dominant dev, LLS entry point), data quality note."
         ),
         agent=analyst,
     )
 
     ceo_synthesis = Task(
         description=(
-            f"Review the market intelligence for {market_name}. "
-            f"1. Flag any data anomalies. "
-            f"2. Strategic read: what does this mean for LLS right now? "
-            f"3. The single most important signal in this data. "
-            f"4. One specific action for LLS. Direct. One action, not five."
+            f"The analyst has produced a complete market intelligence brief for {market_name}. "
+            f"It is in your context. Read it and write a 6-section CEO brief.\n\n"
+            f"IMPORTANT: You have NO tools. Do NOT delegate. Do NOT ask questions. "
+            f"Just read the analyst context and write the 6 sections below.\n\n"
+            f"SECTION 1 — MARKET PULSE\n"
+            f"  3 numbers: absorption rate, average PSF range, active project count.\n"
+            f"  One sentence: is this market hot, stable, or cooling?\n\n"
+            f"SECTION 2 — SUPPLY ANALYSIS\n"
+            f"  Months of inventory at current velocity. New supply risk. Grade mix.\n\n"
+            f"SECTION 3 — COMPETITOR ACTIVITY\n"
+            f"  Who are the Grade A players? What are they doing? Any distressed signals?\n\n"
+            f"SECTION 4 — DEMAND SIGNALS\n"
+            f"  Kaveri registration count. GV gap (market vs circle rate). What it means.\n\n"
+            f"SECTION 5 — RISK FLAGS\n"
+            f"  Max 3 risks. Each one line: what the risk is and who it affects.\n\n"
+            f"SECTION 6 — LLS ACTION\n"
+            f"  One sentence. Specific. Actionable. With a number.\n"
+            f"  Example: 'Acquire land in Yelahanka North at <₹X/sqft before Brigade "
+            f"  prices it higher in next launch.'\n"
+            f"  If data is fallback/sample: say so and note confidence is LOW.\n\n"
+            f"DATA QUALITY CHECK: If the analyst report says data is FALLBACK SAMPLE, "
+            f"prefix every number with [ESTIMATED] and add a warning at the top."
         ),
         expected_output=(
-            "Strategic brief: data check, CEO read (3-4 sentences), key signal, one action."
+            "Six-section CEO brief: Market Pulse | Supply Analysis | Competitor Activity | "
+            "Demand Signals | Risk Flags | LLS Action. Each section clearly labelled. "
+            "LLS Action is one specific sentence with a number."
         ),
         agent=ceo,
         context=[analyze],
@@ -340,6 +361,26 @@ def run_market_intelligence(market_name: str) -> str:
         rl.agent_done("analyst")
         rl.agent_done("ceo")
 
+        # Extract outputs — prefer CEO synthesis; fall back to analyst if CEO returned placeholder
+        _PLACEHOLDER = "the final answer to the original input question"
+        ceo_raw = ""
+        analyst_raw = ""
+        if hasattr(result, "tasks_output") and result.tasks_output:
+            if len(result.tasks_output) >= 2:
+                analyst_raw = result.tasks_output[0].raw or ""
+                ceo_raw = result.tasks_output[1].raw or ""
+            elif len(result.tasks_output) == 1:
+                analyst_raw = result.tasks_output[0].raw or ""
+        ceo_raw = ceo_raw or (result.raw if hasattr(result, "raw") else str(result))
+
+        if _PLACEHOLDER in ceo_raw.lower() or len(ceo_raw.strip()) < 50:
+            logger.warning("[CEO] Placeholder detected — using analyst output as report body")
+            report_body = analyst_raw or str(result)
+            ceo_section = "[CEO synthesis unavailable — see analyst report above]"
+        else:
+            report_body = ceo_raw
+            ceo_section = ""
+
         # ── Save report ────────────────────────────────────────────────────────
         output_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -363,12 +404,14 @@ def run_market_intelligence(market_name: str) -> str:
                 f"Validated : {val_report['valid']}/{val_report['total']} records\n"
             )
             f.write("=" * 60 + "\n\n")
-            f.write(str(result))
+            f.write(report_body)
+            if ceo_section:
+                f.write(f"\n\n{ceo_section}\n")
 
         rl.finish(status="success", report_path=report_path)
         print(f"\n  Report saved -> {report_path}\n")
 
-        return str(result)
+        return report_body
 
     except Exception as exc:
         error_msg = str(exc)

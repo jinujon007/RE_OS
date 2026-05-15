@@ -468,6 +468,12 @@ CREATE INDEX idx_rera_projects_developer ON rera_projects(developer_id);
 CREATE INDEX idx_rera_projects_status ON rera_projects(project_status);
 CREATE INDEX idx_rera_projects_number ON rera_projects(rera_number);
 CREATE INDEX idx_listings_market ON listings(micro_market_id);
+
+-- Partial unique index on kaveri_registrations: enforce uniqueness only for non-empty
+-- registration numbers. Empty strings (fallback/sample records) are allowed to coexist.
+CREATE UNIQUE INDEX idx_kaveri_reg_unique
+    ON kaveri_registrations(registration_number)
+    WHERE registration_number IS NOT NULL AND registration_number != '';
 CREATE INDEX idx_listings_type ON listings(transaction_type, property_type);
 CREATE INDEX idx_listings_active ON listings(is_active, last_seen_at);
 CREATE INDEX idx_kaveri_date ON kaveri_registrations(transaction_date);

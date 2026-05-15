@@ -96,9 +96,9 @@ body {
   padding: 12px;
   display: grid;
   grid-template-columns: 40% 60%;
-  grid-template-rows: 50% 50%;
+  grid-template-rows: 1fr 1fr 110px;
   gap: 12px;
-  overflow: hidden;
+  overflow: auto;
 }
 
 /* ── Office floor bottom row: Scout takes 70%, Processor 30% ── */
@@ -149,17 +149,25 @@ body {
   cursor: pointer;
   transition: all 0.3s ease;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
 }
 .cabin:hover {
   border-color: #3a5a85;
 }
 .cabin.active {
-  animation: border-pulse 2s ease-in-out infinite;
+  animation: pulse-border 2s ease-in-out infinite;
 }
-@keyframes border-pulse {
-  0%, 100% { border-color: #2a3a55; }
-  50% { opacity: 0.7; }
+@keyframes pulse-border {
+  0%, 100% { box-shadow: 0 0 0 0 #f0a02000; border-color: #2a3a55; }
+  50% { box-shadow: 0 0 16px 4px #f0a02050; border-color: #f0a020; }
+}
+.cabin.flash-accept {
+  animation: flash-accept 0.6s ease-out;
+}
+@keyframes flash-accept {
+  0% { box-shadow: 0 0 0 0 #3fb95000; }
+  30% { box-shadow: 0 0 24px 8px #3fb95080; }
+  100% { box-shadow: 0 0 0 0 #3fb95000; }
 }
 .cabin.ceo { border-color: #f0a020; }
 .cabin.ceo.active { box-shadow: 0 0 12px #f0a02040; }
@@ -168,6 +176,9 @@ body {
 .cabin.analyst { border-color: #3fb950; }
 .cabin.analyst.active { box-shadow: 0 0 12px #3fb95040; }
 .cabin.processor { border-color: #6b7280; opacity: 0.6; }
+.cabin.sentinel { border-color: #7b5ea7; grid-column: 1 / -1; grid-row: 3; padding: 8px 12px; cursor: default; overflow: visible; }
+.cabin.sentinel .cabin-name { color: #9b7ec7; }
+.cabin.sentinel .cabin-badge { background: #3d2d5a; color: #9b7ec7; }
 
 .cabin-badge {
   font-family: 'Press Start 2P', cursive;
@@ -278,19 +289,53 @@ body {
   animation: pulse 1s ease-in-out infinite;
 }
 
-/* ── Command Panel ── */
+/* ── Command Panel (absolute dropdown — does not affect cabin flex height) ── */
 .command-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: -2px;
+  right: -2px;
+  background: #1a2235;
+  border: 2px solid #2a3a55;
+  border-radius: 0 0 6px 6px;
+  z-index: 200;
   max-height: 0;
   overflow: hidden;
-  transition: max-height 0.2s ease;
-  margin-top: 8px;
-  padding-top: 0;
-  border-top: 1px solid transparent;
+  opacity: 0;
+  transition: max-height 0.2s ease, opacity 0.15s ease, padding 0.2s ease;
+  padding: 0 8px;
 }
 .command-panel.open {
-  max-height: 200px;
-  padding-top: 8px;
-  border-top-color: #2a3a55;
+  max-height: 220px;
+  opacity: 1;
+  padding: 8px;
+}
+
+/* ── Quick Action Buttons ── */
+.quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.quick-btn {
+  background: #1a2a3a;
+  border: 1px solid #2a3a55;
+  color: #8b949e;
+  padding: 3px 8px;
+  font-family: 'Press Start 2P', cursive;
+  font-size: 7px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.quick-btn:hover {
+  background: #2a3a55;
+  color: #c9d1d9;
+  border-color: #3a5a85;
+}
+.quick-btn:active {
+  transform: scale(0.95);
 }
 .command-input {
   width: 100%;
@@ -572,6 +617,20 @@ body {
       <div class="cabin-last-action" id="action-processor">On call...</div>
     </div>
 
+    <!-- Sentinel Cabin (monitoring only — no commands) -->
+    <div class="cabin sentinel" id="cabin-sentinel">
+      <div class="cabin-badge idle" id="badge-sentinel">WATCHING</div>
+      <div class="cabin-name">THE SENTINEL</div>
+      <div class="cabin-role">Scheduler Monitor</div>
+      <div class="cabin-status">
+        <span class="status-dot green" id="dot-sentinel"></span>
+        <span id="status-sentinel">● WATCHING</span>
+      </div>
+      <div class="cabin-last-action" id="action-sentinel">Checking schedule...</div>
+      <div class="cabin-last-action" id="sentinel-next">Next run: —</div>
+      <div class="cabin-last-action" id="sentinel-last">Last run: —</div>
+    </div>
+
   </div>
 
   <!-- ── INFRASTRUCTURE PANEL ── -->
@@ -654,6 +713,30 @@ body {
 // ── State ──
 let autoScroll = true;
 let openCommands = new Set();
+const AGENT_ACTIONS = {
+  ceo: [
+    { label: '▶ Yelahanka', prompt: 'run yelahanka' },
+    { label: '▶ Devanahalli', prompt: 'run devanahalli' },
+    { label: '▶ Hebbal', prompt: 'run hebbal' },
+    { label: '⏹ Stop', prompt: 'stop' },
+    { label: '? Status', prompt: 'status' },
+  ],
+  scraper: [
+    { label: '▶ Scrape Yelahanka', prompt: 'scrape yelahanka' },
+    { label: '▶ Scrape Devanahalli', prompt: 'scrape devanahalli' },
+    { label: '▶ Scrape Hebbal', prompt: 'scrape hebbal' },
+    { label: '⏹ Stop', prompt: 'stop' },
+    { label: '? Status', prompt: 'status' },
+  ],
+  analyst: [
+    { label: '📊 Analyze Yelahanka', prompt: 'analyze yelahanka' },
+    { label: '📊 Analyze Devanahalli', prompt: 'analyze devanahalli' },
+    { label: '📊 Analyze Hebbal', prompt: 'analyze hebbal' },
+    { label: '⏹ Stop', prompt: 'stop' },
+    { label: '? Status', prompt: 'status' },
+  ],
+};
+const feedbackTimers = new Map();
 
 // ── Clock ──
 function tick() {
@@ -726,13 +809,35 @@ async function pollDbState() {
 pollDbState();
 setInterval(pollDbState, 30000);
 
+// ── Sentinel Polling ──
+async function pollSentinel() {
+  try {
+    const data = await fetch('/api/sentinel/status').then(r => r.json());
+    const nxt = data.next_run || {};
+    const lst = data.last_run;
+    const nextEl = document.getElementById('sentinel-next');
+    const lastEl = document.getElementById('sentinel-last');
+    const actionEl = document.getElementById('action-sentinel');
+    if (nextEl) nextEl.textContent = 'Next run: ' + (nxt.label || '—');
+    if (lastEl) lastEl.textContent = lst && !lst.error
+      ? 'Last: ' + (lst.status || '?') + ' · ' + (lst.micro_market || '?')
+      : 'Last run: no data yet';
+    if (actionEl) actionEl.textContent = 'Scheduler · Next: ' + (nxt.label || '—');
+  } catch (e) {
+    const el = document.getElementById('action-sentinel');
+    if (el) el.textContent = 'Sentinel unreachable';
+  }
+}
+pollSentinel();
+setInterval(pollSentinel, 30000);
+
 // ── Agent State Polling ──
 async function pollAgents() {
   try {
     const data = await fetch('/api/agents').then(r => r.json());
     const agents = data.agents || data; // support both nested and top-level contracts
 
-    ['ceo', 'analyst', 'scraper'].forEach(agent => {
+    ['ceo', 'analyst', 'scraper', 'processor'].forEach(agent => {
       const state = agents[agent];
       if (!state) {
         updateAgent(agent, { state: 'offline', last_action: 'No connection' });
@@ -771,7 +876,7 @@ async function pollAgents() {
 
   } catch (e) {
     // Offline
-    ['ceo', 'analyst', 'scraper'].forEach(agent => {
+    ['ceo', 'analyst', 'scraper', 'processor'].forEach(agent => {
       updateAgent(agent, { state: 'offline', last_action: 'Connection lost' });
     });
   }
@@ -786,18 +891,24 @@ function updateAgent(agent, state) {
 
   const st = state.state || 'offline';
   const stLower = st.toLowerCase();
+  const isWorking = stLower === 'working';
 
-  // Badge
-  let badgeText = st.toUpperCase();
-  let badgeClass = 'cabin-badge ' + stLower;
-  if (['working', 'scraping', 'analyzing', 'directing'].includes(stLower)) {
-    badgeClass = 'cabin-badge ' + stLower;
+  // Badge — use label (SCRAPING/ANALYZING/DIRECTING) when available; fall back to state
+  const label = state.label || st.toUpperCase();
+  const labelLower = label.toLowerCase();
+
+  let badgeText = label;
+  let badgeClass;
+  if (isWorking) {
+    badgeClass = 'cabin-badge ' + labelLower;  // scraping / analyzing / directing
   } else if (stLower === 'done') {
     badgeClass = 'cabin-badge done';
   } else if (stLower === 'failed') {
     badgeClass = 'cabin-badge failed';
   } else if (stLower === 'idle') {
     badgeClass = 'cabin-badge idle';
+  } else if (stLower === 'standby') {
+    badgeClass = 'cabin-badge standby';
   } else {
     badgeClass = 'cabin-badge offline';
     badgeText = 'OFFLINE';
@@ -806,7 +917,7 @@ function updateAgent(agent, state) {
   badgeEl.className = badgeClass;
 
   // Active animation
-  if (['working', 'scraping', 'analyzing', 'directing'].includes(stLower)) {
+  if (isWorking) {
     cabinEl.classList.add('active');
   } else {
     cabinEl.classList.remove('active');
@@ -814,7 +925,7 @@ function updateAgent(agent, state) {
 
   // Dot color
   let dotClass = 'status-dot grey';
-  if (['working', 'scraping', 'analyzing', 'directing'].includes(stLower)) {
+  if (isWorking) {
     dotClass = 'status-dot amber';
   } else if (stLower === 'done') {
     dotClass = 'status-dot green';
@@ -844,17 +955,57 @@ function toggleCommand(agent) {
   } else {
     panel.classList.add('open');
     openCommands.add(agent);
+    // Stop propagation so clicking panel doesn't bubble up and close it
+    panel.addEventListener('click', e => e.stopPropagation());
+    // Inject quick action buttons
+    injectQuickActions(agent, panel);
     setTimeout(() => document.getElementById('input-' + agent).focus(), 200);
   }
+}
+
+function injectQuickActions(agent, panel) {
+  // Remove existing buttons if any
+  const existing = panel.querySelector('.quick-actions');
+  if (existing) existing.remove();
+  const actions = AGENT_ACTIONS[agent];
+  if (!actions) return;
+  const container = document.createElement('div');
+  container.className = 'quick-actions';
+  actions.forEach(a => {
+    const btn = document.createElement('button');
+    btn.className = 'quick-btn';
+    btn.textContent = a.label;
+    btn.onclick = e => {
+      e.stopPropagation();
+      document.getElementById('input-' + agent).value = a.prompt;
+      sendCommand(agent);
+    };
+    container.appendChild(btn);
+  });
+  // Insert before the input
+  const input = panel.querySelector('.command-input');
+  panel.insertBefore(container, input);
 }
 
 // ── Send Command ──
 async function sendCommand(agent) {
   const input = document.getElementById('input-' + agent);
   const responseEl = document.getElementById('response-' + agent);
+  const actionEl = document.getElementById('action-' + agent);
+  const cabinEl = document.getElementById('cabin-' + agent);
   const prompt = input.value.trim();
   if (!prompt) return;
 
+  // Clear any pending restore timer for this agent
+  if (feedbackTimers.has(agent)) {
+    clearTimeout(feedbackTimers.get(agent));
+    feedbackTimers.delete(agent);
+  }
+
+  // Store original action text for restore
+  const originalAction = actionEl.textContent;
+
+  // Show sending state
   responseEl.textContent = 'Sending...';
   input.value = '';
 
@@ -865,9 +1016,51 @@ async function sendCommand(agent) {
       body: JSON.stringify({ prompt })
     });
     const data = await res.json();
+
+    // Update response panel
     responseEl.textContent = data.details || data.action || 'Command sent';
+
+    // Update action line with feedback
+    const feedback = data.hint || data.details || data.action || 'Command sent';
+    actionEl.textContent = feedback;
+
+    // Color-code action line
+    if (data.status === 'accepted' || data.status === 'running') {
+      actionEl.style.color = '#f0a020'; // amber
+    } else if (data.status === 'error' || data.status === 'unknown_command') {
+      actionEl.style.color = '#f85149'; // red
+    } else {
+      actionEl.style.color = '#8b949e'; // default
+    }
+
+    // Flash accept animation on cabin
+    cabinEl.classList.remove('flash-accept');
+    void cabinEl.offsetWidth; // reflow to restart animation
+    cabinEl.classList.add('flash-accept');
+    cabinEl.addEventListener('animationend', () => cabinEl.classList.remove('flash-accept'), { once: true });
+
+    // Restore action line after 3s (unless pollAgents overwrites it first)
+    const timer = setTimeout(() => {
+      if (actionEl.textContent === feedback) {
+        actionEl.textContent = originalAction;
+        actionEl.style.color = '';
+      }
+      feedbackTimers.delete(agent);
+    }, 3000);
+    feedbackTimers.set(agent, timer);
+
   } catch (e) {
     responseEl.textContent = 'Error: ' + e.message;
+    actionEl.textContent = 'Error: ' + e.message;
+    actionEl.style.color = '#f85149';
+    const timer = setTimeout(() => {
+      if (actionEl.textContent.startsWith('Error:')) {
+        actionEl.textContent = originalAction;
+        actionEl.style.color = '';
+      }
+      feedbackTimers.delete(agent);
+    }, 3000);
+    feedbackTimers.set(agent, timer);
   }
 }
 

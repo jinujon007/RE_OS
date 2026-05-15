@@ -11,12 +11,12 @@ THREE TIERS — deliberately separated to eliminate TPM conflicts:
     BACKUP 4:  Ollama local
 
   ANALYSIS (Analyst):
-    PRIMARY:   Cerebras  llama3.3-70b                           — 60-100k TPM, 1M tok/day
+    PRIMARY:   Cerebras  llama3.1-8b                            — 60-100k TPM, 1M tok/day
     BACKUP 1:  Groq  meta-llama/llama-4-scout-17b-16e-instruct  — 30,000 TPM (shared with CEO)
     BACKUP 2:  Ollama local
 
   LIGHT (Scraper + Parser + Organizer):
-    PRIMARY:   Cerebras  llama3.3-70b                           — 60-100k TPM, 1M tok/day
+    PRIMARY:   Cerebras  llama3.1-8b                            — 60-100k TPM, 1M tok/day
     BACKUP 1:  Google AI Studio  gemma-3-27b-it                 — 15,000 TPM, 14,400 req/day
     BACKUP 2:  NVIDIA NIM  llama-3.3-70b                       — 40 req/min
     BACKUP 3:  Ollama local
@@ -203,6 +203,6 @@ def get_router_status() -> dict:
         },
         "excluded": excl,
         "heavy_chain":    f"Groq({GROQ_CEO_MODEL}, 30k TPM)" if g else ("Gemini(250k TPM)" if gem else "NVIDIA→OpenRouter→Ollama"),
-        "analysis_chain": f"Cerebras({CEREBRAS_MODEL}, 1M tok/day)" if c else (f"Groq({GROQ_ANALYST_MODEL})" if g else "Ollama"),
-        "light_chain":    f"Cerebras({CEREBRAS_MODEL}, 1M tok/day)" if c else (f"Gemini({GEMINI_LIGHT_MODEL})" if gem else ("NVIDIA" if n else "Ollama(slow)")),
+        "analysis_chain": f"Cerebras({CEREBRAS_MODEL}, 8k ctx, 1M tok/day)" if c else (f"Groq({GROQ_ANALYST_MODEL})" if g else "Ollama"),
+        "light_chain":    f"Cerebras({CEREBRAS_MODEL}, 8k ctx, 1M tok/day)" if c else (f"Gemini({GEMINI_LIGHT_MODEL})" if gem else ("NVIDIA" if n else "Ollama(slow)")),
     }
