@@ -172,6 +172,10 @@ For each matching project, return a JSON array of objects with:
   source_url       (string or null)
 
 Include ONLY North Bengaluru projects. Skip South/East/West Bengaluru.
+Look for project names, launch dates, BHK configurations, and price ranges.
+If this page is a homepage or generic marketing page with NO project listings,
+return an empty JSON array `[]`. Do not guess or fabricate projects.
+
 Return ONLY the JSON array, no commentary.
 
 DEVELOPER WEBSITE TEXT:
@@ -180,15 +184,28 @@ DEVELOPER WEBSITE TEXT:
 
 # ── AI extraction (Gemini Flash — full-page marketing comprehension) ──────────
 
-def _ai_extract_developer(text: str, developer_name: str) -> list[dict]:
+def _ai_extract_developer(text: str, developer_name: str, dom_snippets: str = "") -> list[dict]:
     # Filter text to market-relevant sections first
     filtered = _filter_relevant_text(text, developer_name)
-    if len(filtered) < 100:
+    if len(filtered) < 100 and len(dom_snippets) < 100:
         return []
 
-    # Gemini Flash can handle larger context
-    truncated = filtered[:6000]
-    prompt = DEVELOPER_EXTRACTION_PROMPT + truncated
+    # T-147: DOM-targeted extraction takes priority — project cards/lists tagged with
+    # North Bengaluru keywords. Even 200 chars of DOM snippets (5-6 project cards) beats
+    # the full-text path which is dominated by nav/footer noise. Fall back to sampling
+    # only if DOM < 200 chars.
+    if dom_snippets and len(dom_snippets) >= 200:
+        truncated = dom_snippets[:12000]
+        prompt = DEVELOPER_EXTRACTION_PROMPT + truncated
+    elif len(filtered) >= len(text) - 10 and len(filtered) > 8000:
+        mid = len(filtered) // 2
+        truncated = filtered[:5000] + "\n...\n" + filtered[mid:mid + 5000]
+        prompt = DEVELOPER_EXTRACTION_PROMPT + truncated
+    else:
+        # No meaningful DOM snippets AND text is noisy. Append any available snippets
+        # to the prompt so AI has at least some signal.
+        fallback = dom_snippets if dom_snippets else filtered[:8000]
+        prompt = DEVELOPER_EXTRACTION_PROMPT + fallback
 
     raw = ""
     try:
@@ -204,7 +221,7 @@ def _ai_extract_developer(text: str, developer_name: str) -> list[dict]:
             raw = resp.choices[0].message.content.strip()
         elif CEREBRAS_API_KEY:
             # Fallback — truncate more aggressively for Cerebras context limit
-            short_prompt = DEVELOPER_EXTRACTION_PROMPT + filtered[:2000]
+            short_prompt = prompt  # Use same prompt as Gemini path
             resp = litellm.completion(
                 model=f"openai/{CEREBRAS_MODEL}",
                 api_key=CEREBRAS_API_KEY,
@@ -272,6 +289,73 @@ def _clean_html(html: str) -> str:
         tag.decompose()
     text = soup.get_text(separator=" ", strip=True)
     return re.sub(r"\s{3,}", "\n", text)
+
+
+def _extract_dom_snippets(html: str) -> str:
+    """
+    T-147 fix: Extract project-specific elements using BHK+keyword dual-filter.
+
+    Old approach: any element with keyword hit → dominated by nav/footer noise
+    (39k chars for Godrej, but mostly "About Us", "Leadership", "Sustainability")
+
+    New approach (tiered):
+      Tier 1: Elements with BOTH keyword AND BHK pattern (2 Bhk, 3 Bhk, etc.)
+              → guaranteed project cards, minimal noise
+      Tier 2: Elements with keyword + price/location patterns + noise filter
+              → nav items stripped (know us, leadership, projects residential, etc.)
+              → minimum 30 chars threshold to exclude buttons/crumbs
+    """
+    north_blr = {
+        "yelahanka", "hebbal", "devanahalli", "jakkur", "thanisandra",
+        "kogilu", "bagalur", "singanayakanahalli", "nagawara", "north bangalore",
+        "north bengaluru", "bial", "airport", "finsbury"
+    }
+    soup = BeautifulSoup(html, "lxml")
+
+    # Tier 1: BHK + keyword — project cards
+    bhk_re = re.compile(r'\d+\s*bhk', re.IGNORECASE)
+    bhk_snippets: list[str] = []
+    for tag in soup.find_all(["a", "h2", "h3", "h4", "span", "p", "li"]):
+        text = tag.get_text(" ", strip=True)
+        if len(text) < 20:
+            continue
+        text_lower = text.lower()
+        has_kw = any(kw in text_lower for kw in north_blr)
+        has_bhk = bool(bhk_re.search(text_lower))
+        if has_kw and has_bhk:
+            bhk_snippets.append(text)
+
+    if bhk_snippets:
+        return "\n".join(bhk_snippets)
+
+    # Tier 2: Keyword elements with noise filter
+    skip_starts = ("home", "about", "career", "contact", "investor", "media",
+                   "gallery", "legal", "privacy", "terms", "close", "menu",
+                   "leadership", "sustainability")
+    skip_contains = {
+        "know us", "projects residential", "projects location",
+        "residential projects", "investor relations", "media centre"
+    }
+    tier2_snippets: list[str] = []
+    for tag in soup.find_all(["a", "span", "p", "div", "h2", "h3", "li"]):
+        text = tag.get_text(" ", strip=True)
+        if len(text) < 30:
+            continue
+        text_lower = text.lower()
+        if not any(kw in text_lower for kw in north_blr):
+            continue
+        # Noise filter
+        stripped = text_lower.strip()
+        if stripped.startswith(skip_starts):
+            continue
+        if any(sc in text_lower for sc in skip_contains):
+            continue
+        # Require meaningful content (at least 3 words)
+        if text.count(" ") < 2:
+            continue
+        tier2_snippets.append(text)
+
+    return "\n".join(tier2_snippets)
 
 
 # ── Normalization ─────────────────────────────────────────────────────────────
@@ -388,39 +472,41 @@ class DeveloperScout:
         alt_url = dev_info.get("alt_url", "")
         developer_name = dev_info["name"]
 
-        # Fetch page content
+        # Fetch raw HTML + cleaned text; extract DOM snippets for targeted extraction
         if dev_info.get("use_playwright"):
-            text = self._playwright_fetch(url)
-            if len(text) < 200 and alt_url:
-                text = self._playwright_fetch(alt_url)
+            raw_html = self._playwright_fetch_raw(url)
+            if len(raw_html) < 500 and alt_url:
+                raw_html = self._playwright_fetch_raw(alt_url)
         else:
-            text = self._requests_fetch(url)
-            if len(text) < 200 and alt_url:
-                text = self._requests_fetch(alt_url)
+            raw_html = self._requests_fetch_raw(url)
+            if len(raw_html) < 500 and alt_url:
+                raw_html = self._requests_fetch_raw(alt_url)
 
-        if len(text) < 100:
+        if len(raw_html) < 500:
             logger.debug(f"[DeveloperScout][{dev_key}] No usable content from {url}")
             return []
 
-        raw_items = _ai_extract_developer(text, developer_name)
+        text = _clean_html(raw_html)
+        dom_snippets = _extract_dom_snippets(raw_html)
+        raw_items = _ai_extract_developer(text, developer_name, dom_snippets=dom_snippets)
         results = [
             _normalize_developer_finding(r, dev_key, developer_name, self.market, url)
             for r in raw_items
         ]
         return [r for r in results if r is not None]
 
-    def _requests_fetch(self, url: str) -> str:
+    def _requests_fetch_raw(self, url: str) -> str:
         try:
             resp = self.session.get(url, timeout=25)
             time.sleep(1)
             if resp.status_code == 200:
-                return _clean_html(resp.text)
+                return resp.text
             logger.debug(f"[DeveloperScout] HTTP {resp.status_code} for {url}")
         except requests.exceptions.RequestException as exc:
             logger.debug(f"[DeveloperScout] Request error: {exc}")
         return ""
 
-    def _playwright_fetch(self, url: str) -> str:
+    def _playwright_fetch_raw(self, url: str) -> str:
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -437,10 +523,13 @@ class DeveloperScout:
                 page = ctx.new_page()
                 page.set_default_timeout(30_000)
                 page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-                page.wait_for_timeout(3000)
+                page.wait_for_timeout(6000)
+                # Scroll to trigger lazy-loaded project cards
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(2000)
                 html = page.content()
                 browser.close()
-                return _clean_html(html)
+                return html
         except Exception as exc:
             logger.debug(f"[DeveloperScout][Playwright] Failed for {url}: {exc}")
             return ""
