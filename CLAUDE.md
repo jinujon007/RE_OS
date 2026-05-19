@@ -1,5 +1,5 @@
 # RE_OS — Claude Handout
-**Last updated: 2026-05-14**
+**Last updated: 2026-05-19**
 **Owner: Jinu — Employee, Land & Life Space (LLS)**
 **Working directory: `D:\Brain\JINU JOSHI\03 LLS\02 Projects\RE_market\RE_OS`**
 
@@ -7,10 +7,15 @@
 
 ## What This Is
 
-Multi-agent real estate intelligence OS for LLS. Five AI agents scrape, parse, store, and analyze RERA Karnataka + listing portal data for North Bengaluru micro-markets. Jinu reads the output directly for land acquisition and project positioning decisions.
+Multi-agent real estate intelligence OS for LLS. Six AI scouts scrape RERA Karnataka + listing portals + developer sites + news. A 3-stage pipeline stores and analyzes data for North Bengaluru micro-markets. Jinu reads the output for land acquisition and project positioning decisions.
 
 **Primary markets:** Yelahanka, Devanahalli, Hebbal
-**Questions it answers:** Enter a micro-market at what PSF? Who are Grade A competitors? Which developers are distressed? Absorption trends?
+**Questions it answers:** Enter a micro-market at what PSF? Who are Grade A competitors? Which developers are distressed (JD/JV targets)? Absorption trends? Go/no-go on a market right now?
+
+**Phase 1 (Scout Integration): ✅ COMPLETE**
+**Phase 2 (Dashboard): 🟡 IN PROGRESS — API wiring underway**
+**Phase 3 (Board Room): 🟡 Bootstrap queued (T-217, T-218)**
+**Phase 4 (Agent Memory): 🟡 Schema queued (T-219, T-220)**
 
 ---
 
@@ -18,14 +23,14 @@ Multi-agent real estate intelligence OS for LLS. Five AI agents scrape, parse, s
 
 ```
 CEO Agent (Orchestrator)
-    ├── Scraper Agent  → RERA Karnataka + listings + Kaveri registrations
-    ├── Parser Agent   → normalizes HTML/JSON (standalone only — not in main crew)
-    ├── Organizer Agent → DEPRECATED in main crew — standalone only
-    └── Analyst Agent  → queries DB, calculates metrics, produces brief
+    ├── Scraper Agent  → 6 scouts: RERA + RERA Detail + Portal + Developer + News + Kaveri
+    ├── Analyst Agent  → queries DB, calculates 6 market signals, produces brief
+    ├── Sentinel Agent → system health monitor (docker-compose healthcheck)
+    ├── Parser Agent   → standalone only (not in main crew)
+    └── Organizer Agent → DEPRECATED (replaced by db_organizer.py)
 ```
 
-Main runtime: **3-stage pipeline** — Data Crew → Python Organizer → Intel Crew.
-CEO orchestrates, never touches data. Parser + Organizer kept for standalone use.
+Main runtime: **3-stage pipeline** — Data Crew (6 scouts) → Python Organizer (db_organizer.py) → Intel Crew (Analyst + CEO).
 
 ---
 
@@ -33,26 +38,28 @@ CEO orchestrates, never touches data. Parser + Organizer kept for standalone use
 
 | Container | Image | Port | Role |
 |-----------|-------|------|------|
-| `re_os_db` | postgis/postgis:15-3.3 | 5432 | Primary data store (PostGIS) |
-| `re_os_ollama` | ollama/ollama:latest | 11434 | Local LLM fallback |
-| `re_os_redis` | redis:7-alpine | 6379 | Task queue (RQ) |
-| `re_os_agents` | custom (Dockerfile) | — | Runs the crew |
-| `re_os_scheduler` | custom (Dockerfile) | — | APScheduler: 2AM RERA refresh |
+| `re_os_db` | postgis/postgis:15-3.3 | 5432 (internal) | Primary data store |
+| `re_os_ollama` | ollama/ollama:latest | 11434 (internal) | Local LLM fallback |
+| `re_os_redis` | redis:7-alpine | 6379 (internal) | Task queue |
+| `re_os_agents` | custom (Dockerfile) | 8050 exposed | Runs crew + Flask dashboard |
+| `re_os_scheduler` | custom (Dockerfile) | — | APScheduler: 2AM UTC RERA refresh |
 
 `docker compose up -d` · `docker compose ps` · `docker compose down`
+
+Only port 8050 is externally exposed — all others are internal (security hardening 2026-05-19).
 
 ---
 
 ## LLM Routing
 
 ```
-HEAVY  (CEO):      Groq Scout 17b (30k TPM) → Gemini 2.5 Flash → NVIDIA 405b → OpenRouter 70b → Ollama
+HEAVY  (CEO):      Groq Scout 17b → Gemini 2.5 Flash → NVIDIA 405b → OpenRouter 70b → Ollama
 ANALYSIS (Analyst): Cerebras 8b (1M tok/day) → Groq Scout → Ollama
 LIGHT  (Scraper):  Cerebras 8b (1M tok/day) → Gemini Gemma 27b → NVIDIA 70b → Ollama
 ```
 
 **Critical:** Cerebras 8,192 token context cap — fine for structured extraction + DB queries. NOT for CEO.
-Cerebras and Groq are completely separate budgets — no TPM conflicts between tiers.
+**Thread-safe:** LLM exclusion tracking uses threading.Lock — providers excluded on rate-limit, cleared on success.
 **After rotating any key:** `docker compose restart agents scheduler` — no rebuild needed.
 **Router:** `config/llm_router.py` · **Config:** `config/settings.py`
 
@@ -63,38 +70,61 @@ Cerebras and Groq are completely separate budgets — no TPM conflicts between t
 ```
 RE_OS/
 ├── CLAUDE.md                     ← YOU ARE HERE
-├── MODELS.md                     ← Free model reference + daily capacity math
-├── CHANGELOG.md                  ← File-level change log
-├── VISION.md                     ← 14-phase product roadmap
+├── TASK_QUEUE.md                 ← ALL pending work + sprint priorities
+├── VISION.md                     ← 14-phase roadmap (Phase 1 complete, Phase 2 in progress)
+├── AGENTS.md                     ← Multi-brain coordination protocol
+├── CHANGELOG.md                  ← File-level change log (audit trail)
+├── DEVLOG.md                     ← Phase-by-phase build history
+├── MODELS.md                     ← Free model reference + daily capacity
 ├── docker-compose.yml / Dockerfile / requirements.txt / .env
 │
 ├── agents/
-│   ├── ceo_agent.py             ← Orchestrator, allows_delegation=True, max_iter=10
-│   ├── analyst_agent.py         ← MarketSummary, CompetitorAnalysis, ReportGenerator tools
-│   ├── scraper_agent.py         ← RERAScraperTool, ListingsScraper, GuidanceValue, KaveriReg
+│   ├── ceo_agent.py             ← Orchestrator, max_iter=3, HEAVY LLM tier
+│   ├── analyst_agent.py         ← 6-signal market analysis, ANALYSIS LLM tier
+│   ├── scraper_agent.py         ← 8 tools: 6 scouts + 2 kaveri tools, LIGHT LLM tier
+│   ├── sentinel_agent.py        ← System health monitor (docker healthcheck)
 │   ├── parser_agent.py          ← standalone only
-│   └── organizer_agent.py       ← DEPRECATED in main crew
+│   └── organizer_agent.py       ← DEPRECATED
 │
-├── crews/market_intel_crew.py   ← v2: 3-stage pipeline
+├── crews/
+│   ├── market_intel_crew.py     ← 3-stage pipeline (6-task Stage 1 + Stage 2 + Stage 3)
+│   └── board_room.py            ← Phase 3 skeleton (not implemented)
+│
 ├── scrapers/
-│   ├── rera_karnataka.py        ← Playwright AJAX intercept + POST fallback + hardcoded fallback
-│   ├── listings_scraper.py      ← 99acres/MagicBricks (sample data fallback)
-│   └── kaveri_karnataka.py      ← Guidance values + registrations scraper
+│   ├── rera_karnataka.py        ← Playwright AJAX intercept + POST + hardcoded fallback
+│   ├── rera_detail_scout.py     ← RERA project deep-dive (session fix pending T-207)
+│   ├── portal_scout.py          ← 99acres/MagicBricks/Housing.com listings
+│   ├── developer_scout.py       ← Brigade/Prestige/Sobha/Godrej etc. project pages
+│   ├── news_scout.py            ← Google News + ET Realty (Gemini/Cerebras fallback)
+│   ├── kaveri_karnataka.py      ← Guidance values + registrations
+│   ├── listings_scraper.py      ← Legacy (99acres/MagicBricks, still used)
+│   └── scout_memory.py          ← SHA-based dedup across all scouts
 │
 ├── utils/
-│   ├── validator.py             ← RERA record validation
-│   ├── db_organizer.py          ← Batch DB upsert, no LLM
-│   └── status.py                ← Health dashboard
+│   ├── validator.py             ← RERA record validation + [ESTIMATED] prefix
+│   ├── db_organizer.py          ← Batch DB upsert, SAVEPOINT pattern, no LLM
+│   ├── status.py                ← Health dashboard
+│   ├── diagnose.py              ← Diagnostic utility
+│   └── agent_memory.py          ← Phase 4 skeleton (T-220, not yet implemented)
 │
 ├── config/
-│   ├── llm_router.py            ← get_heavy_llm / get_analysis_llm / get_light_llm
+│   ├── llm_router.py            ← 3-tier routing, thread-safe exclusion tracking
 │   ├── settings.py              ← All env vars, model names, market keywords, grade criteria
-│   ├── run_logger.py            ← JSONL run log + runs_summary.md
-│   ├── checkpointer.py          ← File-based task resume (failed runs restart from last stage)
-│   └── scheduler.py            ← APScheduler
+│   ├── run_logger.py            ← JSONL run history + markdown summary
+│   ├── checkpointer.py          ← File-based stage resume (JSONDecodeError handled)
+│   └── scheduler.py             ← APScheduler (2AM UTC RERA; Yelahanka 2:30AM IST pending T-189)
 │
-├── database/schema.sql          ← 12 tables + views (v_market_brief, v_market_inventory etc.)
-└── logs/ + outputs/             ← crew.log, run_history.jsonl, intel reports per market
+├── dashboard/
+│   ├── app.py                   ← Flask server (port 8050), /api/health live
+│   └── templates/index.html     ← Dashboard UI (wiring in progress, Phase D tasks)
+│
+├── database/
+│   ├── schema.sql               ← 12 tables + 4 views + indexes
+│   └── migrate_*.sql            ← Applied migrations (data_source, kaveri unique, views)
+│
+├── tests/                       ← pytest (validator, checkpointer, llm_router) + conftest
+├── .github/workflows/ci.yml     ← py_compile + pytest + ruff CI
+└── logs/ + outputs/             ← crew.log (573KB), run_history.jsonl, intel reports
 ```
 
 ---
@@ -102,20 +132,23 @@ RE_OS/
 ## The 3-Stage Pipeline
 
 ```
-STAGE 1 — Data Crew (scraper agent, LLM-assisted)
-  scrape_rera     → Playwright AJAX intercept → checkpoint saved
-  scrape_listings → 99acres/MagicBricks       → checkpoint saved
-  scrape_kaveri   → Guidance values + regs    → checkpoint saved
+STAGE 1 — Data Crew (scraper agent, LLM-assisted) — 6 tasks
+  scrape_rera        → Playwright AJAX intercept → checkpoint saved
+  scrape_rera_detail → RERA project deep-dive (session fix pending T-207)
+  scrape_listings    → 99acres/MagicBricks
+  scrape_portal      → portal_scout (7 portals)
+  scrape_developer   → developer_scout (8 developer sites)
+  scrape_news        → news_scout (Google News + ET Realty)
+
+  Cache skip: ALL 6 checkpoints exist → skip Stage 1 entirely
 
 STAGE 2 — Python Organizer (no LLM — pure Python)
-  Load checkpoints → validate → batch upsert (db_organizer.py) → log to agent_runs
+  Load checkpoints → validate → batch upsert (SAVEPOINT pattern) → log to agent_runs
 
 STAGE 3 — Intel Crew (LLM reasoning)
-  analyze      → queries DB, produces market brief
-  ceo_synthesis → strategic read + one action for LLS
+  analyze      → queries DB, produces 6-signal market brief
+  ceo_synthesis → LLS-framed strategic read (PSF entry, JD/JV targets, go/no-go)
 ```
-
-Checkpointing: today's checkpoint exists → Stage 1 skipped. Stage 3 fails → restart from Stage 3 only.
 
 ---
 
@@ -135,6 +168,13 @@ docker compose exec agents python crews/market_intel_crew.py   # all markets
 
 # Scrapers standalone
 docker compose exec agents python scrapers/rera_karnataka.py --market Yelahanka
+docker compose exec agents python scrapers/developer_scout.py --developer "Brigade,Prestige" --market Yelahanka
+docker compose exec agents python scrapers/news_scout.py --market Yelahanka
+
+# Dashboard
+curl http://localhost:8050/api/health
+curl http://localhost:8050/api/agents
+curl http://localhost:8050/api/intel
 
 # DB (or use MCP postgres tool — no docker exec needed)
 docker compose exec postgres psql -U re_os_user -d re_os
@@ -142,6 +182,9 @@ docker compose exec postgres psql -U re_os_user -d re_os
 
 # Health check
 docker compose exec agents python utils/status.py
+
+# Tests
+docker compose exec agents pytest tests/
 
 # Rebuild after Dockerfile changes
 docker compose build agents && docker compose up -d agents
@@ -154,22 +197,36 @@ Get-Content logs/crew.log -Wait -Tail 50
 
 ## Current State — Open Issues
 
-### Bug 3 — schema.sql GENERATED COLUMN (Deferred)
+### Bug 3 — schema.sql delay_months GENERATED COLUMN (Deferred)
 `delay_months` generated column may fail on PostgreSQL on DB wipe + reinit.
-**File:** `database/schema.sql` ~line 134. DB container currently healthy — low urgency.
+**File:** `database/schema.sql` ~line 134. DB currently healthy — low urgency.
 **Fix when hit:** move to view-level calculation or trigger.
 
-### Bugs 1 + 2: ✅ Fixed 2026-05-13.
+### RERA Portal Playwright Timeout (Open — High)
+Yelahanka and Hebbal return 8 hardcoded fallback projects (marked [ESTIMATED]).
+Devanahalli: 317 live projects ✅. Root cause: RERA portal selector `No locality input found`.
+**Fix:** T-207 (rera_detail_scout session state) may help. RERA portal selector fix needed separately.
+
+### Kaveri GV Portal Unreachable (Open — Medium)
+`kaveri.karnataka.gov.in` guidance value portal consistently unreachable.
+**Current state:** Falls back to 7 seeded guidance values (₹2,800–₹6,500 PSF for Yelahanka).
+**Fix:** Try alternative endpoint or scrape via different path.
 
 ---
 
 ## Database Schema
 
-12 tables (all UUID PKs): `micro_markets`, `developers`, `rera_projects`, `project_snapshots`, `listings`, `kaveri_registrations`, `guidance_values`, `regulatory_zones`, `overlay_constraints`, `infrastructure_pipeline`, `market_snapshots`, `agent_runs`
+**14 tables** (12 core + board_sessions + agent_memories — board/memory tables pending migrations):
+`micro_markets`, `developers`, `rera_projects`, `project_snapshots`, `listings`,
+`kaveri_registrations`, `guidance_values`, `regulatory_zones`, `overlay_constraints`,
+`infrastructure_pipeline`, `market_snapshots`, `agent_runs`, `news_articles`,
+`board_sessions` (pending T-217), `agent_memories` (pending T-219)
 
-Pre-built views: `v_active_projects`, `v_market_inventory`, `v_developer_scorecard`, `v_market_brief`
+**Views:** `v_active_projects`, `v_market_inventory`, `v_developer_scorecard`, `v_market_brief`
 
-Developer grades (defined in `config/settings.py`): Grade A = known major brand OR ≥500 units. B = 100–499. C = <100.
+**Current data (2026-05-19):** Devanahalli 317 live RERA + Yelahanka/Hebbal 8 fallback each. 31+ intel reports for Yelahanka.
+
+Developer grades: Grade A = known major brand OR ≥500 units. B = 100–499. C = <100.
 
 ---
 
@@ -188,13 +245,12 @@ Developer grades (defined in `config/settings.py`): Grade A = known major brand 
 
 ---
 
----
-
 ## Skill Routing
 
 - Bugs/errors → `/investigate`
-- Architecture → `/plan-eng-review`
+- Architecture decisions → `/plan-eng-review`
 - Code review → `/review`
 - QA/testing → `/qa`
 
 *Run `python utils/status.py` for instant health snapshot at session start.*
+*Read `TASK_QUEUE.md` SPRINT BRIEF for current work priorities.*

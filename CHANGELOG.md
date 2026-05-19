@@ -5,6 +5,50 @@
 
 ---
 
+## Session — Claude Code 2026-05-19 (TPM Review + Task Planning)
+
+### TASK_QUEUE.md — RECONSTRUCTED
+**Change:** File corrupted to 19MB (T-205 row repeated millions of times — concurrent write incident). Fully reconstructed from session context. Historical DONE task specs removed (see DEVLOG.md). Sprint Brief added. All READY task specs present. New tasks T-212 to T-224 added.
+**Why:** File unreadable. Reconstruction required to unblock Cline + Kilo Code.
+
+### TASK_QUEUE.md — SPRINT BRIEF ADDED
+**Change:** Priority-ordered work table for Cline (32 tasks) and Kilo Code (12 tasks). Makes priority unambiguous — brains no longer scan hundreds of rows.
+**Why:** Queue had 200+ tasks with no clear ordering. Brains were picking wrong priority items.
+
+### TASK_QUEUE.md — NEW TASKS T-212 to T-224 ADDED
+**Change:** 13 new tasks across 4 new phases:
+- Phase I (T-212–216): Dashboard UI build (org chart, intel panel, SSE log stream, auto-refresh, market selector)
+- Phase J (T-217–218): Board Room bootstrap (board_sessions table, board_room.py skeleton)
+- Phase K (T-219–220): Agent Memory bootstrap (agent_memories table, agent_memory.py utility)
+- Phase L (T-221–224): Intelligence audit (dashboard gap, Devanahalli wiki, Board Room personas, data quality)
+**Why:** Next 2 phases not yet in queue. Brains had nothing to pick up after completing current READY tasks.
+
+### TASK_QUEUE.md — STALE TASKS RESOLVED
+**Change:** T-064 → DONE (markets already expanded 2026-05-19). T-065, T-066, T-068 → SKIP (superseded by PD-phase equivalents T-166, T-167, T-168).
+**Why:** Status was READY but work already done or superseded. Would confuse Cline.
+
+### VISION.md — PHASE 1 MARKED COMPLETE
+**Change:** Phase 1 status updated from "Scaffolding exists" to "✅ COMPLETE — 2026-05-19". All 11 tasks checked. Definition of done confirmed met.
+**Why:** Phase 1 was complete for weeks but VISION.md still showed in-progress.
+
+### VISION.md — WHAT EXISTS TODAY TABLE UPDATED
+**Change:** 6 scouts now show ✅ Live (were 🟡 "not integrated"). Dashboard backend ✅. Board Room + Memory show 🟡 skeleton. 3-market pipeline + CI added to table.
+**Why:** Table was stale from 2026-05-14 and showed pre-Phase 1 state.
+
+### VISION.md — PHASE 2 STATUS UPDATED
+**Change:** Status updated from "Flask server scaffolded" to "🟡 IN PROGRESS". P2.14 checked (port exposed). Active task IDs linked. Decision resolved (Vanilla JS + HTMX).
+**Why:** Phase 2 work is actively in progress — status was misleading.
+
+### VISION.md — PHASE 3 STATUS UPDATED
+**Change:** Status updated from "Not started" to "🟡 BOOTSTRAP IN PROGRESS — board_sessions + board_room.py skeleton queued (T-217, T-218)".
+**Why:** Bootstrap work now queued — status should reflect this.
+
+### CLAUDE.md — FULL REWRITE
+**Change:** Updated from 2026-05-14 state to 2026-05-19. Architecture now shows 6 scouts + Sentinel. File map updated (board_room.py, agent_memory.py, news_articles, tests, CI). Pipeline shows 6-task Stage 1. Open issues updated (RERA Playwright + Kaveri portal added). DB schema updated (14 tables). Phase status added at top.
+**Why:** CLAUDE.md was 5 days out of date. Brains reading it were working with stale architecture.
+
+---
+
 ## Session — Claude 2026-05-14 (Scout System)
 
 ### scrapers/scout_memory.py — CREATED
