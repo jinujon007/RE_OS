@@ -32,7 +32,7 @@ pandas==2.2.3
 numpy==1.26.4
 
 # Geo utilities
-shapely==2.0.6
+shapely==2.1.2
 pyproj==3.7.0
 
 # Utilities
@@ -42,7 +42,7 @@ loguru==0.7.2
 tenacity>=8.1.0
 
 # Terminal output
-rich>=13.7.0
+rich>=15.0.0
 
 # Future: workflow orchestration
 # prefect>=2.0.0
