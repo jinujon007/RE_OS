@@ -572,7 +572,43 @@ TASK_QUEUE.md | Corrected status entries: T-143 DONE, T-144 DONE, T-145 DONE (al
 
 ---
 
+## Session — Claude Code 2026-05-19 (Phase 23 Review + Task Governance)
+
+TASK_QUEUE.md | INDEX: Marked T-153, T-185, T-186, T-203, T-204 DONE (Kilo Code completed today, not reflected in INDEX). T-207 INDEX title + spec reframed: "DB write debug" → "extraction fix" (Candidate A confirmed by T-152). T-207 blocker changed T-150 → T-210. T-210 (RERA detail URL diagnosis) + T-211 (alternative news sources spec) added to INDEX + DETAIL SPECS. | Claude Code | 2026-05-19
+DEVLOG.md | Phase 23 entry added: critical findings summary, confirmed T-152 root cause (nav-only HTML), developer_scout empty checkpoint, news=0, CEO Section 7 missing. Full critical path to Yelahanka launch documented. | Claude Code | 2026-05-19
+
+---
+
+## Session — Cline 2026-05-19 (T-064 Market Expansion)
+
+TASK_QUEUE.md | T-064: Market expansion — Devanahalli + Hebbal | Cline | 2026-05-19
+
+**Execution:**
+- Yelahanka: PASS — 1171.7s — fallback sample (RERA portal timed out)
+- Devanahalli: PASS — 1693.5s — 317 live RERA projects scraped successfully
+- Hebbal: PASS — 1613.9s — fallback sample (RERA portal timed out)
+
+**Output files:**
+- outputs/yelahanka/intel_report_20260519_0623.txt
+- outputs/devanahalli/intel_report_20260519_0656.txt
+- outputs/hebbal/intel_report_20260519_0725.txt
+
+**Notes:**
+- Devanahalli was the only market with live RERA data (317 projects from Bengaluru Rural district)
+- Yelahanka and Hebbal fell back to sample data due to RERA portal timeouts
+- All 3 markets produced intel reports successfully
+
+---
+
 *CHANGELOG — Last updated: 2026-05-19 IST*
+
+### 2026-05-19 16:30 IST — File: OPERATIONAL_REVIEW.md — Updated operational review
+**Type:** Documentation
+**Author:** Cline
+**Before:** (previous version of OPERATIONAL_REVIEW.md)
+**After:** Comprehensive operational and strategic review with execution roadmap, risk matrix, next‑action checklist, and additional operational dimensions.
+**Why:** Provide a complete, production‑grade assessment and actionable plan for Yelahanka launch.
+**Verified:** ✅ Yes
 *Update this file immediately after every code, DB, or config change.*
 *Before field required for all changes to existing code/data.*
 *Kilo Code: do NOT write to this file. Write to kilo_logs/CHANGELOG.md only.*
