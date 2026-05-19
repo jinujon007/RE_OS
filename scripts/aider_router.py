@@ -104,13 +104,13 @@ def main():
     if working_gemini_key:
         runtime_env["GEMINI_API_KEY"] = working_gemini_key
         model_flag = [] if extra_args else ["--model", AIDER_GEMINI_MODEL]
-        print(f"[Aider Router] Launching → Gemini 2.5 Flash\n")
+        print("[Aider Router] Launching → Gemini 2.5 Flash\n")
         subprocess.run(["aider"] + model_flag + extra_args, env=runtime_env)
 
     elif groq_key:
         runtime_env["GROQ_API_KEY"] = groq_key
         model_flag = [] if extra_args else ["--model", f"groq/{groq_model}"]
-        print(f"[Aider Router] All Gemini keys exhausted → Groq Scout fallback\n")
+        print("[Aider Router] All Gemini keys exhausted → Groq Scout fallback\n")
         subprocess.run(["aider"] + model_flag + extra_args, env=runtime_env)
 
     else:

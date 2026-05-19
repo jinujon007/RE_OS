@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 """Diagnostic script — deep dive RE_OS system state"""
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 print("=" * 70)
@@ -69,7 +70,8 @@ for t in data_crew.tasks:
 
 # 5. Checkpoint file locations
 print("\n[5] LAST CHECKPOINTS")
-import glob, json
+import glob
+import json
 ckpt_dir = "outputs/Yelahanka"
 if os.path.exists(ckpt_dir):
     ckpts = sorted(glob.glob(f"{ckpt_dir}/*.json"), key=os.path.getmtime, reverse=True)[:5]
@@ -78,7 +80,7 @@ if os.path.exists(ckpt_dir):
         size = os.path.getsize(c)
         print(f"    {os.path.basename(c)} ({size} bytes)")
 else:
-    print(f"  No outputs/Yelahanka directory found")
+    print("  No outputs/Yelahanka directory found")
 
 # 6. Recent crew.log tail
 print("\n[6] LAST CREW.LOG ENTRIES")
@@ -110,7 +112,7 @@ print("\n[8] PYTHON REQUIREMENTS")
 req_path = "requirements.txt"
 if os.path.exists(req_path):
     with open(req_path) as f:
-        reqs = [l.strip() for l in f if l.strip() and not l.startswith('#')]
+        reqs = [ln.strip() for ln in f if ln.strip() and not ln.startswith('#')]
     needed = ['httpx', 'price-parser', 'dateparser']
     print(f"  requirements.txt ({len(reqs)} packages):")
     for pkg in needed:

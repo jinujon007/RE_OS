@@ -53,7 +53,7 @@ def _docker_status():
         )
         if result.returncode != 0:
             return None, result.stderr.strip()
-        lines = [l for l in result.stdout.strip().splitlines() if l.strip()]
+        lines = [ln for ln in result.stdout.strip().splitlines() if ln.strip()]
         containers = []
         for line in lines:
             try:

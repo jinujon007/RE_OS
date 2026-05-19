@@ -306,7 +306,7 @@ class KaveriScraper:
 
         records = self._scrape_gv_with_playwright(taluk, meta)
         if not records:
-            logger.info(f"[KaveriScraper] Playwright GV returned 0 — trying POST fallback")
+            logger.info("[KaveriScraper] Playwright GV returned 0 — trying POST fallback")
             records = self._scrape_gv_via_post(taluk, meta)
 
         if not records:
@@ -330,7 +330,7 @@ class KaveriScraper:
 
         records = self._scrape_reg_with_playwright(meta, from_date, to_date)
         if not records:
-            logger.info(f"[KaveriScraper] Playwright reg returned 0 — trying POST fallback")
+            logger.info("[KaveriScraper] Playwright reg returned 0 — trying POST fallback")
             records = self._scrape_reg_via_post(meta, from_date, to_date)
 
         if not records:

@@ -76,7 +76,7 @@ class RERAKarnatakaScraper:
         projects = self._post_search(config["district"], config["subdistrict"], market_name)
 
         if not projects:
-            logger.warning(f"  Portal returned 0 results — using fallback sample data")
+            logger.warning("  Portal returned 0 results — using fallback sample data")
             return self._fallback_rera_data(market_name)
 
         # Deduplicate by RERA number
@@ -272,7 +272,7 @@ def scrape_market_standalone(market_name: str = "Yelahanka"):
     print(f"Live data      : {len(live)}  (fallback: {len(projects)-len(live)})")
     print(f"Output         : {output_path}")
     if projects:
-        print(f"\nSample (first 5):")
+        print("\nSample (first 5):")
         for p in projects[:5]:
             print(f"  {p.get('rera_number','N/A')[:40]:<42} | {p.get('project_name','')[:30]:<32} | {p.get('developer_name','')[:25]}")
     return projects

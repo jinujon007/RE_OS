@@ -108,13 +108,13 @@ def _banner(stage: str, description: str):
 
 def _header(market_name: str, run_id: str):
     print(f"\n{'='*_WIDTH}")
-    print(f"  RE_OS — Market Intelligence Run  (v2)")
+    print("  RE_OS — Market Intelligence Run  (v2)")
     print(f"  Market  : {market_name}")
     print(f"  Run ID  : {run_id}")
     print(f"  Started : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*_WIDTH}")
-    print(f"  PIPELINE: Scrape → (Python) Validate+DB → Analyse → CEO")
-    print(f"  LLMs    : Cerebras 8b (scraper) | Groq Scout (Analyst+CEO)")
+    print("  PIPELINE: Scrape → (Python) Validate+DB → Analyse → CEO")
+    print("  LLMs    : Cerebras 8b (scraper) | Groq Scout (Analyst+CEO)")
     print(f"{'='*_WIDTH}\n")
 
 
@@ -403,7 +403,7 @@ def run_market_intelligence(market_name: str) -> str:
             rl.agent_done("scrape_rera")
             rl.agent_done("scrape_listings")
 
-        print(f"  Stage 1 complete.")
+        print("  Stage 1 complete.")
 
         # ── STAGE 2: Pure Python validate + upsert ────────────────────────────
         _banner("STAGE 2/3", "Validating + writing to PostgreSQL (no LLM) ...")
@@ -566,7 +566,7 @@ def run_all_markets():
     results = {}
 
     print(f"\n{'='*_WIDTH}")
-    print(f"  RE_OS — Full Market Sweep")
+    print("  RE_OS — Full Market Sweep")
     print(f"  Markets : {', '.join(markets)}")
     print(f"  Started : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*_WIDTH}\n")
@@ -589,7 +589,7 @@ def run_all_markets():
         icon = "OK" if r["status"] == "success" else "!!"
         print(f"  [{icon}]  {market}: {r['status']}")
     print(f"\n  Summary: {ok} succeeded, {bad} failed")
-    print(f"  Run history -> logs/runs_summary.md")
+    print("  Run history -> logs/runs_summary.md")
     print(f"{'='*_WIDTH}\n")
 
     return results

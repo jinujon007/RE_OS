@@ -87,3 +87,17 @@ def get_next_scheduled_run() -> dict:
         "in_minutes": minutes,
         "label": f"in {hours}h {minutes}m" if hours > 0 else f"in {minutes}m",
     }
+
+
+
+if __name__ == "__main__":
+    import json
+    import sys
+
+    last = get_last_scheduled_run()
+    next_r = get_next_scheduled_run()
+
+    payload = {"sentinel": "RE_OS", "last_scheduled_run": last, "next_scheduled_run": next_r}
+    print(json.dumps(payload, indent=2))
+
+    sys.exit(0 if (last and not last.get("error")) else 1)

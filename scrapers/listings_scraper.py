@@ -73,11 +73,11 @@ class ListingsScraper:
         listings.extend(rent_listings)
 
         if not listings:
-            logger.warning(f"  No listings from 99acres — trying MagicBricks")
+            logger.warning("  No listings from 99acres — trying MagicBricks")
             listings = self._scrape_magicbricks(market_name)
 
         if not listings:
-            logger.warning(f"  All scrapers returned empty — using structured fallback")
+            logger.warning("  All scrapers returned empty — using structured fallback")
             listings = self._fallback_listings(market_name)
 
         logger.info(f"  Total listings collected: {len(listings)}")

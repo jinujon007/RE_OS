@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [master, main]
   schedule:
-    - cron: "0 6 * * 1"  # Weekly Monday scan — catches historical commits too
+    - cron: "0 6 * * 1"  # Weekly Monday — scans full history
 
 permissions:
   contents: read
@@ -21,14 +21,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history — TruffleHog scans all commits, not just HEAD
+          fetch-depth: 0  # Full history required for --since-commit mode
 
-      - name: TruffleHog Secret Scan
+      # Push to master: scan only the new commits in this push
+      - name: TruffleHog — push
+        if: github.event_name == 'push'
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
+          base: ${{ github.event.before }}
+          head: ${{ github.event.after }}
+          extra_args: --only-verified --fail
+
+      # PR: scan the commits added by this PR
+      - name: TruffleHog — pull request
+        if: github.event_name == 'pull_request'
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.base_ref }}
+          head: ${{ github.head_ref }}
+          extra_args: --only-verified --fail
+
+      # Weekly scheduled scan: full repository history
+      - name: TruffleHog — full history (weekly)
+        if: github.event_name == 'schedule'
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
           extra_args: --only-verified --fail
 
   gitleaks:

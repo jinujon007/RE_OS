@@ -379,7 +379,7 @@ def scout_market(market: str, sources: list[str] | None = None) -> list[dict]:
     if findings:
         new_items = [f for f in findings if f.get("is_new")][:5]
         if new_items:
-            print(f"\nNew discoveries (top 5):")
+            print("\nNew discoveries (top 5):")
             for f in new_items:
                 print(
                     f"  [{f['source']:<14}] "
