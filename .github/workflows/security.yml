@@ -21,34 +21,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history required for --since-commit mode
+          fetch-depth: 0  # Full history — TruffleHog needs it to resolve base commit
 
-      # Push to master: scan only the new commits in this push
-      - name: TruffleHog — push
-        if: github.event_name == 'push'
-        uses: trufflesecurity/trufflehog@main
+      - name: TruffleHog
+        uses: trufflesecurity/trufflehog@v3
         with:
           path: ./
-          base: ${{ github.event.before }}
-          head: ${{ github.event.after }}
-          extra_args: --only-verified --fail
-
-      # PR: scan the commits added by this PR
-      - name: TruffleHog — pull request
-        if: github.event_name == 'pull_request'
-        uses: trufflesecurity/trufflehog@main
-        with:
-          path: ./
-          base: ${{ github.base_ref }}
-          head: ${{ github.head_ref }}
-          extra_args: --only-verified --fail
-
-      # Weekly scheduled scan: full repository history
-      - name: TruffleHog — full history (weekly)
-        if: github.event_name == 'schedule'
-        uses: trufflesecurity/trufflehog@main
-        with:
-          path: ./
+          # push:     base=previous commit, head=this commit
+          # PR:       base=PR base branch SHA, head=PR head SHA
+          # schedule: both empty → scans full history (correct for weekly sweep)
+          base: ${{ github.event.before || github.event.pull_request.base.sha }}
+          head: ${{ github.sha }}
           extra_args: --only-verified --fail
 
   gitleaks:
@@ -62,7 +45,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Gitleaks Secret Scan
+      - name: Gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
