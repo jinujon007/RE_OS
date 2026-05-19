@@ -6,34 +6,12 @@ on:
   pull_request:
     branches: [master, main]
   schedule:
-    - cron: "0 6 * * 1"  # Weekly Monday — scans full history
+    - cron: "0 6 * * 1"  # Weekly Monday full-history sweep
 
 permissions:
   contents: read
 
 jobs:
-  trufflehog:
-    name: Secret Scan (TruffleHog)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Full history — TruffleHog needs it to resolve base commit
-
-      - name: TruffleHog
-        uses: trufflesecurity/trufflehog@v3
-        with:
-          path: ./
-          # push:     base=previous commit, head=this commit
-          # PR:       base=PR base branch SHA, head=PR head SHA
-          # schedule: both empty → scans full history (correct for weekly sweep)
-          base: ${{ github.event.before || github.event.pull_request.base.sha }}
-          head: ${{ github.sha }}
-          extra_args: --only-verified --fail
-
   gitleaks:
     name: Secret Scan (Gitleaks)
     runs-on: ubuntu-latest
@@ -43,10 +21,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Full history — required for complete scan
 
       - name: Gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          # GITLEAKS_LICENSE not required for public repos
