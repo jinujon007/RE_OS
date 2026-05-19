@@ -36,7 +36,7 @@ shapely==2.0.6
 pyproj==3.7.0
 
 # Utilities
-python-dotenv==1.0.1
+python-dotenv==1.2.2
 pydantic==2.9.2
 loguru==0.7.2
 tenacity>=8.1.0
