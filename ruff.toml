@@ -1,0 +1,27 @@
+# ruff.toml — shared linting config for local dev and CI
+# Run: ruff check .
+
+[lint]
+# Rules selected: pyflakes (F) + pycodestyle errors (E) only.
+# Line length and import-order violations are ignored — this is a
+# fast-moving research codebase, not a library.
+select = ["E", "F"]
+ignore = [
+    "E501",   # line too long — not enforced
+    "E402",   # module-level import not at top — DAG files import mid-file
+    "F401",   # unused import — re-exported symbols in __init__.py
+    "F811",   # redefinition of unused name — crewai tool overrides
+    "F841",   # local variable assigned but never used — debug stubs
+]
+
+# Directories to skip entirely
+exclude = [
+    ".kilo",
+    "kilo_output",
+    "__pycache__",
+    ".git",
+]
+
+[lint.per-file-ignores]
+# Agent files use wildcard imports for crewai tool registration
+"agents/*.py" = ["F403", "F405"]

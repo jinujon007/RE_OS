@@ -24,10 +24,7 @@ jobs:
         run: pip install ruff==0.4.4
 
       - name: Lint with ruff
-        run: |
-          ruff check . \
-            --exclude .kilo,kilo_output \
-            --ignore E501,E402,F401,F811,F841,W291,W293
+        run: ruff check .
 
       - name: Check Python syntax (all source files)
         run: |
@@ -36,6 +33,8 @@ jobs:
             agents/analyst_agent.py \
             agents/scraper_agent.py \
             agents/parser_agent.py \
+            agents/organizer_agent.py \
+            agents/sentinel_agent.py \
             config/llm_router.py \
             config/settings.py \
             config/run_logger.py \
@@ -43,8 +42,13 @@ jobs:
             config/scheduler.py \
             crews/market_intel_crew.py \
             scrapers/rera_karnataka.py \
+            scrapers/listings_scraper.py \
+            scrapers/kaveri_karnataka.py \
             scrapers/news_scout.py \
             scrapers/rera_detail_scout.py \
+            scrapers/developer_scout.py \
+            scrapers/portal_scout.py \
+            scrapers/scout_memory.py \
             utils/db_organizer.py \
             utils/validator.py \
             utils/status.py
@@ -81,7 +85,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U re_os_user -d re_os_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -89,6 +93,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install psql client
+        run: sudo apt-get install -y postgresql-client
 
       - name: Apply schema to test database
         env:
