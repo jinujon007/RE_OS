@@ -42,7 +42,7 @@ loguru==0.7.2
 tenacity>=8.1.0
 
 # Terminal output
-rich>=13.7.0
+rich>=15.0.0
 
 # Future: workflow orchestration
 # prefect>=2.0.0
