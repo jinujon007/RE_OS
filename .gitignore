@@ -68,9 +68,11 @@ NEXT_TASKS.md
 plans/(CAI)*
 
 # Dev tooling — local workflow only, not product source
+.claude/
 .cline_logs/
 kilo_logs/
 scripts/
+plans/
 AGENTS.md
 TASK_QUEUE.md
 task.md
