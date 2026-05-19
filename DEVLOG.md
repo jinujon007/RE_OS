@@ -661,6 +661,43 @@ Additionally, news_scout.py had a root bug identified by T-038: days_back=14 eli
 
 ---
 
+### Phase 22 — Yelahanka Launch Focus Pivot (2026-05-19)
+**Date:** 2026-05-19
+**Status:** ✅ Complete
+
+**Situation:**
+Strategic direction changed: all multi-market expansion work (Phase C — Devanahalli + Hebbal) deferred until Yelahanka pipeline is launch-ready and proven in production. Reason: concentrate limited execution capacity to get one market to "trusted intelligence" standard before spreading to three.
+
+**Intelligence already in hand (from Kilo Code drafts):**
+- T-154 wiki: 163 active Yelahanka projects, 10,050 units, 74.2% sold (₹6,188–7,138 psf asking)
+- T-144 distressed brief: 5 developers with overdue possession + >79% absorption (JD/JV targets: Sobha Dream Gardens, Adarsh Lumina, Mantri Tranquil, Shriram Suhaana, Prestige Lakeside Habitat)
+- Market insight: 3.5% average monthly absorption rate reflects bifurcated market — Grade A players (Prestige 84.6%, Brigade 75%, Sobha 85%) absorbed well; Grade C stalled projects drag the average
+- LLS entry white space: ₹5,400–6,000 psf mid-segment (Shriram shows strong absorption at this range)
+- Data quality warning: 97.8% null unit_mix; data_source unconfirmed — T-203/T-204 will establish ground truth
+
+**What was done:**
+- TASK_QUEUE.md: T-159 to T-164 (Phase C), T-155, T-158, T-188 → DEFERRED (post-Yelahanka launch)
+- TASK_QUEUE.md: T-186 unblocked → READY (Yelahanka entry thesis ready to draft from existing data)
+- TASK_QUEUE.md: T-189, T-190 blockers removed (Yelahanka-only scheduler, no T-163 dependency)
+- Added 7 new Yelahanka-specific tasks: T-203 (data source audit), T-204 (confidence map), T-205 (CEO Section 7 LLS framing), T-206 (analyst distressed_developer_list query), T-207 (enrichment DB write debug), T-208 (Brigade/Prestige URL fix), T-209 (Yelahanka decision pack merge)
+- T-205 targets: `crews/market_intel_crew.py` `ceo_synthesis` Task — add Section 7 (Entry PSF, JD/JV targets, Grade split, Go/No-Go)
+- T-206 targets: `agents/analyst_agent.py` `MarketSummaryTool._run()` — add `distressed_developers` SQL query (correct column names: `d.name`, `m.name`, `r.absorption_pct`, `r.sold_units`)
+- NEXT_TASKS.md: full 3-week Yelahanka sprint written with week-by-week gates
+
+**Files changed:**
+- `TASK_QUEUE.md` — Phase C deferred; T-186 unblocked; T-189/T-190 blockers removed; T-203–T-209 added to INDEX + DETAIL SPECS
+- `NEXT_TASKS.md` — complete 3-week Yelahanka sprint plan
+- `DEVLOG.md` — this entry
+
+**Yelahanka launch definition:**
+T-194 PASS (overnight run delivers Yelahanka report without manual trigger) = launched.
+
+**What unlocks after launch:**
+- Track A: Multi-market expansion (T-159–T-164 Devanahalli + Hebbal)
+- Track B: Memory layer (pgvector `market_briefings_history` — Brainstorm 001 Phase 2)
+
+---
+
 ## Ideas & Brainstorm Log
 
 > One entry per brainstorm session. Not implementation plans — raw thinking, evaluated ideas, arguments made, conclusions reached, and status. Future sessions pick up from here without re-deriving the same ground.
@@ -827,3 +864,161 @@ What the system can do now that it couldn't before. What's still broken.
 *Last updated: 2026-05-14 by Claude (Brainstorm 001 — Ruflo evaluation)*
 *Update this file after every meaningful change. One entry per phase, not per commit.*
 *Add a brainstorm entry every time a design session, architecture discussion, or idea evaluation happens.*
+
+---
+
+### Phase 17 — RERA Detail Enrichment Recovery (T-138)
+**Date:** 2026-05-18
+**Status:** ✅ Complete
+
+**Situation:**
+`rera_detail_scout` was producing `Enriched projects : 0`. Root cause was dual: listing parser missed JS-only detail triggers (no href), and detail fetch used GET on an endpoint that requires POST with action id.
+
+**What was done:**
+- Updated `scrapers/rera_karnataka.py` table parse to capture `<a id="..." onclick="showFileApplicationPreview">` and synthesize `projectDetails?action=<id>` detail URLs.
+- Updated `scrapers/rera_detail_scout.py` to use ordered candidate detail URLs with resilient fallback (`requests` then Playwright).
+- Added POST handling in detail fetcher for `/projectDetails?action=...` pattern:
+  - sends `POST /projectDetails` with `data={"action": <id>}`.
+
+**Files changed:**
+- `scrapers/rera_karnataka.py` — JS action-id detail URL capture.
+- `scrapers/rera_detail_scout.py` — multi-candidate fallback + POST action fetch.
+- `TASK_QUEUE.md` — T-138 marked DONE.
+- `CHANGELOG.md` — completion entry added.
+
+**Result:**
+Detail enrichment restored. Validation run succeeded:
+- `[RERADetailScout] Yelahanka: 15 enriched | 15 new detail dives`
+- `Enriched projects : 15`
+
+T-138 closed. Next queued task: T-139 (Gemini 429 fallback hardening in news_scout).
+
+---
+
+### Phase 18 — News Scout Gemini 429 Runtime Fallback (T-139)
+**Date:** 2026-05-18
+**Status:** ✅ Complete
+
+**Situation:**
+`news_scout` selected Gemini when `GEMINI_API_KEY` existed, but Gemini runtime 429/quota errors were swallowed by broad exception handling and returned `[]` immediately. Cerebras path was only key-presence branching, not runtime fallback.
+
+**What was done:**
+- Added runtime rate-limit detection helper in `scrapers/news_scout.py` (`_is_rate_limited`) for Gemini 429/quota signatures.
+- Added provider fallback helper (`_call_cerebras_fallback`) to centralize Cerebras inference path.
+- Wrapped Gemini completion with targeted exception handling:
+  - On 429/quota/rate-limit signals: log WARNING and fallback to Cerebras.
+  - On Cerebras fallback failure: log ERROR and return `[]`.
+  - On non-rate-limit Gemini exceptions: re-raise to existing outer handler.
+- Preserved output contract (still returns `list[dict]`, terminal failures still `[]`).
+
+**Files changed:**
+- `scrapers/news_scout.py` — runtime Gemini 429 detection + Cerebras fallback flow.
+- `TASK_QUEUE.md` — T-139 marked DONE.
+- `CHANGELOG.md` — session closure entry added for T-139.
+- `DEVLOG.md` — Phase 18 entry added.
+
+**Result:**
+News scout no longer hard-fails to empty output when Gemini is rate-limited. Runtime provider fallback now executes deterministically with explicit warning/error telemetry. T-139 closed.
+
+---
+
+### Phase 19 — Agent Run Status Canonicalization (T-140)
+**Date:** 2026-05-18
+**Status:** ✅ Complete
+
+**Situation:**
+`agent_runs.status` had mixed legacy values (`completed`, `Completed`, `success`, `In Progress`) causing fragmented status analytics and unreliable status filters.
+
+**What was done:**
+- Applied live SQL normalization in Postgres:
+  - `success` → `completed`
+  - `Completed` → `completed`
+  - `In Progress` → `in_progress`
+- Replaced and hardened status CHECK constraint:
+  - `DROP CONSTRAINT IF EXISTS agent_runs_status_check`
+  - `ADD CONSTRAINT ... CHECK (status IN ('in_progress', 'completed', 'failed', 'skipped'))`
+- Added canonical app-level status constant in `config/settings.py`:
+  - `AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]`
+- Updated closure artifacts:
+  - `TASK_QUEUE.md` — T-140 marked DONE.
+  - `CHANGELOG.md` — T-140 session entry added.
+
+**Files changed:**
+- `config/settings.py` — canonical status constant.
+- `TASK_QUEUE.md` — status update for T-140.
+- `CHANGELOG.md` — T-140 closure entry.
+
+**Validation:**
+- `SELECT status, COUNT(*) FROM agent_runs GROUP BY status ORDER BY status;`
+- Final distribution:
+  - `completed = 31`
+  - `in_progress = 1`
+
+**Result:**
+`agent_runs.status` is now canonical and constrained at DB level. Config and database are aligned. T-140 closed.
+
+---
+
+### Phase 20 — .gitignore Hygiene Closure (T-141)
+**Date:** 2026-05-18
+**Status:** ✅ Complete
+
+**Situation:**
+Generated local artifacts (`kilo_output/`, `kilo_logs/`) must stay excluded from git to prevent noisy diffs and accidental commits of transient AI/runtime outputs.
+
+**What was done:**
+- Verified `.gitignore` already contains both required exclusions:
+  - `kilo_output/`
+  - `kilo_logs/`
+- Closed queue/log artifacts for task completion:
+  - `TASK_QUEUE.md` — T-141 marked `DONE`.
+  - `CHANGELOG.md` — T-141 session entry added.
+
+**Files changed:**
+- `TASK_QUEUE.md` — T-141 status `READY` → `DONE`.
+- `CHANGELOG.md` — T-141 closure entry.
+- `.gitignore` — no content change required (already compliant).
+
+---
+
+### Phase 21 — Review Cycle + Kilo Code Incident #2 Recovery (2026-05-19)
+**Date:** 2026-05-19
+**Status:** ✅ Complete
+
+**Situation:**
+Full review of all Cline and Kilo Code work from 2026-05-18. CHANGELOG.md was overwritten a second time by Kilo Code — same failure mode as Phase 16. The T-051 entry contained TypeScript source files from an unrelated project (a Virtual Office PA streaming feature). Kilo Code also left corrupted status syntax in TASK_QUEUE.md (`.Replace()` artifact) for T-143/T-144. A NVIDIA model name regression was found in settings.py where T-140 stripped vendor-qualified prefixes.
+
+**What Cline built (validated ✅):**
+- T-138: rera_detail_scout multi-URL fallback + POST action fetch → 15 enriched projects
+- T-139: news_scout Gemini 429 → Cerebras fallback (deterministic)
+- T-140: agent_runs status canonicalization + AGENT_RUN_STATUSES constant
+- T-141: .gitignore already compliant
+- T-147: developer_scout DOM extraction rewrite → Godrej 6 projects via Cerebras
+- T-063/T-018/T-024: db_organizer 4 run_*() methods + crew Stage 2 full wiring
+- Crew: all-scouts cache gate, _EXCLUDED.clear() lifecycle, 404→nvidia exclusion, traceback logging
+
+**What Kilo Code produced (validated ✅):**
+- T-143: Multi-market comparison draft → kilo_output/drafts/
+- T-144: Distressed project brief Yelahanka → kilo_output/drafts/
+- T-145: RERA enrichment gaps audit → kilo_output/audits/
+- T-154: Yelahanka wiki draft → kilo_output/drafts/
+
+**Fixes applied by Claude Code:**
+- Restored CHANGELOG.md from git HEAD; added all 2026-05-18 entries
+- Reverted NVIDIA model names: `meta/llama-3.1-405b-instruct`, `nvidia/llama-3.1-nemotron-70b-instruct`, `meta/llama-3.3-70b-instruct`
+- Fixed TASK_QUEUE.md: T-143/T-144/T-145 → DONE; T-152/T-153 → READY; T-157 → SKIP; T-150 blocker cleared
+
+**Files changed:**
+- `CHANGELOG.md` — recovered + 2026-05-18 entries added
+- `config/settings.py` — NVIDIA model names reverted to vendor-qualified
+- `TASK_QUEUE.md` — status corrections + blocker updates
+- `NEXT_TASKS.md` — full 4-week PM plan written
+- `DEVLOG.md` — this entry
+
+**What's next:**
+- Cline: T-150 (integration test) → T-151 → T-159 → T-160 → T-161 → T-162 → T-163 → T-165 → T-166 → T-167
+- Kilo Code: T-153 (developer_scout checkpoint audit), T-185 (news_articles post-T-139)
+- After T-163: Cline moves to Phase D (dashboard) + Phase F (intelligence quality)
+
+**Result:**
+T-141 fully closed with verification-first completion. Generated artifact directories remain excluded from version control.

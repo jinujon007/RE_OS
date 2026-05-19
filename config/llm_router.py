@@ -68,7 +68,7 @@ def get_heavy_llm(temperature: float = 0.1) -> LLM:
             model=f"groq/{GROQ_CEO_MODEL}",
             api_key=GROQ_API_KEY,
             temperature=temperature,
-            max_tokens=512,
+            max_tokens=2048,
             num_retries=3,
         )
     if GEMINI_API_KEY and "gemini" not in _EXCLUDED:
@@ -112,6 +112,7 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
     Analyst Agent — market intelligence synthesis.
     Cerebras primary: 1M tokens/day, 60-100k TPM, completely separate from CEO's Groq budget.
     Groq Scout backup: shares CEO's 30k TPM bucket only if Cerebras unavailable.
+    Gemini 2.5 Flash backup: 250k TPM if Groq also exhausted.
     """
     if CEREBRAS_API_KEY and "cerebras" not in _EXCLUDED:
         logger.info(f"[Router] ANALYSIS tier → Cerebras {CEREBRAS_MODEL} (1M tok/day)")
@@ -120,7 +121,7 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             api_key=CEREBRAS_API_KEY,
             base_url=CEREBRAS_BASE_URL,
             temperature=temperature,
-            max_tokens=1000,
+            max_tokens=4096,
             num_retries=3,
         )
     if GROQ_API_KEY and "groq" not in _EXCLUDED:
@@ -129,7 +130,26 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             model=f"groq/{GROQ_ANALYST_MODEL}",
             api_key=GROQ_API_KEY,
             temperature=temperature,
-            max_tokens=1000,
+            max_tokens=4096,
+            num_retries=3,
+        )
+    if GEMINI_API_KEY and "gemini" not in _EXCLUDED:
+        logger.info(f"[Router] ANALYSIS fallback → Google AI Studio {GEMINI_CEO_MODEL} (250k TPM)")
+        return LLM(
+            model=GEMINI_CEO_MODEL,
+            api_key=GEMINI_API_KEY,
+            temperature=temperature,
+            max_tokens=4096,
+            num_retries=3,
+        )
+    if NVIDIA_API_KEY and "nvidia" not in _EXCLUDED:
+        logger.info(f"[Router] ANALYSIS fallback → NVIDIA NIM {NVIDIA_ANALYST_MODEL} (40 req/min)")
+        return LLM(
+            model=f"openai/{NVIDIA_ANALYST_MODEL}",
+            api_key=NVIDIA_API_KEY,
+            base_url=NVIDIA_BASE_URL,
+            temperature=temperature,
+            max_tokens=4096,
             num_retries=3,
         )
     logger.warning("[Router] ANALYSIS fallback → Ollama (slow)")

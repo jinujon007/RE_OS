@@ -233,28 +233,59 @@ def _ai_analyze_articles(articles: list[dict], market: str) -> list[dict]:
     prompt = NEWS_EXTRACTION_PROMPT + truncated
 
     raw = ""
+
+    def _is_rate_limited(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return (
+            "429" in msg
+            or "rate limit" in msg
+            or "ratelimit" in msg
+            or "too many requests" in msg
+            or "requests per minute" in msg
+            or "tokens per day" in msg
+        )
+
+    def _call_cerebras_fallback(litellm_module):
+        if not CEREBRAS_API_KEY:
+            logger.error("[NewsScout] Gemini fallback requested but CEREBRAS_API_KEY missing")
+            return ""
+        short_prompt = NEWS_EXTRACTION_PROMPT + combined[:2000]
+        resp = litellm_module.completion(
+            model=f"openai/{CEREBRAS_MODEL}",
+            api_key=CEREBRAS_API_KEY,
+            base_url=CEREBRAS_BASE_URL,
+            messages=[{"role": "user", "content": short_prompt}],
+            max_tokens=800,
+            temperature=0.0,
+        )
+        return resp.choices[0].message.content.strip()
+
     try:
         import litellm
         if GEMINI_API_KEY:
-            resp = litellm.completion(
-                model=GEMINI_CEO_MODEL,
-                api_key=GEMINI_API_KEY,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=1500,
-                temperature=0.0,
-            )
-            raw = resp.choices[0].message.content.strip()
+            try:
+                resp = litellm.completion(
+                    model=GEMINI_CEO_MODEL,
+                    api_key=GEMINI_API_KEY,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=1500,
+                    temperature=0.0,
+                )
+                raw = resp.choices[0].message.content.strip()
+            except Exception as gem_exc:
+                if _is_rate_limited(gem_exc):
+                    logger.warning(
+                        f"[NewsScout] Gemini rate-limited (429/quota): {gem_exc} | falling back to Cerebras"
+                    )
+                    try:
+                        raw = _call_cerebras_fallback(litellm)
+                    except Exception as fb_exc:
+                        logger.error(f"[NewsScout] Cerebras fallback failed after Gemini rate-limit: {fb_exc}")
+                        return []
+                else:
+                    raise
         elif CEREBRAS_API_KEY:
-            short_prompt = NEWS_EXTRACTION_PROMPT + combined[:2000]
-            resp = litellm.completion(
-                model=f"openai/{CEREBRAS_MODEL}",
-                api_key=CEREBRAS_API_KEY,
-                base_url=CEREBRAS_BASE_URL,
-                messages=[{"role": "user", "content": short_prompt}],
-                max_tokens=800,
-                temperature=0.0,
-            )
-            raw = resp.choices[0].message.content.strip()
+            raw = _call_cerebras_fallback(litellm)
         else:
             return []
     except Exception as exc:

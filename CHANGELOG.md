@@ -543,7 +543,36 @@ DEVLOG.md | Phase 15 marked Complete; Phase 16 recovery entry added | Claude | 2
 
 ---
 
-*CHANGELOG — Last updated: 2026-05-15 IST*
+---
+
+## Session — Cline 2026-05-18 (Phase A Pipeline Closure — T-138, T-139, T-140, T-141, T-147)
+
+scrapers/rera_karnataka.py | T-138: Capture `<a id="..." onclick="showFileApplicationPreview">` and synthesize `projectDetails?action=<id>` detail URLs from RERA listing table parse (previously extracted 0 detail URLs) | Cline | 2026-05-18
+scrapers/rera_detail_scout.py | T-138: Added `_fetch_with_fallbacks()` multi-URL fallback; POST handling for `/projectDetails?action=` pattern; Playwright fallback iterates all candidate URLs; `nav_only` guard returns empty detail dict when page < 1000 chars. Before: 0 enriched. After: 15 enriched. | Cline | 2026-05-18
+scrapers/news_scout.py | T-139: Added `_is_rate_limited()` helper and `_call_cerebras_fallback()` helper inside `_ai_analyze_articles()`; Gemini 429/quota errors now trigger Cerebras fallback with WARNING log; non-rate-limit Gemini errors re-raise. Before: Gemini 429 swallowed, returned []. After: deterministic Cerebras fallback. | Cline | 2026-05-18
+config/settings.py | T-140: Added `AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]` canonical status constant. SQL migration also applied to live DB (via docker exec): success→completed, Completed→completed, In Progress→in_progress. CHECK constraint re-added. | Cline | 2026-05-18
+.gitignore | T-141: Verified `kilo_output/` and `kilo_logs/` already present — no content change needed. Confirmed compliant. | Cline | 2026-05-18
+scrapers/developer_scout.py | T-147: DOM-targeted extraction via `_extract_dom_snippets()` with BHK+keyword dual-filter (Tier 1) + keyword+noise-filter (Tier 2). DOM threshold lowered 500→200 chars. CRITICAL FIX: Cerebras fallback used `filtered[:2000]` (wrong) — fixed to use `prompt` variable (correct). Before: 0 projects. After: Godrej 6 projects via Cerebras fallback. Brigade/Prestige URLs dead → T-151. | Cline | 2026-05-18
+
+---
+
+## Session — Cline 2026-05-18 (Crew + DB organizer — T-063, T-018, T-024, T-022)
+
+utils/db_organizer.py | Added `run_portal_scout()`, `run_developer_scout()`, `run_news_scout()`, `run_rera_detail_scout()` public methods + `_upsert_listing_by_cid()`, `_insert_news_article()`, `_upsert_rera_detail()` private helpers. run_news_scout() has news_articles table existence guard. | Cline | 2026-05-18
+crews/market_intel_crew.py | Stage 1: Added `scrape_rera_detail`, `scrape_portal`, `scrape_developer`, `scrape_news` Tasks; kaveri context chain updated. Cache skip now requires ALL scouts cached (was RERA-only — caused portal/news scouts to never run on cached days). Stage 2: Added run_portal_scout, run_developer_scout, run_news_scout, run_rera_detail_scout calls loading from checkpoints. Stage 3: _EXCLUDED.clear() before Stage 3 (prevents Gemma exclusion from blocking Gemini Flash). _EXCLUDED.clear() on success and failure exit paths. Traceback logging on exceptions. _RATE_LIMIT_RETRIES 2→3. Rate limit detection: added llm_provider attribute check; added Cerebras "requests per minute" pattern; added 404 → nvidia exclusion. | Cline | 2026-05-18
+agents/scraper_agent.py | T-041 carry-over: NewsScoutTool days_back 14→60 (matches news_scout.py default fix) | Cline | 2026-05-18
+
+---
+
+## Recovery — Claude Code 2026-05-19
+
+CHANGELOG.md | Recovered from git HEAD after Kilo Code second overwrite incident (T-051 TypeScript content from unrelated project pasted as CHANGELOG entry). Added all 2026-05-18 Cline session entries above. | Claude Code | 2026-05-19
+config/settings.py | REGRESSION FIX: NVIDIA model names stripped of vendor prefix by T-140 PR. Reverted to vendor-qualified: `meta/llama-3.1-405b-instruct`, `nvidia/llama-3.1-nemotron-70b-instruct`, `meta/llama-3.3-70b-instruct`. Without vendor prefix, NVIDIA NIM rejects model names (expects `{vendor}/{model}` format in model field). | Claude Code | 2026-05-19
+TASK_QUEUE.md | Corrected status entries: T-143 DONE, T-144 DONE, T-145 DONE (all completed by Kilo Code per kilo_logs); T-153 READY (T-147 now DONE — unblocks PB-2 audit); T-157 SKIP (superseded by T-145 which completed same audit). | Claude Code | 2026-05-19
+
+---
+
+*CHANGELOG — Last updated: 2026-05-19 IST*
 *Update this file immediately after every code, DB, or config change.*
 *Before field required for all changes to existing code/data.*
 *Kilo Code: do NOT write to this file. Write to kilo_logs/CHANGELOG.md only.*

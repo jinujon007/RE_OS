@@ -222,17 +222,23 @@ Developer grades (defined in `config/settings.py`): Grade A = known major brand 
 
 ## Multi-Brain Protocol
 
-Three brains co-develop: **Claude Code** (architect + reviewer), **Cline** (implementer), **Roo Code** (implementer — status uncertain, see AGENTS.md notice).
+Three brains co-develop: **Claude Code** (architect + reviewer), **Cline** (primary implementer), **Kilo Code** (secondary implementer — T0 read-only tasks, free tier).
+
+**Cline and Kilo Code can run simultaneously** without conflicts. Each only picks tasks labeled with its own brain name in TASK_QUEUE.md. Each marks a task IN-PROGRESS before starting — this prevents double-claiming.
+
+**Cline model switching:** Cline has two mode slots — **Plan mode** (reasoning) and **Act mode** (tool execution) — set independently. Every task spec has a `Plan mode:` and `Act mode:` line. Before running any task, Cline tells Jinu which models to set. Jinu switches manually, confirms, then Cline runs. Providers: Ollama (local free), OpenRouter (free models), NinRouter (NVIDIA + Codex). T3/T4 tasks use Codex in Plan mode.
 
 **The loop:**
-- Jinu tells Cline/Roo: *"go do next task"* → brain reads `TASK_QUEUE.md` → picks first READY task with its name → executes → logs → marks DONE → ready for next
-- After 5–7 tasks: Jinu tells Claude: *"review the project development"* → Claude reads all changes, fixes drift, adds new tasks to TASK_QUEUE.md
-- Neither Cline nor Roo Code ever makes architecture decisions. They execute what Claude has specced.
+- Jinu tells Cline: *"go to next task"* → Cline reads TASK_QUEUE.md → picks first `READY / Brain=Cline` row → marks IN-PROGRESS → reads Plan + Act model from spec → tells Jinu which models to set → waits for confirmation → executes → logs → marks DONE → reports next task's models
+- Jinu tells Kilo Code: *"go to next task"* → same loop, only for `Brain=Kilo Code` rows
+- After 5–7 tasks: Jinu tells Claude: *"review the project development"* → Claude reads changes, fixes drift, adds tasks
+- Neither Cline nor Kilo Code ever makes architecture decisions. They execute what Claude has specced.
 
 **Key files for brains:**
-- `AGENTS.md` — protocol, roles, how-to
-- `TASK_QUEUE.md` — the atomic task list (INDEX + DETAIL SPECS)
+- `AGENTS.md` — protocol, roles, model routing, how-to (full detail)
+- `TASK_QUEUE.md` — the atomic task list (INDEX + DETAIL SPECS + model routing at top)
 - `VISION.md` — the 14-phase office vision (context, never deviate from this)
+- `TOOL_GUIDE.md` — tool setup and Cline model routing guide
 
 **Session start read order:** this file → `DEVLOG.md` (last 2 phases only) → `CHANGELOG.md` → `TASK_QUEUE.md` (find next task)
 

@@ -3,9 +3,10 @@
 
 ---
 
-## ⚠️ Tool Stack Update — 2026-05-15
+## ⚠️ Tool Stack Update — 2026-05-16
 **Roo Code shut down on 2026-05-15.** Replaced by **Kilo Code** (VS Code extension, free tier).
 **New tools added: Gemini CLI + Aider (CLI).**
+**Plandex removed 2026-05-16** — Plandex Cloud (api.plandex.ai) decommissioned; v2.x has no Windows binary. Aider covers T3/T4 multi-file tasks.
 Full usage guide → `TOOL_GUIDE.md`
 
 ---
@@ -15,10 +16,11 @@ Full usage guide → `TOOL_GUIDE.md`
 | Brain | Lives in | Role | Strengths | Cost |
 |-------|----------|------|-----------|------|
 | **Claude Code** | VS Code terminal | Principal — architect, reviewer, aligner | Architecture, multi-file analysis, vision alignment, writes specs | Per session |
-| **Cline** | VS Code extension | Implementer A — atomic execution | Single-file edits, terminal runs, config changes, T1–T4 tasks | Switchable per task (see model routing) |
-| **Kilo Code** | VS Code extension | Implementer B — read-only audits | T0 tasks: single-file reads, audits, verify output | Free tier built-in |
+| **Cline** | VS Code extension | Implementer A — single-file atomic tasks | T1/T2 tasks: single-file edits, docker commands, config changes | Switchable per task (see model routing) |
+| **Kilo Code** | VS Code extension | Implementer B — background loop | T0 + evergreen: audits, summaries, drafts, kilo_output only | Free tier built-in |
 | **Gemini CLI** | Terminal (`gemini`) | Large-context reader + summarizer | Read 10+ files at once, codebase Q&A, log analysis | Free: 1,500 req/day |
-| **Aider** | Terminal (`aider`) | Autonomous multi-file editor | Systematic refactors, git-committed changes, test-fix loops | Free via Gemini key |
+| **Aider** | Terminal (`aider`) | Autonomous multi-file editor | T3/T4 tasks + systematic refactors, git-committed changes, test-fix loops | Free via Gemini key |
+| **OpenCode** | Terminal (`opencode`) | Free CLI agent for routine tasks | Read, explain, small 1-file edits — replaces Claude Code for non-architecture asks | Free via OpenRouter |
 
 **RE_OS Crew** is not a development brain. It is the product being built. Do not confuse it with the development brains above.
 
@@ -64,58 +66,119 @@ Full usage guide → `TOOL_GUIDE.md`
 
 **PARALLEL-SAFE PROTOCOL (Cline may be running at the same time):**
 
-1. Open `TASK_QUEUE.md`
-2. Scan the **TASK INDEX** — find the first row where `Status = READY` and `Brain = Kilo Code`
-   - **ONLY pick Brain=Kilo Code rows. Never touch Brain=Cline or Brain=Claude rows.**
-   - This is a hard rule for parallel-safe operation. Do not make exceptions.
-3. **Immediately mark that row `IN-PROGRESS`** in the INDEX — save the file. This claims the task.
-4. Read the full DETAIL SPEC before doing anything else
-5. Execute exactly as written
-6. Write logs (see below). Mark DONE (or NEEDS-FIX) in TASK_QUEUE.md INDEX.
-7. Return to step 2.
+**Three-tier loop — work top to bottom, return to top after each task:**
+
+```
+TIER 1 — Urgent (explicitly assigned by Claude)
+  → Scan TASK_QUEUE.md INDEX for first READY row where Brain = Kilo Code
+  → If found: claim it (mark IN-PROGRESS), execute, log, mark DONE, return to TIER 1
+
+TIER 2 — Ready prep (pre-audits for upcoming blocked tasks)
+  → Scan TASK_QUEUE.md INDEX for READY Brain=Kilo Code rows not yet taken
+  → Same claim/execute/log cycle as Tier 1
+
+TIER 3 — Evergreen (always available, never blocked, never empty)
+  → See TASK_QUEUE.md § EVERGREEN TASKS
+  → Pick next evergreen task in rotation
+  → Execute, write output to kilo_output/, log to kilo_logs/CHANGELOG.md
+  → Return to TIER 1 (check if new Tier 1/2 tasks appeared)
+```
+
+**Only pick Brain=Kilo Code rows. Never touch Brain=Cline or Brain=Claude rows.**
+This is a hard rule for parallel-safe operation. No exceptions.
 
 **Model:** Kilo Code free tier uses its built-in default model. No model selection needed.
 
+---
+
+**Write zones — where Kilo Code is allowed to write:**
+
+| Zone | What it's for | Allowed? |
+|------|--------------|---------|
+| `kilo_output/summaries/` | Log digests, DB snapshots, inventories | ✅ YES |
+| `kilo_output/audits/` | Mismatch reports, flagged issues | ✅ YES |
+| `kilo_output/drafts/` | New file drafts awaiting Claude review | ✅ YES |
+| `kilo_output/queue/` | Task spec drafts for Claude to finalize | ✅ YES |
+| `kilo_logs/CHANGELOG.md` | Kilo Code session log | ✅ YES |
+| Any existing production file | — | ❌ NEVER |
+| Root `CHANGELOG.md` | — | ❌ NEVER |
+| `TASK_QUEUE.md` | — | ❌ NEVER (read-only for Kilo Code) |
+| `DEVLOG.md` | — | ❌ NEVER |
+| `AGENTS.md` | — | ❌ NEVER |
+| `NEXT_TASKS.md` | — | ❌ NEVER |
+
+**Kilo Code creates new files in kilo_output/. It never edits existing production files.**
+This is the core safety boundary. CHANGELOG.md has been overwritten twice — this rule is ABSOLUTE.
+
+**⚠️ INCIDENT LOG:**
+- Phase 16 (2026-05-15): Kilo Code (T-038) replaced 534-line CHANGELOG.md with 36-line task spec dump.
+- Phase 21 (2026-05-19): Kilo Code replaced 549-line CHANGELOG.md with T-051 TypeScript content from an unrelated project.
+- Both incidents recovered from git. Root cause: Kilo Code treating CHANGELOG.md as a task output file.
+- Prevention: CHANGELOG.md is NEVER a Kilo Code output target. Log to `kilo_logs/CHANGELOG.md` ONLY.
+
+---
+
+**What Kilo Code CAN do (expanded from T0-only):**
+- Read any file, any size — no line limit
+- Run read-only terminal commands: `docker compose ps`, `SELECT` queries, `ls outputs/`, `cat logs/`
+- Create new files inside `kilo_output/` or `kilo_logs/`
+- Audit, analyse, draft, summarize, propose specs
+
+**What Kilo Code CANNOT do:**
+- Edit any existing file outside `kilo_output/` or `kilo_logs/`
+- Run docker exec write operations (INSERT, UPDATE, DROP, restart)
+- Git commits or git operations
+- Take tasks marked Brain=Cline or Brain=Claude
+
+---
+
 **Logging — ONE file only:**
 
-**`kilo_logs/CHANGELOG.md`** — Kilo Code's ONLY log file. Write all findings here.
+**`kilo_logs/CHANGELOG.md`** — Kilo Code's session log.
 ```
 ## T-XXX | Task Title | PASS/FAIL/DONE | YYYY-MM-DD HH:MM
 
 **Findings:**
-- answer to question 1
-- answer to question 2
+- key finding 1
+- key finding 2
+**Output written to:** kilo_output/[path]
 **Status change:** T-XXX → DONE
 ```
 
-⚠️ **DO NOT TOUCH root `CHANGELOG.md`** — Kilo Code's write tool replaces the entire file. Root CHANGELOG.md is off-limits. Claude harvests kilo_logs entries into root CHANGELOG.md during review cycles.
+For evergreen tasks:
+```
+## EG-XXX | Task Title | DONE | YYYY-MM-DD HH:MM
 
-⚠️ **CRITICAL: Never paste task specs into any log file.** The spec already lives in TASK_QUEUE.md — do not copy it anywhere.
+**Output written to:** kilo_output/[path/filename]
+**Summary:** one line of what was found
+```
 
-**Hard limits for Kilo Code free tier:**
-- Only T0 tasks (read-only: audit, verify, diagnose)
-- Do NOT take tasks requiring any file edits
-- Do NOT take tasks where the file is >300 lines (check line count first via `wc -l` or count in preview)
-- Do NOT take Claude-assigned tasks
-- Do NOT take Tier T2+ tasks (docker commands, multi-step)
-- **Do NOT write to root `CHANGELOG.md`** — only write to `kilo_logs/CHANGELOG.md`
+⚠️ **CRITICAL: Never paste task specs into any log file.** Specs live in TASK_QUEUE.md — do not copy them.
+
+---
 
 **On context limit / file too long:**
 1. STOP immediately
-2. Write to `kilo_logs/CHANGELOG.md`: full escalation note with reason
-3. In TASK_QUEUE.md: change Brain `Kilo Code` → `Cline`, Status `IN-PROGRESS` → `READY`.
-4. Move to the next Kilo Code task.
+2. Write to `kilo_logs/CHANGELOG.md`: escalation note with reason and file name
+3. In TASK_QUEUE.md: change Brain `Kilo Code` → `Cline`, Status `IN-PROGRESS` → `READY`
+4. Move to next Kilo Code task (Tier 1 → Tier 2 → Tier 3)
+
+### OpenCode — NOT a task-picker (ROUTINE READS + SMALL EDITS)
+OpenCode does not pick tasks from TASK_QUEUE.md. Jinu triggers it directly for routine questions.
+Used for: "what does X do?", "read this log and explain", "add this import line".
+It replaces Claude Code sessions for anything that does not require architecture thinking.
+See `TOOL_GUIDE.md § 7` for exact commands.
 
 ### Gemini CLI — NOT a task-picker (READ + ANALYZE only)
 Gemini CLI does not pick tasks from TASK_QUEUE.md. Jinu triggers it directly.
 Used for: "read all 5 scraper files and tell me what's broken", "summarize crew.log", "what does scout_memory.py do?"
 See `TOOL_GUIDE.md` for exact commands.
 
-### Aider — NOT a task-picker (TARGETED REFACTORS)
+### Aider — NOT a task-picker (MULTI-FILE EDITS + REFACTORS)
 Aider does not pick tasks from TASK_QUEUE.md. Jinu triggers it directly.
-Used for: systematic bug fixes across files, rename-and-replace refactors, test fix loops.
+Used for: T3/T4 tasks touching 2+ files, systematic bug fixes, rename-and-replace refactors, test fix loops.
 Always runs in `/architect` mode. Always commits to git after changes.
-See `TOOL_GUIDE.md` for exact commands.
+See `TOOL_GUIDE.md § 5` for exact commands.
 
 ### Claude Code — review cycle
 Claude does NOT pick tasks from TASK_QUEUE.md during normal operation.

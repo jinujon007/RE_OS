@@ -97,6 +97,150 @@ class DBOrganizer:
         )
         return stats
 
+    def run_portal_scout(self, market_name: str, findings: list) -> dict:
+        """Upsert portal scout findings into listings table using cid."""
+        started = time.time()
+        upserted = failed = 0
+        table = "listings"
+
+        for rec in findings:
+            try:
+                with self.engine.begin() as conn:
+                    market_id = self._get_market_id_by_name(conn, market_name)
+                    self._upsert_listing_by_cid(conn, rec, market_id)
+                    upserted += 1
+            except Exception as exc:
+                logger.error(f"[Organizer] portal upsert failed: {exc}")
+                failed += 1
+
+        duration = int(time.time() - started)
+        logger.info(f"[Organizer] {market_name}: {upserted} records upserted into {table}")
+        return {
+            "market": market_name,
+            "total": len(findings),
+            "upserted": upserted,
+            "failed": failed,
+            "duration_seconds": duration,
+        }
+
+    def run_developer_scout(self, market_name: str, findings: list) -> dict:
+        """Upsert developer scout findings into listings table using cid."""
+        started = time.time()
+        upserted = failed = 0
+        table = "listings"
+
+        for rec in findings:
+            try:
+                with self.engine.begin() as conn:
+                    market_id = self._get_market_id_by_name(conn, market_name)
+                    source_val = str(rec.get("source", "developer")).strip() or "developer"
+                    if not source_val.startswith("dev_"):
+                        rec = dict(rec)
+                        rec["source"] = f"dev_{source_val}"
+                    self._upsert_listing_by_cid(conn, rec, market_id)
+                    upserted += 1
+            except Exception as exc:
+                logger.error(f"[Organizer] developer upsert failed: {exc}")
+                failed += 1
+
+        duration = int(time.time() - started)
+        logger.info(f"[Organizer] {market_name}: {upserted} records upserted into {table}")
+        return {
+            "market": market_name,
+            "total": len(findings),
+            "upserted": upserted,
+            "failed": failed,
+            "duration_seconds": duration,
+        }
+
+    def run_news_scout(self, market_name: str, findings: list) -> dict:
+        """Insert news findings into news_articles; skip safely if table missing."""
+        started = time.time()
+        inserted = failed = 0
+        table = "news_articles"
+
+        with self.engine.begin() as conn:
+            exists = conn.execute(text("SELECT to_regclass('public.news_articles')")).scalar()
+
+        if not exists:
+            logger.warning(
+                "[Organizer] news_articles table missing. Skipping run_news_scout without failing pipeline."
+            )
+            return {
+                "market": market_name,
+                "total": len(findings),
+                "inserted": 0,
+                "failed": 0,
+                "duration_seconds": int(time.time() - started),
+            }
+
+        for rec in findings:
+            try:
+                with self.engine.begin() as conn:
+                    self._insert_news_article(conn, rec)
+                    inserted += 1
+            except Exception as exc:
+                logger.error(f"[Organizer] news insert failed: {exc}")
+                failed += 1
+
+        duration = int(time.time() - started)
+        logger.info(f"[Organizer] {market_name}: {inserted} records upserted into {table}")
+        return {
+            "market": market_name,
+            "total": len(findings),
+            "inserted": inserted,
+            "failed": failed,
+            "duration_seconds": duration,
+        }
+
+    def run_rera_detail_scout(self, market_name: str, findings: list) -> dict:
+        """Upsert RERA detail enriched data into rera_projects (Stage 2 upsert).
+
+        Maps enriched fields (unit_mix, project_cost_crore, amenities, approvals, etc.)
+        to typed rera_projects columns. Creates record if rera_number not yet in DB.
+
+        Returns stats dict: {inserted, updated, skipped, failed, duration_seconds}.
+        """
+        started = time.time()
+        inserted = updated = skipped = failed = 0
+
+        logger.info(
+            f"[DBOrganizer] RERA detail upsert for {market_name} — {len(findings)} records"
+        )
+
+        for rec in findings:
+            rera_num = str(rec.get("rera_number", "")).strip()
+            if not rera_num:
+                skipped += 1
+                continue
+            try:
+                with self.engine.begin() as conn:
+                    action = self._upsert_rera_detail(conn, rec)
+                    if action == "inserted":
+                        inserted += 1
+                    elif action == "updated":
+                        updated += 1
+                    else:
+                        skipped += 1
+            except Exception as exc:
+                logger.error(f"[DBOrganizer] rera_detail upsert failed for {rera_num}: {exc}")
+                failed += 1
+
+        duration = int(time.time() - started)
+        logger.info(
+            f"[DBOrganizer] RERA detail done — {inserted} inserted, {updated} updated, "
+            f"{skipped} no-match, {failed} failed ({duration}s)"
+        )
+        return {
+            "market": market_name,
+            "total": len(findings),
+            "inserted": inserted,
+            "updated": updated,
+            "skipped": skipped,
+            "failed": failed,
+            "duration_seconds": duration,
+        }
+
     # ── Developer ──────────────────────────────────────────────────────────────
 
     def _upsert_developer(self, conn, project: dict) -> str | None:
@@ -423,6 +567,276 @@ class DBOrganizer:
             params,
         )
 
+    def _upsert_listing_by_cid(self, conn, rec: dict, market_id: str | None):
+        cid = str(rec.get("cid", "")).strip()
+        if not cid:
+            raise ValueError("listing record missing cid")
+
+        source = str(rec.get("source", "unknown")).strip() or "unknown"
+        project_name = rec.get("project_name")
+        locality = rec.get("locality")
+        scraped_at = _safe_date(rec.get("scraped_at")) or datetime.utcnow().strftime("%Y-%m-%d")
+        listed_price = float(rec.get("price_min", 0) or 0)
+
+        conn.execute(
+            text("""
+            INSERT INTO listings (
+                source, source_listing_id, micro_market_id,
+                address, locality, listed_price,
+                listed_at, first_seen_at, last_seen_at,
+                raw_data, data_source
+            ) VALUES (
+                :source, :cid, :market_id,
+                :project_name, :locality, :listed_price,
+                :listed_at, NOW(), NOW(),
+                CAST(:raw_data AS jsonb), 'portal_scraped'
+            )
+            ON CONFLICT (source, source_listing_id) DO UPDATE SET
+                micro_market_id = EXCLUDED.micro_market_id,
+                address = EXCLUDED.address,
+                locality = EXCLUDED.locality,
+                listed_price = EXCLUDED.listed_price,
+                listed_at = EXCLUDED.listed_at,
+                last_seen_at = NOW(),
+                raw_data = EXCLUDED.raw_data,
+                updated_at = NOW()
+        """),
+            {
+                "source": source,
+                "cid": cid,
+                "market_id": market_id,
+                "project_name": project_name,
+                "locality": locality,
+                "listed_price": listed_price,
+                "listed_at": scraped_at,
+                "raw_data": json.dumps(rec, default=str),
+            },
+        )
+
+    def _insert_news_article(self, conn, rec: dict):
+        params = {
+            "cid": rec.get("cid", ""),
+            "title": rec.get("title", ""),
+            "source": rec.get("source", "unknown"),
+            "url": rec.get("url", ""),
+            "published_at": _safe_date(rec.get("published_at") or rec.get("date")),
+            "summary": rec.get("summary", ""),
+            "raw_data": json.dumps(rec, default=str),
+        }
+        conn.execute(
+            text("""
+            INSERT INTO news_articles (cid, title, source, source_url, published_at, summary, raw_data)
+            VALUES (:cid, :title, :source, :url, :published_at, :summary, CAST(:raw_data AS jsonb))
+            ON CONFLICT (cid) DO NOTHING
+        """),
+            params,
+        )
+
+    def _upsert_rera_detail(self, conn, rec: dict) -> str:
+        """Upsert RERA detail enriched fields into rera_projects.
+
+        Maps enriched fields to typed columns:
+          unit_mix            → unit_mix JSONB
+          project_cost_crore  → estimated_project_cost
+          site_area_sqft      → total_land_area_sqm (×0.0929)
+          fsi_utilized        → total_built_up_area_sqm (× land area)
+          total_units         → total_units
+          bda_approval_no     → architect_name
+          bbmp_approval_no    → ca_name
+          no_of_floors        → no_of_floors (extra JSONB field)
+          amenities           → amenities JSONB
+          completion_pct      → completion_pct
+          possession_date     → possession_date
+          plan_approval_date → plan_approval_date
+          bda_approval_no     → bda_approval_no
+          bbmp_approval_no    → bbmp_approval_no
+          project_address     → address (fallback)
+
+        Returns 'inserted', 'updated', or 'skipped'.
+        """
+        rera_num = str(rec.get("rera_number", "")).strip()
+
+        # Build area conversions
+        site_area_sqft = float(rec.get("site_area_sqft", 0) or 0)
+        total_land_sqm = round(site_area_sqft * 0.0929, 2) if site_area_sqft else None
+
+        fsi_utilized = float(rec.get("fsi_utilized", 0) or 0)
+        total_built_sqm = None
+        if fsi_utilized and total_land_sqm:
+            total_built_sqm = round(fsi_utilized * total_land_sqm, 2)
+
+        project_cost = float(rec.get("project_cost_crore", 0) or 0)
+        # Store cost in rupees (crore × 10_000_000), match estimated_project_cost DECIMAL(15,2)
+        cost_rupees = round(project_cost * 10_000_000, 2) if project_cost else None
+
+        total_units = int(rec.get("total_units", 0) or 0) or None
+        no_of_floors = int(rec.get("no_of_floors", 0) or 0) or None
+        completion_pct = float(rec.get("completion_pct", 0) or 0) or None
+
+        # Build unit_mix JSONB
+        unit_mix = rec.get("unit_mix")
+        if unit_mix is not None:
+            unit_mix = json.dumps(unit_mix, default=str)
+
+        # Build amenities JSONB
+        amenities = rec.get("amenities")
+        if amenities is not None:
+            amenities = json.dumps(amenities, default=str)
+
+        # Build extra JSONB for fields not in rera_projects schema
+        extra = {}
+        if no_of_floors is not None:
+            extra["no_of_floors"] = no_of_floors
+        bda_no = rec.get("bda_approval_no")
+        if bda_no:
+            extra["bda_approval_no"] = bda_no
+        bbmp_no = rec.get("bbmp_approval_no")
+        if bbmp_no:
+            extra["bbmp_approval_no"] = bbmp_no
+        extra_json = json.dumps(extra, default=str) if extra else None
+
+        # Check if record exists
+        existing = conn.execute(
+            text("SELECT id FROM rera_projects WHERE rera_number = :rn"),
+            {"rn": rera_num},
+        ).fetchone()
+
+        # Build params for upsert — only include non-None values
+        params = {"rn": rera_num}
+        set_clauses = ["last_scraped_at = NOW()"]
+
+        if total_units is not None:
+            params["total_units"] = total_units
+            set_clauses.append("total_units = :total_units")
+
+        if total_land_sqm is not None:
+            params["total_land_area_sqm"] = total_land_sqm
+            set_clauses.append("total_land_area_sqm = :total_land_area_sqm")
+
+        if total_built_sqm is not None:
+            params["total_built_up_area_sqm"] = total_built_sqm
+            set_clauses.append("total_built_up_area_sqm = :total_built_up_area_sqm")
+
+        if cost_rupees is not None:
+            params["estimated_project_cost"] = cost_rupees
+            set_clauses.append("estimated_project_cost = :estimated_project_cost")
+
+        if unit_mix is not None:
+            params["unit_mix"] = unit_mix
+            set_clauses.append("unit_mix = CAST(:unit_mix AS jsonb)")
+
+        if amenities is not None:
+            params["amenities"] = amenities
+            set_clauses.append("amenities = CAST(:amenities AS jsonb)")
+
+        if completion_pct is not None:
+            params["completion_pct"] = completion_pct
+            set_clauses.append("completion_pct = :completion_pct")
+
+        # Map bda → architect_name, bbmp → ca_name
+        if bda_no:
+            params["architect_name"] = bda_no
+            set_clauses.append("architect_name = :architect_name")
+
+        if bbmp_no:
+            params["ca_name"] = bbmp_no
+            set_clauses.append("ca_name = :ca_name")
+
+        poss_date = _safe_date(rec.get("possession_date"))
+        if poss_date:
+            params["possession_date"] = poss_date
+            set_clauses.append("possession_date = :possession_date")
+
+        plan_date = _safe_date(rec.get("plan_approval_date"))
+        if plan_date:
+            params["plan_approval_date"] = plan_date
+            set_clauses.append("plan_approval_date = :plan_approval_date")
+
+        # Fallback address from project_address if rera_projects.address is NULL
+        project_addr = rec.get("project_address")
+        if project_addr:
+            params["project_address"] = project_addr
+            set_clauses.append(
+                "address = COALESCE(NULLIF(address, ''), :project_address)"
+            )
+
+        if extra_json:
+            params["extra"] = extra_json
+            set_clauses.append("raw_data = COALESCE(raw_data, '{}'::jsonb) || CAST(:extra AS jsonb)")
+
+        # Merge raw_data enrichment (always — for fields like unit_mix that might not be typed yet)
+        raw_enrich = {
+            k: v for k, v in {
+                "unit_mix": rec.get("unit_mix"),
+                "project_cost_crore": rec.get("project_cost_crore"),
+                "completion_pct": rec.get("completion_pct"),
+                "amenities": rec.get("amenities"),
+                "bda_approval_no": bda_no,
+                "bbmp_approval_no": bbmp_no,
+                "no_of_floors": no_of_floors,
+                "plan_approval_date": plan_date,
+            }.items() if v is not None
+        }
+        if raw_enrich:
+            params["raw_extra"] = json.dumps(raw_enrich, default=str)
+            set_clauses.append("raw_data = COALESCE(raw_data, '{}'::jsonb) || CAST(:raw_extra AS jsonb)")
+
+        set_clause = ", ".join(set_clauses)
+
+        conn.execute(
+            text(f"""
+            INSERT INTO rera_projects (
+                rera_number, project_name, developer_id, address,
+                total_units, unit_mix, estimated_project_cost,
+                total_land_area_sqm, total_built_up_area_sqm,
+                architect_name, ca_name, amenities,
+                completion_pct, possession_date, plan_approval_date,
+                last_scraped_at, data_source, raw_data
+            ) VALUES (
+                :rn,
+                :project_name,
+                (SELECT id FROM developers WHERE LOWER(name) = LOWER(:developer)) LIMIT 1,
+                COALESCE(NULLIF(:project_address, ''), address),
+                COALESCE(:total_units, total_units),
+                COALESCE(CAST(:unit_mix AS jsonb), unit_mix),
+                COALESCE(:estimated_project_cost, estimated_project_cost),
+                COALESCE(:total_land_area_sqm, total_land_area_sqm),
+                COALESCE(:total_built_up_area_sqm, total_built_up_area_sqm),
+                COALESCE(:architect_name, architect_name),
+                COALESCE(:ca_name, ca_name),
+                COALESCE(CAST(:amenities AS jsonb), amenities),
+                COALESCE(:completion_pct, completion_pct),
+                COALESCE(:possession_date, possession_date),
+                COALESCE(:plan_approval_date, plan_approval_date),
+                NOW(),
+                'detail_scout',
+                CAST(:raw_extra AS jsonb)
+            )
+            ON CONFLICT (rera_number) DO UPDATE SET
+                {set_clause}
+        """),
+            {
+                **params,
+                "project_name": rec.get("project_name", ""),
+                "developer": rec.get("developer", ""),
+                "project_address": rec.get("project_address", ""),
+                # Provide defaults for the INSERT clause (will be overridden by COALESCE)
+                "total_units": total_units,
+                "unit_mix": unit_mix,
+                "estimated_project_cost": cost_rupees,
+                "total_land_area_sqm": total_land_sqm,
+                "total_built_up_area_sqm": total_built_sqm,
+                "architect_name": bda_no,
+                "ca_name": bbmp_no,
+                "amenities": amenities,
+                "completion_pct": completion_pct,
+                "possession_date": poss_date,
+                "plan_approval_date": plan_date,
+            },
+        )
+
+        return "updated" if existing else "inserted"
+
     # ── Run logging ────────────────────────────────────────────────────────────
 
     def _log_run(self, market_name: str, stats: dict):
@@ -433,11 +847,11 @@ class DBOrganizer:
                     INSERT INTO agent_runs (
                         agent_name, task_type, micro_market, status,
                         records_inserted, records_updated, records_failed,
-                        completed_at
+                        duration_seconds, completed_at
                     ) VALUES (
                         'organizer', 'rera_ingest', :market, 'completed',
                         :inserted, :updated, :failed,
-                        NOW()
+                        :duration, NOW()
                     )
                 """),
                     {
@@ -445,6 +859,7 @@ class DBOrganizer:
                         "inserted": stats.get("inserted", 0),
                         "updated": stats.get("updated", 0),
                         "failed": stats.get("failed", 0),
+                        "duration": stats.get("duration_seconds", 0),
                     },
                 )
         except Exception as exc:

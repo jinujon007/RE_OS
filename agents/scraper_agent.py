@@ -214,7 +214,7 @@ class NewsScoutTool(BaseTool):
         try:
             memory = ScoutMemory(market_name)
             scout = NewsScout(market_name, memory)
-            findings = scout.scout(days_back=14)
+            findings = scout.scout(days_back=60)
             new_count = sum(1 for f in findings if f.get("is_new"))
             Checkpointer().save(market_name, "news_scout", findings)
             return json.dumps({

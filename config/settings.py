@@ -116,3 +116,6 @@ GRADE_A_MIN_UNITS = 500
 
 # Grade B: 100-499 units
 GRADE_B_MIN_UNITS = 100
+
+# ── AGENT RUN STATUSES ────────────────────────────────────────────────────────
+AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]

@@ -173,6 +173,12 @@ class RERAKarnatakaScraper:
                         detail_url = href
                     elif href.startswith("/"):
                         detail_url = self.BASE_URL + href
+                else:
+                    action_link = tds[3].select_one("a[id]")
+                    if action_link and action_link.get("id"):
+                        action_id = self._clean(action_link.get("id"))
+                        if action_id:
+                            detail_url = f"{self.BASE_URL}/projectDetails?action={action_id}"
 
             project = {
                 "rera_number": project_id,

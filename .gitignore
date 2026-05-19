@@ -17,6 +17,8 @@ build/
 # Logs & outputs (don't commit run data)
 logs/
 outputs/
+kilo_output/
+kilo_logs/
 
 # Docker volumes
 postgres_data/
@@ -52,3 +54,15 @@ crew_run.txt
 .coverage
 htmlcov/
 .gstack/
+.aider*
+
+# Temporary debug/test scripts (never source)
+tmp_*.py
+
+# Backup files
+*.bak
+
+# Internal ops docs (private LLS context — not for public repo)
+BRAIN_BRIEF.md
+NEXT_TASKS.md
+plans/(CAI)*

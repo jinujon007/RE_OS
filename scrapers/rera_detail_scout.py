@@ -147,7 +147,11 @@ def _ai_extract_detail(text: str) -> dict:
 
 def _fetch_detail_page_requests(detail_url: str, session: requests.Session) -> str:
     try:
-        resp = session.get(detail_url, timeout=30)
+        if "/projectDetails?action=" in detail_url:
+            action = detail_url.split("action=", 1)[-1].strip()
+            resp = session.post(f"{RERA_BASE}/projectDetails", data={"action": action}, timeout=30)
+        else:
+            resp = session.get(detail_url, timeout=30)
         time.sleep(1)
         if resp.status_code == 200:
             return _clean_html(resp.text)
@@ -155,6 +159,22 @@ def _fetch_detail_page_requests(detail_url: str, session: requests.Session) -> s
     except requests.exceptions.RequestException as exc:
         logger.debug(f"[RERADetailScout] Request error: {exc}")
     return ""
+
+
+def _fetch_with_fallbacks(url_candidates: list[str], session: requests.Session) -> tuple[str, str]:
+    """Try multiple candidate URLs; return first page with meaningful content."""
+    best_text = ""
+    best_url = ""
+    for url in url_candidates:
+        if not url:
+            continue
+        text = _fetch_detail_page_requests(url, session)
+        if len(text) > len(best_text):
+            best_text = text
+            best_url = url
+        if len(text) >= 1000:
+            return text, url
+    return best_text, best_url
 
 
 def _fetch_detail_page_playwright(detail_url: str) -> str:
@@ -256,19 +276,53 @@ class RERADetailScout:
         if not rera_number:
             return None
 
-        if not detail_url:
-            detail_url = self._build_detail_url(rera_number)
+        candidate_urls = self._build_detail_urls(rera_number, detail_url)
+        detail_url = candidate_urls[0]
 
         logger.info(f"[RERADetailScout] Diving: {project_name} ({rera_number})")
 
-        text = _fetch_detail_page_requests(detail_url, self.session)
+        text, used_url = _fetch_with_fallbacks(candidate_urls, self.session)
+        if used_url:
+            detail_url = used_url
         if len(text) < 200:
-            text = _fetch_detail_page_playwright(detail_url)
+            for url in candidate_urls:
+                ptext = _fetch_detail_page_playwright(url)
+                if len(ptext) > len(text):
+                    text = ptext
+                    detail_url = url
+                if len(text) >= 1000:
+                    break
+        nav_only = False
+        if len(text) < 1000:
+            nav_only = True
+            logger.warning(
+                f"[RERADetailScout] detail page returned nav-only content for {rera_number}"
+            )
+
         if len(text) < 100:
             logger.debug(f"[RERADetailScout] Insufficient content for {rera_number}")
             return None
 
         details = _ai_extract_detail(text)
+        if nav_only:
+            details = {
+                "total_units": None,
+                "unit_mix": None,
+                "site_area_sqft": None,
+                "site_area_acres": None,
+                "project_cost_crore": None,
+                "fsi_utilized": None,
+                "total_wings": None,
+                "bda_approval_no": None,
+                "bbmp_approval_no": None,
+                "plan_approval_date": None,
+                "possession_date": None,
+                "project_address": None,
+                "promoter_address": None,
+                "completion_pct": None,
+                "no_of_floors": None,
+                "amenities": None,
+            }
 
         enriched = {
             "cid": ScoutMemory.cid_rera(rera_number),
@@ -301,13 +355,29 @@ class RERADetailScout:
         }
         return enriched
 
-    def _build_detail_url(self, rera_number: str) -> str:
-        # The RERA portal detail URL requires the internal project ID, not RERA number.
-        # As a fallback, try searching by RERA number on the listing page.
-        # detail_url should ideally be captured from the listing table (col 3 href).
-        # This fallback builds a search URL that will navigate to the project.
+    def _build_detail_urls(self, rera_number: str, detail_url: str = "") -> list[str]:
+        """Build ordered candidate detail URLs for resilient fallback."""
+        urls: list[str] = []
+        if detail_url:
+            urls.append(detail_url)
+
         encoded = rera_number.replace("/", "%2F")
-        return f"{RERA_BASE}/viewAllProjects?regNo={encoded}"
+        # Legacy/search endpoints observed in portal flows.
+        urls.extend([
+            f"{RERA_BASE}/viewPromoterProjectDetails?regNo={encoded}",
+            f"{RERA_BASE}/viewProjectDetails?regNo={encoded}",
+            f"{RERA_BASE}/viewAllProjectDetails?regNo={encoded}",
+            f"{RERA_BASE}/projectViewDetails?regNo={encoded}",
+        ])
+
+        # De-dupe preserving order.
+        seen = set()
+        ordered = []
+        for u in urls:
+            if u and u not in seen:
+                seen.add(u)
+                ordered.append(u)
+        return ordered
 
 
 # ── Standalone runner ─────────────────────────────────────────────────────────

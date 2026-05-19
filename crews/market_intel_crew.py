@@ -49,14 +49,24 @@ from utils.db_organizer import DBOrganizer
 
 # ── Rate-limit retry: exclude failing providers on the fly ─────────────────────
 
-_RATE_LIMIT_RETRIES = 2
+_RATE_LIMIT_RETRIES = 3
 
 
 def _detect_rate_limited_provider(exc: Exception) -> str | None:
     """Return the provider name if the error is a rate limit from a known provider,
     or None otherwise."""
+    # LiteLLM sets llm_provider on its exception objects — check that first
+    provider_attr = getattr(exc, "llm_provider", None)
+    if provider_attr:
+        p = provider_attr.lower()
+        for name in ("cerebras", "groq", "nvidia", "openrouter"):
+            if name in p:
+                return name
+        if "gemini" in p or "google" in p:
+            return "gemini"
+
     msg = str(exc).lower()
-    if "cerebras" in msg or "token_quota_exceeded" in msg:
+    if "cerebras" in msg or "token_quota_exceeded" in msg or "tokens per day" in msg:
         return "cerebras"
     if "groq" in msg:
         return "groq"
@@ -64,8 +74,24 @@ def _detect_rate_limited_provider(exc: Exception) -> str | None:
         return "gemini"
     if "nvidia" in msg:
         return "nvidia"
+    if ("404" in msg or "page not found" in msg) and "nvidia" not in _EXCLUDED:
+        return "nvidia"
     if "openrouter" in msg:
         return "openrouter"
+    # Cerebras rate limit says "OpenAIException - Requests per minute limit exceeded" (no
+    # "cerebras" in the message). Groq sometimes returns "Invalid response from LLM call -
+    # None or empty" instead of a 429 when overloaded or output is truncated. Treat both as
+    # transient provider failures and attribute to the first non-excluded active provider.
+    if (
+        "requests per minute" in msg
+        or "too many requests" in msg
+        or "rate limit" in msg
+        or "none or empty" in msg
+        or "invalid response from llm" in msg
+    ):
+        for provider in ("cerebras", "groq", "gemini", "nvidia", "openrouter"):
+            if provider not in _EXCLUDED:
+                return provider
     return None
 
 
@@ -111,6 +137,21 @@ def _build_data_crew(market_name: str) -> Crew:
         agent=scraper,
     )
 
+    scrape_rera_detail = Task(
+        description=(
+            f"Enrich RERA project records for {market_name} with full detail page data. "
+            f"Call the rera_detail_scout tool with input '{market_name}'. "
+            f"The tool reads the RERA checkpoint automatically — do NOT pass a file path. "
+            f"It extracts unit mix, project costs, approval numbers, and completion stages. "
+            f"Return a brief summary: how many projects enriched."
+        ),
+        expected_output=(
+            f"One line: 'Enriched N RERA projects for {market_name} with detail data.'"
+        ),
+        agent=scraper,
+        context=[scrape_rera],
+    )
+
     scrape_listings = Task(
         description=(
             f"Scrape current property listings for: {market_name}. "
@@ -119,7 +160,51 @@ def _build_data_crew(market_name: str) -> Crew:
         ),
         expected_output=(f"One line: 'Found N listings for {market_name}.'"),
         agent=scraper,
-        context=[scrape_rera],
+        context=[scrape_rera_detail],
+    )
+
+    scrape_portal = Task(
+        description=(
+            f"Scout 7 property portals for active {market_name} listings. "
+            f"Call the portal_scout tool with input '{market_name}'. "
+            f"The tool covers 99acres, Housing.com, MagicBricks, PropTiger, NoBroker, SquareYards. "
+            f"It saves data to disk automatically. Return a brief summary: "
+            f"how many listings found and how many are new discoveries."
+        ),
+        expected_output=(
+            f"One line: 'Found N portal listings for {market_name} (X new discoveries).'"
+        ),
+        agent=scraper,
+        context=[scrape_listings],
+    )
+
+    scrape_developer = Task(
+        description=(
+            f"Scout developer websites for {market_name} pre-launch and new projects. "
+            f"Call the developer_scout tool with input '{market_name}'. "
+            f"Covers Brigade, Prestige, Sobha, Godrej, Adarsh, Salarpuria, Shriram, Mantri. "
+            f"Catches pre-launch projects not yet on portals or RERA. "
+            f"Return a brief summary: how many developer projects found and how many are new."
+        ),
+        expected_output=(
+            f"One line: 'Found N developer projects for {market_name} (X new pre-launch).'"
+        ),
+        agent=scraper,
+        context=[scrape_portal],
+    )
+
+    scrape_news = Task(
+        description=(
+            f"Scout property news for {market_name} market signals (last 60 days). "
+            f"Call the news_scout tool with input '{market_name}'. "
+            f"Signal types: new_launch, price_change, regulatory, developer_news, infrastructure. "
+            f"Return a brief summary: how many articles analyzed and which signal types found."
+        ),
+        expected_output=(
+            f"One line: 'Analyzed N articles for {market_name}. Signals: [list signal types found].'"
+        ),
+        agent=scraper,
+        context=[scrape_developer],
     )
 
     scrape_kaveri = Task(
@@ -137,12 +222,15 @@ def _build_data_crew(market_name: str) -> Crew:
             f"and 'Found N Kaveri registrations for {market_name}.'"
         ),
         agent=scraper,
-        context=[scrape_listings],
+        context=[scrape_news],
     )
 
     return Crew(
         agents=[scraper],
-        tasks=[scrape_rera, scrape_listings, scrape_kaveri],
+        tasks=[
+            scrape_rera, scrape_rera_detail, scrape_listings,
+            scrape_portal, scrape_developer, scrape_news, scrape_kaveri,
+        ],
         process=Process.sequential,
         verbose=True,
     )
@@ -289,12 +377,21 @@ def run_market_intelligence(market_name: str) -> str:
         # ── STAGE 1: Data collection ───────────────────────────────────────────
         _banner("STAGE 1/3", "Scraping RERA Karnataka + listings ...")
 
-        if cp.exists(market_name, "rera_scraped"):
+        # Skip Stage 1 only when ALL scout checkpoints exist from today's run.
+        # RERA-only cache skip caused portal/developer/news scouts to never run,
+        # leaving listings table at 0 on all subsequent same-day runs.
+        scouts_all_cached = (
+            cp.exists(market_name, "rera_scraped")
+            and cp.exists(market_name, "portal_scout")
+            and cp.exists(market_name, "developer_scout")
+            and cp.exists(market_name, "news_scout")
+        )
+        if scouts_all_cached:
             logger.info(
-                "[Crew] RERA checkpoint found — using today's cached data, skipping scrape"
+                "[Crew] All scout checkpoints found — using today's cached data, skipping Stage 1"
             )
             print(
-                "  [Cache] Using today's RERA checkpoint. Delete outputs/{market}/checkpoints/ to force re-scrape."
+                "  [Cache] All scouts cached. Delete outputs/{market}/checkpoints/ to force re-scrape."
             )
             rl.agent_done("scrape_rera")
             rl.agent_done("scrape_listings")
@@ -353,11 +450,50 @@ def run_market_intelligence(market_name: str) -> str:
                 "[Crew] No Kaveri checkpoints found — skipping Kaveri DB upsert"
             )
 
+        # Scout upserts (portal, developer, news)
+        portal_findings = cp.load(market_name, "portal_scout") or []
+        if portal_findings:
+            portal_stats = organizer.run_portal_scout(market_name, portal_findings)
+            print(f"\n  Portal Scout DB: {portal_stats.get('upserted', 0)} listings upserted")
+        else:
+            logger.info("[Crew] No portal_scout checkpoint — skipping")
+
+        dev_findings = cp.load(market_name, "developer_scout") or []
+        if dev_findings:
+            dev_stats = organizer.run_developer_scout(market_name, dev_findings)
+            print(f"  Developer Scout DB: {dev_stats.get('upserted', 0)} projects upserted")
+        else:
+            logger.info("[Crew] No developer_scout checkpoint — skipping")
+
+        news_findings = cp.load(market_name, "news_scout") or []
+        if news_findings:
+            organizer.run_news_scout(market_name, news_findings)
+        else:
+            logger.info("[Crew] No news_scout checkpoint — skipping")
+
+        rera_detail_findings = cp.load(market_name, "rera_detail_scout") or []
+        if rera_detail_findings:
+            detail_stats = organizer.run_rera_detail_scout(market_name, rera_detail_findings)
+            print(
+                f"  RERA Detail Scout: {detail_stats['updated']} updated, "
+                f"{detail_stats['inserted']} inserted"
+            )
+        else:
+            logger.info("[Crew] No rera_detail_scout checkpoint — skipping")
+
         # ── STAGE 3: Intelligence ──────────────────────────────────────────────
         _banner("STAGE 3/3", "Generating market intelligence (Analyst + CEO) ...")
 
+        # Reset provider exclusions — Stage 1 may have excluded Gemini Gemma (LIGHT tier,
+        # 15k TPM) which would incorrectly block Gemini Flash (ANALYSIS/HEAVY tier, 250k TPM).
+        # Both share the "gemini" exclusion key despite being different models and quotas.
+        _EXCLUDED.clear()
         intel_crew = _build_intel_crew(market_name, db_stats)
-        result = intel_crew.kickoff()
+        result = _kickoff_with_fallback(
+            intel_crew,
+            lambda: _build_intel_crew(market_name, db_stats),
+            "Stage 3 (intel)",
+        )
         rl.agent_done("analyst")
         rl.agent_done("ceo")
 
@@ -410,13 +546,15 @@ def run_market_intelligence(market_name: str) -> str:
 
         rl.finish(status="success", report_path=report_path)
         print(f"\n  Report saved -> {report_path}\n")
-
+        _EXCLUDED.clear()
         return report_body
 
     except Exception as exc:
         error_msg = str(exc)
         rl.finish(status="failed", error=error_msg)
         logger.error(f"Run failed for {market_name}: {error_msg}")
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        _EXCLUDED.clear()
         raise
 
 

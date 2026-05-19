@@ -33,7 +33,7 @@ CREATE TABLE micro_markets (
 CREATE TABLE developers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(200) NOT NULL,
-    name_normalized VARCHAR(200),                -- lowercase, trimmed for dedup
+    name_normalized VARCHAR(200) UNIQUE,         -- lowercase, trimmed for dedup
     rera_promoter_id VARCHAR(100),
     grade CHAR(1),                               -- A = Tier 1, B = Tier 2, C = small/unknown
     total_projects INTEGER DEFAULT 0,
@@ -113,7 +113,7 @@ CREATE TABLE rera_projects (
         ) STORED,
 
     -- Status
-    project_status VARCHAR(50),                  -- New Project, Under Construction, Completed, Expired, Revoked
+    project_status VARCHAR(512),                 -- RERA status strings can be long (253+ chars seen)
     rera_status VARCHAR(50),
     is_active BOOLEAN DEFAULT TRUE,
 
@@ -428,6 +428,29 @@ CREATE TABLE market_snapshots (
     created_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(micro_market_id, snapshot_date, period)
 );
+
+-- ============================================================
+-- NEWS ARTICLES
+-- Market signals from news_scout (Google News RSS + ET Realty)
+-- ============================================================
+CREATE TABLE news_articles (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    cid VARCHAR(100) UNIQUE NOT NULL,              -- content ID from scout_memory
+    title TEXT NOT NULL,
+    source VARCHAR(100),
+    source_url TEXT,
+    published_at DATE,
+    summary TEXT,
+    signal_type VARCHAR(50),                       -- new_launch, price_change, regulatory, developer_news, infrastructure
+    key_insight TEXT,
+    micro_market_id UUID REFERENCES micro_markets(id),
+    raw_data JSONB,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_news_articles_market ON news_articles(micro_market_id);
+CREATE INDEX idx_news_articles_signal ON news_articles(signal_type);
+CREATE INDEX idx_news_articles_date ON news_articles(published_at);
 
 -- ============================================================
 -- AGENT RUN LOGS
