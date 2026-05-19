@@ -296,9 +296,7 @@ docker compose build agents && docker compose up -d agents
 | [HOW_TO_RUN.md](HOW_TO_RUN.md) | Daily operation — every command, every error, every fix |
 | [SETUP.md](SETUP.md) | First-time setup from zero to first run |
 | [VISION.md](VISION.md) | 14-phase roadmap to full Virtual Real Estate Office |
-| [AGENTS.md](AGENTS.md) | Agent roles, task protocol, dev workflow |
 | [MODELS.md](MODELS.md) | Free model reference and daily capacity math |
-| [DEVLOG.md](DEVLOG.md) | Phase-by-phase build history |
 | [CHANGELOG.md](CHANGELOG.md) | File-level change log |
 
 ---

@@ -76,3 +76,11 @@ TASK_QUEUE.md
 DEVLOG.md
 TOOL_GUIDE.md
 OPERATIONAL_REVIEW.md
+.clinerules
+
+# VS Code personal settings (contains local paths and credentials)
+.vscode/
+
+# Obsidian notes (vault files that don't belong in product repo)
+*.canvas
+RE_OS Home.md
