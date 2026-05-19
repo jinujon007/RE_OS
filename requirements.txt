@@ -29,7 +29,7 @@ apscheduler==3.10.4
 
 # Data processing
 pandas==2.2.3
-numpy==1.26.4
+numpy==2.4.6
 
 # Geo utilities
 shapely==2.0.6
