@@ -10,6 +10,7 @@ jobs:
   lint:
     name: Lint & Syntax Check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -19,9 +20,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: Install ruff
-        run: pip install ruff==0.4.4
+        run: pip install ruff==0.4.4  # pinned — bump carefully; newer versions may surface new errors
 
       - name: Lint with ruff
         run: ruff check .
@@ -56,6 +58,7 @@ jobs:
   docker-validate:
     name: Docker Compose Validate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -74,6 +77,7 @@ jobs:
   schema-check:
     name: SQL Schema Syntax
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     services:
       postgres:

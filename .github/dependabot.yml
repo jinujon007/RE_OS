@@ -1,0 +1,30 @@
+version: 2
+updates:
+  # Python dependencies
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    ignore:
+      # crewai and crewai-tools: major bumps require architecture review
+      - dependency-name: "crewai"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "crewai-tools"
+        update-types: ["version-update:semver-major"]
+      # sqlalchemy: major bumps break ORM patterns
+      - dependency-name: "sqlalchemy"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "ci/cd"

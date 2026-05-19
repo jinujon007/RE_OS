@@ -1,0 +1,23 @@
+# CODEOWNERS — RE_OS
+# Automatically requests review from the maintainer on critical-path changes.
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything not matched below
+* @jinujon007
+
+# Database schema — breaking changes require explicit maintainer review
+database/schema.sql @jinujon007
+
+# LLM routing — a bad change here silently breaks all three market runs
+config/llm_router.py @jinujon007
+config/settings.py @jinujon007
+
+# Core agent logic
+agents/ @jinujon007
+crews/ @jinujon007
+
+# CI/CD and repo governance
+.github/ @jinujon007
+Dockerfile @jinujon007
+docker-compose.yml @jinujon007
+requirements.txt @jinujon007
