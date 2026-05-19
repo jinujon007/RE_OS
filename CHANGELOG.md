@@ -442,6 +442,43 @@ docker compose exec postgres psql -U re_os_user -d re_os -f /tmp/seed_kaveri_yel
 
 ---
 
+---
+
+## Session — Claude Code 2026-05-19 (Enterprise Audit Remediation — commit 8806b20)
+
+16 items across 5 passes. Summary of every file touched:
+
+| File | Change | Pass |
+|------|--------|------|
+| `utils/validator.py` | Prefix `[ESTIMATED]` to `project_name` for `seed_estimated` records — data provenance guard | C0 |
+| `config/settings.py` | `DB_PASSWORD` now raises `ValueError` if unset (no default). Cerebras comment corrected llama-3.3-70b → llama3.1-8b. | H2, M4 |
+| `docker-compose.yml` | Removed exposed ports 5432 (postgres), 6379 (redis), 11434 (ollama). Replaced sentinel healthcheck with HTTP (`/api/health`). | H3, C4, H6 |
+| `utils/db_organizer.py` | All 6 `run_*` methods: replaced per-record `engine.begin()` (165+ connections) with single connection + per-record SAVEPOINT pattern. | H1 |
+| `config/llm_router.py` | `_EXCLUDED` set made thread-safe via `threading.Lock` + helpers `_is_excluded()`, `_exclude()`, `_clear_excluded()`. | C3 |
+| `crews/market_intel_crew.py` | All `_EXCLUDED` mutations replaced with thread-safe helpers. | C3 |
+| `config/checkpointer.py` | `load()` now catches `JSONDecodeError` gracefully → returns `None` instead of raising. | Pass 2 |
+| `tests/conftest.py` | Created — sets `DB_PASSWORD` env var + stubs `crewai` module before any import, enabling CI tests without full stack. | Pass 2 |
+| `tests/test_validator.py` | Added `test_seed_estimated_gets_estimated_prefix` and additional edge-case tests. | C0, C1 |
+| `tests/unit/test_checkpointer.py` | Created — 9 test cases covering save/load, exists, corrupt JSON, path structure, market slug. | Pass 2 |
+| `tests/unit/test_llm_router.py` | Created — 8 test cases covering all three tiers with provider exclusion scenarios. | Pass 2 |
+| `pytest.ini` | Created — sets `pythonpath = .` and `testpaths = tests`. | Pass 2 |
+| `requirements.txt` | Added `pytest>=7.0` and `pytest-mock>=3.0` under Testing section. | L4 |
+| `.github/workflows/ci.yml` | Bumped ruff to 0.11.12. Added `test:` job (pytest, no full stack). Fixed py_compile to use `find` glob instead of hardcoded file list. | M2, M6, Pass 2 |
+| `.dockerignore` | Created — excludes `__pycache__`, `.env`, `logs/`, `outputs/`, dev tooling, test artefacts, `*.md`, `LICENSE`. | M1 |
+| `Makefile` | Added `test` target and `.PHONY` entry. | M5 |
+| `README.md` | Scout Division status corrected to "active in Stage 1". `DB_PASSWORD` marked Required. Makefile shortcuts table added (18 targets). Roadmap updated. | M5, L6 |
+| `TODOS.md` | Created — deferred items: Redis RQ, Alembic, dashboard auth, Prometheus, git tag, branch protection. | Pass 5 |
+| `.github/CONTRIBUTING.md` | Dead link `AGENTS.md` → `CLAUDE.md`. | H5 |
+| `agents/__init__.py` | Removed `create_organizer_agent` import + `__all__` entry. | L1 |
+| `agents/organizer_agent.py` | Deleted (deprecated). | L1 |
+| `utils/diagnose.py` | Moved from repo root `diagnose.py` → `utils/diagnose.py`. Fixed `sys.path.insert` depth. | L2 |
+| `TASK_QUEUE.md.bak` | Deleted. | L3 |
+| `.env.example` | `DB_PASSWORD` placeholder updated to `your_secure_db_password_here`. Added `CEREBRAS_API_KEY` and `GEMINI_API_KEY` (both were primary LLM tiers missing from template). | Post-audit fix |
+
+**Verified:** All 12 self-audit checks passed (Explore agent review). Commit `8806b20` on master.
+
+---
+
 ## Open Issues / Task Backlog
 
 See Known Issues table below. Open tasks are tracked separately.
