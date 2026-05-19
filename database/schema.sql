@@ -102,6 +102,7 @@ CREATE TABLE rera_projects (
     launch_date DATE,
     registration_date DATE,
     possession_date DATE,
+    plan_approval_date DATE,                     -- BDA/BBMP plan sanction date (from RERA detail page)
     rera_expiry_date DATE,
     actual_completion_date DATE,
     delay_months INTEGER
@@ -111,6 +112,7 @@ CREATE TABLE rera_projects (
                  THEN (actual_completion_date - possession_date) / 30
                  ELSE 0 END
         ) STORED,
+    completion_pct DECIMAL(5,2),                 -- Construction completion % (from RERA detail page)
 
     -- Status
     project_status VARCHAR(512),                 -- RERA status strings can be long (253+ chars seen)

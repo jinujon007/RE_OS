@@ -47,4 +47,7 @@ Out of scope:
 - `.env` is gitignored and never committed. `.env.example` contains only placeholder values.
 - All DB queries use parameterised statements via SQLAlchemy (no raw f-string SQL).
 - Playwright runs in headless Docker with no host network access.
-- No user-facing web endpoints in the current build (dashboard is scaffolded, not wired).
+- The dashboard (`dashboard/app.py`) runs on port 8050 inside Docker. All market parameters on
+  pipeline-control and report endpoints are validated against a strict whitelist before any
+  filesystem or subprocess operation is performed.
+- The agents container runs as a non-root user (`re_os`, uid 1001) since Dockerfile v1.1.

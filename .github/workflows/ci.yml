@@ -14,10 +14,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
@@ -46,10 +46,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
@@ -69,12 +69,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Create stub .env from example
         run: |
           cp .env.example .env
+          sed -i 's/your_secure_db_password_here/ci_stub_password/' .env
+          sed -i 's/csk_your-key-here/csk_stubkey/' .env
           sed -i 's/gsk_your-key-here/gsk_stubkey/' .env
+          sed -i 's/AIza_your-key-here/AIza_stubkey/' .env
           sed -i 's/nvapi-your-key-here/nvapi_stubkey/' .env
           sed -i 's/sk-or-v1-your-key-here/sk-or-v1-stubkey/' .env
 
@@ -103,7 +106,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Install psql client
         run: sudo apt-get install -y postgresql-client

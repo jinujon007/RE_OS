@@ -35,11 +35,18 @@ _diag_running_last_signature = None
 
 LOG_PATH = "/app/logs/crew.log"
 VALID_MARKETS = {"Yelahanka", "Devanahalli", "Hebbal", "all"}
+# Canonical market name lookup — only keys in this map are valid URL path segments
 MARKET_CANONICAL = {
     "yelahanka": "Yelahanka",
     "devanahalli": "Devanahalli",
     "hebbal": "Hebbal",
     "all": "all",
+}
+# Safe slug map used for filesystem paths — derived from canonical names only
+MARKET_SLUG = {
+    "Yelahanka": "yelahanka",
+    "Devanahalli": "devanahalli",
+    "Hebbal": "hebbal",
 }
 
 _agent_states = {
@@ -117,7 +124,10 @@ _monitor_thread = None
 
 
 def _get_db():
-    return psycopg2.connect(os.environ["DATABASE_URL"])
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        raise RuntimeError("DATABASE_URL environment variable is not set")
+    return psycopg2.connect(url)
 
 
 def _read_last_lines(path: str, limit: int = 20):
@@ -362,7 +372,13 @@ def _start_pipeline_for_market(market: str):
         if market != "all":
             cmd += ["--market", market]
 
-        proc = subprocess.Popen(cmd, cwd="/app")
+        proc = subprocess.Popen(
+            cmd,
+            cwd="/app",
+            shell=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         started = datetime.now().isoformat()
         _running[market] = {"proc": proc, "started": started}
         logger.info(
@@ -454,6 +470,7 @@ def health():
 
 @app.route("/api/db/state")
 def db_state():
+    conn = None
     try:
         conn = _get_db()
         cur = conn.cursor()
@@ -501,10 +518,12 @@ def db_state():
             for r in cur.fetchall()
         ]
 
-        conn.close()
         return jsonify(state)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 # ── Pipeline Control ───────────────────────────────────────────────────────────
@@ -512,13 +531,19 @@ def db_state():
 
 @app.route("/api/run/<market>", methods=["POST"])
 def run_pipeline(market):
-    payload, status_code = _start_pipeline_for_market(market)
+    canonical = _normalize_market(market)
+    if not canonical:
+        return jsonify({"error": "invalid market"}), 400
+    payload, status_code = _start_pipeline_for_market(canonical)
     return jsonify(payload), status_code
 
 
 @app.route("/api/run/<market>", methods=["DELETE"])
 def stop_pipeline(market):
-    payload, status_code = _stop_pipeline_for_market(market)
+    canonical = _normalize_market(market)
+    if not canonical:
+        return jsonify({"error": "invalid market"}), 400
+    payload, status_code = _stop_pipeline_for_market(canonical)
     return jsonify(payload), status_code
 
 
@@ -762,12 +787,18 @@ def stream_logs():
 
 @app.route("/api/reports/<market>")
 def get_report(market):
-    pattern = f"/app/outputs/{market.lower()}/intel_report_*.txt"
+    canonical = _normalize_market(market)
+    if not canonical or canonical == "all":
+        return jsonify({"error": "invalid market"}), 400
+    slug = MARKET_SLUG.get(canonical)
+    if not slug:
+        return jsonify({"error": "invalid market"}), 400
+    pattern = f"/app/outputs/{slug}/intel_report_*.txt"
     files = sorted(glob.glob(pattern))
     if not files:
         return jsonify({"content": None, "file": None})
     latest = files[-1]
-    with open(latest) as f:
+    with open(latest, encoding="utf-8") as f:
         content = f.read()
     return jsonify({"content": content, "file": os.path.basename(latest)})
 
