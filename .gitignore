@@ -73,6 +73,7 @@ kilo_logs/
 scripts/
 AGENTS.md
 TASK_QUEUE.md
+task.md
 DEVLOG.md
 TOOL_GUIDE.md
 OPERATIONAL_REVIEW.md
