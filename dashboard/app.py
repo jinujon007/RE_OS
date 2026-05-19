@@ -633,7 +633,7 @@ def agent_command(agent_id):
                 "details": f"Unknown agent_id '{agent_id}'",
                 "hint": "Try: run [market], stop [market], status",
             }
-        )
+        ), 404
 
     if any(k in text for k in ["run", "start", "scrape", "scan", "analyse", "analyze"]):
         market = chosen_market or "Yelahanka"

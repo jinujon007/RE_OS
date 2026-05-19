@@ -79,7 +79,6 @@ services:
       - "8050:8050"
     volumes:
       - ./:/app
-      - ./outputs:/app/outputs
     depends_on:
       postgres:
         condition: service_healthy
@@ -114,7 +113,6 @@ services:
       TARGET_MARKETS: ${TARGET_MARKETS:-Yelahanka,Devanahalli,Hebbal}
     volumes:
       - ./:/app
-      - ./outputs:/app/outputs
     depends_on:
       postgres:
         condition: service_healthy

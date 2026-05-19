@@ -15,7 +15,10 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Playwright — installs its own Chromium; runs as root here so browsers install to /root
+# Playwright browser install — path must be set BEFORE install so browsers land in a
+# location that the non-root user (re_os, uid 1001) can access at runtime.
+# Setting it here (before USER re_os) makes it available to the RUN command below.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN playwright install chromium --with-deps
 
 # App code
@@ -31,14 +34,12 @@ RUN mkdir -p \
 # Non-root user — run the application as re_os, not root
 RUN groupadd --gid 1001 re_os \
     && useradd --uid 1001 --gid re_os --no-create-home re_os \
-    && chown -R re_os:re_os /app
+    && chown -R re_os:re_os /app /ms-playwright
 
 USER re_os
 
 ENV PYTHONUNBUFFERED=1
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
-# Tell Playwright where browsers are (installed to root home during build)
-ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
 
 CMD ["python", "crews/market_intel_crew.py"]

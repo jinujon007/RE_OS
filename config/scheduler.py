@@ -22,6 +22,10 @@ from config.settings import TARGET_MARKETS
 def run_rera_refresh():
     """Daily RERA data pull for all target markets."""
     from crews.market_intel_crew import run_all_markets
+    from config.llm_router import _clear_excluded
+    # Reset provider exclusions so stale rate-limit state from the previous
+    # run doesn't carry over — each scheduled run starts with a clean slate.
+    _clear_excluded()
     logger.info("Scheduler: Starting daily RERA refresh")
     try:
         run_all_markets()
@@ -78,7 +82,8 @@ def run_market_snapshot():
                         total_rera_units = EXCLUDED.total_rera_units,
                         sold_rera_units = EXCLUDED.sold_rera_units,
                         unsold_rera_units = EXCLUDED.unsold_rera_units,
-                        avg_absorption_pct = EXCLUDED.avg_absorption_pct
+                        avg_absorption_pct = EXCLUDED.avg_absorption_pct,
+                        avg_psf_sale = EXCLUDED.avg_psf_sale
                 """), {"market": f"%{market}%"})
                 logger.info(f"  Snapshot created for: {market}")
             except Exception as e:
