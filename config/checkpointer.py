@@ -60,12 +60,16 @@ class Checkpointer:
         return path
 
     def load(self, market: str, task: str):
-        """Load today's checkpoint. Returns None if it doesn't exist."""
+        """Load today's checkpoint. Returns None if not found or unreadable."""
         path = self._path(market, task)
         if not os.path.exists(path):
             return None
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning(f"[Checkpoint] Unreadable checkpoint at {path}: {exc} — treating as missing")
+            return None
         size = len(data) if isinstance(data, list) else "dict"
         logger.info(
             f"[Checkpoint] Loaded {market}/{task} ← {os.path.basename(path)} ({size} records)"

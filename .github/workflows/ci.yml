@@ -23,37 +23,44 @@ jobs:
           cache: "pip"
 
       - name: Install ruff
-        run: pip install ruff==0.4.4  # pinned — bump carefully; newer versions may surface new errors
+        run: pip install ruff==0.11.12
 
       - name: Lint with ruff
         run: ruff check .
 
       - name: Check Python syntax (all source files)
         run: |
-          python -m py_compile \
-            agents/ceo_agent.py \
-            agents/analyst_agent.py \
-            agents/scraper_agent.py \
-            agents/parser_agent.py \
-            agents/organizer_agent.py \
-            agents/sentinel_agent.py \
-            config/llm_router.py \
-            config/settings.py \
-            config/run_logger.py \
-            config/checkpointer.py \
-            config/scheduler.py \
-            crews/market_intel_crew.py \
-            scrapers/rera_karnataka.py \
-            scrapers/listings_scraper.py \
-            scrapers/kaveri_karnataka.py \
-            scrapers/news_scout.py \
-            scrapers/rera_detail_scout.py \
-            scrapers/developer_scout.py \
-            scrapers/portal_scout.py \
-            scrapers/scout_memory.py \
-            utils/db_organizer.py \
-            utils/validator.py \
-            utils/status.py
+          find . -name "*.py" \
+            -not -path "./.kilo/*" \
+            -not -path "./kilo_output/*" \
+            -not -path "./kilo_logs/*" \
+            -not -path "./.pytest_cache/*" \
+            -not -path "./node_modules/*" \
+            | xargs python -m py_compile
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: lint
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install test dependencies
+        run: pip install pytest>=7.0 pytest-mock>=3.0 loguru python-dotenv
+
+      - name: Run unit tests
+        env:
+          DB_PASSWORD: test_password_for_ci
+        run: pytest tests/ -v --tb=short
 
   docker-validate:
     name: Docker Compose Validate

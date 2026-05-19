@@ -62,23 +62,28 @@ class DBOrganizer:
             f"[DBOrganizer] Starting upsert for {market_name} — {len(records)} records"
         )
 
-        for project in records:
-            try:
-                with self.engine.begin() as conn:
+        with self.engine.begin() as conn:
+            for i, project in enumerate(records):
+                sp = f"sp_rera_{i}"
+                try:
+                    conn.execute(text(f"SAVEPOINT {sp}"))
                     dev_id = self._upsert_developer(conn, project)
                     market_id = self._get_market_id(conn, project)
                     self._update_developer_grade(conn, dev_id, project)
                     action = self._upsert_project(conn, project, dev_id, market_id)
+                    conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
                     if action == "inserted":
                         inserted += 1
                     else:
                         updated += 1
-            except Exception as exc:
-                logger.error(
-                    f"[DBOrganizer] Upsert failed for "
-                    f"'{project.get('rera_number', '?')}': {exc}"
-                )
-                failed += 1
+                except Exception as exc:
+                    conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
+                    conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
+                    logger.error(
+                        f"[DBOrganizer] Upsert failed for "
+                        f"'{project.get('rera_number', '?')}': {exc}"
+                    )
+                    failed += 1
 
         duration = int(time.time() - started)
         stats = {
@@ -103,15 +108,20 @@ class DBOrganizer:
         upserted = failed = 0
         table = "listings"
 
-        for rec in findings:
-            try:
-                with self.engine.begin() as conn:
+        with self.engine.begin() as conn:
+            for i, rec in enumerate(findings):
+                sp = f"sp_portal_{i}"
+                try:
+                    conn.execute(text(f"SAVEPOINT {sp}"))
                     market_id = self._get_market_id_by_name(conn, market_name)
                     self._upsert_listing_by_cid(conn, rec, market_id)
+                    conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
                     upserted += 1
-            except Exception as exc:
-                logger.error(f"[Organizer] portal upsert failed: {exc}")
-                failed += 1
+                except Exception as exc:
+                    conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
+                    conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
+                    logger.error(f"[Organizer] portal upsert failed: {exc}")
+                    failed += 1
 
         duration = int(time.time() - started)
         logger.info(f"[Organizer] {market_name}: {upserted} records upserted into {table}")
@@ -129,19 +139,24 @@ class DBOrganizer:
         upserted = failed = 0
         table = "listings"
 
-        for rec in findings:
-            try:
-                with self.engine.begin() as conn:
+        with self.engine.begin() as conn:
+            for i, rec in enumerate(findings):
+                sp = f"sp_dev_{i}"
+                try:
+                    conn.execute(text(f"SAVEPOINT {sp}"))
                     market_id = self._get_market_id_by_name(conn, market_name)
                     source_val = str(rec.get("source", "developer")).strip() or "developer"
                     if not source_val.startswith("dev_"):
                         rec = dict(rec)
                         rec["source"] = f"dev_{source_val}"
                     self._upsert_listing_by_cid(conn, rec, market_id)
+                    conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
                     upserted += 1
-            except Exception as exc:
-                logger.error(f"[Organizer] developer upsert failed: {exc}")
-                failed += 1
+                except Exception as exc:
+                    conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
+                    conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
+                    logger.error(f"[Organizer] developer upsert failed: {exc}")
+                    failed += 1
 
         duration = int(time.time() - started)
         logger.info(f"[Organizer] {market_name}: {upserted} records upserted into {table}")
@@ -174,14 +189,19 @@ class DBOrganizer:
                 "duration_seconds": int(time.time() - started),
             }
 
-        for rec in findings:
-            try:
-                with self.engine.begin() as conn:
+        with self.engine.begin() as conn:
+            for i, rec in enumerate(findings):
+                sp = f"sp_news_{i}"
+                try:
+                    conn.execute(text(f"SAVEPOINT {sp}"))
                     self._insert_news_article(conn, rec)
+                    conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
                     inserted += 1
-            except Exception as exc:
-                logger.error(f"[Organizer] news insert failed: {exc}")
-                failed += 1
+                except Exception as exc:
+                    conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
+                    conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
+                    logger.error(f"[Organizer] news insert failed: {exc}")
+                    failed += 1
 
         duration = int(time.time() - started)
         logger.info(f"[Organizer] {market_name}: {inserted} records upserted into {table}")
@@ -208,23 +228,28 @@ class DBOrganizer:
             f"[DBOrganizer] RERA detail upsert for {market_name} — {len(findings)} records"
         )
 
-        for rec in findings:
-            rera_num = str(rec.get("rera_number", "")).strip()
-            if not rera_num:
-                skipped += 1
-                continue
-            try:
-                with self.engine.begin() as conn:
+        with self.engine.begin() as conn:
+            for i, rec in enumerate(findings):
+                rera_num = str(rec.get("rera_number", "")).strip()
+                if not rera_num:
+                    skipped += 1
+                    continue
+                sp = f"sp_detail_{i}"
+                try:
+                    conn.execute(text(f"SAVEPOINT {sp}"))
                     action = self._upsert_rera_detail(conn, rec)
+                    conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
                     if action == "inserted":
                         inserted += 1
                     elif action == "updated":
                         updated += 1
                     else:
                         skipped += 1
-            except Exception as exc:
-                logger.error(f"[DBOrganizer] rera_detail upsert failed for {rera_num}: {exc}")
-                failed += 1
+                except Exception as exc:
+                    conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
+                    conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
+                    logger.error(f"[DBOrganizer] rera_detail upsert failed for {rera_num}: {exc}")
+                    failed += 1
 
         duration = int(time.time() - started)
         logger.info(
@@ -393,34 +418,43 @@ class DBOrganizer:
             f"{len(gv_records)} GV records, {len(reg_records)} registrations"
         )
 
-        # Guidance values
-        for rec in gv_records:
-            try:
-                with self.engine.begin() as conn:
+        with self.engine.begin() as conn:
+            # Guidance values
+            for i, rec in enumerate(gv_records):
+                sp = f"sp_gv_{i}"
+                try:
+                    conn.execute(text(f"SAVEPOINT {sp}"))
                     market_id = self._get_market_id_by_name(conn, market_name)
                     action = self._upsert_guidance_value(conn, rec, market_id)
+                    conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
                     if action == "inserted":
                         gv_inserted += 1
                     else:
                         gv_updated += 1
-            except Exception as exc:
-                logger.error(f"[DBOrganizer] GV upsert failed: {exc}")
+                except Exception as exc:
+                    conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
+                    conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
+                    logger.error(f"[DBOrganizer] GV upsert failed: {exc}")
 
-        # Registrations
-        for rec in reg_records:
-            try:
-                with self.engine.begin() as conn:
+            # Registrations
+            for i, rec in enumerate(reg_records):
+                sp = f"sp_reg_{i}"
+                try:
+                    conn.execute(text(f"SAVEPOINT {sp}"))
                     market_id = self._get_market_id_by_name(conn, market_name)
                     self._insert_registration(conn, rec, market_id)
+                    conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
                     reg_inserted += 1
-            except Exception as exc:
-                err = str(exc)
-                # duplicate key = already recorded, not a real failure
-                if "unique" in err.lower() or "duplicate" in err.lower():
-                    pass
-                else:
-                    logger.error(f"[DBOrganizer] Registration insert failed: {exc}")
-                    reg_failed += 1
+                except Exception as exc:
+                    conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
+                    conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
+                    err = str(exc)
+                    # duplicate key = already recorded, not a real failure
+                    if "unique" in err.lower() or "duplicate" in err.lower():
+                        pass
+                    else:
+                        logger.error(f"[DBOrganizer] Registration insert failed: {exc}")
+                        reg_failed += 1
 
         duration = int(_time.time() - started)
         stats = {

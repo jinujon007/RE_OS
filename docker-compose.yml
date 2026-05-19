@@ -16,8 +16,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
-    ports:
-      - "5432:5432"
+    # Port intentionally not published — access via: docker compose exec postgres psql -U re_os_user -d re_os
+    # Or: make db
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U re_os_user -d re_os"]
       interval: 10s
@@ -32,8 +32,7 @@ services:
     restart: unless-stopped
     volumes:
       - ollama_data:/root/.ollama
-    ports:
-      - "11434:11434"
+    # Port not published — agents communicate via internal Docker network (http://ollama:11434)
     # Uncomment below if you have an NVIDIA GPU (dramatically faster)
     # deploy:
     #   resources:
@@ -49,8 +48,8 @@ services:
     image: redis:7-alpine
     container_name: re_os_redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    # Port not published — agents communicate via internal Docker network (redis://redis:6379)
+    # Redis is wired in docker-compose but RQ task queue not yet active — Phase 3 planned feature
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -87,7 +86,7 @@ services:
       redis:
         condition: service_started
     healthcheck:
-      test: ["CMD", "python", "/app/agents/sentinel_agent.py"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8050/api/health', timeout=5)\" 2>/dev/null || exit 1"]
       interval: 60s
       timeout: 30s
       retries: 3

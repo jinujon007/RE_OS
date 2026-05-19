@@ -1,0 +1,47 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+
+# Environment — never bake secrets into image
+.env
+.env.*
+
+# Runtime data — no reason to COPY into image
+logs/
+outputs/
+postgres_data/
+ollama_data/
+
+# Dev tooling — not needed in container
+.git/
+.gitignore
+.claude/
+.cline_logs/
+.kilo/
+kilo_output/
+kilo_logs/
+.aider*
+tmp_*.py
+plans/
+scripts/
+.gstack/
+
+# Test artefacts
+.pytest_cache/
+.coverage
+htmlcov/
+tests/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+*.bak
+
+# Docs that don't affect runtime
+*.md
+LICENSE

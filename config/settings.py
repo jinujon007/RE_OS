@@ -9,9 +9,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── DATABASE ──────────────────────────────────────────────────────────────────
+_db_password = os.getenv("DB_PASSWORD")
+if not _db_password:
+    raise ValueError(
+        "DB_PASSWORD is not set. Add it to your .env file (see .env.example). "
+        "Example: DB_PASSWORD=your_secure_password_here"
+    )
+
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://re_os_user:re_os_2024@localhost:5432/re_os"
+    f"postgresql://re_os_user:{_db_password}@localhost:5432/re_os"
 )
 
 # ── LLM ENGINES ───────────────────────────────────────────────────────────────
@@ -21,7 +28,7 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 
 # Tier 1b — Cerebras: FREE, 1M tokens/day, 60-100k TPM, fastest inference available
-# No credit card. Instant API key. llama-3.3-70b at 1,800+ tok/s.
+# No credit card. Instant API key. llama3.1-8b at 1,800+ tok/s.
 # LIMIT: 8,192 token context cap — fine for Light + Analysis (structured tasks, short prompts)
 # Sign up: cloud.cerebras.ai
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")

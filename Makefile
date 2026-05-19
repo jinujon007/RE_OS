@@ -5,7 +5,7 @@
 .PHONY: up down ps logs rebuild \
         run run-yelahanka run-devanahalli run-hebbal \
         db db-inventory db-projects db-developers \
-        lint syntax-check health \
+        lint syntax-check test health \
         ollama-pull clean
 
 # ── STACK ─────────────────────────────────────────────────────────────────────
@@ -62,6 +62,9 @@ ollama-pull:
 
 lint:
 	ruff check .
+
+test:
+	pytest tests/ -v --tb=short
 
 syntax-check:
 	python -m py_compile \

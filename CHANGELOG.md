@@ -522,6 +522,40 @@ config/settings.py | REGRESSION FIX: NVIDIA model names stripped of vendor prefi
 
 ---
 
-*CHANGELOG — Last updated: 2026-05-19 IST*
-*Update this file after every code, DB, or config change.*
-*Before field required for all changes to existing code/data.*
+### 2026-05-19 17:09 IST — File: crews/market_intel_crew.py — T-063 Stage 2 rera_detail upsert + import json confirmed
+**Type:** Code Verification
+**Author:** PM Operational Review
+
+**Before:**
+T-063 spec required Stage 2 rera_detail upsert block in crew.py with `import json` available.
+
+**After:**
+`crew.py:474-482` — Stage 2 block confirmed present: loads `rera_detail_scout` checkpoint, calls `organizer.run_rera_detail_scout()`, prints upsert counts. `import json` confirmed at `crew.py:26`. `run_rera_detail_scout()` confirmed at `db_organizer.py:196`. T-063 implementation is confirmed complete.
+
+**Verified:** ✅ Code review — both functions present and call-chain intact.
+
+---
+
+### 2026-05-19 17:09 IST — File: T-150 (PA-5 Integration Test) — Run ID 20260519_112252 execution result
+**Type:** Test Execution
+**Author:** PM Operational Review
+
+**Before:**
+Checkpoints cleared. 10 fresh RERA fallback records staged. Pipeline fresh-launched.
+
+**After:**
+| Stage | Result | Detail |
+|-------|--------|--------|
+| `scrape_rera` | ✅ | 8 fallback records, live portal timed out (POST failed, HTTP 403) |
+| `scrape_rera_detail` | ❌ | 0 enriched — all 4 URL patterns returned 404/405/nav-only |
+| `scrape_listings` | ✅ | 6 MagicBricks records |
+| `scrape_portal` | ✅ | 1 MagicBricks record (Myhna Vistara, 0 new) |
+| `scrape_developer` | ❌ | 0 projects — Gemini Flash 429 quota exhausted (20 req/day cap) |
+| `scrape_news` | ⏸ | Not reached (pipeline blocked at developer_scout) |
+| Stage 2 UPSERT | ⏸ | NOT REACHED |
+| Stage 3 Intel | ⏸ | NOT REACHED |
+| Intel report | ❌ | NOT CREATED |
+
+**Verified:** ✅ crew.log tail, DB query `total_units>0 = 10` (pre-seeded, not from this run)
+
+---

@@ -43,7 +43,7 @@ from agents import (
 from config.settings import TARGET_MARKETS
 from config.run_logger import RunLogger
 from config.checkpointer import Checkpointer
-from config.llm_router import _EXCLUDED
+from config.llm_router import _EXCLUDED, _EXCLUDED_LOCK, _exclude, _clear_excluded, _is_excluded
 from utils.validator import validate_and_log
 from utils.db_organizer import DBOrganizer
 
@@ -74,7 +74,7 @@ def _detect_rate_limited_provider(exc: Exception) -> str | None:
         return "gemini"
     if "nvidia" in msg:
         return "nvidia"
-    if ("404" in msg or "page not found" in msg) and "nvidia" not in _EXCLUDED:
+    if ("404" in msg or "page not found" in msg) and not _is_excluded("nvidia"):
         return "nvidia"
     if "openrouter" in msg:
         return "openrouter"
@@ -90,7 +90,7 @@ def _detect_rate_limited_provider(exc: Exception) -> str | None:
         or "invalid response from llm" in msg
     ):
         for provider in ("cerebras", "groq", "gemini", "nvidia", "openrouter"):
-            if provider not in _EXCLUDED:
+            if not _is_excluded(provider):
                 return provider
     return None
 
@@ -336,7 +336,7 @@ def _kickoff_with_fallback(
         except RateLimitError as exc:
             provider = _detect_rate_limited_provider(exc)
             if provider and attempt <= max_retries:
-                _EXCLUDED.add(provider)
+                _exclude(provider)
                 logger.warning(
                     f"[Retry] {stage_name}: {provider} rate-limited, excluding and retrying (attempt {attempt}/{max_retries})"
                 )
@@ -352,7 +352,7 @@ def _kickoff_with_fallback(
         except Exception as exc:
             provider = _detect_rate_limited_provider(exc)
             if provider and attempt <= max_retries:
-                _EXCLUDED.add(provider)
+                _exclude(provider)
                 logger.warning(
                     f"[Retry] {stage_name}: possible {provider} limit, excluding and retrying (attempt {attempt}/{max_retries})"
                 )
@@ -487,7 +487,7 @@ def run_market_intelligence(market_name: str) -> str:
         # Reset provider exclusions — Stage 1 may have excluded Gemini Gemma (LIGHT tier,
         # 15k TPM) which would incorrectly block Gemini Flash (ANALYSIS/HEAVY tier, 250k TPM).
         # Both share the "gemini" exclusion key despite being different models and quotas.
-        _EXCLUDED.clear()
+        _clear_excluded()
         intel_crew = _build_intel_crew(market_name, db_stats)
         result = _kickoff_with_fallback(
             intel_crew,
@@ -546,7 +546,7 @@ def run_market_intelligence(market_name: str) -> str:
 
         rl.finish(status="success", report_path=report_path)
         print(f"\n  Report saved -> {report_path}\n")
-        _EXCLUDED.clear()
+        _clear_excluded()
         return report_body
 
     except Exception as exc:
@@ -554,7 +554,7 @@ def run_market_intelligence(market_name: str) -> str:
         rl.finish(status="failed", error=error_msg)
         logger.error(f"Run failed for {market_name}: {error_msg}")
         logger.error(f"Full traceback:\n{traceback.format_exc()}")
-        _EXCLUDED.clear()
+        _clear_excluded()
         raise
 
 

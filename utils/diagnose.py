@@ -2,7 +2,7 @@
 """Diagnostic script — deep dive RE_OS system state"""
 import sys
 import os
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 print("=" * 70)
 print("RE_OS DIAGNOSTIC — Deep Dive Report")
@@ -117,7 +117,7 @@ if os.path.exists(req_path):
     print(f"  requirements.txt ({len(reqs)} packages):")
     for pkg in needed:
         present = any(pkg in r for r in reqs)
-        print(f"    {pkg}: {'✓ present' if present else '✗ MISSING'}")
+        print(f"    {pkg}: {'present' if present else 'MISSING'}")
 else:
     print("  requirements.txt not found")
 

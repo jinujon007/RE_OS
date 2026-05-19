@@ -139,7 +139,7 @@ flowchart TB
 - **Developer grading** — automatic A/B/C classification: Grade A = recognised brand or ≥500 units; B = 100–499; C = <100
 - **Checkpointed pipeline** — today's Stage 1 checkpoint means failed runs restart from Stage 3; no re-scraping
 - **Autonomous scheduling** — APScheduler runs RERA refresh at 2 AM IST daily; market snapshots at 6 AM
-- **Scout Division** — four specialised scouts built and awaiting integration: News Scout, Portal Scout, Developer Scout, RERA Detail Scout
+- **Scout Division** — four specialised scouts active in Stage 1: News Scout, Portal Scout, Developer Scout, RERA Detail Scout. Full dedup and cross-source reconciliation in Phase 2.
 
 ---
 
@@ -211,7 +211,7 @@ All configuration lives in `.env`. Copy `.env.example` to get started.
 | `NVIDIA_API_KEY` | Optional | — | 405B model, 40 req/min free. [build.nvidia.com](https://build.nvidia.com) |
 | `OPENROUTER_API_KEY` | Optional | — | Last-resort fallback. [openrouter.ai](https://openrouter.ai) |
 | `TARGET_MARKETS` | Optional | `Yelahanka,Devanahalli,Hebbal` | Comma-separated market names |
-| `DB_PASSWORD` | Optional | `re_os_2024` | PostgreSQL password |
+| `DB_PASSWORD` | **Required** | — | PostgreSQL password — set before first `docker compose up` |
 | `OLLAMA_MODEL` | Optional | `llama3.1:8b` | Local model name |
 
 ---
@@ -277,6 +277,32 @@ docker compose build agents && docker compose up -d agents
 
 ---
 
+## Shortcuts (`make`)
+
+A `Makefile` wraps the most common commands. Requires `make` installed.
+
+| Target | What It Does |
+|--------|-------------|
+| `make up` | `docker compose up -d` |
+| `make down` | `docker compose down` |
+| `make ps` | `docker compose ps` |
+| `make logs` | Tail agents container logs |
+| `make rebuild` | Rebuild agents image and restart |
+| `make run` | Run all markets |
+| `make run-yelahanka` | Run Yelahanka only |
+| `make run-devanahalli` | Run Devanahalli only |
+| `make run-hebbal` | Run Hebbal only |
+| `make db` | Open psql shell |
+| `make db-inventory` | Print `v_market_inventory` |
+| `make db-projects` | Print `v_active_projects` (20 rows) |
+| `make db-developers` | Print `v_developer_scorecard` |
+| `make test` | Run unit test suite (`pytest tests/`) |
+| `make lint` | `ruff check .` |
+| `make health` | `python utils/status.py` |
+| `make clean` | `docker compose down -v` (wipes DB) |
+
+---
+
 ## Target Markets
 
 | Market | Character | RERA Coverage |
@@ -304,8 +330,8 @@ docker compose build agents && docker compose up -d agents
 ## Roadmap
 
 - [x] **Phase 0** — Core pipeline: RERA scraper, PostGIS, CEO + Analyst agents
-- [x] **Phase 1** — Scout Division: News, Portal, Developer, RERA Detail scouts (built)
-- [ ] **Phase 2** — Scout integration: wire all 4 scouts into pipeline + dedup
+- [x] **Phase 1** — Scout Division: News, Portal, Developer, RERA Detail scouts (built and active in Stage 1)
+- [ ] **Phase 2** — Scout dedup + cross-source reconciliation (ScoutMemory full integration)
 - [ ] **Phase 3** — Dashboard: Flask + live agent status + scout feed
 - [ ] **Phase 4** — Sentinel Agent: system health monitoring + alerts
 - [ ] **Phase 5** — Finance Department: feasibility analyst + GDV modelling

@@ -7,7 +7,7 @@ Thank you for your interest. RE_OS is an active project — contributions that e
 ## Before You Start
 
 1. Read [VISION.md](../VISION.md) — the 14-phase roadmap describes everything planned. Most meaningful contributions fit into an existing phase.
-2. Read [AGENTS.md](../AGENTS.md) — understand the agent architecture and multi-brain protocol before touching agent code.
+2. Read [CLAUDE.md](../CLAUDE.md) — understand the agent architecture, LLM routing, and 3-stage pipeline before touching agent code.
 3. Read [HOW_TO_RUN.md](../HOW_TO_RUN.md) — get the stack running locally before writing code.
 
 ---

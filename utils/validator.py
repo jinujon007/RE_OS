@@ -51,7 +51,10 @@ def validate_rera_records(records: list) -> tuple:
                 f"[Validator] INVALID {raw.get('rera_number', 'NO_RERA')}: {errors}"
             )
         else:
-            valid.append(raw)
+            r_out = dict(raw)
+            if str(raw.get("data_source", "")).lower() == "seed_estimated":
+                r_out["project_name"] = f"[ESTIMATED] {raw.get('project_name', '')}"
+            valid.append(r_out)
 
     error_summary = []
     for r in invalid:

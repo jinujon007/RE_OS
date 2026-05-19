@@ -208,9 +208,12 @@ def _ai_extract_developer(text: str, developer_name: str, dom_snippets: str = ""
         prompt = DEVELOPER_EXTRACTION_PROMPT + fallback
 
     raw = ""
-    try:
-        import litellm
-        if GEMINI_API_KEY:
+    import litellm  # inside function — optional dep, not required at module level
+
+    # ── Primary: Gemini Flash ─────────────────────────────────────────────────
+    gemini_error = None
+    if GEMINI_API_KEY:
+        try:
             resp = litellm.completion(
                 model=GEMINI_CEO_MODEL,
                 api_key=GEMINI_API_KEY,
@@ -219,22 +222,36 @@ def _ai_extract_developer(text: str, developer_name: str, dom_snippets: str = ""
                 temperature=0.0,
             )
             raw = resp.choices[0].message.content.strip()
-        elif CEREBRAS_API_KEY:
-            # Fallback — truncate more aggressively for Cerebras context limit
-            short_prompt = prompt  # Use same prompt as Gemini path
+        except Exception as exc:
+            gemini_error = exc
+            logger.warning(
+                f"[DeveloperScout] Gemini extraction error ({type(exc).__name__}): {exc}"
+            )
+
+    # ── Fallback: Cerebras 8b (truncate to stay within 8 192-token context) ───
+    if (not raw) and CEREBRAS_API_KEY:
+        cerebras_prompt = (prompt[:7000] + "\n... [TRUNCATED for Cerebras 8K]")
+        try:
             resp = litellm.completion(
                 model=f"openai/{CEREBRAS_MODEL}",
                 api_key=CEREBRAS_API_KEY,
                 base_url=CEREBRAS_BASE_URL,
-                messages=[{"role": "user", "content": short_prompt}],
+                messages=[{"role": "user", "content": cerebras_prompt}],
                 max_tokens=800,
                 temperature=0.0,
             )
             raw = resp.choices[0].message.content.strip()
-        else:
-            return []
-    except Exception as exc:
-        logger.warning(f"[DeveloperScout] AI extraction error: {exc}")
+            if gemini_error:
+                logger.warning(
+                    "[DeveloperScout] Cerebras fallback succeeded after Gemini failure "
+                    f"({type(gemini_error).__name__})"
+                )
+        except Exception as exc:
+            logger.warning(
+                f"[DeveloperScout] Cerebras extraction error ({type(exc).__name__}): {exc}"
+            )
+
+    if not raw:
         return []
 
     raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`")
