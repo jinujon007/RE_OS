@@ -1,0 +1,87 @@
+name: Bug Report
+description: Something is broken — scraper, pipeline, DB, or agents
+labels: ["bug", "triage"]
+assignees: ["jinujon007"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before filing:** run `docker compose ps` to confirm all 5 containers are running.
+        Paste full log output — not a summary. The exact error line is what matters.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Which component is broken?
+      options:
+        - RERA Scraper (rera_karnataka.py)
+        - Listings Scraper (portal listings)
+        - Kaveri Scraper (registration data)
+        - News Scout
+        - RERA Detail Scout
+        - Python Organizer / DB upsert (Stage 2)
+        - Analyst Agent (Stage 3)
+        - CEO Agent (Stage 3)
+        - Docker / container startup
+        - Database / PostGIS
+        - Scheduler
+        - LLM Router / API keys
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: market
+    attributes:
+      label: Which market?
+      placeholder: "e.g. Yelahanka, Devanahalli, Hebbal, or All"
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect vs. what actually occurred?
+      placeholder: "Pipeline hung at Stage 1. Expected RERA scraper to return ~40 rows. Got 0 rows, then fallback sample data."
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: |
+        Run these and paste the full output:
+        ```
+        docker compose logs agents --tail 50
+        docker compose logs postgres --tail 20
+        ```
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: |
+        Run `docker compose ps` and paste output. Also include:
+        - OS and Docker Desktop version
+        - Which API keys are set (key names only, not values)
+      placeholder: |
+        OS: Windows 11
+        Docker Desktop: 4.x.x
+        Keys set: GROQ_API_KEY, CEREBRAS_API_KEY
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: All 5 containers show `running` in `docker compose ps`
+        - label: I have at least one LLM API key set in `.env`
+        - label: I searched existing issues before filing this one

@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  lint:
+    name: Lint & Syntax Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff==0.4.4
+
+      - name: Lint with ruff
+        run: |
+          ruff check . \
+            --exclude .kilo,kilo_output \
+            --ignore E501,E402,F401,F811,F841,W291,W293
+
+      - name: Check Python syntax (all source files)
+        run: |
+          python -m py_compile \
+            agents/ceo_agent.py \
+            agents/analyst_agent.py \
+            agents/scraper_agent.py \
+            agents/parser_agent.py \
+            config/llm_router.py \
+            config/settings.py \
+            config/run_logger.py \
+            config/checkpointer.py \
+            config/scheduler.py \
+            crews/market_intel_crew.py \
+            scrapers/rera_karnataka.py \
+            scrapers/news_scout.py \
+            scrapers/rera_detail_scout.py \
+            utils/db_organizer.py \
+            utils/validator.py \
+            utils/status.py
+
+  docker-validate:
+    name: Docker Compose Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create stub .env from example
+        run: |
+          cp .env.example .env
+          sed -i 's/gsk_your-key-here/gsk_stubkey/' .env
+          sed -i 's/nvapi-your-key-here/nvapi_stubkey/' .env
+          sed -i 's/sk-or-v1-your-key-here/sk-or-v1-stubkey/' .env
+
+      - name: Validate docker-compose.yml
+        run: docker compose config --quiet
+
+  schema-check:
+    name: SQL Schema Syntax
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgis/postgis:15-3.3
+        env:
+          POSTGRES_DB: re_os_test
+          POSTGRES_USER: re_os_user
+          POSTGRES_PASSWORD: re_os_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply schema to test database
+        env:
+          PGPASSWORD: re_os_test
+        run: |
+          psql -h localhost -U re_os_user -d re_os_test -f database/schema.sql
+          echo "Schema applied successfully"

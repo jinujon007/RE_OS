@@ -1,0 +1,61 @@
+name: Feature Request
+description: Propose a new scout, agent, market, or capability
+labels: ["enhancement"]
+assignees: ["jinujon007"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [VISION.md](../VISION.md) first — most planned work is already specced in the 14-phase roadmap.
+        If it's there, comment on the relevant phase instead of opening a new issue.
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - New scout (data source)
+        - New agent (reasoning capability)
+        - New market / city
+        - Database / schema change
+        - Dashboard / UI
+        - LLM routing improvement
+        - CI / DevOps
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Frame it as a decision you can't make today because of missing data or capability.
+      placeholder: "I can't assess developer distress signals without registration volume trends. Kaveri data is stored but not surfaced in the market brief."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would you build? Be specific about inputs, outputs, and where it fits in the pipeline.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else could solve this? Why is your approach better?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I checked VISION.md and this isn't already planned there
+        - label: This is not a duplicate of an existing open issue

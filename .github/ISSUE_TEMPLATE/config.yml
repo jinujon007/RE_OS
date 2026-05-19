@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: HOW_TO_RUN.md — Troubleshooting Guide
+    url: https://github.com/jinujon007/RE_OS/blob/master/HOW_TO_RUN.md
+    about: Common errors and fixes — check here before opening a bug report.
+  - name: VISION.md — Roadmap
+    url: https://github.com/jinujon007/RE_OS/blob/master/VISION.md
+    about: 14-phase feature roadmap — check here before requesting a feature.
