@@ -28,7 +28,7 @@ rq==1.16.1
 apscheduler==3.10.4
 
 # Data processing
-pandas==2.2.3
+pandas==3.0.3
 numpy==1.26.4
 
 # Geo utilities
