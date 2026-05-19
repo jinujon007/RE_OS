@@ -64,10 +64,8 @@ Cerebras and Groq are completely separate budgets — no TPM conflicts between t
 RE_OS/
 ├── CLAUDE.md                     ← YOU ARE HERE
 ├── MODELS.md                     ← Free model reference + daily capacity math
-├── AGENTS.md                     ← Task backlog + multi-brain protocol (read this for open tasks)
-├── DEVLOG.md                     ← Phase-by-phase build history (read last 2 phases only)
-├── CHANGELOG.md                  ← File-level change log (Claude + Cline edits)
-├── .cline_logs/CHANGELOG.md      ← Cline session log
+├── CHANGELOG.md                  ← File-level change log
+├── VISION.md                     ← 14-phase product roadmap
 ├── docker-compose.yml / Dockerfile / requirements.txt / .env
 │
 ├── agents/
@@ -152,36 +150,6 @@ docker compose build agents && docker compose up -d agents
 Get-Content logs/crew.log -Wait -Tail 50
 ```
 
-```powershell
-# ── AIDER (multi-file editor with automatic Gemini key rotation) ───────────
-# Always use the router — it picks the first Gemini key with available quota,
-# falls back to Groq Scout if all 4 keys are exhausted.
-
-# Standard launch (from RE_OS root):
-python scripts/aider_router.py
-# Shorthand:
-.\scripts\aider.ps1
-
-# Force a specific model (overrides router default):
-python scripts/aider_router.py --model gemini/gemini-2.5-flash
-python scripts/aider_router.py --model groq/meta-llama/llama-4-scout-17b-16e-instruct
-
-# Key slots live in .env — paste new keys into next empty slot:
-# GEMINI_API_KEY_1=...  (primary)
-# GEMINI_API_KEY_2=...  (backup 1)
-# GEMINI_API_KEY_3=...  (backup 2)
-# GEMINI_API_KEY_4=...  (backup 3)
-# GROQ_API_KEY=...      (final fallback — already set)
-
-# Inside Aider session:
-# /add <file>    — load file for editing
-# /ask <q>       — ask without editing
-# /undo          — undo last commit
-# /diff          — show pending changes
-# /exit          — quit
-# Full guide → TOOL_GUIDE.md § 5
-```
-
 ---
 
 ## Current State — Open Issues
@@ -191,7 +159,7 @@ python scripts/aider_router.py --model groq/meta-llama/llama-4-scout-17b-16e-ins
 **File:** `database/schema.sql` ~line 134. DB container currently healthy — low urgency.
 **Fix when hit:** move to view-level calculation or trigger.
 
-### Bugs 1 + 2: ✅ Fixed 2026-05-13. Details in DEVLOG.md Phases 3–4.
+### Bugs 1 + 2: ✅ Fixed 2026-05-13.
 
 ---
 
@@ -219,28 +187,6 @@ Developer grades (defined in `config/settings.py`): Grade A = known major brand 
 **Rotate Groq:** `console.groq.com` → delete old → create new → update `.env` → `docker compose restart agents scheduler`
 
 ---
-
-## Multi-Brain Protocol
-
-Three brains co-develop: **Claude Code** (architect + reviewer), **Cline** (primary implementer), **Kilo Code** (secondary implementer — T0 read-only tasks, free tier).
-
-**Cline and Kilo Code can run simultaneously** without conflicts. Each only picks tasks labeled with its own brain name in TASK_QUEUE.md. Each marks a task IN-PROGRESS before starting — this prevents double-claiming.
-
-**Cline model switching:** Cline has two mode slots — **Plan mode** (reasoning) and **Act mode** (tool execution) — set independently. Every task spec has a `Plan mode:` and `Act mode:` line. Before running any task, Cline tells Jinu which models to set. Jinu switches manually, confirms, then Cline runs. Providers: Ollama (local free), OpenRouter (free models), NinRouter (NVIDIA + Codex). T3/T4 tasks use Codex in Plan mode.
-
-**The loop:**
-- Jinu tells Cline: *"go to next task"* → Cline reads TASK_QUEUE.md → picks first `READY / Brain=Cline` row → marks IN-PROGRESS → reads Plan + Act model from spec → tells Jinu which models to set → waits for confirmation → executes → logs → marks DONE → reports next task's models
-- Jinu tells Kilo Code: *"go to next task"* → same loop, only for `Brain=Kilo Code` rows
-- After 5–7 tasks: Jinu tells Claude: *"review the project development"* → Claude reads changes, fixes drift, adds tasks
-- Neither Cline nor Kilo Code ever makes architecture decisions. They execute what Claude has specced.
-
-**Key files for brains:**
-- `AGENTS.md` — protocol, roles, model routing, how-to (full detail)
-- `TASK_QUEUE.md` — the atomic task list (INDEX + DETAIL SPECS + model routing at top)
-- `VISION.md` — the 14-phase office vision (context, never deviate from this)
-- `TOOL_GUIDE.md` — tool setup and Cline model routing guide
-
-**Session start read order:** this file → `DEVLOG.md` (last 2 phases only) → `CHANGELOG.md` → `TASK_QUEUE.md` (find next task)
 
 ---
 

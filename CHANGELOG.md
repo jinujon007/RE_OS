@@ -43,7 +43,7 @@
 **Change:** New Flask web server (port 8050). Routes: `/`, `/api/health`, `/api/db/state`, `/api/run/<market>` (POST/DELETE), `/api/status`, `/api/logs/stream` (SSE), `/api/reports/<market>`.
 **Why:** Web dashboard for viewing live logs + triggering pipeline runs without docker exec.
 
-### dashboard/templates/index.html — Complete Rewrite (Cline 2026-05-14)
+### dashboard/templates/index.html — Complete Rewrite (2026-05-14)
 **Before:** Basic terminal-style dashboard with left/right panel layout.
 **After:** "LLS Intelligence Operations Center" — visual office floor plan. Three AI agents as employee cabins (THE DIRECTOR/ceo, THE ANALYST/analyst, THE SCOUT/scraper). Each cabin shows real-time state, clickable for command input. Grid layout: 65% office floor + 35% infrastructure panel (top), 33% live feed (bottom). Press Start 2P pixel font, deep navy blueprint theme, cabin cards with accent colors (gold/blue/green), status dots, terminal slots for Scout (RERA/LISTINGS/KAVERI), command panels with slide animation. Polls `/api/agents` (graceful offline handling), SSE log stream with color-coding, health/DB/reports in infra panel.
 **Why:** Transform dashboard from basic monitoring tool into immersive "mission control" interface where agents are visualized as office employees with status indicators and direct command capability.
@@ -83,27 +83,15 @@
 
 ## Session — Claude 2026-05-14 (Pixel Office Integration)
 
-### dashboard/app.py — Updated (Brain A)
+### dashboard/app.py — Updated
 **Type:** New Feature
-**Author:** Claude (Brain A)
 **Change:** Added `_agent_states` dict tracking 4 agents (ceo, scraper, analyst, processor). Background monitor thread reads `crew.log` every 2s, updates agent labels (SCRAPING/ANALYZING/DIRECTING). New routes: `GET /api/agents` (agent states + running_markets), `POST /api/agents/<id>/command` (NLP-lite: detects market names + action verbs, routes to pipeline start/stop).
 **Why:** Backend to support pixel-art office floor plan frontend with per-agent state tracking and command dispatch.
 
-### dashboard/templates/index.html — Rebuilt (Brain B)
+### dashboard/templates/index.html — Rebuilt
 **Type:** New Feature
-**Author:** Claude (Brain B)
 **Change:** Full pixel-art "LLS Intelligence Ops Center" office floor plan. Press Start 2P font. CSS Grid: office floor (65%) | infra panel (35%) | live feed (bottom). 4 cabin cards: Director (gold), Scout (blue), Analyst (green), Processor (grey). Badge label uses `state.label || state.state.toUpperCase()` — shows SCRAPING/ANALYZING/DIRECTING during active runs. Scout cabin: 3 sub-terminal slots (RERA/LISTINGS/KAVERI). Click-to-expand command panel. Polls `/api/agents` every 2s, `/api/health` + `/api/db/state` every 30s. SSE log stream at bottom.
 **Why:** Immersive mission control UI. Contract fix (state.label over state.state for badge text) already correctly implemented in Brain B output — no separate patch needed.
-
----
-
-## Current Handoff -- Cline 2026-05-14 03:37 IST
-
-Status: complete
-Last files touched: `dashboard/templates/index.html`, `CHANGELOG.md`, `DEVLOG.md`
-State: Dashboard C1/C2/C3 complete — preset buttons, inline feedback, pulse-border animation. No rebuild needed.
-Next action: Restart agents, verify at http://localhost:8050
-Open question for Jinu: None
 
 ---
 
@@ -112,7 +100,7 @@ Open question for Jinu: None
 ```
 ### [DATE TIME IST] — [File or System] — [Short title]
 **Type:** Code | DB | Config | Schema | Seed Data | Bug Fix | New Feature
-**Author:** Claude | Cline | Manual
+**Author:** Claude | Manual
 
 **Before:**
 (exact previous state — code snippet, SQL result, or config value)
@@ -132,9 +120,8 @@ Open question for Jinu: None
 
 ---
 
-### 2026-05-14 03:37 IST — File: dashboard/templates/index.html — C1 preset buttons + C2 inline feedback + C3 animation polish (Cline)
+### 2026-05-14 03:37 IST — File: dashboard/templates/index.html — C1 preset buttons + C2 inline feedback + C3 animation polish
 **Type:** New Feature
-**Author:** Cline
 
 **Before:**
 - No quick-action buttons in command panels — free text only.
@@ -157,20 +144,8 @@ C1: one-click market selection. C2: always-visible feedback without opening pane
 
 **Verified:** ✅ Yes — no rebuild needed, `docker compose restart agents`
 
-### 2026-05-14 03:35 IST — File: CHANGELOG.md — Update handoff (Cline)
-**Type:** Documentation
-**Author:** Cline
-
-**Before:** Handoff timestamp 02:23 IST, status "complete", next action "Restart dashboard service".
-**After:** Handoff timestamp 03:37 IST, status "complete", last files include CHANGELOG.md + DEVLOG.md, next action "Restart agents, verify at http://localhost:8050".
-
-**Why:** Protocol compliance — update handoff after every session.
-
-**Verified:** ✅ Yes
-
-### 2026-05-14 02:23 IST — File: dashboard/templates/index.html — Bug Fixes (Cline)
+### 2026-05-14 02:23 IST — File: dashboard/templates/index.html — Bug Fixes
 **Type:** Bug Fix
-**Author:** Cline
 
 **Before:**
 - Duplicate `.cabin.scout` CSS rule set `grid-column: 1 / 3` (spanning full width), conflicting with earlier rule `grid-column: 1` (bottom-left only).
@@ -187,7 +162,6 @@ Scout cabin mispositioned (spanning full width instead of bottom-left), Processo
 
 ### 2026-05-14 02:18 IST — File: dashboard/app.py — Contract hardening + lifecycle prune + diagnostics
 **Type:** Bug Fix
-**Author:** Roo (Debug mode)
 
 **Before:**
 - `/api/agents` returned nested `{"agents": ...}` only, while UI consumer path in some flows expected direct top-level keys.
@@ -210,7 +184,6 @@ Eliminate false-offline UI regressions and stale-failure carryover in long-runni
 
 ### 2026-05-14 02:19 IST — File: dashboard/templates/index.html — Robust agents payload parser
 **Type:** Bug Fix
-**Author:** Roo (Debug mode)
 
 **Before:**
 Frontend agent polling assumed one payload shape (`data[agent]`) and one terminal active token (`active`).
@@ -226,26 +199,8 @@ Guarantee UI stability across contract evolution and prevent terminal indicators
 
 ---
 
-### 2026-05-14 02:19 IST — File: DEVLOG.md — Add Phase 11 hardening entry
-**Type:** Documentation
-**Author:** Roo (Debug mode)
-
-**Before:**
-No log entry for contract/lifecycle hardening patch.
-
-**After:**
-Added Phase 11 with risk diagnosis, validation logging, fixes, and outcomes.
-
-**Why:**
-Protocol compliance + future session continuity.
-
-**Verified:** ✅ Yes
-
----
-
 ### 2026-05-14 02:02 IST — File: dashboard/app.py — Agent-state monitor + agent command API
 **Type:** New Feature
-**Author:** Roo (Code mode)
 
 **Before:**
 Dashboard backend had no `_agent_states` map, no log-driven background state monitor, no `/api/agents` endpoint, and no `/api/agents/<agent_id>/command` route.
@@ -264,21 +219,6 @@ Enable frontend command palette + live agent cards with stage-aware execution st
 **Verified:** ✅ Yes
 
 ---
-
-### 2026-05-14 02:03 IST — File: DEVLOG.md — Add Phase 10 dashboard backend entry
-**Type:** Documentation
-**Author:** Roo (Code mode)
-
-**Before:**
-No phase entry for dashboard agent-state API and command router implementation.
-
-**After:**
-Added Phase 10 entry documenting situation, code changes, behavior added, and outcome.
-
-**Why:**
-Protocol requirement: log meaningful change in DEVLOG after implementation.
-
-**Verified:** ✅ Yes
 
 ---
 
@@ -502,9 +442,9 @@ docker compose exec postgres psql -U re_os_user -d re_os -f /tmp/seed_kaveri_yel
 
 ---
 
-## Task Backlog
+## Open Issues / Task Backlog
 
-Single source of truth for all open tasks is **`AGENTS.md`**. Do not maintain a parallel list here.
+See Known Issues table below. Open tasks are tracked separately.
 
 ---
 
@@ -529,59 +469,41 @@ DEVLOG.md | Added new phase entry documenting CC1+CC2 backend delivery and valid
 
 ---
 
-## Session — Claude 2026-05-15 (Phase 16 — Recovery + Protocol Hardening)
+## Session — Claude 2026-05-15
 
-CHANGELOG.md | Restored from git HEAD after Kilo Code (T-038) overwrote entire file with 1-line entry | Claude | 2026-05-15
-AGENTS.md | Kilo Code logging protocol: removed root CHANGELOG.md from Kilo Code mandate; kilo_logs/CHANGELOG.md is now Kilo Code's ONLY output file | Claude | 2026-05-15
-AGENTS.md | Added ⚠️ hard limit: Kilo Code must NOT write to root CHANGELOG.md; added to Key Files table | Claude | 2026-05-15
 scrapers/news_scout.py | Fixed days_back default 14→60 in _fetch_google_news_rss, scout(), scout_news(), argparse; added filtered-count logging; added ET Realty non-200 log; NEWS_QUERIES years 2025→2026 | Claude | 2026-05-15
-TASK_QUEUE.md | T-038 DONE, T-039 DONE, T-041 DONE, T-011 SKIP, T-012 SKIP, T-013 SKIP (→T-042), T-042 READY; all Kilo Code task specs updated to log to kilo_logs only | Claude | 2026-05-15
-kilo_logs/CHANGELOG.md | Created dedicated Kilo Code log; pre-populated Phase 15 entries T-001 through T-008 and T-038; T-039 findings added | Claude + Kilo Code | 2026-05-15
-DEVLOG.md | Phase 15 marked Complete; Phase 16 recovery entry added | Claude | 2026-05-15
 
-**T-039** | scrapers/developer_scout.py | Kilo Code diagnosed: keywords found, _clean_html likely filtering project names from nav/header; Brigade URL brigade.in/all-properties?city=bangalore, Prestige URL prestige.co.in/residential-projects/bangalore | Kilo Code + Claude | 2026-05-15
+**scrapers/developer_scout.py diagnosis:** keywords found, _clean_html likely filtering project names from nav/header; Brigade URL brigade.in/all-properties?city=bangalore, Prestige URL prestige.co.in/residential-projects/bangalore | Claude | 2026-05-15
 
 ---
 
 ---
 
-## Session — Cline 2026-05-18 (Phase A Pipeline Closure — T-138, T-139, T-140, T-141, T-147)
+## Session — 2026-05-18 (Phase A Pipeline Closure)
 
-scrapers/rera_karnataka.py | T-138: Capture `<a id="..." onclick="showFileApplicationPreview">` and synthesize `projectDetails?action=<id>` detail URLs from RERA listing table parse (previously extracted 0 detail URLs) | Cline | 2026-05-18
-scrapers/rera_detail_scout.py | T-138: Added `_fetch_with_fallbacks()` multi-URL fallback; POST handling for `/projectDetails?action=` pattern; Playwright fallback iterates all candidate URLs; `nav_only` guard returns empty detail dict when page < 1000 chars. Before: 0 enriched. After: 15 enriched. | Cline | 2026-05-18
-scrapers/news_scout.py | T-139: Added `_is_rate_limited()` helper and `_call_cerebras_fallback()` helper inside `_ai_analyze_articles()`; Gemini 429/quota errors now trigger Cerebras fallback with WARNING log; non-rate-limit Gemini errors re-raise. Before: Gemini 429 swallowed, returned []. After: deterministic Cerebras fallback. | Cline | 2026-05-18
-config/settings.py | T-140: Added `AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]` canonical status constant. SQL migration also applied to live DB (via docker exec): success→completed, Completed→completed, In Progress→in_progress. CHECK constraint re-added. | Cline | 2026-05-18
-.gitignore | T-141: Verified `kilo_output/` and `kilo_logs/` already present — no content change needed. Confirmed compliant. | Cline | 2026-05-18
-scrapers/developer_scout.py | T-147: DOM-targeted extraction via `_extract_dom_snippets()` with BHK+keyword dual-filter (Tier 1) + keyword+noise-filter (Tier 2). DOM threshold lowered 500→200 chars. CRITICAL FIX: Cerebras fallback used `filtered[:2000]` (wrong) — fixed to use `prompt` variable (correct). Before: 0 projects. After: Godrej 6 projects via Cerebras fallback. Brigade/Prestige URLs dead → T-151. | Cline | 2026-05-18
-
----
-
-## Session — Cline 2026-05-18 (Crew + DB organizer — T-063, T-018, T-024, T-022)
-
-utils/db_organizer.py | Added `run_portal_scout()`, `run_developer_scout()`, `run_news_scout()`, `run_rera_detail_scout()` public methods + `_upsert_listing_by_cid()`, `_insert_news_article()`, `_upsert_rera_detail()` private helpers. run_news_scout() has news_articles table existence guard. | Cline | 2026-05-18
-crews/market_intel_crew.py | Stage 1: Added `scrape_rera_detail`, `scrape_portal`, `scrape_developer`, `scrape_news` Tasks; kaveri context chain updated. Cache skip now requires ALL scouts cached (was RERA-only — caused portal/news scouts to never run on cached days). Stage 2: Added run_portal_scout, run_developer_scout, run_news_scout, run_rera_detail_scout calls loading from checkpoints. Stage 3: _EXCLUDED.clear() before Stage 3 (prevents Gemma exclusion from blocking Gemini Flash). _EXCLUDED.clear() on success and failure exit paths. Traceback logging on exceptions. _RATE_LIMIT_RETRIES 2→3. Rate limit detection: added llm_provider attribute check; added Cerebras "requests per minute" pattern; added 404 → nvidia exclusion. | Cline | 2026-05-18
-agents/scraper_agent.py | T-041 carry-over: NewsScoutTool days_back 14→60 (matches news_scout.py default fix) | Cline | 2026-05-18
+scrapers/rera_karnataka.py | Capture `<a id="..." onclick="showFileApplicationPreview">` and synthesize `projectDetails?action=<id>` detail URLs from RERA listing table parse (previously extracted 0 detail URLs) | 2026-05-18
+scrapers/rera_detail_scout.py | Added `_fetch_with_fallbacks()` multi-URL fallback; POST handling for `/projectDetails?action=` pattern; Playwright fallback iterates all candidate URLs; `nav_only` guard returns empty detail dict when page < 1000 chars. Before: 0 enriched. After: 15 enriched. | 2026-05-18
+scrapers/news_scout.py | Added `_is_rate_limited()` helper and `_call_cerebras_fallback()` helper inside `_ai_analyze_articles()`; Gemini 429/quota errors now trigger Cerebras fallback with WARNING log; non-rate-limit Gemini errors re-raise. Before: Gemini 429 swallowed, returned []. After: deterministic Cerebras fallback. | 2026-05-18
+config/settings.py | Added `AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]` canonical status constant. SQL migration also applied to live DB (via docker exec): success→completed, Completed→completed, In Progress→in_progress. CHECK constraint re-added. | 2026-05-18
+scrapers/developer_scout.py | DOM-targeted extraction via `_extract_dom_snippets()` with BHK+keyword dual-filter (Tier 1) + keyword+noise-filter (Tier 2). DOM threshold lowered 500→200 chars. CRITICAL FIX: Cerebras fallback used `filtered[:2000]` (wrong) — fixed to use `prompt` variable (correct). Before: 0 projects. After: Godrej 6 projects via Cerebras fallback. Brigade/Prestige URLs dead — needs investigation. | 2026-05-18
 
 ---
 
-## Recovery — Claude Code 2026-05-19
+## Session — 2026-05-18 (Crew + DB organizer)
 
-CHANGELOG.md | Recovered from git HEAD after Kilo Code second overwrite incident (T-051 TypeScript content from unrelated project pasted as CHANGELOG entry). Added all 2026-05-18 Cline session entries above. | Claude Code | 2026-05-19
-config/settings.py | REGRESSION FIX: NVIDIA model names stripped of vendor prefix by T-140 PR. Reverted to vendor-qualified: `meta/llama-3.1-405b-instruct`, `nvidia/llama-3.1-nemotron-70b-instruct`, `meta/llama-3.3-70b-instruct`. Without vendor prefix, NVIDIA NIM rejects model names (expects `{vendor}/{model}` format in model field). | Claude Code | 2026-05-19
-TASK_QUEUE.md | Corrected status entries: T-143 DONE, T-144 DONE, T-145 DONE (all completed by Kilo Code per kilo_logs); T-153 READY (T-147 now DONE — unblocks PB-2 audit); T-157 SKIP (superseded by T-145 which completed same audit). | Claude Code | 2026-05-19
-
----
-
-## Session — Claude Code 2026-05-19 (Phase 23 Review + Task Governance)
-
-TASK_QUEUE.md | INDEX: Marked T-153, T-185, T-186, T-203, T-204 DONE (Kilo Code completed today, not reflected in INDEX). T-207 INDEX title + spec reframed: "DB write debug" → "extraction fix" (Candidate A confirmed by T-152). T-207 blocker changed T-150 → T-210. T-210 (RERA detail URL diagnosis) + T-211 (alternative news sources spec) added to INDEX + DETAIL SPECS. | Claude Code | 2026-05-19
-DEVLOG.md | Phase 23 entry added: critical findings summary, confirmed T-152 root cause (nav-only HTML), developer_scout empty checkpoint, news=0, CEO Section 7 missing. Full critical path to Yelahanka launch documented. | Claude Code | 2026-05-19
+utils/db_organizer.py | Added `run_portal_scout()`, `run_developer_scout()`, `run_news_scout()`, `run_rera_detail_scout()` public methods + `_upsert_listing_by_cid()`, `_insert_news_article()`, `_upsert_rera_detail()` private helpers. run_news_scout() has news_articles table existence guard. | 2026-05-18
+crews/market_intel_crew.py | Stage 1: Added `scrape_rera_detail`, `scrape_portal`, `scrape_developer`, `scrape_news` Tasks; kaveri context chain updated. Cache skip now requires ALL scouts cached (was RERA-only — caused portal/news scouts to never run on cached days). Stage 2: Added run_portal_scout, run_developer_scout, run_news_scout, run_rera_detail_scout calls loading from checkpoints. Stage 3: _EXCLUDED.clear() before Stage 3 (prevents Gemma exclusion from blocking Gemini Flash). _EXCLUDED.clear() on success and failure exit paths. Traceback logging on exceptions. _RATE_LIMIT_RETRIES 2→3. Rate limit detection: added llm_provider attribute check; added Cerebras "requests per minute" pattern; added 404 → nvidia exclusion. | 2026-05-18
+agents/scraper_agent.py | NewsScoutTool days_back 14→60 (matches news_scout.py default fix) | 2026-05-18
 
 ---
 
-## Session — Cline 2026-05-19 (T-064 Market Expansion)
+## Session — Claude Code 2026-05-19 (Regression Fix)
 
-TASK_QUEUE.md | T-064: Market expansion — Devanahalli + Hebbal | Cline | 2026-05-19
+config/settings.py | REGRESSION FIX: NVIDIA model names stripped of vendor prefix. Reverted to vendor-qualified: `meta/llama-3.1-405b-instruct`, `nvidia/llama-3.1-nemotron-70b-instruct`, `meta/llama-3.3-70b-instruct`. Without vendor prefix, NVIDIA NIM rejects model names (expects `{vendor}/{model}` format in model field). | Claude Code | 2026-05-19
+
+---
+
+## Session — 2026-05-19 (Market Expansion — Devanahalli + Hebbal)
 
 **Execution:**
 - Yelahanka: PASS — 1171.7s — fallback sample (RERA portal timed out)
@@ -601,14 +523,5 @@ TASK_QUEUE.md | T-064: Market expansion — Devanahalli + Hebbal | Cline | 2026-
 ---
 
 *CHANGELOG — Last updated: 2026-05-19 IST*
-
-### 2026-05-19 16:30 IST — File: OPERATIONAL_REVIEW.md — Updated operational review
-**Type:** Documentation
-**Author:** Cline
-**Before:** (previous version of OPERATIONAL_REVIEW.md)
-**After:** Comprehensive operational and strategic review with execution roadmap, risk matrix, next‑action checklist, and additional operational dimensions.
-**Why:** Provide a complete, production‑grade assessment and actionable plan for Yelahanka launch.
-**Verified:** ✅ Yes
-*Update this file immediately after every code, DB, or config change.*
+*Update this file after every code, DB, or config change.*
 *Before field required for all changes to existing code/data.*
-*Kilo Code: do NOT write to this file. Write to kilo_logs/CHANGELOG.md only.*

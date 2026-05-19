@@ -128,7 +128,9 @@ CREATE TABLE rera_projects (
 
     -- Raw data preservation
     raw_data JSONB,
-    source_url TEXT,
+    -- RERA detail page URL for deep-dive enrichment
+    detail_url TEXT,                                -- /projectDetails?action=...
+    source_url TEXT,                                -- RERA listing page URL
     last_scraped_at TIMESTAMP,
     data_source VARCHAR(20) NOT NULL DEFAULT 'seed_estimated'
         CHECK (data_source IN ('portal_scraped', 'seed_estimated', 'manual_entry')),
