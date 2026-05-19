@@ -1,0 +1,32 @@
+name: Dependency Review
+
+on:
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    name: Dependency Vulnerability Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          # Block PRs that introduce HIGH or CRITICAL CVEs
+          fail-on-severity: high
+
+          # Block licenses incompatible with commercial use
+          # GPL-3.0 and AGPL-3.0 require derivative works to be open-sourced
+          deny-licenses: GPL-3.0, AGPL-3.0
+
+          # Post a comment summarizing the review on the PR
+          comment-summary-in-pr: always
