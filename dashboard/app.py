@@ -351,6 +351,17 @@ def _normalize_market(market_raw: str):
     return MARKET_CANONICAL.get(key)
 
 
+_API_KEY = os.environ.get("DASHBOARD_API_KEY", "")
+
+
+def _is_run_api_authorized(req) -> bool:
+    """Opt-in API key gate. Auth disabled when DASHBOARD_API_KEY is unset (local mode)."""
+    if not _API_KEY:
+        return True
+    provided = req.headers.get("X-API-Key", "") or req.args.get("api_key", "")
+    return provided == _API_KEY
+
+
 def _detect_market_from_prompt(prompt: str):
     text = (prompt or "").lower()
     for key, canonical in MARKET_CANONICAL.items():
@@ -531,6 +542,8 @@ def db_state():
 
 @app.route("/api/run/<market>", methods=["POST"])
 def run_pipeline(market):
+    if not _is_run_api_authorized(request):
+        return jsonify({"error": "unauthorized"}), 401
     canonical = _normalize_market(market)
     if not canonical:
         return jsonify({"error": "invalid market"}), 400
@@ -540,6 +553,8 @@ def run_pipeline(market):
 
 @app.route("/api/run/<market>", methods=["DELETE"])
 def stop_pipeline(market):
+    if not _is_run_api_authorized(request):
+        return jsonify({"error": "unauthorized"}), 401
     canonical = _normalize_market(market)
     if not canonical:
         return jsonify({"error": "invalid market"}), 400
@@ -568,9 +583,76 @@ def run_status():
 
 # ── Agent Control / State ──────────────────────────────────────────────────────
 
-
+ 
+ 
 @app.route("/api/agents", methods=["GET"])
 def agents_state():
+    # Try to get live data from database first
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        
+        # Execute the SQL query as specified in T-166
+        cur.execute("""
+            SELECT agent_name, status, MAX(created_at) as last_run, COUNT(*) as total_runs
+            FROM agent_runs 
+            GROUP BY agent_name, status 
+            ORDER BY last_run DESC
+        """)
+        
+        # Build results in the format specified: {name, status, last_run, total_runs} per agent
+        db_agents = {}
+        for row in cur.fetchall():
+            agent_name, status, last_run, total_runs = row
+            # Convert to the expected format matching the original _agent_states structure
+            if agent_name not in db_agents:
+                db_agents[agent_name] = {
+                    "id": agent_name,
+                    "name": agent_name.replace("_", " ").title(),
+                    "role": agent_name.replace("_", " ").title(),
+                    "label": status.upper() if status else "IDLE",
+                    "state": status if status else "idle",
+                    "last_action": f"Last run: {last_run}" if last_run else "No recent activity",
+                    "started": last_run.isoformat() if hasattr(last_run, 'isoformat') else str(last_run) if last_run else None,
+                }
+        
+        # If we got data from DB, use it; otherwise fall back to in-memory
+        if db_agents:
+            with _lock:
+                states_copy = copy.deepcopy(db_agents)
+                running_copy = {}
+                for market, entry in _running.items():
+                    rc = entry["proc"].poll()
+                    running_copy[market] = {
+                        "started": entry.get("started"),
+                        "state": "running" if rc is None else ("done" if rc == 0 else "failed"),
+                        "returncode": rc,
+                        "pid": entry["proc"].pid,
+                    }
+            
+            response = {"agents": states_copy, "running_markets": running_copy}
+            
+            # Backward + forward compatibility: expose both nested and top-level agent keys.
+            response.update(states_copy)
+            
+            global _diag_agents_contract_logged
+            if not _diag_agents_contract_logged:
+                logger.info(
+                    "[DIAG agents] /api/agents keys=%s nested_agents=%s (from DB)",
+                    sorted(response.keys()),
+                    sorted(states_copy.keys()),
+                )
+                _diag_agents_contract_logged = True
+            
+            conn.close()
+            return jsonify(response)
+        
+        conn.close()
+    except Exception as e:
+        logger.warning(f"[DIAG agents] DB query failed, falling back to in-memory: {e}")
+        # Fall through to in-memory implementation below
+    
+    # Fallback to original in-memory implementation if DB fails or returns no data
     with _lock:
         states_copy = copy.deepcopy(_agent_states)
         running_copy = {}
@@ -582,26 +664,28 @@ def agents_state():
                 "returncode": rc,
                 "pid": entry["proc"].pid,
             }
-
+ 
     response = {"agents": states_copy, "running_markets": running_copy}
-
+ 
     # Backward + forward compatibility: expose both nested and top-level agent keys.
     response.update(states_copy)
-
+ 
     global _diag_agents_contract_logged
     if not _diag_agents_contract_logged:
         logger.info(
-            "[DIAG agents] /api/agents keys=%s nested_agents=%s",
+            "[DIAG agents] /api/agents keys=%s nested_agents=%s (fallback)",
             sorted(response.keys()),
             sorted(states_copy.keys()),
         )
         _diag_agents_contract_logged = True
-
+ 
     return jsonify(response)
 
 
 @app.route("/api/agents/<agent_id>/command", methods=["POST"])
 def agent_command(agent_id):
+    if not _is_run_api_authorized(request):
+        return jsonify({"error": "unauthorized"}), 401
     body = request.get_json(silent=True) or {}
     prompt = str(body.get("prompt") or "")
     market_from_body = _normalize_market(str(body.get("market") or ""))

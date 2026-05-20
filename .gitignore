@@ -80,6 +80,10 @@ DEVLOG.md
 TOOL_GUIDE.md
 OPERATIONAL_REVIEW.md
 .clinerules
+CLINE_BRIEF.md
+CURRENT_TASK.md
+KILO_BRIEF.md
+TASK_ARCHIVE.md
 
 # VS Code personal settings (contains local paths and credentials)
 .vscode/

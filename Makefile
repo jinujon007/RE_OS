@@ -4,9 +4,9 @@
 
 .PHONY: up down ps logs rebuild \
         run run-yelahanka run-devanahalli run-hebbal \
-        db db-inventory db-projects db-developers \
+        db db-inventory db-projects db-developers db-reset \
         lint format syntax-check test health \
-        ollama-pull clean
+        ollama-pull ci clean
 
 # ── STACK ─────────────────────────────────────────────────────────────────────
 
@@ -53,6 +53,9 @@ db-projects:
 db-developers:
 	docker compose exec postgres psql -U re_os_user -d re_os -c "SELECT * FROM v_developer_scorecard;"
 
+db-reset:
+	docker compose down -v && docker compose up -d
+
 # ── LOCAL LLM ─────────────────────────────────────────────────────────────────
 
 ollama-pull:
@@ -68,6 +71,8 @@ format:
 
 test:
 	pytest tests/ -v --tb=short
+
+ci: lint test syntax-check
 
 syntax-check:
 	python -m py_compile \

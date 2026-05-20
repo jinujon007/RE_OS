@@ -79,11 +79,11 @@ services:
       - "8050:8050"
     volumes:
       - ./:/app
+      - re_os_outputs:/app/outputs
+      - re_os_logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8050/api/health', timeout=5)\" 2>/dev/null || exit 1"]
       interval: 60s
@@ -113,14 +113,16 @@ services:
       TARGET_MARKETS: ${TARGET_MARKETS:-Yelahanka,Devanahalli,Hebbal}
     volumes:
       - ./:/app
+      - re_os_outputs:/app/outputs
+      - re_os_logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_started
     command: python config/scheduler.py
 
 volumes:
   postgres_data:
   ollama_data:
   redis_data:
+  re_os_outputs:
+  re_os_logs:

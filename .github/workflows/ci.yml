@@ -55,12 +55,35 @@ jobs:
           cache: "pip"
 
       - name: Install test dependencies
-        run: pip install pytest>=7.0 pytest-mock>=3.0 loguru python-dotenv
+        run: pip install pytest>=7.0 pytest-mock>=3.0 loguru python-dotenv flask psycopg2-binary
 
       - name: Run unit tests
         env:
           DB_PASSWORD: test_password_for_ci
         run: pytest tests/ -v --tb=short
+
+  pip-audit:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Run pip-audit
+        run: pip-audit -r requirements.txt
+        continue-on-error: true
 
   docker-validate:
     name: Docker Compose Validate

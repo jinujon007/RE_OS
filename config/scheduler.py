@@ -36,10 +36,29 @@ def run_rera_refresh():
 
 def run_listings_scan():
     """Listings scan — 6-hourly."""
-    from scrapers.rera_karnataka import RERAKarnatakaScraper
+    from scrapers.listings_scraper import ListingsScraper
+    from config.checkpointer import Checkpointer
     logger.info("Scheduler: Starting listings scan")
-    # Listings scraper runs separately here
-    # Implement listings_scraper.py for this
+    scraper = ListingsScraper()
+    cp = Checkpointer()
+
+    total = 0
+    failures = 0
+
+    for market in [m.strip() for m in TARGET_MARKETS]:
+        try:
+            listings = scraper.scrape_market(market)
+            cp.save(market, "listings_scraped", listings)
+            count = len(listings or [])
+            total += count
+            logger.info(f"  Listings scan: {market} -> {count} listings")
+        except Exception as e:
+            failures += 1
+            logger.error(f"  Listings scan failed for {market}: {e}")
+
+    logger.info(
+        f"Scheduler: Listings scan complete — total={total}, failures={failures}"
+    )
 
 
 def run_market_snapshot():

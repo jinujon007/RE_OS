@@ -609,7 +609,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     os.makedirs("logs", exist_ok=True)
-    logger.add("logs/crew.log", rotation="50 MB", level="INFO")
+    logger.add("logs/crew.log", rotation="5 MB", retention=5, level="INFO")
 
     if args.history:
         from config.run_logger import print_run_history
