@@ -396,10 +396,11 @@ if not _API_KEY:
 
 def _is_run_api_authorized(req) -> bool:
     """Opt-in API key gate. Auth disabled when DASHBOARD_API_KEY is unset (local mode)."""
-    if not _API_KEY:
+    api_key = os.environ.get("DASHBOARD_API_KEY", "")
+    if not api_key:
         return True
     provided = req.headers.get("X-API-Key", "") or req.args.get("api_key", "")
-    return provided == _API_KEY
+    return provided == api_key
 
 
 def _detect_market_from_prompt(prompt: str):
@@ -543,13 +544,13 @@ def health():
 
 # ── Metrics ─────────────────────────────────────────────────────────────────────
 
-from prometheus_client import Counter, generate_latest
-
-# Define Prometheus counters
-pipeline_runs_total = Counter('pipeline_runs_total', 'Total number of pipeline runs')
-llm_calls_total = Counter('llm_calls_total', 'Total number of LLM calls')
-db_upserts_total = Counter('db_upserts_total', 'Total number of DB upserts')
-scrape_success_total = Counter('scrape_success_total', 'Total number of successful scrapes')
+from prometheus_client import generate_latest
+from config.metrics import (
+    pipeline_runs_total,
+    llm_calls_total,
+    db_upserts_total,
+    scrape_success_total,
+)
 
 @app.route('/metrics')
 def metrics():
@@ -982,9 +983,9 @@ def get_report(market):
     return jsonify({"content": content, "file": os.path.basename(latest)})
 
 
-@app.route("/api/intel", methods=["GET"])
-def intel_summary():
-    """Phase-2 lightweight intel cards payload for UI."""
+@app.route("/api/intel/cards", methods=["GET"])
+def intel_cards():
+    """DB-backed market summary cards for dashboard UI."""
     conn = None
     try:
         conn = _get_db()
@@ -1018,6 +1019,52 @@ def intel_summary():
     finally:
         if conn:
             _release_db(conn)
+
+
+# ── Intel API ──────────────────────────────────────────────────────────────────
+
+
+@app.route("/api/intel")
+def get_intel():
+    result = {}
+    for market in ["Yelahanka", "Devanahalli", "Hebbal"]:
+        slug = MARKET_SLUG.get(market)
+        pattern = f"/app/outputs/{slug}/intel_report_*.txt"
+        files = sorted(glob.glob(pattern))
+        if files:
+            latest = files[-1]
+            with open(latest, encoding="utf-8") as f:
+                content = f.read()
+            # Extract timestamp from filename: intel_report_20260519_1430.txt -> "2026-05-19 14:30"
+            fname = os.path.basename(latest)
+            result[market] = {
+                "last_report": fname,
+                "summary": content[:500],
+                "estimated": "[ESTIMATED DATA" in content,
+            }
+        else:
+            result[market] = {
+                "last_report": None,
+                "summary": "No reports yet",
+                "estimated": False,
+            }
+    return jsonify(result)
+
+
+@app.route("/api/intel/download")
+def download_intel():
+    market_raw = request.args.get("market", "")
+    canonical = _normalize_market(market_raw)
+    if not canonical or canonical == "all":
+        return jsonify({"error": "invalid market"}), 400
+    slug = MARKET_SLUG.get(canonical)
+    pattern = f"/app/outputs/{slug}/intel_report_*.txt"
+    files = sorted(glob.glob(pattern))
+    if not files:
+        return jsonify({"error": "no report found"}), 404
+    with open(files[-1], encoding="utf-8") as f:
+        content = f.read()
+    return Response(content, mimetype="text/plain")
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

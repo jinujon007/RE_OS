@@ -5,6 +5,17 @@
 
 ---
 
+## Session — Claude Code 2026-05-20 (Round 8 — TPM Integration Audit)
+
+### P0 Bug Fixes (pre-integration blockers)
+- `requirements.txt`: added `prometheus-client>=0.21.0` — missing dep caused `ModuleNotFoundError` on app start
+- `dashboard/app.py`: renamed duplicate `@app.route("/api/intel")` → `/api/intel/cards` (endpoint `intel_cards`) — Flask startup conflict; two functions registered on identical path+method
+- `.github/workflows/ci.yml`: added `prometheus-client>=0.21.0` to test job install step — CI import of `dashboard.app` was failing
+- `tests/unit/test_dashboard_routes.py`: fixed `test_health_last_run_populated_from_db` — `redis`/`httpx` are locally imported in `health()`, patching at `dashboard.app.*` level is a no-op; switched to `patch.dict(sys.modules, ...)` approach
+- `TASK_QUEUE.md`: T-217 and T-219 marked DONE — `board_sessions` and `agent_memories` schemas already present in Alembic baseline migration `0001_initial.py` and `models.py`
+
+---
+
 ## Session — Claude Code 2026-05-20 (5-Round Engineering Audit)
 
 ### Round 1 — Runtime correctness (commit 6da457e)
@@ -684,3 +695,5 @@ Checkpoints cleared. 10 fresh RERA fallback records staged. Pipeline fresh-launc
 **Verified:** ✅ crew.log tail, DB query `total_units>0 = 10` (pre-seeded, not from this run)
 
 ---
+T-167 | /api/intel endpoint wired | PASS | /api/intel and /api/intel/download both added to dashboard/app.py | Cline | 2026-05-20 11:37
+

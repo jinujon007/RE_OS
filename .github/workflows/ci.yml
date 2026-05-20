@@ -58,7 +58,7 @@ jobs:
           cache: "pip"
 
       - name: Install test dependencies
-        run: pip install pytest>=7.0 pytest-mock>=3.0 pytest-cov>=4.0 loguru python-dotenv flask psycopg2-binary sqlalchemy
+        run: pip install pytest>=7.0 pytest-mock>=3.0 pytest-cov>=4.0 loguru python-dotenv flask psycopg2-binary sqlalchemy "prometheus-client>=0.21.0"
 
       - name: Run unit tests
         env:
