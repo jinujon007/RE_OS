@@ -438,6 +438,28 @@ body {
   color: #8b949e;
 }
 
+.intel-cards {
+  display: grid;
+  gap: 6px;
+}
+.intel-card {
+  background: #0a0e1a;
+  border: 1px solid #2a3a55;
+  border-radius: 4px;
+  padding: 8px;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.intel-head {
+  display: flex;
+  justify-content: space-between;
+  font-family: 'Press Start 2P', cursive;
+  color: #c9d1d9;
+  font-size: 8px;
+  margin-bottom: 6px;
+}
+.intel-meta { color: #8b949e; font-size: 9px; }
+
 /* ── Live Feed ── */
 .feed-header {
   background: #1a2235;
@@ -688,6 +710,13 @@ body {
       </select>
       <div class="report-content" id="report-content">
         <span class="empty-msg">No report yet</span>
+      </div>
+    </div>
+
+    <div class="infra-section">
+      <div class="infra-title">INTEL SNAPSHOT</div>
+      <div class="intel-cards" id="intel-cards">
+        <div class="empty-msg">Loading intel…</div>
       </div>
     </div>
 
@@ -1081,6 +1110,34 @@ async function loadReport() {
   }
 }
 loadReport();
+
+// ── Intel Cards ──
+async function pollIntel() {
+  const wrap = document.getElementById('intel-cards');
+  if (!wrap) return;
+  try {
+    const data = await fetch('/api/intel').then(r => r.json());
+    if (!data.cards || !data.cards.length) {
+      wrap.innerHTML = '<div class="empty-msg">No intel yet</div>';
+      return;
+    }
+    wrap.innerHTML = data.cards.map(c => {
+      const psf = c.avg_psf != null ? `₹${c.avg_psf}/sqft` : '—';
+      const rpt = c.latest_report ? c.latest_report.split('/').pop() : 'no report';
+      return `
+        <div class="intel-card">
+          <div class="intel-head"><span>${c.market}</span><span>${c.projects} proj</span></div>
+          <div class="intel-meta">Avg PSF: ${psf}</div>
+          <div class="intel-meta">Report: ${rpt}</div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty-msg">Intel unavailable</div>';
+  }
+}
+pollIntel();
+setInterval(pollIntel, 30000);
 
 // ── Log Streaming (SSE) ──
 const feedArea = document.getElementById('feed-area');

@@ -12,7 +12,7 @@ services:
     environment:
       POSTGRES_DB: re_os
       POSTGRES_USER: re_os_user
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-re_os_2024}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
@@ -63,7 +63,7 @@ services:
     container_name: re_os_agents
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://re_os_user:${DB_PASSWORD:-re_os_2024}@postgres:5432/re_os
+      DATABASE_URL: postgresql://re_os_user:${DB_PASSWORD}@postgres:5432/re_os
       OLLAMA_BASE_URL: http://ollama:11434
       REDIS_URL: redis://redis:6379
       # API Keys from .env — Docker Compose picks these up automatically
@@ -75,6 +75,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       TARGET_MARKETS: ${TARGET_MARKETS:-Yelahanka,Devanahalli,Hebbal}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DASHBOARD_API_KEY: ${DASHBOARD_API_KEY:-}
     ports:
       - "8050:8050"
     volumes:
@@ -101,7 +102,7 @@ services:
     container_name: re_os_scheduler
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://re_os_user:${DB_PASSWORD:-re_os_2024}@postgres:5432/re_os
+      DATABASE_URL: postgresql://re_os_user:${DB_PASSWORD}@postgres:5432/re_os
       OLLAMA_BASE_URL: http://ollama:11434
       REDIS_URL: redis://redis:6379
       CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}

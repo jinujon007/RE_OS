@@ -17,7 +17,7 @@
 
 ---
 
-RE_OS is a five-agent AI system that autonomously scrapes RERA Karnataka, parses live property listings, stores structured geospatial data in PostGIS, and generates actionable micro-market intelligence briefs — ending with a single recommended strategic action per market.
+RE_OS is a multi-agent AI system that autonomously scrapes RERA Karnataka, parses live property listings, stores structured geospatial data in PostGIS, and generates actionable micro-market intelligence briefs — ending with a single recommended strategic action per market.
 
 **One command. Three markets. Full institutional briefing.**
 
@@ -139,7 +139,7 @@ flowchart TB
 - **Developer grading** — automatic A/B/C classification: Grade A = recognised brand or ≥500 units; B = 100–499; C = <100
 - **Checkpointed pipeline** — today's Stage 1 checkpoint means failed runs restart from Stage 3; no re-scraping
 - **Autonomous scheduling** — APScheduler runs RERA refresh at 2 AM IST daily; market snapshots at 6 AM
-- **Scout Division** — four specialised scouts active in Stage 1: News Scout, Portal Scout, Developer Scout, RERA Detail Scout. Full dedup and cross-source reconciliation in Phase 2.
+- **Scout Division** — six specialised scouts active in Stage 1: RERA Karnataka, RERA Detail, Portal, Developer, News, and Kaveri. SHA-based dedup and cross-source reconciliation via ScoutMemory.
 
 ---
 
@@ -330,10 +330,10 @@ A `Makefile` wraps the most common commands. Requires `make` installed.
 ## Roadmap
 
 - [x] **Phase 0** — Core pipeline: RERA scraper, PostGIS, CEO + Analyst agents
-- [x] **Phase 1** — Scout Division: News, Portal, Developer, RERA Detail scouts (built and active in Stage 1)
-- [ ] **Phase 2** — Scout dedup + cross-source reconciliation (ScoutMemory full integration)
-- [ ] **Phase 3** — Dashboard: Flask + live agent status + scout feed
-- [ ] **Phase 4** — Sentinel Agent: system health monitoring + alerts
+- [x] **Phase 1** — Scout Division: RERA, RERA Detail, Portal, Developer, News, Kaveri scouts (6 scouts, ScoutMemory dedup, all active in Stage 1)
+- [x] **Phase 2** — Dashboard: Flask server on port 8050, live /api/health, /api/agents, /api/intel, /api/db/state, SSE log stream, pipeline trigger endpoints
+- [ ] **Phase 3** — Board Room: CEO decomposes pitch, department heads (BD, Finance, Engineering, Ops) respond concurrently
+- [ ] **Phase 4** — Agent Memory: cross-run knowledge persistence with confidence decay
 - [ ] **Phase 5** — Finance Department: feasibility analyst + GDV modelling
 - [ ] **Phase 6** — Mission Control UI: org chart, direct comms, Board Room
 - [ ] **Phase 7** — PR & Brand Department: content + social media agents

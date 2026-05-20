@@ -148,8 +148,8 @@ def _fetch_google_news_rss(query: str, days_back: int = 60) -> list[dict]:
                 if pub_dt.replace(tzinfo=None) < cutoff:
                     filtered_count += 1
                     continue
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(f"[NewsScout] Could not parse pub date '{pub_date_str}': {exc} — including article without date filter")
 
             articles.append({
                 "title": title,
@@ -167,7 +167,7 @@ def _fetch_google_news_rss(query: str, days_back: int = 60) -> list[dict]:
             )
 
     except Exception as exc:
-        logger.debug(f"[NewsScout] Google News RSS error for '{query}': {exc}")
+        logger.warning(f"[NewsScout] Google News RSS fetch failed for '{query}': {exc}")
 
     return articles
 

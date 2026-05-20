@@ -141,8 +141,8 @@ class ScoutMemory:
             try:
                 with open(self._mem_path, encoding="utf-8") as f:
                     return json.load(f)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(f"[ScoutMemory] Failed to load memory index from {self._mem_path}: {exc}")
         return {}
 
     def _save(self):

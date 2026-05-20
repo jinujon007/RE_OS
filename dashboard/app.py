@@ -587,6 +587,7 @@ def run_status():
  
 @app.route("/api/agents", methods=["GET"])
 def agents_state():
+    global _diag_agents_contract_logged
     # Try to get live data from database first
     try:
         conn = _get_db()
@@ -635,7 +636,6 @@ def agents_state():
             # Backward + forward compatibility: expose both nested and top-level agent keys.
             response.update(states_copy)
             
-            global _diag_agents_contract_logged
             if not _diag_agents_contract_logged:
                 logger.info(
                     "[DIAG agents] /api/agents keys=%s nested_agents=%s (from DB)",
@@ -670,7 +670,6 @@ def agents_state():
     # Backward + forward compatibility: expose both nested and top-level agent keys.
     response.update(states_copy)
  
-    global _diag_agents_contract_logged
     if not _diag_agents_contract_logged:
         logger.info(
             "[DIAG agents] /api/agents keys=%s nested_agents=%s (fallback)",
@@ -885,6 +884,44 @@ def get_report(market):
     with open(latest, encoding="utf-8") as f:
         content = f.read()
     return jsonify({"content": content, "file": os.path.basename(latest)})
+
+
+@app.route("/api/intel", methods=["GET"])
+def intel_summary():
+    """Phase-2 lightweight intel cards payload for UI."""
+    conn = None
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+
+        cards = []
+        cur.execute(
+            """
+            SELECT mm.name,
+                   COUNT(DISTINCT rp.id) AS projects,
+                   AVG(rp.price_avg_psf)::numeric(10,0) AS avg_psf
+            FROM micro_markets mm
+            LEFT JOIN rera_projects rp ON rp.micro_market_id = mm.id
+            GROUP BY mm.name
+            ORDER BY mm.name
+            """
+        )
+        for row in cur.fetchall():
+            cards.append(
+                {
+                    "market": row[0],
+                    "projects": int(row[1] or 0),
+                    "avg_psf": int(row[2]) if row[2] else None,
+                    "latest_report": _latest_report_path(row[0]),
+                }
+            )
+
+        return jsonify({"cards": cards})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        if conn:
+            conn.close()
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
