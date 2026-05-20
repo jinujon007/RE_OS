@@ -386,6 +386,7 @@ def run_market_intelligence(market_name: str) -> str:
             and cp.exists(market_name, "developer_scout")
             and cp.exists(market_name, "news_scout")
         )
+        stage1_ok = False
         if scouts_all_cached:
             logger.info(
                 "[Crew] All scout checkpoints found — using today's cached data, skipping Stage 1"
@@ -395,15 +396,25 @@ def run_market_intelligence(market_name: str) -> str:
             )
             rl.agent_done("scrape_rera")
             rl.agent_done("scrape_listings")
+            stage1_ok = True
         else:
-            data_crew = _build_data_crew(market_name)
-            _kickoff_with_fallback(
-                data_crew, lambda: _build_data_crew(market_name), "Stage 1 (scrape)"
-            )
-            rl.agent_done("scrape_rera")
-            rl.agent_done("scrape_listings")
+            try:
+                data_crew = _build_data_crew(market_name)
+                _kickoff_with_fallback(
+                    data_crew, lambda: _build_data_crew(market_name), "Stage 1 (scrape)"
+                )
+                rl.agent_done("scrape_rera")
+                rl.agent_done("scrape_listings")
+                stage1_ok = True
+            except Exception as s1_exc:
+                logger.error(
+                    f"[Crew] Stage 1 failed for {market_name}: {s1_exc}\n"
+                    f"{traceback.format_exc()}"
+                )
+                print(f"\n  [!!] Stage 1 failed: {s1_exc}")
+                print("  [!!] Continuing with Stage 2/3 using any cached checkpoints...")
 
-        print("  Stage 1 complete.")
+        print("  Stage 1 complete." if stage1_ok else "  Stage 1 partial (fallback to cache).")
 
         # ── STAGE 2: Pure Python validate + upsert ────────────────────────────
         _banner("STAGE 2/3", "Validating + writing to PostgreSQL (no LLM) ...")
@@ -488,12 +499,23 @@ def run_market_intelligence(market_name: str) -> str:
         # 15k TPM) which would incorrectly block Gemini Flash (ANALYSIS/HEAVY tier, 250k TPM).
         # Both share the "gemini" exclusion key despite being different models and quotas.
         _clear_excluded()
-        intel_crew = _build_intel_crew(market_name, db_stats)
-        result = _kickoff_with_fallback(
-            intel_crew,
-            lambda: _build_intel_crew(market_name, db_stats),
-            "Stage 3 (intel)",
-        )
+        try:
+            intel_crew = _build_intel_crew(market_name, db_stats)
+            result = _kickoff_with_fallback(
+                intel_crew,
+                lambda: _build_intel_crew(market_name, db_stats),
+                "Stage 3 (intel)",
+            )
+        except Exception as s3_exc:
+            logger.error(
+                f"[Crew] Stage 3 failed for {market_name}: {s3_exc}\n"
+                f"{traceback.format_exc()}"
+            )
+            rl.finish(status="failed", error=f"Stage 3: {s3_exc}")
+            _clear_excluded()
+            raise RuntimeError(
+                f"Stage 3 (intel) failed for {market_name}: {s3_exc}"
+            ) from s3_exc
         rl.agent_done("analyst")
         rl.agent_done("ceo")
 

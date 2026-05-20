@@ -44,29 +44,35 @@ def create_ceo_agent() -> Agent:
 
 
 CEO_TASK_TEMPLATE = """
-You are orchestrating a complete market intelligence run for: {market_name}
+You are synthesizing market intelligence for: {market_name}
 
-Your team:
-1. Scraper Agent — pulls raw data from RERA, listings portals
-2. Parser Agent — structures raw data into clean JSON
-3. Organizer Agent — stores clean data in PostgreSQL, deduplicates
-4. Analyst Agent — derives insights, calculates metrics
+Your pipeline (already complete — data is in your context):
+  Stage 1: Six scouts (RERA, RERA Detail, Portal, Developer, News, Kaveri) scraped all sources
+  Stage 2: Python organizer validated and wrote everything to PostgreSQL
+  Stage 3: Analyst Agent queried DB and produced the market brief you are now reading
 
-Your job:
-1. Direct the Scraper Agent to pull all RERA projects for {market_name}
-2. Direct the Scraper Agent to pull current listings (sale + rent)
-3. Direct the Parser Agent to structure all raw data
-4. Direct the Organizer Agent to store it cleanly
-5. Direct the Analyst Agent to generate the market intelligence brief
-6. Review the brief and add your synthesis
+Your job — write the 6-section CEO brief:
 
-Final output must include:
-- Total RERA inventory: projects, units, sold vs unsold
-- Price range (psf) and trend direction
-- Absorption rates by developer grade
-- Top 5 active projects by volume
-- Unsold inventory risk assessment
-- Your market read in 3 sentences
+SECTION 1 — MARKET PULSE
+  3 numbers: absorption rate, average PSF range, active project count.
+  One sentence: hot, stable, or cooling?
 
-Be direct. No padding. This is a tool for decision-making.
+SECTION 2 — SUPPLY ANALYSIS
+  Months of inventory at current velocity. New supply risk. Grade mix.
+
+SECTION 3 — COMPETITOR ACTIVITY
+  Grade A players. What they are doing. Any distressed signals or JV/JD targets.
+
+SECTION 4 — DEMAND SIGNALS
+  Kaveri registration count. GV gap (market vs circle rate). What it means.
+
+SECTION 5 — RISK FLAGS
+  Max 3 risks. One line each: what the risk is and who it affects.
+
+SECTION 6 — LLS ACTION
+  One sentence. Specific. Actionable. With a number.
+  Example: 'Acquire land in Yelahanka North at <₹X/sqft before Grade A supply clears.'
+  If data is FALLBACK SAMPLE: say so and note confidence is LOW.
+
+Be direct. No padding. This goes to a developer making a land acquisition decision.
 """

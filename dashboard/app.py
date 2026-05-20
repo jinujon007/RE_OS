@@ -473,6 +473,32 @@ def health():
     except Exception:
         services["ollama"] = "warn"  # non-critical — local LLM fallback only
 
+    # Last pipeline run info from agent_runs table
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT micro_market, status, started_at, duration_seconds
+            FROM agent_runs
+            ORDER BY started_at DESC
+            LIMIT 1
+            """
+        )
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            services["last_run"] = {
+                "market": row[0],
+                "status": row[1],
+                "started_at": row[2].isoformat() if row[2] else None,
+                "duration_seconds": row[3],
+            }
+        else:
+            services["last_run"] = None
+    except Exception:
+        services["last_run"] = None
+
     return jsonify(services)
 
 

@@ -85,7 +85,7 @@ def get_heavy_llm(temperature: float = 0.1) -> LLM:
             model=f"groq/{GROQ_CEO_MODEL}",
             api_key=GROQ_API_KEY,
             temperature=temperature,
-            max_tokens=2048,
+            max_tokens=4096,
             num_retries=3,
         )
     if GEMINI_API_KEY and not _is_excluded("gemini"):
@@ -94,7 +94,7 @@ def get_heavy_llm(temperature: float = 0.1) -> LLM:
             model=GEMINI_CEO_MODEL,
             api_key=GEMINI_API_KEY,
             temperature=temperature,
-            max_tokens=512,
+            max_tokens=4096,
             num_retries=3,
         )
     if NVIDIA_API_KEY and not _is_excluded("nvidia"):
@@ -104,7 +104,7 @@ def get_heavy_llm(temperature: float = 0.1) -> LLM:
             api_key=NVIDIA_API_KEY,
             base_url=NVIDIA_BASE_URL,
             temperature=temperature,
-            max_tokens=512,
+            max_tokens=4096,
             num_retries=3,
         )
     if OPENROUTER_API_KEY and not _is_excluded("openrouter"):
@@ -113,7 +113,7 @@ def get_heavy_llm(temperature: float = 0.1) -> LLM:
             model=f"openrouter/{OPENROUTER_MODEL}",
             api_key=OPENROUTER_API_KEY,
             temperature=temperature,
-            max_tokens=512,
+            max_tokens=4096,
             num_retries=3,
         )
     logger.warning("[Router] HEAVY fallback → Ollama (slow, no cloud keys set)")
