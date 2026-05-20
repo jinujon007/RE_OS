@@ -98,7 +98,14 @@ services:
       timeout: 30s
       retries: 3
       start_period: 30s
-    command: python dashboard/app.py  # dashboard at http://localhost:8050 — crew still runnable via: docker compose exec agents python crews/market_intel_crew.py --market Yelahanka
+    command: >
+      gunicorn dashboard.app:app
+      --bind 0.0.0.0:8050
+      --workers 2
+      --threads 4
+      --timeout 120
+      --access-logfile -
+      --error-logfile -
 
   # ── SCHEDULER ─────────────────────────────────────────────────────────────
   # Runs scraping jobs on schedule — daily RERA refresh, hourly listing scan

@@ -17,6 +17,7 @@ from pathlib import Path
 import sys
 
 import psycopg2
+import psycopg2.pool
 from flask import Flask, Response, jsonify, render_template, request
 
 _PROJECT_ROOT = str(Path(__file__).resolve().parents[1])
@@ -122,12 +123,37 @@ AGENT_ACTIONS: dict[str, list[dict]] = {
 
 _monitor_thread = None
 
+# Connection pool — avoids opening a raw connection per request.
+# Initialised lazily on first use so the app starts even if DB is briefly unavailable.
+_db_pool: psycopg2.pool.ThreadedConnectionPool | None = None
+_db_pool_lock = threading.Lock()
+
+
+def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
+    global _db_pool
+    if _db_pool is None:
+        with _db_pool_lock:
+            if _db_pool is None:
+                url = os.environ.get("DATABASE_URL")
+                if not url:
+                    raise RuntimeError("DATABASE_URL environment variable is not set")
+                _db_pool = psycopg2.pool.ThreadedConnectionPool(
+                    minconn=1, maxconn=5, dsn=url
+                )
+    return _db_pool
+
 
 def _get_db():
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        raise RuntimeError("DATABASE_URL environment variable is not set")
-    return psycopg2.connect(url)
+    """Return a pooled connection. Caller must call pool.putconn(conn) when done."""
+    return _get_pool().getconn()
+
+
+def _release_db(conn):
+    """Return a connection to the pool."""
+    try:
+        _get_pool().putconn(conn)
+    except Exception:
+        pass
 
 
 def _read_last_lines(path: str, limit: int = 20):
@@ -450,7 +476,7 @@ def health():
 
     try:
         conn = _get_db()
-        conn.close()
+        _release_db(conn)
         services["postgres"] = "ok"
     except Exception:
         services["postgres"] = "error"
@@ -486,7 +512,7 @@ def health():
             """
         )
         row = cur.fetchone()
-        conn.close()
+        _release_db(conn)
         if row:
             services["last_run"] = {
                 "market": row[0],
@@ -511,6 +537,7 @@ def db_state():
     try:
         conn = _get_db()
         cur = conn.cursor()
+        conn.set_session(readonly=True)
 
         state = {}
 
@@ -560,7 +587,7 @@ def db_state():
         return jsonify({"error": str(e)}), 500
     finally:
         if conn:
-            conn.close()
+            _release_db(conn)
 
 
 # ── Pipeline Control ───────────────────────────────────────────────────────────
@@ -677,10 +704,10 @@ def agents_state():
                 )
                 _diag_agents_contract_logged = True
 
-            conn.close()
+            _release_db(conn)
             return jsonify(response)
 
-        conn.close()
+        _release_db(conn)
     except Exception as e:
         logger.warning(f"[DIAG agents] DB query failed, falling back to in-memory: {e}")
         # Fall through to in-memory implementation below
@@ -954,7 +981,7 @@ def intel_summary():
         return jsonify({"error": str(e)}), 500
     finally:
         if conn:
-            conn.close()
+            _release_db(conn)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

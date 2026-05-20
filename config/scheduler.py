@@ -64,17 +64,16 @@ def run_listings_scan():
 
 
 def run_yelahanka_refresh():
-    """Dedicated Yelahanka refresh at 2:30 AM IST — gets full LLM quota first."""
-    from crews.market_intel_crew import run_market_intelligence
-    from config.llm_router import _clear_excluded
-
-    _clear_excluded()
-    logger.info("Scheduler: Yelahanka dedicated refresh (2:30 AM IST)")
-    try:
-        run_market_intelligence("Yelahanka")
-        logger.info("Scheduler: Yelahanka refresh complete")
-    except Exception as e:
-        logger.error(f"Scheduler: Yelahanka refresh failed — {e}")
+    """
+    REMOVED — Yelahanka already runs as the first market in run_rera_refresh()
+    at 2:00 AM IST (TARGET_MARKETS order: Yelahanka, Devanahalli, Hebbal).
+    Running it again at 2:30 AM caused double LLM cost and checkpoint overwrites.
+    This function is kept as a no-op stub so any existing cron references don't crash.
+    """
+    logger.info(
+        "Scheduler: run_yelahanka_refresh is a no-op — "
+        "Yelahanka already covered by run_rera_refresh at 2:00 AM IST"
+    )
 
 
 def run_market_snapshot():
@@ -141,16 +140,6 @@ if __name__ == "__main__":
         CronTrigger(hour=2, minute=0),
         id="rera_refresh",
         name="Daily RERA Data Refresh (all markets)",
-        misfire_grace_time=3600,
-    )
-
-    # Yelahanka dedicated refresh at 2:30 AM IST — highest-priority market
-    # runs alone so it gets full LLM quota before other markets share the budget.
-    scheduler.add_job(
-        run_yelahanka_refresh,
-        CronTrigger(hour=2, minute=30),
-        id="yelahanka_refresh",
-        name="Yelahanka Dedicated Refresh",
         misfire_grace_time=3600,
     )
 

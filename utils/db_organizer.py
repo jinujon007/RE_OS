@@ -494,23 +494,12 @@ class DBOrganizer:
         return str(row[0]) if row else None
 
     def _upsert_guidance_value(self, conn, rec: dict, market_id: str | None) -> str:
-        """Upsert one guidance value record. Returns 'inserted' or 'updated'."""
-        existing = conn.execute(
-            text("""
-            SELECT id FROM guidance_values
-            WHERE micro_market_id = :mid
-              AND locality = :locality
-              AND property_type = :ptype
-              AND effective_from = :eff
-        """),
-            {
-                "mid": market_id,
-                "locality": rec.get("locality", ""),
-                "ptype": rec.get("property_type", "Residential"),
-                "eff": _safe_date(rec.get("effective_from")) or "2024-04-01",
-            },
-        ).fetchone()
+        """Upsert one guidance value record. Returns 'inserted' or 'updated'.
 
+        Uses ON CONFLICT against idx_guidance_values_unique to avoid race conditions
+        from the old SELECT-then-INSERT pattern.
+        """
+        eff_date = _safe_date(rec.get("effective_from")) or "2024-04-01"
         params = {
             "mid": market_id,
             "locality": rec.get("locality", ""),
@@ -518,40 +507,32 @@ class DBOrganizer:
             "road": rec.get("road_type", "Main Road"),
             "psf": float(rec.get("guidance_value_psf", 0) or 0),
             "sqm": round(float(rec.get("guidance_value_psf", 0) or 0) * 10.764, 2),
-            "eff": _safe_date(rec.get("effective_from")) or "2024-04-01",
+            "eff": eff_date,
         }
 
-        if existing:
-            conn.execute(
-                text("""
-                UPDATE guidance_values SET
-                    guidance_value_psf    = :psf,
-                    guidance_value_per_sqm = :sqm,
-                    road_type             = :road
-                WHERE micro_market_id = :mid
-                  AND locality = :locality
-                  AND property_type = :ptype
-                  AND effective_from = :eff
-            """),
-                params,
+        result = conn.execute(
+            text("""
+            INSERT INTO guidance_values (
+                micro_market_id, locality, property_type, road_type,
+                guidance_value_psf, guidance_value_per_sqm, effective_from,
+                data_source
+            ) VALUES (
+                :mid, :locality, :ptype, :road,
+                :psf, :sqm, :eff,
+                'portal_scraped'
             )
-            return "updated"
-        else:
-            conn.execute(
-                text("""
-                INSERT INTO guidance_values (
-                    micro_market_id, locality, property_type, road_type,
-                    guidance_value_psf, guidance_value_per_sqm, effective_from,
-                    data_source
-                ) VALUES (
-                    :mid, :locality, :ptype, :road,
-                    :psf, :sqm, :eff,
-                    'portal_scraped'
-                )
-            """),
-                params,
-            )
-            return "inserted"
+            ON CONFLICT (micro_market_id, locality, property_type, effective_from)
+            WHERE micro_market_id IS NOT NULL
+            DO UPDATE SET
+                guidance_value_psf     = EXCLUDED.guidance_value_psf,
+                guidance_value_per_sqm = EXCLUDED.guidance_value_per_sqm,
+                road_type              = EXCLUDED.road_type
+            RETURNING (xmax = 0) AS inserted
+        """),
+            params,
+        ).fetchone()
+
+        return "inserted" if (result and result[0]) else "updated"
 
     # ── Kaveri — registrations ─────────────────────────────────────────────────
 
@@ -681,26 +662,14 @@ class DBOrganizer:
         )
 
     def _upsert_rera_detail(self, conn, rec: dict) -> str:
-        """Upsert RERA detail enriched fields into rera_projects.
+        """Enrich an existing rera_projects row from RERA detail-page data.
 
-        Maps enriched fields to typed columns:
-          unit_mix            → unit_mix JSONB
-          project_cost_crore  → estimated_project_cost
-          site_area_sqft      → total_land_area_sqm (×0.0929)
-          fsi_utilized        → total_built_up_area_sqm (× land area)
-          total_units         → total_units
-          bda_approval_no     → architect_name
-          bbmp_approval_no    → ca_name
-          no_of_floors        → no_of_floors (extra JSONB field)
-          amenities           → amenities JSONB
-          completion_pct      → completion_pct
-          possession_date     → possession_date
-          plan_approval_date → plan_approval_date
-          bda_approval_no     → bda_approval_no
-          bbmp_approval_no    → bbmp_approval_no
-          project_address     → address (fallback)
+        rera_detail_scout runs AFTER the regular RERA listing scrape + organizer,
+        so the target row always exists. This is a pure UPDATE — no INSERT path.
+        Approval numbers (BDA, BBMP) are stored in raw_data JSONB; they are NOT
+        mapped to architect_name / ca_name, which are reserved for persons.
 
-        Returns 'inserted', 'updated', or 'skipped'.
+        Returns 'updated' or 'skipped' (no matching rera_number in DB).
         """
         rera_num = str(rec.get("rera_number", "")).strip()
 
@@ -714,107 +683,72 @@ class DBOrganizer:
             total_built_sqm = round(fsi_utilized * total_land_sqm, 2)
 
         project_cost = float(rec.get("project_cost_crore", 0) or 0)
-        # Store cost in rupees (crore × 10_000_000), match estimated_project_cost DECIMAL(15,2)
         cost_rupees = round(project_cost * 10_000_000, 2) if project_cost else None
 
         total_units = int(rec.get("total_units", 0) or 0) or None
         no_of_floors = int(rec.get("no_of_floors", 0) or 0) or None
         completion_pct = float(rec.get("completion_pct", 0) or 0) or None
 
-        # Build unit_mix JSONB
         unit_mix = rec.get("unit_mix")
         if unit_mix is not None:
             unit_mix = json.dumps(unit_mix, default=str)
 
-        # Build amenities JSONB
         amenities = rec.get("amenities")
         if amenities is not None:
             amenities = json.dumps(amenities, default=str)
 
-        # Build extra JSONB for fields not in rera_projects schema
-        extra = {}
-        if no_of_floors is not None:
-            extra["no_of_floors"] = no_of_floors
         bda_no = rec.get("bda_approval_no")
-        if bda_no:
-            extra["bda_approval_no"] = bda_no
         bbmp_no = rec.get("bbmp_approval_no")
-        if bbmp_no:
-            extra["bbmp_approval_no"] = bbmp_no
-        extra_json = json.dumps(extra, default=str) if extra else None
 
-        # Check if record exists
+        poss_date = _safe_date(rec.get("possession_date"))
+        plan_date = _safe_date(rec.get("plan_approval_date"))
+        project_addr = rec.get("project_address")
+
+        # Check record exists before building the UPDATE
         existing = conn.execute(
             text("SELECT id FROM rera_projects WHERE rera_number = :rn"),
             {"rn": rera_num},
         ).fetchone()
 
-        # Build params for upsert — only include non-None values
-        params = {"rn": rera_num}
+        if not existing:
+            return "skipped"
+
+        # Build UPDATE dynamically — only set fields that are present in this record
+        params: dict = {"rn": rera_num}
         set_clauses = ["last_scraped_at = NOW()"]
 
         if total_units is not None:
             params["total_units"] = total_units
             set_clauses.append("total_units = :total_units")
-
         if total_land_sqm is not None:
             params["total_land_area_sqm"] = total_land_sqm
             set_clauses.append("total_land_area_sqm = :total_land_area_sqm")
-
         if total_built_sqm is not None:
             params["total_built_up_area_sqm"] = total_built_sqm
             set_clauses.append("total_built_up_area_sqm = :total_built_up_area_sqm")
-
         if cost_rupees is not None:
             params["estimated_project_cost"] = cost_rupees
             set_clauses.append("estimated_project_cost = :estimated_project_cost")
-
         if unit_mix is not None:
             params["unit_mix"] = unit_mix
             set_clauses.append("unit_mix = CAST(:unit_mix AS jsonb)")
-
         if amenities is not None:
             params["amenities"] = amenities
             set_clauses.append("amenities = CAST(:amenities AS jsonb)")
-
         if completion_pct is not None:
             params["completion_pct"] = completion_pct
             set_clauses.append("completion_pct = :completion_pct")
-
-        # Map bda → architect_name, bbmp → ca_name
-        if bda_no:
-            params["architect_name"] = bda_no
-            set_clauses.append("architect_name = :architect_name")
-
-        if bbmp_no:
-            params["ca_name"] = bbmp_no
-            set_clauses.append("ca_name = :ca_name")
-
-        poss_date = _safe_date(rec.get("possession_date"))
         if poss_date:
             params["possession_date"] = poss_date
             set_clauses.append("possession_date = :possession_date")
-
-        plan_date = _safe_date(rec.get("plan_approval_date"))
         if plan_date:
             params["plan_approval_date"] = plan_date
             set_clauses.append("plan_approval_date = :plan_approval_date")
-
-        # Fallback address from project_address if rera_projects.address is NULL
-        project_addr = rec.get("project_address")
         if project_addr:
             params["project_address"] = project_addr
-            set_clauses.append(
-                "address = COALESCE(NULLIF(address, ''), :project_address)"
-            )
+            set_clauses.append("address = COALESCE(NULLIF(address, ''), :project_address)")
 
-        if extra_json:
-            params["extra"] = extra_json
-            set_clauses.append(
-                "raw_data = COALESCE(raw_data, '{}'::jsonb) || CAST(:extra AS jsonb)"
-            )
-
-        # Merge raw_data enrichment (always — for fields like unit_mix that might not be typed yet)
+        # Approval numbers + extra fields → raw_data JSONB only (not typed columns)
         raw_enrich = {
             k: v
             for k, v in {
@@ -836,60 +770,11 @@ class DBOrganizer:
             )
 
         set_clause = ", ".join(set_clauses)
-
         conn.execute(
-            text(f"""
-            INSERT INTO rera_projects (
-                rera_number, project_name, developer_id, address,
-                total_units, unit_mix, estimated_project_cost,
-                total_land_area_sqm, total_built_up_area_sqm,
-                architect_name, ca_name, amenities,
-                completion_pct, possession_date, plan_approval_date,
-                last_scraped_at, data_source, raw_data
-            ) VALUES (
-                :rn,
-                :project_name,
-                (SELECT id FROM developers WHERE LOWER(name) = LOWER(:developer)) LIMIT 1,
-                COALESCE(NULLIF(:project_address, ''), address),
-                COALESCE(:total_units, total_units),
-                COALESCE(CAST(:unit_mix AS jsonb), unit_mix),
-                COALESCE(:estimated_project_cost, estimated_project_cost),
-                COALESCE(:total_land_area_sqm, total_land_area_sqm),
-                COALESCE(:total_built_up_area_sqm, total_built_up_area_sqm),
-                COALESCE(:architect_name, architect_name),
-                COALESCE(:ca_name, ca_name),
-                COALESCE(CAST(:amenities AS jsonb), amenities),
-                COALESCE(:completion_pct, completion_pct),
-                COALESCE(:possession_date, possession_date),
-                COALESCE(:plan_approval_date, plan_approval_date),
-                NOW(),
-                'portal_scraped',
-                CAST(:raw_extra AS jsonb)
-            )
-            ON CONFLICT (rera_number) DO UPDATE SET
-                {set_clause}
-        """),
-            {
-                **params,
-                "project_name": rec.get("project_name", ""),
-                "developer": rec.get("developer", ""),
-                "project_address": rec.get("project_address", ""),
-                # Provide defaults for the INSERT clause (will be overridden by COALESCE)
-                "total_units": total_units,
-                "unit_mix": unit_mix,
-                "estimated_project_cost": cost_rupees,
-                "total_land_area_sqm": total_land_sqm,
-                "total_built_up_area_sqm": total_built_sqm,
-                "architect_name": bda_no,
-                "ca_name": bbmp_no,
-                "amenities": amenities,
-                "completion_pct": completion_pct,
-                "possession_date": poss_date,
-                "plan_approval_date": plan_date,
-            },
+            text(f"UPDATE rera_projects SET {set_clause} WHERE rera_number = :rn"),
+            params,
         )
-
-        return "updated" if existing else "inserted"
+        return "updated"
 
     # ── Run logging ────────────────────────────────────────────────────────────
 
