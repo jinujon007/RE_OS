@@ -23,6 +23,7 @@ def run_rera_refresh():
     """Daily RERA data pull for all target markets."""
     from crews.market_intel_crew import run_all_markets
     from config.llm_router import _clear_excluded
+
     # Reset provider exclusions so stale rate-limit state from the previous
     # run doesn't carry over — each scheduled run starts with a clean slate.
     _clear_excluded()
@@ -38,6 +39,7 @@ def run_listings_scan():
     """Listings scan — 6-hourly."""
     from scrapers.listings_scraper import ListingsScraper
     from config.checkpointer import Checkpointer
+
     logger.info("Scheduler: Starting listings scan")
     scraper = ListingsScraper()
     cp = Checkpointer()
@@ -61,11 +63,26 @@ def run_listings_scan():
     )
 
 
+def run_yelahanka_refresh():
+    """Dedicated Yelahanka refresh at 2:30 AM IST — gets full LLM quota first."""
+    from crews.market_intel_crew import run_market_intelligence
+    from config.llm_router import _clear_excluded
+
+    _clear_excluded()
+    logger.info("Scheduler: Yelahanka dedicated refresh (2:30 AM IST)")
+    try:
+        run_market_intelligence("Yelahanka")
+        logger.info("Scheduler: Yelahanka refresh complete")
+    except Exception as e:
+        logger.error(f"Scheduler: Yelahanka refresh failed — {e}")
+
+
 def run_market_snapshot():
     """Generate market snapshots for all active markets."""
     logger.info("Scheduler: Generating market snapshots")
     from sqlalchemy import create_engine, text
     from config.settings import DATABASE_URL
+
     engine = create_engine(DATABASE_URL)
 
     with engine.begin() as conn:
@@ -73,7 +90,8 @@ def run_market_snapshot():
             market = market.strip()
             try:
                 # Compute and insert snapshot
-                conn.execute(text("""
+                conn.execute(
+                    text("""
                     INSERT INTO market_snapshots (
                         micro_market_id, snapshot_date, period,
                         total_rera_projects, active_rera_projects,
@@ -103,7 +121,9 @@ def run_market_snapshot():
                         unsold_rera_units = EXCLUDED.unsold_rera_units,
                         avg_absorption_pct = EXCLUDED.avg_absorption_pct,
                         avg_psf_sale = EXCLUDED.avg_psf_sale
-                """), {"market": f"%{market}%"})
+                """),
+                    {"market": f"%{market}%"},
+                )
                 logger.info(f"  Snapshot created for: {market}")
             except Exception as e:
                 logger.error(f"  Snapshot failed for {market}: {e}")
@@ -126,19 +146,8 @@ if __name__ == "__main__":
 
     # Yelahanka dedicated refresh at 2:30 AM IST — highest-priority market
     # runs alone so it gets full LLM quota before other markets share the budget.
-    def _run_yelahanka():
-        from crews.market_intel_crew import run_market_intelligence
-        from config.llm_router import _clear_excluded
-        _clear_excluded()
-        logger.info("Scheduler: Yelahanka dedicated refresh (2:30 AM IST)")
-        try:
-            run_market_intelligence("Yelahanka")
-            logger.info("Scheduler: Yelahanka refresh complete")
-        except Exception as e:
-            logger.error(f"Scheduler: Yelahanka refresh failed — {e}")
-
     scheduler.add_job(
-        _run_yelahanka,
+        run_yelahanka_refresh,
         CronTrigger(hour=2, minute=30),
         id="yelahanka_refresh",
         name="Yelahanka Dedicated Refresh",

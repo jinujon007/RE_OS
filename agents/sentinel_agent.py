@@ -89,7 +89,6 @@ def get_next_scheduled_run() -> dict:
     }
 
 
-
 if __name__ == "__main__":
     import json
     import sys
@@ -97,7 +96,11 @@ if __name__ == "__main__":
     last = get_last_scheduled_run()
     next_r = get_next_scheduled_run()
 
-    payload = {"sentinel": "RE_OS", "last_scheduled_run": last, "next_scheduled_run": next_r}
+    payload = {
+        "sentinel": "RE_OS",
+        "last_scheduled_run": last,
+        "next_scheduled_run": next_r,
+    }
     print(json.dumps(payload, indent=2))
 
     sys.exit(0 if (last and not last.get("error")) else 1)

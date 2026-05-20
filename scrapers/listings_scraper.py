@@ -44,13 +44,13 @@ class ListingsScraper:
 
     # 99acres locality slug mapping
     LOCALITY_SLUGS = {
-        "Yelahanka":       "yelahanka-bangalore",
-        "Devanahalli":     "devanahalli-bangalore",
-        "Hebbal":          "hebbal-bangalore",
-        "Jakkur":          "jakkur-bangalore",
-        "Thanisandra":     "thanisandra-bangalore",
-        "Whitefield":      "whitefield-bangalore",
-        "Sarjapur Road":   "sarjapur-road-bangalore",
+        "Yelahanka": "yelahanka-bangalore",
+        "Devanahalli": "devanahalli-bangalore",
+        "Hebbal": "hebbal-bangalore",
+        "Jakkur": "jakkur-bangalore",
+        "Thanisandra": "thanisandra-bangalore",
+        "Whitefield": "whitefield-bangalore",
+        "Sarjapur Road": "sarjapur-road-bangalore",
         "Electronic City": "electronic-city-bangalore",
     }
 
@@ -83,10 +83,14 @@ class ListingsScraper:
         logger.info(f"  Total listings collected: {len(listings)}")
         return listings
 
-    def _scrape_99acres(self, market_name: str, transaction_type: str = "sale") -> list[dict]:
+    def _scrape_99acres(
+        self, market_name: str, transaction_type: str = "sale"
+    ) -> list[dict]:
         """Scrape 99acres search results for a locality."""
         listings = []
-        slug = self.LOCALITY_SLUGS.get(market_name, market_name.lower().replace(" ", "-") + "-bangalore")
+        slug = self.LOCALITY_SLUGS.get(
+            market_name, market_name.lower().replace(" ", "-") + "-bangalore"
+        )
 
         try:
             # 99acres URL pattern for locality search
@@ -99,16 +103,22 @@ class ListingsScraper:
             time.sleep(1)
 
             if response.status_code != 200:
-                logger.warning(f"  99acres {transaction_type} returned HTTP {response.status_code}")
+                logger.warning(
+                    f"  99acres {transaction_type} returned HTTP {response.status_code}"
+                )
                 return []
 
-            soup = BeautifulSoup(response.text, 'lxml')
+            soup = BeautifulSoup(response.text, "lxml")
 
             # 99acres listing cards — class names change, so try multiple patterns
             listing_cards = (
-                soup.find_all('div', class_=re.compile(r'srpTuple|listingCard|propertyCard', re.I)) or
-                soup.find_all('article', class_=re.compile(r'listing|property', re.I)) or
-                soup.find_all('div', attrs={'data-id': True})
+                soup.find_all(
+                    "div", class_=re.compile(r"srpTuple|listingCard|propertyCard", re.I)
+                )
+                or soup.find_all(
+                    "article", class_=re.compile(r"listing|property", re.I)
+                )
+                or soup.find_all("div", attrs={"data-id": True})
             )
 
             for card in listing_cards[:30]:  # cap at 30 per type
@@ -125,23 +135,25 @@ class ListingsScraper:
 
         return listings
 
-    def _parse_99acres_card(self, card, market_name: str, transaction_type: str) -> dict | None:
+    def _parse_99acres_card(
+        self, card, market_name: str, transaction_type: str
+    ) -> dict | None:
         """Parse a 99acres listing card."""
         try:
-            text = card.get_text(separator=' ', strip=True)
+            text = card.get_text(separator=" ", strip=True)
 
             # Extract price
-            price_raw = ''
-            price_match = re.search(r'₹\s*[\d,.]+\s*(?:Cr|L|Lac|Lakh|K)?', text, re.I)
+            price_raw = ""
+            price_match = re.search(r"₹\s*[\d,.]+\s*(?:Cr|L|Lac|Lakh|K)?", text, re.I)
             if price_match:
                 price_raw = price_match.group()
 
             # Extract area
-            area_match = re.search(r'(\d[\d,]*)\s*(?:sq\.?\s*ft|sqft)', text, re.I)
-            area_sqft = int(area_match.group(1).replace(',', '')) if area_match else 0
+            area_match = re.search(r"(\d[\d,]*)\s*(?:sq\.?\s*ft|sqft)", text, re.I)
+            area_sqft = int(area_match.group(1).replace(",", "")) if area_match else 0
 
             # Extract BHK
-            bhk_match = re.search(r'(\d)\s*BHK', text, re.I)
+            bhk_match = re.search(r"(\d)\s*BHK", text, re.I)
             bhk = f"{bhk_match.group(1)} BHK" if bhk_match else "Unknown"
 
             if not price_raw:
@@ -164,7 +176,7 @@ class ListingsScraper:
         """Fallback: try MagicBricks."""
         listings = []
         try:
-            locality_encoded = market_name.replace(' ', '%20')
+            locality_encoded = market_name.replace(" ", "%20")
             url = f"https://www.magicbricks.com/property-for-sale/residential-real-estate?proptype=Multistorey-Apartment,Builder-Floor-Apartment,Penthouse,Studio-Apartment&cityName=Bangalore&Area={locality_encoded}"
 
             response = self.session.get(url, timeout=20)
@@ -173,26 +185,34 @@ class ListingsScraper:
             if response.status_code != 200:
                 return []
 
-            soup = BeautifulSoup(response.text, 'lxml')
-            cards = soup.find_all('div', class_=re.compile(r'mb-srp|listingCard|propCard', re.I))
+            soup = BeautifulSoup(response.text, "lxml")
+            cards = soup.find_all(
+                "div", class_=re.compile(r"mb-srp|listingCard|propCard", re.I)
+            )
 
             for card in cards[:20]:
-                text = card.get_text(separator=' ', strip=True)
-                price_match = re.search(r'₹\s*[\d,.]+\s*(?:Cr|L|Lac)?', text, re.I)
-                area_match = re.search(r'(\d[\d,]*)\s*sq\.?\s*ft', text, re.I)
-                bhk_match = re.search(r'(\d)\s*BHK', text, re.I)
+                text = card.get_text(separator=" ", strip=True)
+                price_match = re.search(r"₹\s*[\d,.]+\s*(?:Cr|L|Lac)?", text, re.I)
+                area_match = re.search(r"(\d[\d,]*)\s*sq\.?\s*ft", text, re.I)
+                bhk_match = re.search(r"(\d)\s*BHK", text, re.I)
 
                 if price_match:
-                    listings.append({
-                        "price_display": price_match.group(),
-                        "price_numeric": self._parse_price(price_match.group()),
-                        "area_sqft": int(area_match.group(1).replace(',', '')) if area_match else 0,
-                        "bhk_config": f"{bhk_match.group(1)} BHK" if bhk_match else "Unknown",
-                        "transaction_type": "sale",
-                        "locality": market_name,
-                        "source": "magicbricks",
-                        "scraped_at": datetime.now().isoformat(),
-                    })
+                    listings.append(
+                        {
+                            "price_display": price_match.group(),
+                            "price_numeric": self._parse_price(price_match.group()),
+                            "area_sqft": int(area_match.group(1).replace(",", ""))
+                            if area_match
+                            else 0,
+                            "bhk_config": f"{bhk_match.group(1)} BHK"
+                            if bhk_match
+                            else "Unknown",
+                            "transaction_type": "sale",
+                            "locality": market_name,
+                            "source": "magicbricks",
+                            "scraped_at": datetime.now().isoformat(),
+                        }
+                    )
 
         except Exception as e:
             logger.debug(f"  MagicBricks scrape failed: {e}")
@@ -211,9 +231,9 @@ class ListingsScraper:
         # North Bengaluru market ranges (realistic as of 2024-2026)
         market_profiles = {
             "Yelahanka": {
-                "sale_2bhk_range": (55, 85),   # lakhs
+                "sale_2bhk_range": (55, 85),  # lakhs
                 "sale_3bhk_range": (85, 140),
-                "rent_2bhk_range": (18, 28),   # thousands/month
+                "rent_2bhk_range": (18, 28),  # thousands/month
                 "rent_3bhk_range": (28, 45),
                 "area_2bhk": (950, 1250),
                 "area_3bhk": (1350, 1700),
@@ -248,37 +268,40 @@ class ListingsScraper:
 
         for i, (bhk, price_range, area_range, txn_type) in enumerate(configs):
             import random
+
             random.seed(i + hash(market_name) % 100)
             price = random.randint(*price_range)
             area = random.randint(*area_range)
             unit = "L" if txn_type == "sale" else "K/mo"
-            listings.append({
-                "price_display": f"₹ {price} {unit}",
-                "price_numeric": price * (100000 if txn_type == "sale" else 1000),
-                "area_sqft": area,
-                "bhk_config": bhk,
-                "transaction_type": txn_type,
-                "locality": market_name,
-                "source": "fallback_sample",
-                "note": "Live scraping blocked — sample data for pipeline testing",
-                "scraped_at": now,
-            })
+            listings.append(
+                {
+                    "price_display": f"₹ {price} {unit}",
+                    "price_numeric": price * (100000 if txn_type == "sale" else 1000),
+                    "area_sqft": area,
+                    "bhk_config": bhk,
+                    "transaction_type": txn_type,
+                    "locality": market_name,
+                    "source": "fallback_sample",
+                    "note": "Live scraping blocked — sample data for pipeline testing",
+                    "scraped_at": now,
+                }
+            )
 
         return listings
 
     def _parse_price(self, price_str: str) -> int:
         """Convert price string like '₹ 85 L' to integer."""
         try:
-            s = re.sub(r'[₹,\s]', '', price_str).upper()
-            num_match = re.search(r'[\d.]+', s)
+            s = re.sub(r"[₹,\s]", "", price_str).upper()
+            num_match = re.search(r"[\d.]+", s)
             if not num_match:
                 return 0
             num = float(num_match.group())
-            if 'CR' in s:
+            if "CR" in s:
                 return int(num * 10000000)
-            elif 'L' in s or 'LAC' in s or 'LAKH' in s:
+            elif "L" in s or "LAC" in s or "LAKH" in s:
                 return int(num * 100000)
-            elif 'K' in s:
+            elif "K" in s:
                 return int(num * 1000)
             return int(num)
         except Exception:

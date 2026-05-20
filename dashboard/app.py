@@ -610,7 +610,6 @@ def run_status():
 # ── Agent Control / State ──────────────────────────────────────────────────────
 
 
-
 @app.route("/api/agents", methods=["GET"])
 def agents_state():
     global _diag_agents_contract_logged
@@ -639,8 +638,14 @@ def agents_state():
                     "role": agent_name.replace("_", " ").title(),
                     "label": status.upper() if status else "IDLE",
                     "state": status if status else "idle",
-                    "last_action": f"Last run: {last_run}" if last_run else "No recent activity",
-                    "started": last_run.isoformat() if hasattr(last_run, 'isoformat') else str(last_run) if last_run else None,
+                    "last_action": f"Last run: {last_run}"
+                    if last_run
+                    else "No recent activity",
+                    "started": last_run.isoformat()
+                    if hasattr(last_run, "isoformat")
+                    else str(last_run)
+                    if last_run
+                    else None,
                 }
 
         # If we got data from DB, use it; otherwise fall back to in-memory
@@ -652,7 +657,9 @@ def agents_state():
                     rc = entry["proc"].poll()
                     running_copy[market] = {
                         "started": entry.get("started"),
-                        "state": "running" if rc is None else ("done" if rc == 0 else "failed"),
+                        "state": "running"
+                        if rc is None
+                        else ("done" if rc == 0 else "failed"),
                         "returncode": rc,
                         "pid": entry["proc"].pid,
                     }
@@ -831,13 +838,13 @@ def sentinel_status():
         with _lock:
             if "sentinel" in _agent_states:
                 if last and "error" not in last:
-                    _agent_states["sentinel"][
-                        "last_action"
-                    ] = f"Last: {last.get('status', '?')} · Next: {nxt.get('label', '?')}"
+                    _agent_states["sentinel"]["last_action"] = (
+                        f"Last: {last.get('status', '?')} · Next: {nxt.get('label', '?')}"
+                    )
                 else:
-                    _agent_states["sentinel"][
-                        "last_action"
-                    ] = f"Next run: {nxt.get('label', '?')}"
+                    _agent_states["sentinel"]["last_action"] = (
+                        f"Next run: {nxt.get('label', '?')}"
+                    )
 
         return jsonify({"last_run": last, "next_run": nxt})
     except Exception as e:

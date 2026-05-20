@@ -1,6 +1,7 @@
 """
 Pytest configuration — sets env vars and stubs heavy dependencies before any imports.
 """
+
 import os
 import sys
 import types

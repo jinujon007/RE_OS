@@ -17,8 +17,7 @@ if not _db_password:
     )
 
 DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    f"postgresql://re_os_user:{_db_password}@localhost:5432/re_os"
+    "DATABASE_URL", f"postgresql://re_os_user:{_db_password}@localhost:5432/re_os"
 )
 
 # ── LLM ENGINES ───────────────────────────────────────────────────────────────
@@ -40,8 +39,12 @@ CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "llama3.1-8b")
 # Analyst uses llama-4-scout too — separate call, same 30k bucket shared with CEO
 # Sign up: console.groq.com — no card required for free tier
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_CEO_MODEL = os.getenv("GROQ_CEO_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
-GROQ_ANALYST_MODEL = os.getenv("GROQ_ANALYST_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+GROQ_CEO_MODEL = os.getenv(
+    "GROQ_CEO_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"
+)
+GROQ_ANALYST_MODEL = os.getenv(
+    "GROQ_ANALYST_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"
+)
 GROQ_LIGHT_MODEL = os.getenv("GROQ_LIGHT_MODEL", "llama-3.1-8b-instant")
 
 # Tier 2b — Google AI Studio (Gemini): free tier
@@ -57,14 +60,18 @@ GEMINI_LIGHT_MODEL = os.getenv("GEMINI_LIGHT_MODEL", "gemini/gemma-3-27b-it")
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
 NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NVIDIA_CEO_MODEL = os.getenv("NVIDIA_CEO_MODEL", "meta/llama-3.1-405b-instruct")
-NVIDIA_ANALYST_MODEL = os.getenv("NVIDIA_ANALYST_MODEL", "nvidia/llama-3.1-nemotron-70b-instruct")
+NVIDIA_ANALYST_MODEL = os.getenv(
+    "NVIDIA_ANALYST_MODEL", "nvidia/llama-3.1-nemotron-70b-instruct"
+)
 NVIDIA_LIGHT_MODEL = os.getenv("NVIDIA_LIGHT_MODEL", "meta/llama-3.3-70b-instruct")
 
 # Tier 3 — OpenRouter: free tier backup (50 req/day base, 1,000/day with $10 lifetime topup)
 # All free models use the :free suffix
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
+OPENROUTER_MODEL = os.getenv(
+    "OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free"
+)
 
 # ── REDIS ────────────────────────────────────────────────────────────────────
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -88,7 +95,7 @@ MARKET_RERA_CONFIG = {
         "expected_rows": 734,
     },
     "Devanahalli": {
-        "district": "Bengaluru  Rural",   # two spaces — exact portal value
+        "district": "Bengaluru  Rural",  # two spaces — exact portal value
         "subdistrict": "Devanahalli",
         "expected_rows": 317,
     },
@@ -115,9 +122,21 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 # ── DEVELOPER GRADE CRITERIA ─────────────────────────────────────────────────
 # Grade A: 500+ units launched OR known national brand
 GRADE_A_DEVELOPERS = [
-    "prestige", "brigade", "sobha", "puravankara", "godrej",
-    "mahindra", "lodha", "dl", "dlf", "shapoorji", "embassy",
-    "mantri", "salarpuria", "total environment", "adarsh"
+    "prestige",
+    "brigade",
+    "sobha",
+    "puravankara",
+    "godrej",
+    "mahindra",
+    "lodha",
+    "dl",
+    "dlf",
+    "shapoorji",
+    "embassy",
+    "mantri",
+    "salarpuria",
+    "total environment",
+    "adarsh",
 ]
 GRADE_A_MIN_UNITS = 500
 

@@ -34,8 +34,11 @@ from loguru import logger
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import (
-    CEREBRAS_API_KEY, CEREBRAS_BASE_URL, CEREBRAS_MODEL,
-    GEMINI_API_KEY, GEMINI_CEO_MODEL,
+    CEREBRAS_API_KEY,
+    CEREBRAS_BASE_URL,
+    CEREBRAS_MODEL,
+    GEMINI_API_KEY,
+    GEMINI_CEO_MODEL,
 )
 from scrapers.scout_memory import ScoutMemory
 
@@ -44,31 +47,31 @@ from scrapers.scout_memory import ScoutMemory
 
 PORTAL_URLS: dict[str, dict[str, str]] = {
     "Yelahanka": {
-        "99acres_sale":  "https://www.99acres.com/property-for-sale-in-yelahanka-bangalore-ffid",
-        "99acres_rent":  "https://www.99acres.com/property-for-rent-in-yelahanka-bangalore-ffid",
-        "housing_sale":  "https://housing.com/in/buy/searches/bangalore--yelahanka",
-        "magicbricks":   "https://www.magicbricks.com/property-for-sale/residential-real-estate?proptype=Multistorey-Apartment,Builder-Floor-Apartment&cityName=Bangalore&Area=Yelahanka",
-        "proptiger":     "https://www.proptiger.com/bangalore/north-bangalore/yelahanka/property-sale",
-        "nobroker":      "https://www.nobroker.in/property/residential/sale/bangalore/Yelahanka",
-        "squareyards":   "https://www.squareyards.com/sale/property-for-sale-in-yelahanka-bangalore",
+        "99acres_sale": "https://www.99acres.com/property-for-sale-in-yelahanka-bangalore-ffid",
+        "99acres_rent": "https://www.99acres.com/property-for-rent-in-yelahanka-bangalore-ffid",
+        "housing_sale": "https://housing.com/in/buy/searches/bangalore--yelahanka",
+        "magicbricks": "https://www.magicbricks.com/property-for-sale/residential-real-estate?proptype=Multistorey-Apartment,Builder-Floor-Apartment&cityName=Bangalore&Area=Yelahanka",
+        "proptiger": "https://www.proptiger.com/bangalore/north-bangalore/yelahanka/property-sale",
+        "nobroker": "https://www.nobroker.in/property/residential/sale/bangalore/Yelahanka",
+        "squareyards": "https://www.squareyards.com/sale/property-for-sale-in-yelahanka-bangalore",
     },
     "Devanahalli": {
-        "99acres_sale":  "https://www.99acres.com/property-for-sale-in-devanahalli-bangalore-ffid",
-        "99acres_rent":  "https://www.99acres.com/property-for-rent-in-devanahalli-bangalore-ffid",
-        "housing_sale":  "https://housing.com/in/buy/searches/bangalore--devanahalli",
-        "magicbricks":   "https://www.magicbricks.com/property-for-sale/residential-real-estate?proptype=Multistorey-Apartment,Builder-Floor-Apartment&cityName=Bangalore&Area=Devanahalli",
-        "proptiger":     "https://www.proptiger.com/bangalore/devanahalli/property-sale",
-        "nobroker":      "https://www.nobroker.in/property/residential/sale/bangalore/Devanahalli",
-        "squareyards":   "https://www.squareyards.com/sale/property-for-sale-in-devanahalli-bangalore",
+        "99acres_sale": "https://www.99acres.com/property-for-sale-in-devanahalli-bangalore-ffid",
+        "99acres_rent": "https://www.99acres.com/property-for-rent-in-devanahalli-bangalore-ffid",
+        "housing_sale": "https://housing.com/in/buy/searches/bangalore--devanahalli",
+        "magicbricks": "https://www.magicbricks.com/property-for-sale/residential-real-estate?proptype=Multistorey-Apartment,Builder-Floor-Apartment&cityName=Bangalore&Area=Devanahalli",
+        "proptiger": "https://www.proptiger.com/bangalore/devanahalli/property-sale",
+        "nobroker": "https://www.nobroker.in/property/residential/sale/bangalore/Devanahalli",
+        "squareyards": "https://www.squareyards.com/sale/property-for-sale-in-devanahalli-bangalore",
     },
     "Hebbal": {
-        "99acres_sale":  "https://www.99acres.com/property-for-sale-in-hebbal-bangalore-ffid",
-        "99acres_rent":  "https://www.99acres.com/property-for-rent-in-hebbal-bangalore-ffid",
-        "housing_sale":  "https://housing.com/in/buy/searches/bangalore--hebbal",
-        "magicbricks":   "https://www.magicbricks.com/property-for-sale/residential-real-estate?proptype=Multistorey-Apartment,Builder-Floor-Apartment&cityName=Bangalore&Area=Hebbal",
-        "proptiger":     "https://www.proptiger.com/bangalore/hebbal/property-sale",
-        "nobroker":      "https://www.nobroker.in/property/residential/sale/bangalore/Hebbal",
-        "squareyards":   "https://www.squareyards.com/sale/property-for-sale-in-hebbal-bangalore",
+        "99acres_sale": "https://www.99acres.com/property-for-sale-in-hebbal-bangalore-ffid",
+        "99acres_rent": "https://www.99acres.com/property-for-rent-in-hebbal-bangalore-ffid",
+        "housing_sale": "https://housing.com/in/buy/searches/bangalore--hebbal",
+        "magicbricks": "https://www.magicbricks.com/property-for-sale/residential-real-estate?proptype=Multistorey-Apartment,Builder-Floor-Apartment&cityName=Bangalore&Area=Hebbal",
+        "proptiger": "https://www.proptiger.com/bangalore/hebbal/property-sale",
+        "nobroker": "https://www.nobroker.in/property/residential/sale/bangalore/Hebbal",
+        "squareyards": "https://www.squareyards.com/sale/property-for-sale-in-hebbal-bangalore",
     },
 }
 
@@ -110,6 +113,7 @@ WEBPAGE TEXT:
 
 # ── AI extraction ─────────────────────────────────────────────────────────────
 
+
 def _ai_extract(text: str, market: str) -> list[dict]:
     """
     Send truncated page text to Cerebras for structured extraction.
@@ -122,6 +126,7 @@ def _ai_extract(text: str, market: str) -> list[dict]:
     raw_response = ""
     try:
         import litellm
+
         if CEREBRAS_API_KEY:
             resp = litellm.completion(
                 model=f"openai/{CEREBRAS_MODEL}",
@@ -169,11 +174,23 @@ def _parse_json_response(raw: str) -> list[dict]:
 
 # ── HTML cleaning ─────────────────────────────────────────────────────────────
 
+
 def _clean_html(html: str) -> str:
     """Strip boilerplate tags → clean dense text for AI extraction."""
     soup = BeautifulSoup(html, "lxml")
-    for tag in soup(["script", "style", "nav", "header", "footer",
-                     "aside", "noscript", "iframe", "form"]):
+    for tag in soup(
+        [
+            "script",
+            "style",
+            "nav",
+            "header",
+            "footer",
+            "aside",
+            "noscript",
+            "iframe",
+            "form",
+        ]
+    ):
         tag.decompose()
     text = soup.get_text(separator=" ", strip=True)
     text = re.sub(r"\s{3,}", "\n", text)
@@ -181,6 +198,7 @@ def _clean_html(html: str) -> str:
 
 
 # ── Normalization ─────────────────────────────────────────────────────────────
+
 
 def _parse_price(s: str | None) -> float:
     if not s:
@@ -226,7 +244,9 @@ def _normalize(raw: dict, source: str, market: str, page_url: str = "") -> dict 
     price_val = _parse_price(price_str)
 
     bhk_raw = raw.get("bhk") or ""
-    bhk_configs = [b.strip() for b in bhk_raw.split(",") if b.strip()] if bhk_raw else []
+    bhk_configs = (
+        [b.strip() for b in bhk_raw.split(",") if b.strip()] if bhk_raw else []
+    )
 
     status = raw.get("status") or "Unknown"
 
@@ -251,6 +271,7 @@ def _normalize(raw: dict, source: str, market: str, page_url: str = "") -> dict 
 
 
 # ── Portal Scout ──────────────────────────────────────────────────────────────
+
 
 class PortalScout:
     """
@@ -353,6 +374,7 @@ class PortalScout:
 
 # ── Standalone runner ─────────────────────────────────────────────────────────
 
+
 def scout_market(market: str, sources: list[str] | None = None) -> list[dict]:
     memory = ScoutMemory(market)
     scout = PortalScout(market, memory)
@@ -360,7 +382,8 @@ def scout_market(market: str, sources: list[str] | None = None) -> list[dict]:
 
     output_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "outputs", market.lower().replace(" ", "_")
+        "outputs",
+        market.lower().replace(" ", "_"),
     )
     os.makedirs(output_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M")
@@ -369,9 +392,9 @@ def scout_market(market: str, sources: list[str] | None = None) -> list[dict]:
         json.dump(findings, f, indent=2, default=str)
 
     new_total = sum(1 for f in findings if f.get("is_new"))
-    print(f"\n{'='*55}")
+    print(f"\n{'=' * 55}")
     print(f"PORTAL SCOUT — {market.upper()}")
-    print(f"{'='*55}")
+    print(f"{'=' * 55}")
     print(f"Total findings : {len(findings)}")
     print(f"New (unseen)   : {new_total}")
     print(f"Memory stats   : {memory.stats()}")
@@ -383,19 +406,23 @@ def scout_market(market: str, sources: list[str] | None = None) -> list[dict]:
             for f in new_items:
                 print(
                     f"  [{f['source']:<14}] "
-                    f"{f.get('developer','?')[:20]:<22} | "
-                    f"{f.get('project_name','?')[:30]:<32} | "
-                    f"{f.get('price_display','?')}"
+                    f"{f.get('developer', '?')[:20]:<22} | "
+                    f"{f.get('project_name', '?')[:30]:<32} | "
+                    f"{f.get('price_display', '?')}"
                 )
     return findings
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Portal Scout — multi-source property listings")
-    parser.add_argument("--market", default="Yelahanka",
-                        choices=["Yelahanka", "Devanahalli", "Hebbal"])
-    parser.add_argument("--source", default="",
-                        help="Comma-separated source keys to run (default: all)")
+    parser = argparse.ArgumentParser(
+        description="Portal Scout — multi-source property listings"
+    )
+    parser.add_argument(
+        "--market", default="Yelahanka", choices=["Yelahanka", "Devanahalli", "Hebbal"]
+    )
+    parser.add_argument(
+        "--source", default="", help="Comma-separated source keys to run (default: all)"
+    )
     args = parser.parse_args()
     logger.add("logs/portal_scout.log", rotation="10 MB")
     sources = [s.strip() for s in args.source.split(",") if s.strip()] or None

@@ -43,8 +43,11 @@ from loguru import logger
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import (
-    GEMINI_API_KEY, GEMINI_CEO_MODEL,
-    CEREBRAS_API_KEY, CEREBRAS_BASE_URL, CEREBRAS_MODEL,
+    GEMINI_API_KEY,
+    GEMINI_CEO_MODEL,
+    CEREBRAS_API_KEY,
+    CEREBRAS_BASE_URL,
+    CEREBRAS_MODEL,
 )
 from scrapers.scout_memory import ScoutMemory
 
@@ -108,6 +111,7 @@ ARTICLES TEXT:
 
 # ── Google News RSS fetch ─────────────────────────────────────────────────────
 
+
 def _fetch_google_news_rss(query: str, days_back: int = 60) -> list[dict]:
     """
     Fetch Google News RSS for a query. Returns list of article dicts.
@@ -123,7 +127,9 @@ def _fetch_google_news_rss(query: str, days_back: int = 60) -> list[dict]:
     try:
         resp = requests.get(rss_url, headers=SCRAPE_HEADERS, timeout=15)
         if resp.status_code != 200:
-            logger.debug(f"[NewsScout] Google News RSS HTTP {resp.status_code} for '{query}'")
+            logger.debug(
+                f"[NewsScout] Google News RSS HTTP {resp.status_code} for '{query}'"
+            )
             return []
 
         root = ET.fromstring(resp.content)
@@ -144,20 +150,25 @@ def _fetch_google_news_rss(query: str, days_back: int = 60) -> list[dict]:
             # Date filter (parse RFC 2822 date)
             try:
                 from email.utils import parsedate_to_datetime
+
                 pub_dt = parsedate_to_datetime(pub_date_str)
                 if pub_dt.replace(tzinfo=None) < cutoff:
                     filtered_count += 1
                     continue
             except Exception as exc:
-                logger.warning(f"[NewsScout] Could not parse pub date '{pub_date_str}': {exc} — including article without date filter")
+                logger.warning(
+                    f"[NewsScout] Could not parse pub date '{pub_date_str}': {exc} — including article without date filter"
+                )
 
-            articles.append({
-                "title": title,
-                "url": link,
-                "published": pub_date_str,
-                "snippet": description,
-                "source": "google_news_rss",
-            })
+            articles.append(
+                {
+                    "title": title,
+                    "url": link,
+                    "published": pub_date_str,
+                    "snippet": description,
+                    "source": "google_news_rss",
+                }
+            )
 
         if filtered_count > 0:
             logger.debug(
@@ -174,6 +185,7 @@ def _fetch_google_news_rss(query: str, days_back: int = 60) -> list[dict]:
 
 # ── ET Realty search fetch ────────────────────────────────────────────────────
 
+
 def _fetch_et_realty(query: str, session: requests.Session) -> list[dict]:
     """Scrape ET Realty search results page."""
     encoded = quote(query)
@@ -182,7 +194,9 @@ def _fetch_et_realty(query: str, session: requests.Session) -> list[dict]:
     try:
         resp = session.get(url, timeout=15)
         if resp.status_code != 200:
-            logger.debug(f"[NewsScout] ET Realty HTTP {resp.status_code} for query '{query}'")
+            logger.debug(
+                f"[NewsScout] ET Realty HTTP {resp.status_code} for query '{query}'"
+            )
             return []
         soup = BeautifulSoup(resp.text, "lxml")
         items = soup.select(".eachStory, .story-box, article, .article-box")
@@ -200,19 +214,22 @@ def _fetch_et_realty(query: str, session: requests.Session) -> list[dict]:
             if not link.startswith("http"):
                 link = "https://realty.economictimes.indiatimes.com" + link
 
-            articles.append({
-                "title": title,
-                "url": link,
-                "published": "",
-                "snippet": snippet,
-                "source": "et_realty",
-            })
+            articles.append(
+                {
+                    "title": title,
+                    "url": link,
+                    "published": "",
+                    "snippet": snippet,
+                    "source": "et_realty",
+                }
+            )
     except Exception as exc:
         logger.debug(f"[NewsScout] ET Realty fetch error: {exc}")
     return articles
 
 
 # ── AI article analysis ───────────────────────────────────────────────────────
+
 
 def _ai_analyze_articles(articles: list[dict], market: str) -> list[dict]:
     if not articles:
@@ -222,10 +239,10 @@ def _ai_analyze_articles(articles: list[dict], market: str) -> list[dict]:
     text_parts = []
     for i, a in enumerate(articles[:20]):
         text_parts.append(
-            f"[{i+1}] {a.get('title','')} | "
-            f"URL: {a.get('url','')} | "
-            f"Date: {a.get('published','')} | "
-            f"{a.get('snippet','')[:200]}"
+            f"[{i + 1}] {a.get('title', '')} | "
+            f"URL: {a.get('url', '')} | "
+            f"Date: {a.get('published', '')} | "
+            f"{a.get('snippet', '')[:200]}"
         )
     combined = "\n".join(text_parts)
     # Gemini can handle larger context; truncate for Cerebras fallback
@@ -247,7 +264,9 @@ def _ai_analyze_articles(articles: list[dict], market: str) -> list[dict]:
 
     def _call_cerebras_fallback(litellm_module):
         if not CEREBRAS_API_KEY:
-            logger.error("[NewsScout] Gemini fallback requested but CEREBRAS_API_KEY missing")
+            logger.error(
+                "[NewsScout] Gemini fallback requested but CEREBRAS_API_KEY missing"
+            )
             return ""
         short_prompt = NEWS_EXTRACTION_PROMPT + combined[:2000]
         resp = litellm_module.completion(
@@ -262,6 +281,7 @@ def _ai_analyze_articles(articles: list[dict], market: str) -> list[dict]:
 
     try:
         import litellm
+
         if GEMINI_API_KEY:
             try:
                 resp = litellm.completion(
@@ -280,7 +300,9 @@ def _ai_analyze_articles(articles: list[dict], market: str) -> list[dict]:
                     try:
                         raw = _call_cerebras_fallback(litellm)
                     except Exception as fb_exc:
-                        logger.error(f"[NewsScout] Cerebras fallback failed after Gemini rate-limit: {fb_exc}")
+                        logger.error(
+                            f"[NewsScout] Cerebras fallback failed after Gemini rate-limit: {fb_exc}"
+                        )
                         return []
                 else:
                     raise
@@ -309,6 +331,7 @@ def _ai_analyze_articles(articles: list[dict], market: str) -> list[dict]:
 
 # ── Normalization ─────────────────────────────────────────────────────────────
 
+
 def _normalize_article(raw: dict, market: str) -> dict | None:
     headline = (raw.get("headline") or "").strip()
     url = (raw.get("url") or "").strip()
@@ -336,6 +359,7 @@ def _normalize_article(raw: dict, market: str) -> dict | None:
 
 
 # ── News Scout ────────────────────────────────────────────────────────────────
+
 
 class NewsScout:
     """
@@ -401,6 +425,7 @@ class NewsScout:
 
 # ── Standalone runner ─────────────────────────────────────────────────────────
 
+
 def scout_news(market: str, days_back: int = 60) -> list[dict]:
     memory = ScoutMemory(market)
     scout = NewsScout(market, memory)
@@ -408,7 +433,8 @@ def scout_news(market: str, days_back: int = 60) -> list[dict]:
 
     output_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "outputs", market.lower().replace(" ", "_")
+        "outputs",
+        market.lower().replace(" ", "_"),
     )
     os.makedirs(output_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M")
@@ -417,9 +443,9 @@ def scout_news(market: str, days_back: int = 60) -> list[dict]:
         json.dump(findings, f, indent=2, default=str)
 
     new_total = sum(1 for f in findings if f.get("is_new"))
-    print(f"\n{'='*55}")
+    print(f"\n{'=' * 55}")
     print(f"NEWS SCOUT — {market.upper()}")
-    print(f"{'='*55}")
+    print(f"{'=' * 55}")
     print(f"Total articles  : {len(findings)}")
     print(f"New signals     : {new_total}")
     print(f"Output          : {out_path}")
@@ -429,18 +455,25 @@ def scout_news(market: str, days_back: int = 60) -> list[dict]:
         if matches:
             print(f"\n  {signal_type.upper()} ({len(matches)}):")
             for f in matches[:3]:
-                print(f"    • {f.get('headline','?')[:70]}")
+                print(f"    • {f.get('headline', '?')[:70]}")
                 if f.get("key_insight"):
                     print(f"      → {f['key_insight'][:80]}")
     return findings
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="News Scout — property news intelligence")
-    parser.add_argument("--market", default="Yelahanka",
-                        choices=["Yelahanka", "Devanahalli", "Hebbal"])
-    parser.add_argument("--days", type=int, default=60,
-                        help="How many days back to search (default: 60)")
+    parser = argparse.ArgumentParser(
+        description="News Scout — property news intelligence"
+    )
+    parser.add_argument(
+        "--market", default="Yelahanka", choices=["Yelahanka", "Devanahalli", "Hebbal"]
+    )
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=60,
+        help="How many days back to search (default: 60)",
+    )
     args = parser.parse_args()
     logger.add("logs/news_scout.log", rotation="10 MB")
     scout_news(args.market, days_back=args.days)

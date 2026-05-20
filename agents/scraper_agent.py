@@ -19,6 +19,7 @@ from config.llm_router import get_light_llm
 
 # ── RERA SCRAPER TOOL ─────────────────────────────────────────────────────────
 
+
 class RERAScraperTool(BaseTool):
     name: str = "rera_scraper"
     description: str = (
@@ -30,6 +31,7 @@ class RERAScraperTool(BaseTool):
     def _run(self, market_name: str) -> str:
         from scrapers.rera_karnataka import RERAKarnatakaScraper
         from config.checkpointer import Checkpointer
+
         scraper = RERAKarnatakaScraper()
         projects = scraper.scrape_market(market_name)
         # Save checkpoint — organizer reads from here (not from LLM output string)
@@ -48,6 +50,7 @@ class ListingsScraperTool(BaseTool):
     def _run(self, market_name: str) -> str:
         from scrapers.listings_scraper import ListingsScraper
         from config.checkpointer import Checkpointer
+
         scraper = ListingsScraper()
         listings = scraper.scrape_market(market_name)
         Checkpointer().save(market_name, "listings_scraped", listings)
@@ -66,11 +69,15 @@ class GuidanceValueTool(BaseTool):
     def _run(self, market_name: str) -> str:
         from scrapers.kaveri_karnataka import KaveriScraper
         from config.checkpointer import Checkpointer
+
         try:
             scraper = KaveriScraper()
             records = scraper.scrape_guidance_values(market_name)
             Checkpointer().save(market_name, "kaveri_gv_scraped", records)
-            return json.dumps({"market": market_name, "records": len(records), "data": records}, default=str)
+            return json.dumps(
+                {"market": market_name, "records": len(records), "data": records},
+                default=str,
+            )
         except Exception as e:
             return json.dumps({"error": str(e), "market": market_name})
 
@@ -87,11 +94,15 @@ class KaveriRegistrationTool(BaseTool):
     def _run(self, market_name: str) -> str:
         from scrapers.kaveri_karnataka import KaveriScraper
         from config.checkpointer import Checkpointer
+
         try:
             scraper = KaveriScraper()
             records = scraper.scrape_registrations(market_name, months_back=6)
             Checkpointer().save(market_name, "kaveri_reg_scraped", records)
-            return json.dumps({"market": market_name, "records": len(records), "data": records}, default=str)
+            return json.dumps(
+                {"market": market_name, "records": len(records), "data": records},
+                default=str,
+            )
         except Exception as e:
             return json.dumps({"error": str(e), "market": market_name})
 
@@ -99,6 +110,7 @@ class KaveriRegistrationTool(BaseTool):
 # ── Scout Tools (new) ─────────────────────────────────────────────────────────
 # Each scout uses a different model and a different approach to finding properties.
 # All scouts share ScoutMemory — cross-source dedup at the agent level.
+
 
 class PortalScoutTool(BaseTool):
     name: str = "portal_scout"
@@ -114,19 +126,23 @@ class PortalScoutTool(BaseTool):
         from scrapers.portal_scout import PortalScout
         from scrapers.scout_memory import ScoutMemory
         from config.checkpointer import Checkpointer
+
         try:
             memory = ScoutMemory(market_name)
             scout = PortalScout(market_name, memory)
             findings = scout.scout()
             new_count = sum(1 for f in findings if f.get("is_new"))
             Checkpointer().save(market_name, "portal_scout", findings)
-            return json.dumps({
-                "market": market_name,
-                "total": len(findings),
-                "new_discoveries": new_count,
-                "memory_stats": memory.stats(),
-                "data": findings,
-            }, default=str)
+            return json.dumps(
+                {
+                    "market": market_name,
+                    "total": len(findings),
+                    "new_discoveries": new_count,
+                    "memory_stats": memory.stats(),
+                    "data": findings,
+                },
+                default=str,
+            )
         except Exception as e:
             return json.dumps({"error": str(e), "market": market_name})
 
@@ -146,18 +162,22 @@ class RERADetailScoutTool(BaseTool):
         from scrapers.rera_detail_scout import RERADetailScout
         from scrapers.scout_memory import ScoutMemory
         from config.checkpointer import Checkpointer
+
         try:
             memory = ScoutMemory(market_name)
             scout = RERADetailScout(market_name, memory)
             results = scout.scout()
             new_count = sum(1 for r in results if r.get("is_new"))
             Checkpointer().save(market_name, "rera_detail_scout", results)
-            return json.dumps({
-                "market": market_name,
-                "enriched": len(results),
-                "new_detail_dives": new_count,
-                "data": results,
-            }, default=str)
+            return json.dumps(
+                {
+                    "market": market_name,
+                    "enriched": len(results),
+                    "new_detail_dives": new_count,
+                    "data": results,
+                },
+                default=str,
+            )
         except Exception as e:
             return json.dumps({"error": str(e), "market": market_name})
 
@@ -176,18 +196,22 @@ class DeveloperScoutTool(BaseTool):
         from scrapers.developer_scout import DeveloperScout
         from scrapers.scout_memory import ScoutMemory
         from config.checkpointer import Checkpointer
+
         try:
             memory = ScoutMemory(market_name)
             scout = DeveloperScout(market_name, memory)
             findings = scout.scout()
             new_count = sum(1 for f in findings if f.get("is_new"))
             Checkpointer().save(market_name, "developer_scout", findings)
-            return json.dumps({
-                "market": market_name,
-                "total": len(findings),
-                "new_pre_launch": new_count,
-                "data": findings,
-            }, default=str)
+            return json.dumps(
+                {
+                    "market": market_name,
+                    "total": len(findings),
+                    "new_pre_launch": new_count,
+                    "data": findings,
+                },
+                default=str,
+            )
         except Exception as e:
             return json.dumps({"error": str(e), "market": market_name})
 
@@ -205,22 +229,31 @@ class NewsScoutTool(BaseTool):
         from scrapers.news_scout import NewsScout
         from scrapers.scout_memory import ScoutMemory
         from config.checkpointer import Checkpointer
+
         try:
             memory = ScoutMemory(market_name)
             scout = NewsScout(market_name, memory)
             findings = scout.scout(days_back=60)
             new_count = sum(1 for f in findings if f.get("is_new"))
             Checkpointer().save(market_name, "news_scout", findings)
-            return json.dumps({
-                "market": market_name,
-                "articles_analyzed": len(findings),
-                "new_signals": new_count,
-                "by_signal_type": {
-                    sig: sum(1 for f in findings if f.get("signal_type") == sig)
-                    for sig in ("new_launch", "price_change", "regulatory", "developer_news")
+            return json.dumps(
+                {
+                    "market": market_name,
+                    "articles_analyzed": len(findings),
+                    "new_signals": new_count,
+                    "by_signal_type": {
+                        sig: sum(1 for f in findings if f.get("signal_type") == sig)
+                        for sig in (
+                            "new_launch",
+                            "price_change",
+                            "regulatory",
+                            "developer_news",
+                        )
+                    },
+                    "data": findings,
                 },
-                "data": findings,
-            }, default=str)
+                default=str,
+            )
         except Exception as e:
             return json.dumps({"error": str(e), "market": market_name})
 

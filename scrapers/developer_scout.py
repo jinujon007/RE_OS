@@ -41,8 +41,11 @@ from loguru import logger
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import (
-    GEMINI_API_KEY, GEMINI_CEO_MODEL,
-    CEREBRAS_API_KEY, CEREBRAS_BASE_URL, CEREBRAS_MODEL,
+    GEMINI_API_KEY,
+    GEMINI_CEO_MODEL,
+    CEREBRAS_API_KEY,
+    CEREBRAS_BASE_URL,
+    CEREBRAS_MODEL,
 )
 from scrapers.scout_memory import ScoutMemory
 
@@ -56,8 +59,14 @@ DEVELOPER_SITES: dict[str, dict] = {
         "alt_url": "https://www.brigade.in/residential",
         "use_playwright": True,
         "north_blr_keywords": [
-            "yelahanka", "jakkur", "hebbal", "kogilu", "thanisandra",
-            "north bangalore", "devanahalli", "bagalur"
+            "yelahanka",
+            "jakkur",
+            "hebbal",
+            "kogilu",
+            "thanisandra",
+            "north bangalore",
+            "devanahalli",
+            "bagalur",
         ],
     },
     "Prestige": {
@@ -66,8 +75,13 @@ DEVELOPER_SITES: dict[str, dict] = {
         "alt_url": "https://www.prestige.co.in/all-projects",
         "use_playwright": True,
         "north_blr_keywords": [
-            "yelahanka", "hebbal", "devanahalli", "north bangalore",
-            "thanisandra", "jakkur", "finsbury"
+            "yelahanka",
+            "hebbal",
+            "devanahalli",
+            "north bangalore",
+            "thanisandra",
+            "jakkur",
+            "finsbury",
         ],
     },
     "Sobha": {
@@ -76,7 +90,11 @@ DEVELOPER_SITES: dict[str, dict] = {
         "alt_url": "https://www.sobha.com/projects/",
         "use_playwright": False,
         "north_blr_keywords": [
-            "yelahanka", "devanahalli", "north bangalore", "hebbal", "jakkur"
+            "yelahanka",
+            "devanahalli",
+            "north bangalore",
+            "hebbal",
+            "jakkur",
         ],
     },
     "Godrej": {
@@ -84,61 +102,60 @@ DEVELOPER_SITES: dict[str, dict] = {
         "projects_url": "https://www.godrejproperties.com/bengaluru",
         "alt_url": "https://www.godrejproperties.com/all-projects?city=bengaluru",
         "use_playwright": False,
-        "north_blr_keywords": [
-            "yelahanka", "north bangalore", "devanahalli", "hebbal"
-        ],
+        "north_blr_keywords": ["yelahanka", "north bangalore", "devanahalli", "hebbal"],
     },
     "Adarsh": {
         "name": "Adarsh Developers",
         "projects_url": "https://www.adarshgroup.com/all-projects/",
         "alt_url": "https://www.adarshgroup.com/ongoing-projects/",
         "use_playwright": False,
-        "north_blr_keywords": [
-            "yelahanka", "satellite town", "north bangalore"
-        ],
+        "north_blr_keywords": ["yelahanka", "satellite town", "north bangalore"],
     },
     "Salarpuria": {
         "name": "Salarpuria Sattva Group",
         "projects_url": "https://www.salarpuriasattva.com/residential-projects/",
         "alt_url": "https://www.salarpuriasattva.com/ongoing-projects/",
         "use_playwright": False,
-        "north_blr_keywords": [
-            "yelahanka", "hebbal", "north bangalore", "thanisandra"
-        ],
+        "north_blr_keywords": ["yelahanka", "hebbal", "north bangalore", "thanisandra"],
     },
     "Shriram": {
         "name": "Shriram Properties",
         "projects_url": "https://www.shriramproperties.com/projects/bangalore/",
         "alt_url": "https://www.shriramproperties.com/all-projects/",
         "use_playwright": False,
-        "north_blr_keywords": [
-            "yelahanka", "north bangalore"
-        ],
+        "north_blr_keywords": ["yelahanka", "north bangalore"],
     },
     "Mantri": {
         "name": "Mantri Developers",
         "projects_url": "https://www.mantrideveloper.com/projects/",
         "alt_url": "https://www.mantrideveloper.com/ongoing-projects/",
         "use_playwright": False,
-        "north_blr_keywords": [
-            "yelahanka", "north bangalore"
-        ],
+        "north_blr_keywords": ["yelahanka", "north bangalore"],
     },
 }
 
 # Yelahanka-specific keyword weight (for scoring relevance)
 MARKET_KEYWORDS: dict[str, list[str]] = {
     "Yelahanka": [
-        "yelahanka", "yelahanka new town", "yelahanka satellite town",
-        "kogilu", "singanayakanahalli", "bagalur", "jakkur", "north bangalore"
+        "yelahanka",
+        "yelahanka new town",
+        "yelahanka satellite town",
+        "kogilu",
+        "singanayakanahalli",
+        "bagalur",
+        "jakkur",
+        "north bangalore",
     ],
     "Devanahalli": [
-        "devanahalli", "sadahalli", "rachenahalli", "kiadb aerospace",
-        "namma metro devanahalli", "bial", "international airport"
+        "devanahalli",
+        "sadahalli",
+        "rachenahalli",
+        "kiadb aerospace",
+        "namma metro devanahalli",
+        "bial",
+        "international airport",
     ],
-    "Hebbal": [
-        "hebbal", "nagawara", "thanisandra", "rt nagar", "banaswadi"
-    ],
+    "Hebbal": ["hebbal", "nagawara", "thanisandra", "rt nagar", "banaswadi"],
 }
 
 SCRAPE_HEADERS = {
@@ -184,7 +201,10 @@ DEVELOPER WEBSITE TEXT:
 
 # ── AI extraction (Gemini Flash — full-page marketing comprehension) ──────────
 
-def _ai_extract_developer(text: str, developer_name: str, dom_snippets: str = "") -> list[dict]:
+
+def _ai_extract_developer(
+    text: str, developer_name: str, dom_snippets: str = ""
+) -> list[dict]:
     # Filter text to market-relevant sections first
     filtered = _filter_relevant_text(text, developer_name)
     if len(filtered) < 100 and len(dom_snippets) < 100:
@@ -199,7 +219,7 @@ def _ai_extract_developer(text: str, developer_name: str, dom_snippets: str = ""
         prompt = DEVELOPER_EXTRACTION_PROMPT + truncated
     elif len(filtered) >= len(text) - 10 and len(filtered) > 8000:
         mid = len(filtered) // 2
-        truncated = filtered[:5000] + "\n...\n" + filtered[mid:mid + 5000]
+        truncated = filtered[:5000] + "\n...\n" + filtered[mid : mid + 5000]
         prompt = DEVELOPER_EXTRACTION_PROMPT + truncated
     else:
         # No meaningful DOM snippets AND text is noisy. Append any available snippets
@@ -230,7 +250,7 @@ def _ai_extract_developer(text: str, developer_name: str, dom_snippets: str = ""
 
     # ── Fallback: Cerebras 8b (truncate to stay within 8 192-token context) ───
     if (not raw) and CEREBRAS_API_KEY:
-        cerebras_prompt = (prompt[:7000] + "\n... [TRUNCATED for Cerebras 8K]")
+        cerebras_prompt = prompt[:7000] + "\n... [TRUNCATED for Cerebras 8K]"
         try:
             resp = litellm.completion(
                 model=f"openai/{CEREBRAS_MODEL}",
@@ -275,9 +295,19 @@ def _filter_relevant_text(text: str, developer_name: str) -> str:
     This reduces noise from South/East Bengaluru projects before AI processing.
     """
     north_blr = {
-        "yelahanka", "hebbal", "devanahalli", "jakkur", "thanisandra",
-        "kogilu", "bagalur", "singanayakanahalli", "nagawara", "north bangalore",
-        "north bengaluru", "bial", "airport"
+        "yelahanka",
+        "hebbal",
+        "devanahalli",
+        "jakkur",
+        "thanisandra",
+        "kogilu",
+        "bagalur",
+        "singanayakanahalli",
+        "nagawara",
+        "north bangalore",
+        "north bengaluru",
+        "bial",
+        "airport",
     }
     lines = text.split("\n")
     relevant = []
@@ -301,8 +331,9 @@ def _filter_relevant_text(text: str, developer_name: str) -> str:
 
 def _clean_html(html: str) -> str:
     soup = BeautifulSoup(html, "lxml")
-    for tag in soup(["script", "style", "nav", "header", "footer",
-                     "aside", "noscript", "iframe"]):
+    for tag in soup(
+        ["script", "style", "nav", "header", "footer", "aside", "noscript", "iframe"]
+    ):
         tag.decompose()
     text = soup.get_text(separator=" ", strip=True)
     return re.sub(r"\s{3,}", "\n", text)
@@ -323,14 +354,25 @@ def _extract_dom_snippets(html: str) -> str:
               → minimum 30 chars threshold to exclude buttons/crumbs
     """
     north_blr = {
-        "yelahanka", "hebbal", "devanahalli", "jakkur", "thanisandra",
-        "kogilu", "bagalur", "singanayakanahalli", "nagawara", "north bangalore",
-        "north bengaluru", "bial", "airport", "finsbury"
+        "yelahanka",
+        "hebbal",
+        "devanahalli",
+        "jakkur",
+        "thanisandra",
+        "kogilu",
+        "bagalur",
+        "singanayakanahalli",
+        "nagawara",
+        "north bangalore",
+        "north bengaluru",
+        "bial",
+        "airport",
+        "finsbury",
     }
     soup = BeautifulSoup(html, "lxml")
 
     # Tier 1: BHK + keyword — project cards
-    bhk_re = re.compile(r'\d+\s*bhk', re.IGNORECASE)
+    bhk_re = re.compile(r"\d+\s*bhk", re.IGNORECASE)
     bhk_snippets: list[str] = []
     for tag in soup.find_all(["a", "h2", "h3", "h4", "span", "p", "li"]):
         text = tag.get_text(" ", strip=True)
@@ -346,12 +388,29 @@ def _extract_dom_snippets(html: str) -> str:
         return "\n".join(bhk_snippets)
 
     # Tier 2: Keyword elements with noise filter
-    skip_starts = ("home", "about", "career", "contact", "investor", "media",
-                   "gallery", "legal", "privacy", "terms", "close", "menu",
-                   "leadership", "sustainability")
+    skip_starts = (
+        "home",
+        "about",
+        "career",
+        "contact",
+        "investor",
+        "media",
+        "gallery",
+        "legal",
+        "privacy",
+        "terms",
+        "close",
+        "menu",
+        "leadership",
+        "sustainability",
+    )
     skip_contains = {
-        "know us", "projects residential", "projects location",
-        "residential projects", "investor relations", "media centre"
+        "know us",
+        "projects residential",
+        "projects location",
+        "residential projects",
+        "investor relations",
+        "media centre",
     }
     tier2_snippets: list[str] = []
     for tag in soup.find_all(["a", "span", "p", "div", "h2", "h3", "li"]):
@@ -376,6 +435,7 @@ def _extract_dom_snippets(html: str) -> str:
 
 
 # ── Normalization ─────────────────────────────────────────────────────────────
+
 
 def _parse_price(s: str | None) -> float:
     if not s or str(s).lower() in ("price on request", "null", "none", ""):
@@ -439,6 +499,7 @@ def _normalize_developer_finding(
 
 # ── Developer Scout ───────────────────────────────────────────────────────────
 
+
 class DeveloperScout:
     """
     Crawls developer websites directly for North Bengaluru projects.
@@ -467,7 +528,9 @@ class DeveloperScout:
                 continue
             try:
                 findings = self._scout_developer(dev_key, dev_info)
-                new, known = self.memory.mark_all(findings, source=f"dev_{dev_key.lower()}")
+                new, known = self.memory.mark_all(
+                    findings, source=f"dev_{dev_key.lower()}"
+                )
                 all_findings.extend(new + known)
                 logger.info(
                     f"[DeveloperScout][{dev_key}] "
@@ -505,7 +568,9 @@ class DeveloperScout:
 
         text = _clean_html(raw_html)
         dom_snippets = _extract_dom_snippets(raw_html)
-        raw_items = _ai_extract_developer(text, developer_name, dom_snippets=dom_snippets)
+        raw_items = _ai_extract_developer(
+            text, developer_name, dom_snippets=dom_snippets
+        )
         results = [
             _normalize_developer_finding(r, dev_key, developer_name, self.market, url)
             for r in raw_items
@@ -554,6 +619,7 @@ class DeveloperScout:
 
 # ── Standalone runner ─────────────────────────────────────────────────────────
 
+
 def scout_developers(market: str, developers: list[str] | None = None) -> list[dict]:
     memory = ScoutMemory(market)
     scout = DeveloperScout(market, memory)
@@ -561,7 +627,8 @@ def scout_developers(market: str, developers: list[str] | None = None) -> list[d
 
     output_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "outputs", market.lower().replace(" ", "_")
+        "outputs",
+        market.lower().replace(" ", "_"),
     )
     os.makedirs(output_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M")
@@ -570,28 +637,32 @@ def scout_developers(market: str, developers: list[str] | None = None) -> list[d
         json.dump(findings, f, indent=2, default=str)
 
     new_total = sum(1 for f in findings if f.get("is_new"))
-    print(f"\n{'='*55}")
+    print(f"\n{'=' * 55}")
     print(f"DEVELOPER SCOUT — {market.upper()}")
-    print(f"{'='*55}")
+    print(f"{'=' * 55}")
     print(f"Total findings : {len(findings)}")
     print(f"New pre-launch : {new_total}")
     print(f"Output         : {out_path}")
     for f in [x for x in findings if x.get("is_new")][:5]:
         print(
             f"  [{f['source']:<18}] "
-            f"{f.get('project_name','?')[:30]:<32} | "
-            f"{f.get('launch_status','?'):<20} | "
-            f"{f.get('price_display','?')}"
+            f"{f.get('project_name', '?')[:30]:<32} | "
+            f"{f.get('launch_status', '?'):<20} | "
+            f"{f.get('price_display', '?')}"
         )
     return findings
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Developer Scout — direct developer website crawler")
-    parser.add_argument("--market", default="Yelahanka",
-                        choices=["Yelahanka", "Devanahalli", "Hebbal"])
-    parser.add_argument("--developer", default="",
-                        help="Comma-separated developer keys (default: all)")
+    parser = argparse.ArgumentParser(
+        description="Developer Scout — direct developer website crawler"
+    )
+    parser.add_argument(
+        "--market", default="Yelahanka", choices=["Yelahanka", "Devanahalli", "Hebbal"]
+    )
+    parser.add_argument(
+        "--developer", default="", help="Comma-separated developer keys (default: all)"
+    )
     args = parser.parse_args()
     logger.add("logs/developer_scout.log", rotation="10 MB")
     devs = [d.strip() for d in args.developer.split(",") if d.strip()] or None

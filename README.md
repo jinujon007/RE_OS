@@ -107,7 +107,7 @@ flowchart TB
 
     subgraph Stage2["Stage 2 · Python Organizer  (no LLM)"]
         ORG["Validate + deduplicate → batch upsert"]
-        DB[("PostgreSQL + PostGIS\n12 tables · 4 analytics views")]
+        DB[("PostgreSQL + PostGIS\n14 tables · 4 analytics views")]
         ORG --> DB
     end
 
@@ -135,7 +135,7 @@ flowchart TB
 
 - **Multi-source scraping** — RERA Karnataka (Playwright AJAX intercept + POST fallback + hardcoded fallback), property portal listings, Kaveri registration and guidance value data
 - **Tiered LLM routing** — Cerebras → Groq → Gemini → NVIDIA → OpenRouter → Ollama. Free tier first, local fallback always available. A full three-market run costs $0.
-- **PostGIS data store** — 12 tables with geospatial support, 4 pre-built analytics views (`v_market_inventory`, `v_developer_scorecard`, `v_market_brief`, `v_active_projects`)
+- **PostGIS data store** — 14 tables with geospatial support, 4 pre-built analytics views (`v_market_inventory`, `v_developer_scorecard`, `v_market_brief`, `v_active_projects`)
 - **Developer grading** — automatic A/B/C classification: Grade A = recognised brand or ≥500 units; B = 100–499; C = <100
 - **Checkpointed pipeline** — today's Stage 1 checkpoint means failed runs restart from Stage 3; no re-scraping
 - **Autonomous scheduling** — APScheduler runs RERA refresh at 2 AM IST daily; market snapshots at 6 AM
@@ -232,7 +232,7 @@ Cerebras and Groq are separate budgets — no TPM conflicts between tiers. See [
 
 ## Database Schema
 
-12 tables (UUID primary keys, PostGIS geometry support):
+14 tables (UUID primary keys, PostGIS geometry support):
 
 `micro_markets` · `developers` · `rera_projects` · `project_snapshots` · `listings` · `kaveri_registrations` · `guidance_values` · `regulatory_zones` · `overlay_constraints` · `infrastructure_pipeline` · `market_snapshots` · `agent_runs`
 

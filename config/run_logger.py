@@ -47,18 +47,18 @@ class RunLogger:
     def start(self):
         self.start_time = datetime.now()
         self._record = {
-            "run_id":           self.run_id,
-            "market":           self.market,
-            "run_type":         self.run_type,
-            "start_time":       self.start_time.isoformat(),
-            "end_time":         None,
+            "run_id": self.run_id,
+            "market": self.market,
+            "run_type": self.run_type,
+            "start_time": self.start_time.isoformat(),
+            "end_time": None,
             "duration_seconds": None,
-            "status":           "running",
-            "error":            None,
-            "error_type":       None,
+            "status": "running",
+            "error": None,
+            "error_type": None,
             "agents_completed": [],
-            "report_path":      None,
-            "notes":            [],
+            "report_path": None,
+            "notes": [],
         }
         self._append_record()
         self._print_banner("START", f"Run ID: {self.run_id}")
@@ -75,25 +75,35 @@ class RunLogger:
 
     def finish(self, status: str, report_path: str = None, error: str = None):
         end = datetime.now()
-        duration = round((end - self.start_time).total_seconds(), 1) if self.start_time else None
+        duration = (
+            round((end - self.start_time).total_seconds(), 1)
+            if self.start_time
+            else None
+        )
 
-        self._record.update({
-            "end_time":         end.isoformat(),
-            "duration_seconds": duration,
-            "status":           status,
-            "agents_completed": self.agents_completed,
-            "report_path":      report_path,
-            "error":            error,
-            "error_type":       self._classify_error(error) if error else None,
-        })
+        self._record.update(
+            {
+                "end_time": end.isoformat(),
+                "duration_seconds": duration,
+                "status": status,
+                "agents_completed": self.agents_completed,
+                "report_path": report_path,
+                "error": error,
+                "error_type": self._classify_error(error) if error else None,
+            }
+        )
 
         self._append_record()
         self._update_summary()
 
         if status == "success":
-            self._print_banner("SUCCESS", f"{self.market} — {duration}s — {report_path}")
+            self._print_banner(
+                "SUCCESS", f"{self.market} — {duration}s — {report_path}"
+            )
         else:
-            self._print_banner("FAILED", f"{self.market} — {self._classify_error(error)}")
+            self._print_banner(
+                "FAILED", f"{self.market} — {self._classify_error(error)}"
+            )
 
     # ── Error classification ───────────────────────────────────────────────
 
@@ -176,15 +186,23 @@ class RunLogger:
         ]
 
         for i, r in enumerate(runs, 1):
-            status_icon = "✅" if r.get("status") == "success" else ("❌" if r.get("status") == "failed" else "🔄")
-            duration = f"{r.get('duration_seconds', '—')}s" if r.get("duration_seconds") else "—"
+            status_icon = (
+                "✅"
+                if r.get("status") == "success"
+                else ("❌" if r.get("status") == "failed" else "🔄")
+            )
+            duration = (
+                f"{r.get('duration_seconds', '—')}s"
+                if r.get("duration_seconds")
+                else "—"
+            )
             agents = ", ".join(r.get("agents_completed", [])) or "—"
             error_type = r.get("error_type") or "—"
             notes = "; ".join(r.get("notes", [])) or "—"
             run_id_short = r.get("run_id", "")[-19:]  # last 19 chars
             lines.append(
-                f"| {i} | `{run_id_short}` | {r.get('market','?')} | "
-                f"{status_icon} {r.get('status','?')} | {duration} | "
+                f"| {i} | `{run_id_short}` | {r.get('market', '?')} | "
+                f"{status_icon} {r.get('status', '?')} | {duration} | "
                 f"{agents[:40]} | {error_type} | {notes[:60]} |"
             )
 
@@ -221,9 +239,9 @@ class RunLogger:
 
     def _print_banner(self, label: str, msg: str):
         width = 65
-        print(f"\n{'='*width}")
+        print(f"\n{'=' * width}")
         print(f"  RE_OS [{label}] — {msg}")
-        print(f"{'='*width}\n")
+        print(f"{'=' * width}\n")
 
     def _print_progress(self, agent_name: str):
         idx = len(self.agents_completed)
@@ -233,6 +251,7 @@ class RunLogger:
 
 
 # ── Convenience functions ──────────────────────────────────────────────────────
+
 
 def print_run_history(last_n: int = 10):
     """Print the last N runs to terminal. Call standalone to review history."""
@@ -251,14 +270,14 @@ def print_run_history(last_n: int = 10):
 
     runs = sorted(runs, key=lambda r: r.get("start_time", ""), reverse=True)[:last_n]
 
-    print(f"\n{'='*65}")
+    print(f"\n{'=' * 65}")
     print(f"  RE_OS Run History — last {len(runs)} runs")
-    print(f"{'='*65}")
+    print(f"{'=' * 65}")
     for r in runs:
         icon = "✅" if r.get("status") == "success" else "❌"
         dur = f"{r.get('duration_seconds')}s" if r.get("duration_seconds") else "—"
         err = f" [{r.get('error_type')}]" if r.get("error_type") else ""
-        print(f"  {icon} {r.get('run_id','')} | {r.get('market')} | {dur}{err}")
+        print(f"  {icon} {r.get('run_id', '')} | {r.get('market')} | {dur}{err}")
     print()
 
 

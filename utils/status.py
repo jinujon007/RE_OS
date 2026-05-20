@@ -13,7 +13,13 @@ ROOT = Path(__file__).parent.parent
 LOGS_DIR = ROOT / "logs"
 ENV_FILE = ROOT / ".env"
 
-REQUIRED_KEYS = ["GROQ_API_KEY", "CEREBRAS_API_KEY", "GEMINI_API_KEY", "NVIDIA_API_KEY", "OPENROUTER_API_KEY"]
+REQUIRED_KEYS = [
+    "GROQ_API_KEY",
+    "CEREBRAS_API_KEY",
+    "GEMINI_API_KEY",
+    "NVIDIA_API_KEY",
+    "OPENROUTER_API_KEY",
+]
 
 W = 68  # terminal width
 
@@ -46,8 +52,10 @@ def _docker_status():
     try:
         result = subprocess.run(
             ["docker", "compose", "ps", "--format", "json"],
-            capture_output=True, text=True, timeout=8,
-            cwd=str(ROOT)
+            capture_output=True,
+            text=True,
+            timeout=8,
+            cwd=str(ROOT),
         )
         if result.returncode != 0:
             return None, result.stderr.strip()
@@ -84,10 +92,10 @@ def _run_history(last_n=8):
 
 def _log_health():
     files = {
-        "crew.log":         LOGS_DIR / "crew.log",
+        "crew.log": LOGS_DIR / "crew.log",
         "run_history.jsonl": LOGS_DIR / "run_history.jsonl",
-        "runs_summary.md":  LOGS_DIR / "runs_summary.md",
-        "scheduler.log":    LOGS_DIR / "scheduler.log",
+        "runs_summary.md": LOGS_DIR / "runs_summary.md",
+        "scheduler.log": LOGS_DIR / "scheduler.log",
     }
     now = datetime.now().timestamp()
     results = []
@@ -126,15 +134,19 @@ def main():
     _section("API KEYS")
     present = _env_keys()
     key_labels = {
-        "CEREBRAS_API_KEY":  ("Cerebras", "1M tok/day — Light + Analysis tier PRIMARY"),
-        "GEMINI_API_KEY":    ("Gemini",   "250k TPM  — CEO tier BACKUP 1"),
-        "GROQ_API_KEY":      ("Groq",     "30k TPM   — CEO tier PRIMARY"),
-        "NVIDIA_API_KEY":    ("NVIDIA",   "40 req/m  — backup"),
-        "OPENROUTER_API_KEY":("OpenRouter","50-1k/day — last resort"),
+        "CEREBRAS_API_KEY": ("Cerebras", "1M tok/day — Light + Analysis tier PRIMARY"),
+        "GEMINI_API_KEY": ("Gemini", "250k TPM  — CEO tier BACKUP 1"),
+        "GROQ_API_KEY": ("Groq", "30k TPM   — CEO tier PRIMARY"),
+        "NVIDIA_API_KEY": ("NVIDIA", "40 req/m  — backup"),
+        "OPENROUTER_API_KEY": ("OpenRouter", "50-1k/day — last resort"),
     }
     for key, (label, note) in key_labels.items():
         icon = "✓" if key in present else "✗ MISSING"
-        marker = "  ←— ADD THIS" if key not in present and key in ("CEREBRAS_API_KEY", "GEMINI_API_KEY") else ""
+        marker = (
+            "  ←— ADD THIS"
+            if key not in present and key in ("CEREBRAS_API_KEY", "GEMINI_API_KEY")
+            else ""
+        )
         print(f"  {icon:12}  {label:12}  {note}{marker}")
 
     # ── 2. Docker containers ─────────────────────────────────────────────────
@@ -147,11 +159,11 @@ def main():
         print("  ✗ No containers running — run: docker compose up -d")
     else:
         name_map = {
-            "re_os_db":        ("PostgreSQL + PostGIS", "5432"),
-            "re_os_ollama":    ("Ollama LLM",           "11434"),
-            "re_os_redis":     ("Redis queue",          "6379"),
-            "re_os_agents":    ("Agent crew",           "—"),
-            "re_os_scheduler": ("APScheduler",          "—"),
+            "re_os_db": ("PostgreSQL + PostGIS", "5432"),
+            "re_os_ollama": ("Ollama LLM", "11434"),
+            "re_os_redis": ("Redis queue", "6379"),
+            "re_os_agents": ("Agent crew", "—"),
+            "re_os_scheduler": ("APScheduler", "—"),
         }
         for c in containers:
             name = c.get("Name", c.get("Service", "?"))
@@ -166,7 +178,9 @@ def main():
     _section("RECENT RUNS  (last 8)")
     runs = _run_history(8)
     if not runs:
-        print("  No runs yet — run: docker compose exec agents python crews/market_intel_crew.py --market Yelahanka")
+        print(
+            "  No runs yet — run: docker compose exec agents python crews/market_intel_crew.py --market Yelahanka"
+        )
     else:
         total = len(runs)
         ok = sum(1 for r in runs if r.get("status") == "success")
@@ -183,7 +197,9 @@ def main():
             market = r.get("market", "?")
             run_id = r.get("run_id", "")[-19:]
             err_str = f"  [{err}]" if err else ""
-            print(f"  {icon}  {run_id}  {market:12}  {dur:8}  agents{agent_bar}{err_str}")
+            print(
+                f"  {icon}  {run_id}  {market:12}  {dur:8}  agents{agent_bar}{err_str}"
+            )
 
     # ── 4. Log health ────────────────────────────────────────────────────────
     _section("LOG FILES")
@@ -206,10 +222,18 @@ def main():
     # ── 6. Quick commands ────────────────────────────────────────────────────
     _section("QUICK COMMANDS")
     print("  docker compose up -d                                          start stack")
-    print("  docker compose exec agents python crews/market_intel_crew.py  run crew (all markets)")
-    print("  docker compose exec agents python crews/market_intel_crew.py --market Yelahanka")
-    print("  Get-Content logs/crew.log -Wait -Tail 50                      live log tail")
-    print("  python utils/status.py                                        this dashboard")
+    print(
+        "  docker compose exec agents python crews/market_intel_crew.py  run crew (all markets)"
+    )
+    print(
+        "  docker compose exec agents python crews/market_intel_crew.py --market Yelahanka"
+    )
+    print(
+        "  Get-Content logs/crew.log -Wait -Tail 50                      live log tail"
+    )
+    print(
+        "  python utils/status.py                                        this dashboard"
+    )
 
     print()
     _hr("=")

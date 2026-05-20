@@ -37,9 +37,13 @@ from loguru import logger
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import (
-    CEREBRAS_API_KEY, CEREBRAS_BASE_URL, CEREBRAS_MODEL,
-    GROQ_API_KEY, GROQ_CEO_MODEL,
-    GEMINI_API_KEY, GEMINI_CEO_MODEL,
+    CEREBRAS_API_KEY,
+    CEREBRAS_BASE_URL,
+    CEREBRAS_MODEL,
+    GROQ_API_KEY,
+    GROQ_CEO_MODEL,
+    GEMINI_API_KEY,
+    GEMINI_CEO_MODEL,
 )
 from config.checkpointer import Checkpointer
 from scrapers.scout_memory import ScoutMemory
@@ -87,6 +91,7 @@ RERA PAGE TEXT:
 
 # ── AI extraction (Groq Scout 17b — better at multi-table gov pages) ──────────
 
+
 def _ai_extract_detail(text: str) -> dict:
     truncated = text[:4000]
     prompt = DETAIL_EXTRACTION_PROMPT + truncated
@@ -94,6 +99,7 @@ def _ai_extract_detail(text: str) -> dict:
     raw = ""
     try:
         import litellm
+
         if GROQ_API_KEY:
             resp = litellm.completion(
                 model=f"groq/{GROQ_CEO_MODEL}",
@@ -145,11 +151,14 @@ def _ai_extract_detail(text: str) -> dict:
 
 # ── Page fetching ─────────────────────────────────────────────────────────────
 
+
 def _fetch_detail_page_requests(detail_url: str, session: requests.Session) -> str:
     try:
         if "/projectDetails?action=" in detail_url:
             action = detail_url.split("action=", 1)[-1].strip()
-            resp = session.post(f"{RERA_BASE}/projectDetails", data={"action": action}, timeout=30)
+            resp = session.post(
+                f"{RERA_BASE}/projectDetails", data={"action": action}, timeout=30
+            )
         else:
             resp = session.get(detail_url, timeout=30)
         time.sleep(1)
@@ -161,7 +170,9 @@ def _fetch_detail_page_requests(detail_url: str, session: requests.Session) -> s
     return ""
 
 
-def _fetch_with_fallbacks(url_candidates: list[str], session: requests.Session) -> tuple[str, str]:
+def _fetch_with_fallbacks(
+    url_candidates: list[str], session: requests.Session
+) -> tuple[str, str]:
     """Try multiple candidate URLs; return first page with meaningful content."""
     best_text = ""
     best_url = ""
@@ -211,6 +222,7 @@ def _clean_html(html: str) -> str:
 
 # ── RERA Detail Scout ─────────────────────────────────────────────────────────
 
+
 class RERADetailScout:
     """
     Deep-dives into RERA Karnataka project detail pages.
@@ -226,7 +238,9 @@ class RERADetailScout:
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
 
-    def scout(self, projects: list[dict] | None = None, max_projects: int = 30) -> list[dict]:
+    def scout(
+        self, projects: list[dict] | None = None, max_projects: int = 30
+    ) -> list[dict]:
         """
         Deep-dive RERA detail pages.
         projects: pre-loaded list from RERA listing scraper; if None, loads from checkpoint.
@@ -237,15 +251,16 @@ class RERADetailScout:
             projects = cp.load(self.market, "rera_scraped") or []
 
         if not projects:
-            logger.warning(f"[RERADetailScout] No RERA projects to enrich for {self.market}")
+            logger.warning(
+                f"[RERADetailScout] No RERA projects to enrich for {self.market}"
+            )
             return []
 
         # Prioritise projects we haven't detail-scouted yet
         unseen = [
-            p for p in projects
-            if not self.memory.is_known(
-                ScoutMemory.cid_rera(p.get("rera_number", ""))
-            )
+            p
+            for p in projects
+            if not self.memory.is_known(ScoutMemory.cid_rera(p.get("rera_number", "")))
         ]
         to_scout = unseen[:max_projects]
         logger.info(
@@ -346,8 +361,10 @@ class RERADetailScout:
             "bda_approval_no": details.get("bda_approval_no"),
             "bbmp_approval_no": details.get("bbmp_approval_no"),
             "plan_approval_date": details.get("plan_approval_date"),
-            "possession_date": details.get("possession_date") or project.get("possession_date"),
-            "project_address": details.get("project_address") or project.get("locality"),
+            "possession_date": details.get("possession_date")
+            or project.get("possession_date"),
+            "project_address": details.get("project_address")
+            or project.get("locality"),
             "promoter_address": details.get("promoter_address"),
             "completion_pct": details.get("completion_pct"),
             "no_of_floors": details.get("no_of_floors"),
@@ -363,12 +380,14 @@ class RERADetailScout:
 
         encoded = rera_number.replace("/", "%2F")
         # Legacy/search endpoints observed in portal flows.
-        urls.extend([
-            f"{RERA_BASE}/viewPromoterProjectDetails?regNo={encoded}",
-            f"{RERA_BASE}/viewProjectDetails?regNo={encoded}",
-            f"{RERA_BASE}/viewAllProjectDetails?regNo={encoded}",
-            f"{RERA_BASE}/projectViewDetails?regNo={encoded}",
-        ])
+        urls.extend(
+            [
+                f"{RERA_BASE}/viewPromoterProjectDetails?regNo={encoded}",
+                f"{RERA_BASE}/viewProjectDetails?regNo={encoded}",
+                f"{RERA_BASE}/viewAllProjectDetails?regNo={encoded}",
+                f"{RERA_BASE}/projectViewDetails?regNo={encoded}",
+            ]
+        )
 
         # De-dupe preserving order.
         seen = set()
@@ -382,6 +401,7 @@ class RERADetailScout:
 
 # ── Standalone runner ─────────────────────────────────────────────────────────
 
+
 def scout_market_rera_details(market: str) -> list[dict]:
     memory = ScoutMemory(market)
     scout = RERADetailScout(market, memory)
@@ -389,7 +409,8 @@ def scout_market_rera_details(market: str) -> list[dict]:
 
     output_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "outputs", market.lower().replace(" ", "_")
+        "outputs",
+        market.lower().replace(" ", "_"),
     )
     os.makedirs(output_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M")
@@ -398,9 +419,9 @@ def scout_market_rera_details(market: str) -> list[dict]:
         json.dump(results, f, indent=2, default=str)
 
     new_total = sum(1 for r in results if r.get("is_new"))
-    print(f"\n{'='*55}")
+    print(f"\n{'=' * 55}")
     print(f"RERA DETAIL SCOUT — {market.upper()}")
-    print(f"{'='*55}")
+    print(f"{'=' * 55}")
     print(f"Enriched projects : {len(results)}")
     print(f"New detail dives  : {new_total}")
     print(f"Output            : {out_path}")
@@ -408,8 +429,8 @@ def scout_market_rera_details(market: str) -> list[dict]:
         for r in results[:3]:
             mix = r.get("unit_mix") or {}
             print(
-                f"  {r.get('rera_number','?')[:40]:<42} | "
-                f"Units: {r.get('total_units','?')} | "
+                f"  {r.get('rera_number', '?')[:40]:<42} | "
+                f"Units: {r.get('total_units', '?')} | "
                 f"Mix: {mix}"
             )
     return results
@@ -417,8 +438,9 @@ def scout_market_rera_details(market: str) -> list[dict]:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RERA Detail Scout")
-    parser.add_argument("--market", default="Yelahanka",
-                        choices=["Yelahanka", "Devanahalli", "Hebbal"])
+    parser.add_argument(
+        "--market", default="Yelahanka", choices=["Yelahanka", "Devanahalli", "Hebbal"]
+    )
     parser.add_argument("--rera", default="", help="Single RERA number to deep-dive")
     args = parser.parse_args()
     logger.add("logs/rera_detail_scout.log", rotation="10 MB")

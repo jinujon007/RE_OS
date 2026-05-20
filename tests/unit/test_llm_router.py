@@ -5,10 +5,13 @@ Strategy: patch crewai.LLM (no actual API calls), patch settings constants
 to control which providers appear available, then assert the right model
 string is passed to LLM().
 """
+
 from unittest.mock import MagicMock, patch
 
 
-def _fresh_router(monkeypatch, *, groq="", cerebras="", gemini="", nvidia="", openrouter=""):
+def _fresh_router(
+    monkeypatch, *, groq="", cerebras="", gemini="", nvidia="", openrouter=""
+):
     """
     Return a freshly-imported llm_router with API keys set as specified.
     Patches crewai.LLM to a MagicMock so no HTTP calls are made.
@@ -29,6 +32,7 @@ def _fresh_router(monkeypatch, *, groq="", cerebras="", gemini="", nvidia="", op
 
 # ── get_heavy_llm ─────────────────────────────────────────────────────────────
 
+
 def test_heavy_uses_groq_when_key_set():
     mock_llm_cls = MagicMock()
     with patch.multiple(
@@ -42,6 +46,7 @@ def test_heavy_uses_groq_when_key_set():
         _EXCLUDED=set(),
     ):
         import config.llm_router as router
+
         router.get_heavy_llm()
 
     mock_llm_cls.assert_called_once()
@@ -61,6 +66,7 @@ def test_heavy_falls_back_to_gemini_when_groq_excluded():
         _EXCLUDED={"groq"},
     ):
         import config.llm_router as router
+
         router.get_heavy_llm()
 
     mock_llm_cls.assert_called_once()
@@ -80,6 +86,7 @@ def test_heavy_falls_back_to_ollama_when_all_excluded():
         _EXCLUDED={"groq", "gemini", "nvidia", "openrouter"},
     ):
         import config.llm_router as router
+
         router.get_heavy_llm()
 
     mock_llm_cls.assert_called_once()
@@ -99,6 +106,7 @@ def test_heavy_uses_ollama_when_no_keys():
         _EXCLUDED=set(),
     ):
         import config.llm_router as router
+
         router.get_heavy_llm()
 
     mock_llm_cls.assert_called_once()
@@ -107,6 +115,7 @@ def test_heavy_uses_ollama_when_no_keys():
 
 
 # ── get_analysis_llm ──────────────────────────────────────────────────────────
+
 
 def test_analysis_uses_cerebras_when_key_set():
     mock_llm_cls = MagicMock()
@@ -120,12 +129,15 @@ def test_analysis_uses_cerebras_when_key_set():
         _EXCLUDED=set(),
     ):
         import config.llm_router as router
+
         router.get_analysis_llm()
 
     mock_llm_cls.assert_called_once()
     # Cerebras uses openai/ prefix in LiteLLM
     model_arg = mock_llm_cls.call_args[1]["model"]
-    assert model_arg.startswith("openai/"), f"Expected openai/ Cerebras model, got: {model_arg}"
+    assert model_arg.startswith("openai/"), (
+        f"Expected openai/ Cerebras model, got: {model_arg}"
+    )
     base_url = mock_llm_cls.call_args[1].get("base_url", "")
     assert "cerebras" in base_url, f"Expected cerebras base_url, got: {base_url}"
 
@@ -142,14 +154,18 @@ def test_analysis_falls_back_to_ollama_when_all_excluded():
         _EXCLUDED={"cerebras", "groq", "gemini", "nvidia"},
     ):
         import config.llm_router as router
+
         router.get_analysis_llm()
 
     mock_llm_cls.assert_called_once()
     model_arg = mock_llm_cls.call_args[1]["model"]
-    assert model_arg.startswith("ollama/"), f"Expected ollama/ fallback, got: {model_arg}"
+    assert model_arg.startswith("ollama/"), (
+        f"Expected ollama/ fallback, got: {model_arg}"
+    )
 
 
 # ── get_light_llm ─────────────────────────────────────────────────────────────
+
 
 def test_light_uses_cerebras_when_key_set():
     mock_llm_cls = MagicMock()
@@ -162,6 +178,7 @@ def test_light_uses_cerebras_when_key_set():
         _EXCLUDED=set(),
     ):
         import config.llm_router as router
+
         router.get_light_llm()
 
     mock_llm_cls.assert_called_once()
@@ -180,8 +197,11 @@ def test_light_falls_back_to_ollama_when_no_keys():
         _EXCLUDED=set(),
     ):
         import config.llm_router as router
+
         router.get_light_llm()
 
     mock_llm_cls.assert_called_once()
     model_arg = mock_llm_cls.call_args[1]["model"]
-    assert model_arg.startswith("ollama/"), f"Expected ollama/ fallback, got: {model_arg}"
+    assert model_arg.startswith("ollama/"), (
+        f"Expected ollama/ fallback, got: {model_arg}"
+    )

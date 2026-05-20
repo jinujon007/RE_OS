@@ -45,11 +45,24 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from crewai import LLM
 from config.settings import (
-    OLLAMA_BASE_URL, OLLAMA_MODEL,
-    GROQ_API_KEY, GROQ_CEO_MODEL, GROQ_ANALYST_MODEL, CEREBRAS_API_KEY, CEREBRAS_BASE_URL, CEREBRAS_MODEL,
-    GEMINI_API_KEY, GEMINI_CEO_MODEL, GEMINI_LIGHT_MODEL,
-    NVIDIA_API_KEY, NVIDIA_BASE_URL, NVIDIA_CEO_MODEL, NVIDIA_ANALYST_MODEL, NVIDIA_LIGHT_MODEL,
-    OPENROUTER_API_KEY, OPENROUTER_MODEL,
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
+    GROQ_API_KEY,
+    GROQ_CEO_MODEL,
+    GROQ_ANALYST_MODEL,
+    CEREBRAS_API_KEY,
+    CEREBRAS_BASE_URL,
+    CEREBRAS_MODEL,
+    GEMINI_API_KEY,
+    GEMINI_CEO_MODEL,
+    GEMINI_LIGHT_MODEL,
+    NVIDIA_API_KEY,
+    NVIDIA_BASE_URL,
+    NVIDIA_CEO_MODEL,
+    NVIDIA_ANALYST_MODEL,
+    NVIDIA_LIGHT_MODEL,
+    OPENROUTER_API_KEY,
+    OPENROUTER_MODEL,
 )
 
 # Runtime provider exclusion — thread-safe shared set.
@@ -88,7 +101,9 @@ def get_heavy_llm(temperature: float = 0.1) -> LLM:
             num_retries=3,
         )
     if GEMINI_API_KEY and not _is_excluded("gemini"):
-        logger.info(f"[Router] HEAVY fallback → Google AI Studio {GEMINI_CEO_MODEL} (250k TPM)")
+        logger.info(
+            f"[Router] HEAVY fallback → Google AI Studio {GEMINI_CEO_MODEL} (250k TPM)"
+        )
         return LLM(
             model=GEMINI_CEO_MODEL,
             api_key=GEMINI_API_KEY,
@@ -141,7 +156,9 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             num_retries=3,
         )
     if GROQ_API_KEY and not _is_excluded("groq"):
-        logger.info(f"[Router] ANALYSIS fallback → Groq {GROQ_ANALYST_MODEL} (shares CEO 30k TPM)")
+        logger.info(
+            f"[Router] ANALYSIS fallback → Groq {GROQ_ANALYST_MODEL} (shares CEO 30k TPM)"
+        )
         return LLM(
             model=f"groq/{GROQ_ANALYST_MODEL}",
             api_key=GROQ_API_KEY,
@@ -150,7 +167,9 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             num_retries=3,
         )
     if GEMINI_API_KEY and not _is_excluded("gemini"):
-        logger.info(f"[Router] ANALYSIS fallback → Google AI Studio {GEMINI_CEO_MODEL} (250k TPM)")
+        logger.info(
+            f"[Router] ANALYSIS fallback → Google AI Studio {GEMINI_CEO_MODEL} (250k TPM)"
+        )
         return LLM(
             model=GEMINI_CEO_MODEL,
             api_key=GEMINI_API_KEY,
@@ -159,7 +178,9 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             num_retries=3,
         )
     if NVIDIA_API_KEY and not _is_excluded("nvidia"):
-        logger.info(f"[Router] ANALYSIS fallback → NVIDIA NIM {NVIDIA_ANALYST_MODEL} (40 req/min)")
+        logger.info(
+            f"[Router] ANALYSIS fallback → NVIDIA NIM {NVIDIA_ANALYST_MODEL} (40 req/min)"
+        )
         return LLM(
             model=f"openai/{NVIDIA_ANALYST_MODEL}",
             api_key=NVIDIA_API_KEY,
@@ -184,7 +205,9 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
     NVIDIA backup: 40 req/min, no TPM cap.
     """
     if CEREBRAS_API_KEY and not _is_excluded("cerebras"):
-        logger.info(f"[Router] LIGHT tier → Cerebras {CEREBRAS_MODEL} (1M tok/day, fastest)")
+        logger.info(
+            f"[Router] LIGHT tier → Cerebras {CEREBRAS_MODEL} (1M tok/day, fastest)"
+        )
         return LLM(
             model=f"openai/{CEREBRAS_MODEL}",
             api_key=CEREBRAS_API_KEY,
@@ -194,7 +217,9 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
             num_retries=3,
         )
     if GEMINI_API_KEY and not _is_excluded("gemini"):
-        logger.info(f"[Router] LIGHT fallback → Google AI Studio {GEMINI_LIGHT_MODEL} (15k TPM)")
+        logger.info(
+            f"[Router] LIGHT fallback → Google AI Studio {GEMINI_LIGHT_MODEL} (15k TPM)"
+        )
         return LLM(
             model=GEMINI_LIGHT_MODEL,
             api_key=GEMINI_API_KEY,
@@ -203,7 +228,9 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
             num_retries=3,
         )
     if NVIDIA_API_KEY and not _is_excluded("nvidia"):
-        logger.info(f"[Router] LIGHT fallback → NVIDIA NIM {NVIDIA_LIGHT_MODEL} (40 req/min)")
+        logger.info(
+            f"[Router] LIGHT fallback → NVIDIA NIM {NVIDIA_LIGHT_MODEL} (40 req/min)"
+        )
         return LLM(
             model=f"openai/{NVIDIA_LIGHT_MODEL}",
             api_key=NVIDIA_API_KEY,
@@ -239,7 +266,17 @@ def get_router_status() -> dict:
             "ollama": True,
         },
         "excluded": excl,
-        "heavy_chain":    f"Groq({GROQ_CEO_MODEL}, 30k TPM)" if g else ("Gemini(250k TPM)" if gem else "NVIDIA→OpenRouter→Ollama"),
-        "analysis_chain": f"Cerebras({CEREBRAS_MODEL}, 8k ctx, 1M tok/day)" if c else (f"Groq({GROQ_ANALYST_MODEL})" if g else "Ollama"),
-        "light_chain":    f"Cerebras({CEREBRAS_MODEL}, 8k ctx, 1M tok/day)" if c else (f"Gemini({GEMINI_LIGHT_MODEL})" if gem else ("NVIDIA" if n else "Ollama(slow)")),
+        "heavy_chain": f"Groq({GROQ_CEO_MODEL}, 30k TPM)"
+        if g
+        else ("Gemini(250k TPM)" if gem else "NVIDIA→OpenRouter→Ollama"),
+        "analysis_chain": f"Cerebras({CEREBRAS_MODEL}, 8k ctx, 1M tok/day)"
+        if c
+        else (f"Groq({GROQ_ANALYST_MODEL})" if g else "Ollama"),
+        "light_chain": f"Cerebras({CEREBRAS_MODEL}, 8k ctx, 1M tok/day)"
+        if c
+        else (
+            f"Gemini({GEMINI_LIGHT_MODEL})"
+            if gem
+            else ("NVIDIA" if n else "Ollama(slow)")
+        ),
     }

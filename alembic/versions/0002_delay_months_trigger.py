@@ -8,6 +8,7 @@ Revision ID: 0002_delay_months_trigger
 Revises: 0001_baseline
 Create Date: 2026-05-20
 """
+
 from typing import Sequence, Union
 
 from alembic import op
@@ -20,7 +21,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     op.execute("ALTER TABLE rera_projects DROP COLUMN IF EXISTS delay_months")
-    op.execute("ALTER TABLE rera_projects ADD COLUMN IF NOT EXISTS delay_months INTEGER DEFAULT 0")
+    op.execute(
+        "ALTER TABLE rera_projects ADD COLUMN IF NOT EXISTS delay_months INTEGER DEFAULT 0"
+    )
     op.execute("""
         UPDATE rera_projects
         SET delay_months = (actual_completion_date - possession_date) / 30

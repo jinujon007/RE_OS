@@ -124,7 +124,9 @@ class DBOrganizer:
                     failed += 1
 
         duration = int(time.time() - started)
-        logger.info(f"[Organizer] {market_name}: {upserted} records upserted into {table}")
+        logger.info(
+            f"[Organizer] {market_name}: {upserted} records upserted into {table}"
+        )
         return {
             "market": market_name,
             "total": len(findings),
@@ -145,7 +147,9 @@ class DBOrganizer:
                 try:
                     conn.execute(text(f"SAVEPOINT {sp}"))
                     market_id = self._get_market_id_by_name(conn, market_name)
-                    source_val = str(rec.get("source", "developer")).strip() or "developer"
+                    source_val = (
+                        str(rec.get("source", "developer")).strip() or "developer"
+                    )
                     if not source_val.startswith("dev_"):
                         rec = dict(rec)
                         rec["source"] = f"dev_{source_val}"
@@ -159,7 +163,9 @@ class DBOrganizer:
                     failed += 1
 
         duration = int(time.time() - started)
-        logger.info(f"[Organizer] {market_name}: {upserted} records upserted into {table}")
+        logger.info(
+            f"[Organizer] {market_name}: {upserted} records upserted into {table}"
+        )
         return {
             "market": market_name,
             "total": len(findings),
@@ -175,7 +181,9 @@ class DBOrganizer:
         table = "news_articles"
 
         with self.engine.begin() as conn:
-            exists = conn.execute(text("SELECT to_regclass('public.news_articles')")).scalar()
+            exists = conn.execute(
+                text("SELECT to_regclass('public.news_articles')")
+            ).scalar()
 
         if not exists:
             logger.warning(
@@ -204,7 +212,9 @@ class DBOrganizer:
                     failed += 1
 
         duration = int(time.time() - started)
-        logger.info(f"[Organizer] {market_name}: {inserted} records upserted into {table}")
+        logger.info(
+            f"[Organizer] {market_name}: {inserted} records upserted into {table}"
+        )
         return {
             "market": market_name,
             "total": len(findings),
@@ -248,7 +258,9 @@ class DBOrganizer:
                 except Exception as exc:
                     conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
                     conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
-                    logger.error(f"[DBOrganizer] rera_detail upsert failed for {rera_num}: {exc}")
+                    logger.error(
+                        f"[DBOrganizer] rera_detail upsert failed for {rera_num}: {exc}"
+                    )
                     failed += 1
 
         duration = int(time.time() - started)
@@ -609,7 +621,9 @@ class DBOrganizer:
         source = str(rec.get("source", "unknown")).strip() or "unknown"
         project_name = rec.get("project_name")
         locality = rec.get("locality")
-        scraped_at = _safe_date(rec.get("scraped_at")) or datetime.utcnow().strftime("%Y-%m-%d")
+        scraped_at = _safe_date(rec.get("scraped_at")) or datetime.utcnow().strftime(
+            "%Y-%m-%d"
+        )
         listed_price = float(rec.get("price_min", 0) or 0)
 
         conn.execute(
@@ -796,11 +810,14 @@ class DBOrganizer:
 
         if extra_json:
             params["extra"] = extra_json
-            set_clauses.append("raw_data = COALESCE(raw_data, '{}'::jsonb) || CAST(:extra AS jsonb)")
+            set_clauses.append(
+                "raw_data = COALESCE(raw_data, '{}'::jsonb) || CAST(:extra AS jsonb)"
+            )
 
         # Merge raw_data enrichment (always — for fields like unit_mix that might not be typed yet)
         raw_enrich = {
-            k: v for k, v in {
+            k: v
+            for k, v in {
                 "unit_mix": rec.get("unit_mix"),
                 "project_cost_crore": rec.get("project_cost_crore"),
                 "completion_pct": rec.get("completion_pct"),
@@ -809,11 +826,14 @@ class DBOrganizer:
                 "bbmp_approval_no": bbmp_no,
                 "no_of_floors": no_of_floors,
                 "plan_approval_date": plan_date,
-            }.items() if v is not None
+            }.items()
+            if v is not None
         }
         if raw_enrich:
             params["raw_extra"] = json.dumps(raw_enrich, default=str)
-            set_clauses.append("raw_data = COALESCE(raw_data, '{}'::jsonb) || CAST(:raw_extra AS jsonb)")
+            set_clauses.append(
+                "raw_data = COALESCE(raw_data, '{}'::jsonb) || CAST(:raw_extra AS jsonb)"
+            )
 
         set_clause = ", ".join(set_clauses)
 

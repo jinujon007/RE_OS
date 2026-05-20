@@ -40,8 +40,9 @@ def test_reports_uses_canonical_slug_not_raw_path():
         captured["pattern"] = pattern
         return ["/app/outputs/yelahanka/intel_report_20260101_0000.txt"]
 
-    with patch("dashboard.app.glob.glob", side_effect=fake_glob), patch(
-        "builtins.open", return_value=io.StringIO("ok-report")
+    with (
+        patch("dashboard.app.glob.glob", side_effect=fake_glob),
+        patch("builtins.open", return_value=io.StringIO("ok-report")),
     ):
         resp = client.get("/api/reports/YeLaHaNkA")
 

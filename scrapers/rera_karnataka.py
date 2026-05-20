@@ -72,7 +72,9 @@ class RERAKarnatakaScraper:
             logger.warning(f"  No RERA config for '{market_name}' — using fallback")
             return self._fallback_rera_data(market_name)
 
-        projects = self._post_search(config["district"], config["subdistrict"], market_name)
+        projects = self._post_search(
+            config["district"], config["subdistrict"], market_name
+        )
 
         if not projects:
             logger.warning("  Portal returned 0 results — using fallback sample data")
@@ -92,8 +94,12 @@ class RERAKarnatakaScraper:
         logger.info(f"  Found {len(unique)} unique projects in {market_name}")
         return unique
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    def _post_search(self, district: str, subdistrict: str, market_name: str) -> list[dict]:
+    @retry(
+        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
+    )
+    def _post_search(
+        self, district: str, subdistrict: str, market_name: str
+    ) -> list[dict]:
         """
         POST to /projectViewDetails and parse the HTML table response.
         All rows are server-rendered — no JS interception needed.
@@ -113,7 +119,9 @@ class RERAKarnatakaScraper:
             resp.raise_for_status()
 
             size_mb = len(resp.content) / 1024 / 1024
-            logger.info(f"  [POST] {district}/{subdistrict} → {resp.status_code}, {size_mb:.1f} MB")
+            logger.info(
+                f"  [POST] {district}/{subdistrict} → {resp.status_code}, {size_mb:.1f} MB"
+            )
 
             return self._parse_html_table(resp.text, market_name)
 
@@ -177,7 +185,9 @@ class RERAKarnatakaScraper:
                     if action_link and action_link.get("id"):
                         action_id = self._clean(action_link.get("id"))
                         if action_id:
-                            detail_url = f"{self.BASE_URL}/projectDetails?action={action_id}"
+                            detail_url = (
+                                f"{self.BASE_URL}/projectDetails?action={action_id}"
+                            )
 
             project = {
                 "rera_number": project_id,
@@ -187,7 +197,9 @@ class RERAKarnatakaScraper:
                 "project_status": self._clean(cells[6]) if len(cells) > 6 else "",
                 "district": self._clean(cells[7]) if len(cells) > 7 else "",
                 "locality": self._clean(cells[8]) if len(cells) > 8 else market_name,
-                "project_type": self._clean(cells[9]) if len(cells) > 9 else "Residential",
+                "project_type": self._clean(cells[9])
+                if len(cells) > 9
+                else "Residential",
                 "approved_on": self._clean(cells[10]) if len(cells) > 10 else "",
                 "possession_date": self._clean(cells[11]) if len(cells) > 11 else "",
                 "detail_url": detail_url,
@@ -220,22 +232,136 @@ class RERAKarnatakaScraper:
         source='fallback_sample' so analyst knows data is not live.
         """
         now = datetime.now().isoformat()
-        meta = {"district": "Bangalore Urban", "source": "fallback_sample", "scraped_at": now,
-                "note": "Live RERA portal blocked — sample data for pipeline testing"}
+        meta = {
+            "district": "Bangalore Urban",
+            "source": "fallback_sample",
+            "scraped_at": now,
+            "note": "Live RERA portal blocked — sample data for pipeline testing",
+        }
         data = {
             "Yelahanka": [
-                {"rera_number": "PRM/KA/RERA/1251/446/PR/180601/001792", "project_name": "Shriram Suhaana", "developer_name": "Shriram Properties", "locality": "Yelahanka", "project_status": "On-Going", "project_type": "Residential Apartment", "total_units": 648, "sold_units": 520, "unsold_units": 128, "possession_date": "2025-12-31"},
-                {"rera_number": "PRM/KA/RERA/1251/446/PR/180921/002267", "project_name": "Prestige Lakeside Habitat", "developer_name": "Prestige Estates Projects", "locality": "Yelahanka", "project_status": "On-Going", "project_type": "Residential Apartment", "total_units": 3426, "sold_units": 2900, "unsold_units": 526, "possession_date": "2026-03-31"},
-                {"rera_number": "PRM/KA/RERA/1251/446/PR/190415/002456", "project_name": "Brigade Orchards", "developer_name": "Brigade Enterprises", "locality": "Yelahanka", "project_status": "On-Going", "project_type": "Integrated Township", "total_units": 2400, "sold_units": 1800, "unsold_units": 600, "possession_date": "2026-06-30"},
-                {"rera_number": "PRM/KA/RERA/1251/446/PR/200310/002891", "project_name": "Sobha Dream Gardens", "developer_name": "Sobha Limited", "locality": "Yelahanka New Town", "project_status": "On-Going", "project_type": "Residential Apartment", "total_units": 1152, "sold_units": 980, "unsold_units": 172, "possession_date": "2025-09-30"},
-                {"rera_number": "PRM/KA/RERA/1251/446/PR/210512/003102", "project_name": "Godrej Woodscape", "developer_name": "Godrej Properties", "locality": "Yelahanka", "project_status": "New Launch", "project_type": "Residential Apartment", "total_units": 840, "sold_units": 320, "unsold_units": 520, "possession_date": "2027-12-31"},
-                {"rera_number": "PRM/KA/RERA/1251/446/PR/220118/003388", "project_name": "Adarsh Lumina", "developer_name": "Adarsh Developers", "locality": "Yelahanka Satellite Town", "project_status": "On-Going", "project_type": "Residential Apartment", "total_units": 480, "sold_units": 380, "unsold_units": 100, "possession_date": "2025-12-31"},
-                {"rera_number": "PRM/KA/RERA/1251/446/PR/220601/003512", "project_name": "Mantri Tranquil", "developer_name": "Mantri Developers", "locality": "Yelahanka", "project_status": "Ready To Move", "project_type": "Residential Apartment", "total_units": 384, "sold_units": 375, "unsold_units": 9, "possession_date": "2024-03-31"},
-                {"rera_number": "PRM/KA/RERA/1251/446/PR/230215/003744", "project_name": "Salarpuria Sattva Misty Charm", "developer_name": "Salarpuria Sattva Group", "locality": "Yelahanka", "project_status": "New Launch", "project_type": "Residential Apartment", "total_units": 720, "sold_units": 180, "unsold_units": 540, "possession_date": "2028-06-30"},
+                {
+                    "rera_number": "PRM/KA/RERA/1251/446/PR/180601/001792",
+                    "project_name": "Shriram Suhaana",
+                    "developer_name": "Shriram Properties",
+                    "locality": "Yelahanka",
+                    "project_status": "On-Going",
+                    "project_type": "Residential Apartment",
+                    "total_units": 648,
+                    "sold_units": 520,
+                    "unsold_units": 128,
+                    "possession_date": "2025-12-31",
+                },
+                {
+                    "rera_number": "PRM/KA/RERA/1251/446/PR/180921/002267",
+                    "project_name": "Prestige Lakeside Habitat",
+                    "developer_name": "Prestige Estates Projects",
+                    "locality": "Yelahanka",
+                    "project_status": "On-Going",
+                    "project_type": "Residential Apartment",
+                    "total_units": 3426,
+                    "sold_units": 2900,
+                    "unsold_units": 526,
+                    "possession_date": "2026-03-31",
+                },
+                {
+                    "rera_number": "PRM/KA/RERA/1251/446/PR/190415/002456",
+                    "project_name": "Brigade Orchards",
+                    "developer_name": "Brigade Enterprises",
+                    "locality": "Yelahanka",
+                    "project_status": "On-Going",
+                    "project_type": "Integrated Township",
+                    "total_units": 2400,
+                    "sold_units": 1800,
+                    "unsold_units": 600,
+                    "possession_date": "2026-06-30",
+                },
+                {
+                    "rera_number": "PRM/KA/RERA/1251/446/PR/200310/002891",
+                    "project_name": "Sobha Dream Gardens",
+                    "developer_name": "Sobha Limited",
+                    "locality": "Yelahanka New Town",
+                    "project_status": "On-Going",
+                    "project_type": "Residential Apartment",
+                    "total_units": 1152,
+                    "sold_units": 980,
+                    "unsold_units": 172,
+                    "possession_date": "2025-09-30",
+                },
+                {
+                    "rera_number": "PRM/KA/RERA/1251/446/PR/210512/003102",
+                    "project_name": "Godrej Woodscape",
+                    "developer_name": "Godrej Properties",
+                    "locality": "Yelahanka",
+                    "project_status": "New Launch",
+                    "project_type": "Residential Apartment",
+                    "total_units": 840,
+                    "sold_units": 320,
+                    "unsold_units": 520,
+                    "possession_date": "2027-12-31",
+                },
+                {
+                    "rera_number": "PRM/KA/RERA/1251/446/PR/220118/003388",
+                    "project_name": "Adarsh Lumina",
+                    "developer_name": "Adarsh Developers",
+                    "locality": "Yelahanka Satellite Town",
+                    "project_status": "On-Going",
+                    "project_type": "Residential Apartment",
+                    "total_units": 480,
+                    "sold_units": 380,
+                    "unsold_units": 100,
+                    "possession_date": "2025-12-31",
+                },
+                {
+                    "rera_number": "PRM/KA/RERA/1251/446/PR/220601/003512",
+                    "project_name": "Mantri Tranquil",
+                    "developer_name": "Mantri Developers",
+                    "locality": "Yelahanka",
+                    "project_status": "Ready To Move",
+                    "project_type": "Residential Apartment",
+                    "total_units": 384,
+                    "sold_units": 375,
+                    "unsold_units": 9,
+                    "possession_date": "2024-03-31",
+                },
+                {
+                    "rera_number": "PRM/KA/RERA/1251/446/PR/230215/003744",
+                    "project_name": "Salarpuria Sattva Misty Charm",
+                    "developer_name": "Salarpuria Sattva Group",
+                    "locality": "Yelahanka",
+                    "project_status": "New Launch",
+                    "project_type": "Residential Apartment",
+                    "total_units": 720,
+                    "sold_units": 180,
+                    "unsold_units": 540,
+                    "possession_date": "2028-06-30",
+                },
             ],
             "Devanahalli": [
-                {"rera_number": "PRM/KA/RERA/1251/446/PR/190812/002534", "project_name": "Prestige Finsbury Park", "developer_name": "Prestige Estates Projects", "locality": "Devanahalli", "project_status": "On-Going", "project_type": "Residential Apartment", "total_units": 1248, "sold_units": 900, "unsold_units": 348, "possession_date": "2026-09-30"},
-                {"rera_number": "PRM/KA/RERA/1251/446/PR/200224/002812", "project_name": "Brigade Xanadu", "developer_name": "Brigade Enterprises", "locality": "Devanahalli", "project_status": "On-Going", "project_type": "Residential Villa", "total_units": 320, "sold_units": 280, "unsold_units": 40, "possession_date": "2025-06-30"},
+                {
+                    "rera_number": "PRM/KA/RERA/1251/446/PR/190812/002534",
+                    "project_name": "Prestige Finsbury Park",
+                    "developer_name": "Prestige Estates Projects",
+                    "locality": "Devanahalli",
+                    "project_status": "On-Going",
+                    "project_type": "Residential Apartment",
+                    "total_units": 1248,
+                    "sold_units": 900,
+                    "unsold_units": 348,
+                    "possession_date": "2026-09-30",
+                },
+                {
+                    "rera_number": "PRM/KA/RERA/1251/446/PR/200224/002812",
+                    "project_name": "Brigade Xanadu",
+                    "developer_name": "Brigade Enterprises",
+                    "locality": "Devanahalli",
+                    "project_status": "On-Going",
+                    "project_type": "Residential Villa",
+                    "total_units": 320,
+                    "sold_units": 280,
+                    "unsold_units": 40,
+                    "possession_date": "2025-06-30",
+                },
             ],
         }
         projects = data.get(market_name, data.get("Yelahanka", []))
@@ -255,7 +381,8 @@ def scrape_market_standalone(market_name: str = "Yelahanka"):
 
     output_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "outputs", market_name.lower()
+        "outputs",
+        market_name.lower(),
     )
     os.makedirs(output_dir, exist_ok=True)
 
@@ -263,25 +390,30 @@ def scrape_market_standalone(market_name: str = "Yelahanka"):
     output_path = os.path.join(output_dir, f"rera_projects_{timestamp}.json")
     scraper.save_to_json(projects, output_path)
 
-    print(f"\n{'='*55}")
+    print(f"\n{'=' * 55}")
     print(f"RERA SCRAPE — {market_name.upper()}")
-    print(f"{'='*55}")
+    print(f"{'=' * 55}")
     print(f"Projects found : {len(projects)}")
     live = [p for p in projects if p.get("source") == "rera_karnataka_live"]
-    print(f"Live data      : {len(live)}  (fallback: {len(projects)-len(live)})")
+    print(f"Live data      : {len(live)}  (fallback: {len(projects) - len(live)})")
     print(f"Output         : {output_path}")
     if projects:
         print("\nSample (first 5):")
         for p in projects[:5]:
-            print(f"  {p.get('rera_number','N/A')[:40]:<42} | {p.get('project_name','')[:30]:<32} | {p.get('developer_name','')[:25]}")
+            print(
+                f"  {p.get('rera_number', 'N/A')[:40]:<42} | {p.get('project_name', '')[:30]:<32} | {p.get('developer_name', '')[:25]}"
+            )
     return projects
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="RERA Karnataka Scraper")
-    parser.add_argument("--market", default="Yelahanka",
-                        choices=["Yelahanka", "Devanahalli", "Hebbal"],
-                        help="Micro-market to scrape")
+    parser.add_argument(
+        "--market",
+        default="Yelahanka",
+        choices=["Yelahanka", "Devanahalli", "Hebbal"],
+        help="Micro-market to scrape",
+    )
     args = parser.parse_args()
     logger.add("logs/rera_scraper.log", rotation="10 MB")
     scrape_market_standalone(args.market)

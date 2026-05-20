@@ -7,4 +7,3 @@ __all__ = [
     "create_scraper_agent",
     "create_analyst_agent",
 ]
-

@@ -27,8 +27,7 @@ from loguru import logger
 
 
 _BASE_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "outputs"
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs"
 )
 
 
@@ -44,9 +43,7 @@ class Checkpointer:
     def _path(self, market: str, task: str) -> str:
         today = date.today().isoformat()
         slug = self._market_slug(market)
-        return os.path.join(
-            self.base_dir, slug, "checkpoints", f"{task}_{today}.json"
-        )
+        return os.path.join(self.base_dir, slug, "checkpoints", f"{task}_{today}.json")
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -68,7 +65,9 @@ class Checkpointer:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError) as exc:
-            logger.warning(f"[Checkpoint] Unreadable checkpoint at {path}: {exc} — treating as missing")
+            logger.warning(
+                f"[Checkpoint] Unreadable checkpoint at {path}: {exc} — treating as missing"
+            )
             return None
         size = len(data) if isinstance(data, list) else "dict"
         logger.info(

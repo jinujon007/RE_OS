@@ -100,21 +100,21 @@ _WIDTH = 65
 
 
 def _banner(stage: str, description: str):
-    print(f"\n{'─'*_WIDTH}")
+    print(f"\n{'─' * _WIDTH}")
     print(f"  RE_OS {stage}  |  {description}")
-    print(f"{'─'*_WIDTH}")
+    print(f"{'─' * _WIDTH}")
 
 
 def _header(market_name: str, run_id: str):
-    print(f"\n{'='*_WIDTH}")
+    print(f"\n{'=' * _WIDTH}")
     print("  RE_OS — Market Intelligence Run  (v2)")
     print(f"  Market  : {market_name}")
     print(f"  Run ID  : {run_id}")
     print(f"  Started : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{'='*_WIDTH}")
+    print(f"{'=' * _WIDTH}")
     print("  PIPELINE: Scrape → (Python) Validate+DB → Analyse → CEO")
     print("  LLMs    : Cerebras 8b (scraper) | Groq Scout (Analyst+CEO)")
-    print(f"{'='*_WIDTH}\n")
+    print(f"{'=' * _WIDTH}\n")
 
 
 # ── Stage 1: Data Crew ─────────────────────────────────────────────────────────
@@ -227,8 +227,13 @@ def _build_data_crew(market_name: str) -> Crew:
     return Crew(
         agents=[scraper],
         tasks=[
-            scrape_rera, scrape_rera_detail, scrape_listings,
-            scrape_portal, scrape_developer, scrape_news, scrape_kaveri,
+            scrape_rera,
+            scrape_rera_detail,
+            scrape_listings,
+            scrape_portal,
+            scrape_developer,
+            scrape_news,
+            scrape_kaveri,
         ],
         process=Process.sequential,
         verbose=True,
@@ -411,9 +416,15 @@ def run_market_intelligence(market_name: str) -> str:
                     f"{traceback.format_exc()}"
                 )
                 print(f"\n  [!!] Stage 1 failed: {s1_exc}")
-                print("  [!!] Continuing with Stage 2/3 using any cached checkpoints...")
+                print(
+                    "  [!!] Continuing with Stage 2/3 using any cached checkpoints..."
+                )
 
-        print("  Stage 1 complete." if stage1_ok else "  Stage 1 partial (fallback to cache).")
+        print(
+            "  Stage 1 complete."
+            if stage1_ok
+            else "  Stage 1 partial (fallback to cache)."
+        )
 
         # ── STAGE 2: Pure Python validate + upsert ────────────────────────────
         _banner("STAGE 2/3", "Validating + writing to PostgreSQL (no LLM) ...")
@@ -433,7 +444,22 @@ def run_market_intelligence(market_name: str) -> str:
             )
 
         organizer = DBOrganizer()
-        db_stats = organizer.run(market_name, valid)
+        _DB_STATS_DEFAULT = {
+            "inserted": 0,
+            "updated": 0,
+            "failed": 0,
+            "duration_seconds": 0,
+        }
+        try:
+            db_stats = organizer.run(market_name, valid)
+        except Exception as s2_exc:
+            logger.error(
+                f"[Crew] Stage 2 DB write failed for {market_name}: {s2_exc}\n"
+                f"{traceback.format_exc()}"
+            )
+            print(f"\n  [!!] Stage 2 DB write failed: {s2_exc}")
+            print("  [!!] Continuing to Stage 3 with cached/empty data...")
+            db_stats = _DB_STATS_DEFAULT
         cp.save(market_name, "db_stats", db_stats)
         rl.agent_done("organizer")
 
@@ -464,14 +490,18 @@ def run_market_intelligence(market_name: str) -> str:
         portal_findings = cp.load(market_name, "portal_scout") or []
         if portal_findings:
             portal_stats = organizer.run_portal_scout(market_name, portal_findings)
-            print(f"\n  Portal Scout DB: {portal_stats.get('upserted', 0)} listings upserted")
+            print(
+                f"\n  Portal Scout DB: {portal_stats.get('upserted', 0)} listings upserted"
+            )
         else:
             logger.info("[Crew] No portal_scout checkpoint — skipping")
 
         dev_findings = cp.load(market_name, "developer_scout") or []
         if dev_findings:
             dev_stats = organizer.run_developer_scout(market_name, dev_findings)
-            print(f"  Developer Scout DB: {dev_stats.get('upserted', 0)} projects upserted")
+            print(
+                f"  Developer Scout DB: {dev_stats.get('upserted', 0)} projects upserted"
+            )
         else:
             logger.info("[Crew] No developer_scout checkpoint — skipping")
 
@@ -483,7 +513,9 @@ def run_market_intelligence(market_name: str) -> str:
 
         rera_detail_findings = cp.load(market_name, "rera_detail_scout") or []
         if rera_detail_findings:
-            detail_stats = organizer.run_rera_detail_scout(market_name, rera_detail_findings)
+            detail_stats = organizer.run_rera_detail_scout(
+                market_name, rera_detail_findings
+            )
             print(
                 f"  RERA Detail Scout: {detail_stats['updated']} updated, "
                 f"{detail_stats['inserted']} inserted"
@@ -531,7 +563,9 @@ def run_market_intelligence(market_name: str) -> str:
         ceo_raw = ceo_raw or (result.raw if hasattr(result, "raw") else str(result))
 
         if _PLACEHOLDER in ceo_raw.lower() or len(ceo_raw.strip()) < 50:
-            logger.warning("[CEO] Placeholder detected — using analyst output as report body")
+            logger.warning(
+                "[CEO] Placeholder detected — using analyst output as report body"
+            )
             report_body = analyst_raw or str(result)
             ceo_section = "[CEO synthesis unavailable — see analyst report above]"
         else:
@@ -586,11 +620,11 @@ def run_all_markets():
     markets = [m.strip() for m in TARGET_MARKETS]
     results = {}
 
-    print(f"\n{'='*_WIDTH}")
+    print(f"\n{'=' * _WIDTH}")
     print("  RE_OS — Full Market Sweep")
     print(f"  Markets : {', '.join(markets)}")
     print(f"  Started : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{'='*_WIDTH}\n")
+    print(f"{'=' * _WIDTH}\n")
 
     for i, market in enumerate(markets, 1):
         print(f"\n  [{i}/{len(markets)}] Starting: {market}")
@@ -601,9 +635,9 @@ def run_all_markets():
             results[market] = {"status": "failed", "error": str(exc)}
             logger.error(f"  !! {market} failed: {exc}")
 
-    print(f"\n{'='*_WIDTH}")
+    print(f"\n{'=' * _WIDTH}")
     print("  RE_OS — ALL MARKETS COMPLETE")
-    print(f"{'='*_WIDTH}")
+    print(f"{'=' * _WIDTH}")
     ok = sum(1 for r in results.values() if r["status"] == "success")
     bad = sum(1 for r in results.values() if r["status"] == "failed")
     for market, r in results.items():
@@ -611,7 +645,7 @@ def run_all_markets():
         print(f"  [{icon}]  {market}: {r['status']}")
     print(f"\n  Summary: {ok} succeeded, {bad} failed")
     print("  Run history -> logs/runs_summary.md")
-    print(f"{'='*_WIDTH}\n")
+    print(f"{'=' * _WIDTH}\n")
 
     return results
 

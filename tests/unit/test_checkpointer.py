@@ -3,6 +3,7 @@ Unit tests for config/checkpointer.py
 
 Uses a tmp_path fixture so tests never touch the real outputs/ directory.
 """
+
 import os
 from datetime import date
 

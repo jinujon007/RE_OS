@@ -30,7 +30,8 @@ class ScoutMemory:
         if base_dir is None:
             base_dir = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "outputs", market.lower().replace(" ", "_")
+                "outputs",
+                market.lower().replace(" ", "_"),
             )
         os.makedirs(base_dir, exist_ok=True)
         self._mem_path = os.path.join(base_dir, "scout_memory.json")
@@ -99,7 +100,9 @@ class ScoutMemory:
         self._save()
         return True
 
-    def mark_all(self, findings: list[dict], source: str = "") -> tuple[list[dict], list[dict]]:
+    def mark_all(
+        self, findings: list[dict], source: str = ""
+    ) -> tuple[list[dict], list[dict]]:
         """
         Process a batch of findings. Records each, sets is_new flag.
         Returns (new_findings, known_findings). Each finding must have 'cid'.
@@ -130,8 +133,7 @@ class ScoutMemory:
     def new_since(self, since_iso: str) -> list[dict]:
         """Return all items first seen after since_iso (ISO timestamp string)."""
         return [
-            v for v in self._idx.values()
-            if v.get("first_seen_at", "") >= since_iso
+            v for v in self._idx.values() if v.get("first_seen_at", "") >= since_iso
         ]
 
     # ── Private ───────────────────────────────────────────────────────────────
@@ -142,7 +144,9 @@ class ScoutMemory:
                 with open(self._mem_path, encoding="utf-8") as f:
                     return json.load(f)
             except Exception as exc:
-                logger.warning(f"[ScoutMemory] Failed to load memory index from {self._mem_path}: {exc}")
+                logger.warning(
+                    f"[ScoutMemory] Failed to load memory index from {self._mem_path}: {exc}"
+                )
         return {}
 
     def _save(self):
@@ -162,8 +166,11 @@ class ScoutMemory:
 
     @staticmethod
     def _data_hash(data: dict) -> str:
-        safe = {k: v for k, v in data.items()
-                if k not in ("scraped_at", "cid", "is_new", "raw_snippet")}
+        safe = {
+            k: v
+            for k, v in data.items()
+            if k not in ("scraped_at", "cid", "is_new", "raw_snippet")
+        }
         return hashlib.md5(
             json.dumps(safe, sort_keys=True, default=str).encode()
         ).hexdigest()
@@ -171,6 +178,9 @@ class ScoutMemory:
     @staticmethod
     def _label(data: dict) -> str:
         return (
-            data.get("project_name") or data.get("title") or
-            data.get("headline") or data.get("source_url") or ""
+            data.get("project_name")
+            or data.get("title")
+            or data.get("headline")
+            or data.get("source_url")
+            or ""
         )[:80]

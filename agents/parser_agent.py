@@ -35,9 +35,11 @@ class RERAParserTool(BaseTool):
             return json.dumps(self._normalize_rera_record(data), indent=2)
         except json.JSONDecodeError:
             # It's HTML — extract text first
-            soup = BeautifulSoup(raw_data, 'lxml')
-            text = soup.get_text(separator=' ', strip=True)
-            return json.dumps({"raw_text": text[:5000], "needs_llm_parse": True}, indent=2)
+            soup = BeautifulSoup(raw_data, "lxml")
+            text = soup.get_text(separator=" ", strip=True)
+            return json.dumps(
+                {"raw_text": text[:5000], "needs_llm_parse": True}, indent=2
+            )
 
     def _normalize_rera_record(self, data: dict) -> dict:
         """Normalize field names and types from RERA raw data."""
@@ -45,75 +47,98 @@ class RERAParserTool(BaseTool):
 
         # RERA number — look for PRM/KA/... pattern
         rera_num = (
-            data.get('reraNo') or data.get('rera_number') or
-            data.get('registrationNumber') or data.get('projectRno') or ''
+            data.get("reraNo")
+            or data.get("rera_number")
+            or data.get("registrationNumber")
+            or data.get("projectRno")
+            or ""
         )
-        normalized['rera_number'] = rera_num.strip()
+        normalized["rera_number"] = rera_num.strip()
 
         # Project name
-        normalized['project_name'] = (
-            data.get('projectName') or data.get('project_name') or
-            data.get('name') or ''
+        normalized["project_name"] = (
+            data.get("projectName")
+            or data.get("project_name")
+            or data.get("name")
+            or ""
         ).strip()
 
         # Developer/Promoter
-        normalized['developer_name'] = (
-            data.get('promoterName') or data.get('developer_name') or
-            data.get('promoter') or ''
+        normalized["developer_name"] = (
+            data.get("promoterName")
+            or data.get("developer_name")
+            or data.get("promoter")
+            or ""
         ).strip()
 
         # Units
-        normalized['total_units'] = self._to_int(
-            data.get('totalUnits') or data.get('total_units') or
-            data.get('noOfUnits') or 0
+        normalized["total_units"] = self._to_int(
+            data.get("totalUnits")
+            or data.get("total_units")
+            or data.get("noOfUnits")
+            or 0
         )
-        normalized['sold_units'] = self._to_int(
-            data.get('soldUnits') or data.get('sold_units') or
-            data.get('bookedUnits') or 0
+        normalized["sold_units"] = self._to_int(
+            data.get("soldUnits")
+            or data.get("sold_units")
+            or data.get("bookedUnits")
+            or 0
         )
-        normalized['unsold_units'] = self._to_int(
-            data.get('unsoldUnits') or data.get('unsold_units') or
-            data.get('availableUnits') or 0
+        normalized["unsold_units"] = self._to_int(
+            data.get("unsoldUnits")
+            or data.get("unsold_units")
+            or data.get("availableUnits")
+            or 0
         )
 
         # If unsold not given, calculate
-        if normalized['unsold_units'] == 0 and normalized['total_units'] > 0:
-            normalized['unsold_units'] = (
-                normalized['total_units'] - normalized['sold_units']
+        if normalized["unsold_units"] == 0 and normalized["total_units"] > 0:
+            normalized["unsold_units"] = (
+                normalized["total_units"] - normalized["sold_units"]
             )
 
         # Location
-        normalized['district'] = data.get('district', '').strip()
-        normalized['taluk'] = data.get('taluk', '').strip()
-        normalized['locality'] = (
-            data.get('locality') or data.get('projectLocality') or
-            data.get('address') or ''
+        normalized["district"] = data.get("district", "").strip()
+        normalized["taluk"] = data.get("taluk", "").strip()
+        normalized["locality"] = (
+            data.get("locality")
+            or data.get("projectLocality")
+            or data.get("address")
+            or ""
         ).strip()
 
         # Status
-        normalized['project_status'] = (
-            data.get('projectStatus') or data.get('project_status') or
-            data.get('status') or ''
+        normalized["project_status"] = (
+            data.get("projectStatus")
+            or data.get("project_status")
+            or data.get("status")
+            or ""
         ).strip()
 
         # Dates
-        normalized['possession_date'] = data.get('possessionDate') or data.get('possession_date')
-        normalized['registration_date'] = data.get('registrationDate') or data.get('registration_date')
+        normalized["possession_date"] = data.get("possessionDate") or data.get(
+            "possession_date"
+        )
+        normalized["registration_date"] = data.get("registrationDate") or data.get(
+            "registration_date"
+        )
 
         # Project type
-        normalized['project_type'] = (
-            data.get('projectType') or data.get('project_type') or
-            data.get('type') or 'Residential'
+        normalized["project_type"] = (
+            data.get("projectType")
+            or data.get("project_type")
+            or data.get("type")
+            or "Residential"
         ).strip()
 
         # Preserve raw
-        normalized['raw_data'] = data
+        normalized["raw_data"] = data
 
         return normalized
 
     def _to_int(self, value) -> int:
         try:
-            return int(str(value).replace(',', '').strip())
+            return int(str(value).replace(",", "").strip())
         except (ValueError, TypeError):
             return 0
 
@@ -130,7 +155,7 @@ class PriceParserTool(BaseTool):
     def _run(self, price_input: str) -> str:
         try:
             data = json.loads(price_input)
-            price_str = str(data.get('price', price_input))
+            price_str = str(data.get("price", price_input))
         except (json.JSONDecodeError, TypeError):
             price_str = str(price_input)
 
@@ -138,12 +163,14 @@ class PriceParserTool(BaseTool):
         return json.dumps(result)
 
     def _parse_price(self, price_str: str) -> dict:
-        price_str = price_str.replace(',', '').replace('₹', '').replace('Rs', '').strip()
+        price_str = (
+            price_str.replace(",", "").replace("₹", "").replace("Rs", "").strip()
+        )
 
         # Match patterns like 1.2Cr, 45L, 4500 psf
-        cr_match = re.search(r'([\d.]+)\s*[Cc]r', price_str)
-        l_match = re.search(r'([\d.]+)\s*[Ll]', price_str)
-        plain_match = re.search(r'([\d.]+)', price_str)
+        cr_match = re.search(r"([\d.]+)\s*[Cc]r", price_str)
+        l_match = re.search(r"([\d.]+)\s*[Ll]", price_str)
+        plain_match = re.search(r"([\d.]+)", price_str)
 
         if cr_match:
             amount = float(cr_match.group(1)) * 10_000_000
@@ -152,7 +179,11 @@ class PriceParserTool(BaseTool):
             amount = float(l_match.group(1)) * 100_000
             return {"amount_inr": int(amount), "display": price_str, "unit": "lakh"}
         elif plain_match:
-            return {"amount_inr": int(float(plain_match.group(1))), "display": price_str, "unit": "absolute"}
+            return {
+                "amount_inr": int(float(plain_match.group(1))),
+                "display": price_str,
+                "unit": "absolute",
+            }
 
         return {"amount_inr": None, "display": price_str, "unit": "unknown"}
 

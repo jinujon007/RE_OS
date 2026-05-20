@@ -17,8 +17,8 @@ Usage:
 import re
 from loguru import logger
 
-RERA_NUMBER_RE = re.compile(r'^PR[A-Z]*/KA/', re.IGNORECASE)
-RERA_NUMBER_LOOSE_RE = re.compile(r'^PRM/', re.IGNORECASE)
+RERA_NUMBER_RE = re.compile(r"^PR[A-Z]*/KA/", re.IGNORECASE)
+RERA_NUMBER_LOOSE_RE = re.compile(r"^PRM/", re.IGNORECASE)
 
 
 def validate_rera_records(records: list) -> tuple:
@@ -62,8 +62,8 @@ def validate_rera_records(records: list) -> tuple:
             error_summary.append(f"{r.get('rera_number', '?')}: {e}")
 
     report = {
-        "total":   len(records),
-        "valid":   len(valid),
+        "total": len(records),
+        "valid": len(valid),
         "invalid": len(invalid),
         "pass_rate_pct": round(len(valid) / len(records) * 100, 1) if records else 0,
         "error_summary": error_summary[:20],  # cap for log readability

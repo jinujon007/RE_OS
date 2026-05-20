@@ -1,5 +1,5 @@
 # RE_OS — Claude Handout
-**Last updated: 2026-05-19**
+**Last updated: 2026-05-20**
 **Owner: Jinu — Employee, Land & Life Space (LLS)**
 **Working directory: `D:\Brain\JINU JOSHI\03 LLS\02 Projects\RE_market\RE_OS`**
 
@@ -13,9 +13,9 @@ Multi-agent real estate intelligence OS for LLS. Six AI scouts scrape RERA Karna
 **Questions it answers:** Enter a micro-market at what PSF? Who are Grade A competitors? Which developers are distressed (JD/JV targets)? Absorption trends? Go/no-go on a market right now?
 
 **Phase 1 (Scout Integration): ✅ COMPLETE**
-**Phase 2 (Dashboard): 🟡 IN PROGRESS — API wiring underway**
+**Phase 2 (Dashboard): ✅ COMPLETE — Flask server, all API endpoints, SSE log stream, intel cards, auth gate**
 **Phase 3 (Board Room): 🟡 Bootstrap queued (T-217, T-218)**
-**Phase 4 (Agent Memory): 🟡 Schema queued (T-219, T-220)**
+**Phase 4 (Agent Memory): 🟡 Schema live (agent_memories table), persistence not yet wired**
 
 ---
 

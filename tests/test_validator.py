@@ -53,7 +53,9 @@ def test_valid_rera_number_loose_pattern():
         "total_units": 50,
     }
     errors = _check_record(record)
-    assert not any("rera_number" in e for e in errors), f"Unexpected RERA error: {errors}"
+    assert not any("rera_number" in e for e in errors), (
+        f"Unexpected RERA error: {errors}"
+    )
 
 
 def test_check_record_individual_errors():
