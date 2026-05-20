@@ -20,8 +20,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["F401", "F811"]   # test fixtures re-import intentionally
-"database/*" = ["ALL"]         # SQL files — ruff skips by extension anyway
+"tests/*" = ["F401", "F811"]           # test fixtures re-import intentionally
+"database/*" = ["ALL"]                 # SQL files — ruff skips by extension anyway
+"utils/diagnose.py" = ["E402"]        # diagnostic script — sys.path patch before imports is intentional
+"utils/status.py" = ["E402"]          # standalone script — sys.path patch before imports is intentional
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

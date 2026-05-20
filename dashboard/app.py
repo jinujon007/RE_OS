@@ -609,8 +609,8 @@ def run_status():
 
 # ── Agent Control / State ──────────────────────────────────────────────────────
 
- 
- 
+
+
 @app.route("/api/agents", methods=["GET"])
 def agents_state():
     global _diag_agents_contract_logged
@@ -618,15 +618,15 @@ def agents_state():
     try:
         conn = _get_db()
         cur = conn.cursor()
-        
+
         # Execute the SQL query as specified in T-166
         cur.execute("""
             SELECT agent_name, status, MAX(created_at) as last_run, COUNT(*) as total_runs
-            FROM agent_runs 
-            GROUP BY agent_name, status 
+            FROM agent_runs
+            GROUP BY agent_name, status
             ORDER BY last_run DESC
         """)
-        
+
         # Build results in the format specified: {name, status, last_run, total_runs} per agent
         db_agents = {}
         for row in cur.fetchall():
@@ -642,7 +642,7 @@ def agents_state():
                     "last_action": f"Last run: {last_run}" if last_run else "No recent activity",
                     "started": last_run.isoformat() if hasattr(last_run, 'isoformat') else str(last_run) if last_run else None,
                 }
-        
+
         # If we got data from DB, use it; otherwise fall back to in-memory
         if db_agents:
             with _lock:
@@ -656,12 +656,12 @@ def agents_state():
                         "returncode": rc,
                         "pid": entry["proc"].pid,
                     }
-            
+
             response = {"agents": states_copy, "running_markets": running_copy}
-            
+
             # Backward + forward compatibility: expose both nested and top-level agent keys.
             response.update(states_copy)
-            
+
             if not _diag_agents_contract_logged:
                 logger.info(
                     "[DIAG agents] /api/agents keys=%s nested_agents=%s (from DB)",
@@ -669,15 +669,15 @@ def agents_state():
                     sorted(states_copy.keys()),
                 )
                 _diag_agents_contract_logged = True
-            
+
             conn.close()
             return jsonify(response)
-        
+
         conn.close()
     except Exception as e:
         logger.warning(f"[DIAG agents] DB query failed, falling back to in-memory: {e}")
         # Fall through to in-memory implementation below
-    
+
     # Fallback to original in-memory implementation if DB fails or returns no data
     with _lock:
         states_copy = copy.deepcopy(_agent_states)
@@ -690,12 +690,12 @@ def agents_state():
                 "returncode": rc,
                 "pid": entry["proc"].pid,
             }
- 
+
     response = {"agents": states_copy, "running_markets": running_copy}
- 
+
     # Backward + forward compatibility: expose both nested and top-level agent keys.
     response.update(states_copy)
- 
+
     if not _diag_agents_contract_logged:
         logger.info(
             "[DIAG agents] /api/agents keys=%s nested_agents=%s (fallback)",
@@ -703,7 +703,7 @@ def agents_state():
             sorted(states_copy.keys()),
         )
         _diag_agents_contract_logged = True
- 
+
     return jsonify(response)
 
 

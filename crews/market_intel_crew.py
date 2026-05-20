@@ -23,7 +23,6 @@ Run:
 """
 
 import argparse
-import json
 import os
 import sys
 import traceback
@@ -43,7 +42,7 @@ from agents import (
 from config.settings import TARGET_MARKETS
 from config.run_logger import RunLogger
 from config.checkpointer import Checkpointer
-from config.llm_router import _EXCLUDED, _EXCLUDED_LOCK, _exclude, _clear_excluded, _is_excluded
+from config.llm_router import _exclude, _clear_excluded, _is_excluded
 from utils.validator import validate_and_log
 from utils.db_organizer import DBOrganizer
 

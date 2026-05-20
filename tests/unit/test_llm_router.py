@@ -5,9 +5,7 @@ Strategy: patch crewai.LLM (no actual API calls), patch settings constants
 to control which providers appear available, then assert the right model
 string is passed to LLM().
 """
-import importlib
-import sys
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 
 def _fresh_router(monkeypatch, *, groq="", cerebras="", gemini="", nvidia="", openrouter=""):

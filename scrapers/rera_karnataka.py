@@ -23,7 +23,6 @@ Run standalone: python scrapers/rera_karnataka.py --market Yelahanka
 import requests
 from bs4 import BeautifulSoup
 import json
-import time
 import re
 import argparse
 from datetime import datetime

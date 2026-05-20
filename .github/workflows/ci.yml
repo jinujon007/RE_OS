@@ -58,12 +58,12 @@ jobs:
           cache: "pip"
 
       - name: Install test dependencies
-        run: pip install pytest>=7.0 pytest-mock>=3.0 loguru python-dotenv flask psycopg2-binary
+        run: pip install pytest>=7.0 pytest-mock>=3.0 pytest-cov>=4.0 loguru python-dotenv flask psycopg2-binary
 
       - name: Run unit tests
         env:
           DB_PASSWORD: test_password_for_ci
-        run: pytest tests/ -v --tb=short
+        run: pytest tests/ -v --tb=short --cov=. --cov-report=term-missing --cov-fail-under=40
 
   pip-audit:
     name: Dependency Vulnerability Scan

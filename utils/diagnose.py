@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# ruff: noqa: E402 — standalone script, sys.path patch before imports is required
 """Diagnostic script — deep dive RE_OS system state"""
 import sys
 import os
@@ -71,7 +72,6 @@ for t in data_crew.tasks:
 # 5. Checkpoint file locations
 print("\n[5] LAST CHECKPOINTS")
 import glob
-import json
 ckpt_dir = "outputs/Yelahanka"
 if os.path.exists(ckpt_dir):
     ckpts = sorted(glob.glob(f"{ckpt_dir}/*.json"), key=os.path.getmtime, reverse=True)[:5]
