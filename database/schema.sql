@@ -105,13 +105,7 @@ CREATE TABLE rera_projects (
     plan_approval_date DATE,                     -- BDA/BBMP plan sanction date (from RERA detail page)
     rera_expiry_date DATE,
     actual_completion_date DATE,
-    delay_months INTEGER
-        GENERATED ALWAYS AS (
-            CASE WHEN actual_completion_date IS NOT NULL AND possession_date IS NOT NULL
-                      AND actual_completion_date > possession_date
-                 THEN (actual_completion_date - possession_date) / 30
-                 ELSE 0 END
-        ) STORED,
+    delay_months INTEGER DEFAULT 0,
     completion_pct DECIMAL(5,2),                 -- Construction completion % (from RERA detail page)
 
     -- Status
@@ -139,6 +133,26 @@ CREATE TABLE rera_projects (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
+
+-- delay_months: computed by trigger rather than GENERATED ALWAYS AS to avoid
+-- PostgreSQL portability issues on DB reinit with PostGIS image variants.
+CREATE OR REPLACE FUNCTION fn_compute_delay_months()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.actual_completion_date IS NOT NULL AND NEW.possession_date IS NOT NULL
+       AND NEW.actual_completion_date > NEW.possession_date THEN
+        NEW.delay_months := (NEW.actual_completion_date - NEW.possession_date) / 30;
+    ELSE
+        NEW.delay_months := 0;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_compute_delay_months
+BEFORE INSERT OR UPDATE OF actual_completion_date, possession_date
+ON rera_projects
+FOR EACH ROW EXECUTE FUNCTION fn_compute_delay_months();
 
 -- ============================================================
 -- PROJECT QUARTERLY SNAPSHOTS

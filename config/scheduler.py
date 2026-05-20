@@ -115,12 +115,33 @@ if __name__ == "__main__":
 
     scheduler = BlockingScheduler(timezone="Asia/Kolkata")
 
-    # Daily RERA refresh at 2 AM IST
+    # Daily RERA refresh — all markets at 2 AM IST
     scheduler.add_job(
         run_rera_refresh,
         CronTrigger(hour=2, minute=0),
         id="rera_refresh",
-        name="Daily RERA Data Refresh",
+        name="Daily RERA Data Refresh (all markets)",
+        misfire_grace_time=3600,
+    )
+
+    # Yelahanka dedicated refresh at 2:30 AM IST — highest-priority market
+    # runs alone so it gets full LLM quota before other markets share the budget.
+    def _run_yelahanka():
+        from crews.market_intel_crew import run_market_intelligence
+        from config.llm_router import _clear_excluded
+        _clear_excluded()
+        logger.info("Scheduler: Yelahanka dedicated refresh (2:30 AM IST)")
+        try:
+            run_market_intelligence("Yelahanka")
+            logger.info("Scheduler: Yelahanka refresh complete")
+        except Exception as e:
+            logger.error(f"Scheduler: Yelahanka refresh failed — {e}")
+
+    scheduler.add_job(
+        _run_yelahanka,
+        CronTrigger(hour=2, minute=30),
+        id="yelahanka_refresh",
+        name="Yelahanka Dedicated Refresh",
         misfire_grace_time=3600,
     )
 
@@ -143,7 +164,8 @@ if __name__ == "__main__":
 
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
-    logger.info("  2:00 AM IST — RERA full refresh")
+    logger.info("  2:00 AM IST — RERA full refresh (all markets)")
+    logger.info("  2:30 AM IST — Yelahanka dedicated refresh")
     logger.info("  6:00 AM IST — Market snapshots")
     logger.info("  Every 6 hrs — Listings scan")
 
