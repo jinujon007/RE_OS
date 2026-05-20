@@ -57,6 +57,7 @@ class DBOrganizer:
         """
         started = time.time()
         inserted = updated = failed = 0
+        dev_grade_inputs: dict[str, tuple[str, int]] = {}  # dev_id → (name, max_units)
 
         logger.info(
             f"[DBOrganizer] Starting upsert for {market_name} — {len(records)} records"
@@ -69,9 +70,13 @@ class DBOrganizer:
                     conn.execute(text(f"SAVEPOINT {sp}"))
                     dev_id = self._upsert_developer(conn, project)
                     market_id = self._get_market_id(conn, project)
-                    self._update_developer_grade(conn, dev_id, project)
                     action = self._upsert_project(conn, project, dev_id, market_id)
                     conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
+                    if dev_id:
+                        dev_name = str(project.get("developer_name", "")).strip()
+                        units = int(project.get("total_units", 0) or 0)
+                        if dev_id not in dev_grade_inputs or units > dev_grade_inputs[dev_id][1]:
+                            dev_grade_inputs[dev_id] = (dev_name, units)
                     if action == "inserted":
                         inserted += 1
                     else:
@@ -84,6 +89,9 @@ class DBOrganizer:
                         f"'{project.get('rera_number', '?')}': {exc}"
                     )
                     failed += 1
+
+            # Single batch UPDATE for all developer grades — replaces N per-record calls
+            self._batch_update_developer_grades(conn, dev_grade_inputs)
 
         duration = int(time.time() - started)
         stats = {
@@ -303,27 +311,35 @@ class DBOrganizer:
         ).fetchone()
         return str(row[0]) if row else None
 
-    def _update_developer_grade(self, conn, developer_id: str | None, project: dict):
-        if not developer_id:
-            return
-        dev_lower = str(project.get("developer_name", "")).lower()
-        total_units = project.get("total_units", 0)
-
-        grade = "C"
+    @staticmethod
+    def _compute_grade(dev_name: str, total_units: int) -> str:
+        dev_lower = dev_name.lower()
         for known in GRADE_A_DEVELOPERS:
             if known in dev_lower:
-                grade = "A"
-                break
-        if grade == "C":
-            if total_units >= GRADE_A_MIN_UNITS:
-                grade = "A"
-            elif total_units >= GRADE_B_MIN_UNITS:
-                grade = "B"
+                return "A"
+        if total_units >= GRADE_A_MIN_UNITS:
+            return "A"
+        if total_units >= GRADE_B_MIN_UNITS:
+            return "B"
+        return "C"
 
-        conn.execute(
-            text("UPDATE developers SET grade = :g WHERE id = :id"),
-            {"g": grade, "id": developer_id},
-        )
+    def _batch_update_developer_grades(
+        self, conn, grade_inputs: dict[str, tuple[str, int]]
+    ) -> None:
+        """Single executemany UPDATE for all developers touched in this run.
+
+        Replaces N individual UPDATE calls with one batched statement.
+        Grades are computed from the max total_units seen per developer,
+        so a developer with projects of varying sizes is graded correctly.
+        """
+        if not grade_inputs:
+            return
+        params = [
+            {"grade": self._compute_grade(name, units), "id": dev_id}
+            for dev_id, (name, units) in grade_inputs.items()
+        ]
+        conn.execute(text("UPDATE developers SET grade = :grade WHERE id = :id"), params)
+        logger.debug(f"[DBOrganizer] Batch graded {len(params)} developers")
 
     # ── Micro-market ───────────────────────────────────────────────────────────
 

@@ -163,7 +163,6 @@ if __name__ == "__main__":
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
     logger.info("  2:00 AM IST — RERA full refresh (all markets)")
-    logger.info("  2:30 AM IST — Yelahanka dedicated refresh")
     logger.info("  6:00 AM IST — Market snapshots")
     logger.info("  Every 6 hrs — Listings scan")
 

@@ -25,6 +25,15 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 app = Flask(__name__, template_folder="templates")
+
+# Global API authentication – applied to all /api routes except health and status
+@app.before_request
+def _require_api_key():
+    # Skip non-API routes and health/status endpoints
+    if not request.path.startswith('/api') or request.path in ['/api/health', '/api/status']:
+        return None
+    if not _is_run_api_authorized(request):
+        return jsonify({"error": "unauthorized"}), 401
 logger = logging.getLogger("re_os.dashboard")
 
 # market -> {'proc': Popen, 'started': iso-str}
@@ -378,6 +387,11 @@ def _normalize_market(market_raw: str):
 
 
 _API_KEY = os.environ.get("DASHBOARD_API_KEY", "")
+if not _API_KEY:
+    logging.warning(
+        "[RE_OS] DASHBOARD_API_KEY is not set — all /api endpoints are publicly "
+        "accessible. Set DASHBOARD_API_KEY in .env before exposing port 8050."
+    )
 
 
 def _is_run_api_authorized(req) -> bool:
@@ -526,6 +540,20 @@ def health():
         services["last_run"] = None
 
     return jsonify(services)
+
+# ── Metrics ─────────────────────────────────────────────────────────────────────
+
+from prometheus_client import Counter, generate_latest
+
+# Define Prometheus counters
+pipeline_runs_total = Counter('pipeline_runs_total', 'Total number of pipeline runs')
+llm_calls_total = Counter('llm_calls_total', 'Total number of LLM calls')
+db_upserts_total = Counter('db_upserts_total', 'Total number of DB upserts')
+scrape_success_total = Counter('scrape_success_total', 'Total number of successful scrapes')
+
+@app.route('/metrics')
+def metrics():
+    return generate_latest(), 200, {'Content-Type': 'text/plain; version=0.0.4'}
 
 
 # ── DB State ───────────────────────────────────────────────────────────────────
@@ -899,24 +927,32 @@ def sentinel_status():
 def stream_logs():
     def generate():
         log_path = "/app/logs/crew.log"
-        while True:
-            try:
-                with open(log_path, "r") as f:
-                    # replay last 80 lines on connect
-                    lines = f.readlines()
-                    for line in lines[-80:]:
-                        yield f"data: {json.dumps(line.rstrip())}\n\n"
-                    # then tail
-                    while True:
-                        line = f.readline()
-                        if line:
+        # Read at most 32KB from end of file for initial replay (~200 typical log lines).
+        # Prevents loading the full file into memory on every client connect/reconnect.
+        TAIL_BYTES = 32768
+        try:
+            while True:
+                try:
+                    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                        f.seek(0, 2)
+                        file_size = f.tell()
+                        f.seek(max(0, file_size - TAIL_BYTES))
+                        if file_size > TAIL_BYTES:
+                            f.readline()  # discard partial first line after mid-file seek
+                        for line in f.readlines()[-80:]:
                             yield f"data: {json.dumps(line.rstrip())}\n\n"
-                        else:
-                            yield ": heartbeat\n\n"
-                            time.sleep(0.4)
-            except FileNotFoundError:
-                yield f"data: {json.dumps('— log file not found. Run a pipeline to start. —')}\n\n"
-                time.sleep(3)
+                        while True:
+                            line = f.readline()
+                            if line:
+                                yield f"data: {json.dumps(line.rstrip())}\n\n"
+                            else:
+                                yield ": heartbeat\n\n"
+                                time.sleep(0.4)
+                except FileNotFoundError:
+                    yield f"data: {json.dumps('— log file not found. Run a pipeline to start. —')}\n\n"
+                    time.sleep(3)
+        except GeneratorExit:
+            pass  # client disconnected — exit cleanly without leaking the file handle
 
     return Response(
         generate(),

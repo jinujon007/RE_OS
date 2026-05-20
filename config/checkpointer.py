@@ -12,6 +12,12 @@ Convention:
 One checkpoint per task per market per day.
 If a checkpoint for today exists, that stage can be skipped.
 
+Thread/Process Safety:
+    save() uses an atomic write — serialise to a per-PID temp file then os.replace().
+    os.replace() is atomic on POSIX (same filesystem, rename(2) syscall), so a concurrent
+    reader never sees a partial file. This covers the main production race: the scheduler
+    and a dashboard-triggered subprocess writing to the same checkpoint on the same day.
+
 Usage:
     cp = Checkpointer()
     cp.save("Yelahanka", "rera_scraped", projects_list)
@@ -48,11 +54,28 @@ class Checkpointer:
     # ── Public API ─────────────────────────────────────────────────────────────
 
     def save(self, market: str, task: str, data) -> str:
-        """Persist data to disk. Returns the file path written."""
+        """Persist data to disk atomically. Returns the file path written.
+
+        Uses write-to-temp-then-rename so concurrent processes (scheduler vs.
+        dashboard-triggered run) never see a partial file mid-write.
+        """
         path = self._path(market, task)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, default=str)
+
+        # Write to a PID-unique temp file in the same directory, then rename atomically.
+        tmp = path + f".{os.getpid()}.tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, default=str)
+            os.replace(tmp, path)
+        except Exception:
+            if os.path.exists(tmp):
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+            raise
+
         logger.info(f"[Checkpoint] Saved  {market}/{task} → {os.path.basename(path)}")
         return path
 
@@ -80,3 +103,41 @@ class Checkpointer:
 
     def path(self, market: str, task: str) -> str:
         return self._path(market, task)
+
+    def cleanup_old(self, market: str, keep_days: int = 7) -> int:
+        """Delete checkpoint files older than keep_days. Returns count removed.
+
+        Prevents unbounded checkpoint accumulation on long-running deployments.
+        Called automatically by run_all_markets() after a successful sweep.
+        """
+        from datetime import datetime, timedelta
+
+        cutoff = (datetime.utcnow() - timedelta(days=keep_days)).date()
+        slug = self._market_slug(market)
+        cp_dir = os.path.join(self.base_dir, slug, "checkpoints")
+        removed = 0
+
+        if not os.path.isdir(cp_dir):
+            return 0
+
+        for fname in os.listdir(cp_dir):
+            if not fname.endswith(".json"):
+                continue
+            # Filename: {task}_{YYYY-MM-DD}.json — date is the last segment before .json
+            parts = fname[:-5].rsplit("_", 1)
+            if len(parts) != 2:
+                continue
+            try:
+                file_date = date.fromisoformat(parts[1])
+            except ValueError:
+                continue
+            if file_date < cutoff:
+                try:
+                    os.unlink(os.path.join(cp_dir, fname))
+                    removed += 1
+                except OSError:
+                    pass
+
+        if removed:
+            logger.info(f"[Checkpoint] Pruned {removed} old files for {market} (>{keep_days}d)")
+        return removed

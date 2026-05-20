@@ -375,13 +375,16 @@ def _kickoff_with_fallback(
 def run_market_intelligence(market_name: str) -> str:
     rl = RunLogger(market=market_name)
     rl.start()
+    run_id = rl.run_id
     cp = Checkpointer()
 
-    _header(market_name, rl.run_id)
+    _header(market_name, run_id)
+    logger.info(f"[run:{run_id}] START market={market_name}")
 
     try:
         # ── STAGE 1: Data collection ───────────────────────────────────────────
         _banner("STAGE 1/3", "Scraping RERA Karnataka + listings ...")
+        logger.info(f"[run:{run_id}] STAGE 1 begin")
 
         # Skip Stage 1 only when ALL scout checkpoints exist from today's run.
         # RERA-only cache skip caused portal/developer/news scouts to never run,
@@ -395,7 +398,7 @@ def run_market_intelligence(market_name: str) -> str:
         stage1_ok = False
         if scouts_all_cached:
             logger.info(
-                "[Crew] All scout checkpoints found — using today's cached data, skipping Stage 1"
+                f"[run:{run_id}] STAGE 1 skip (all checkpoints cached)"
             )
             print(
                 "  [Cache] All scouts cached. Delete outputs/{market}/checkpoints/ to force re-scrape."
@@ -414,8 +417,7 @@ def run_market_intelligence(market_name: str) -> str:
                 stage1_ok = True
             except Exception as s1_exc:
                 logger.error(
-                    f"[Crew] Stage 1 failed for {market_name}: {s1_exc}\n"
-                    f"{traceback.format_exc()}"
+                    f"[run:{run_id}] STAGE 1 FAILED: {s1_exc}\n{traceback.format_exc()}"
                 )
                 print(f"\n  [!!] Stage 1 failed: {s1_exc}")
                 print(
@@ -430,6 +432,7 @@ def run_market_intelligence(market_name: str) -> str:
 
         # ── STAGE 2: Pure Python validate + upsert ────────────────────────────
         _banner("STAGE 2/3", "Validating + writing to PostgreSQL (no LLM) ...")
+        logger.info(f"[run:{run_id}] STAGE 2 begin")
 
         raw_projects = cp.load(market_name, "rera_scraped") or []
         valid, invalid, val_report = validate_and_log(raw_projects, market_name)
@@ -450,8 +453,7 @@ def run_market_intelligence(market_name: str) -> str:
             db_stats = organizer.run(market_name, valid)
         except Exception as s2_exc:
             logger.error(
-                f"[Crew] Stage 2 DB write failed for {market_name}: {s2_exc}\n"
-                f"{traceback.format_exc()}"
+                f"[run:{run_id}] STAGE 2 DB write FAILED: {s2_exc}\n{traceback.format_exc()}"
             )
             print(f"\n  [!!] Stage 2 DB write failed: {s2_exc}")
             print("  [!!] Continuing to Stage 3 with cached/empty data...")
@@ -521,6 +523,7 @@ def run_market_intelligence(market_name: str) -> str:
 
         # ── STAGE 3: Intelligence ──────────────────────────────────────────────
         _banner("STAGE 3/3", "Generating market intelligence (Analyst + CEO) ...")
+        logger.info(f"[run:{run_id}] STAGE 3 begin")
 
         # Reset provider exclusions — Stage 1 may have excluded Gemini Gemma (LIGHT tier,
         # 15k TPM) which would incorrectly block Gemini Flash (ANALYSIS/HEAVY tier, 250k TPM).
@@ -535,8 +538,7 @@ def run_market_intelligence(market_name: str) -> str:
             )
         except Exception as s3_exc:
             logger.error(
-                f"[Crew] Stage 3 failed for {market_name}: {s3_exc}\n"
-                f"{traceback.format_exc()}"
+                f"[run:{run_id}] STAGE 3 FAILED: {s3_exc}\n{traceback.format_exc()}"
             )
             rl.finish(status="failed", error=f"Stage 3: {s3_exc}")
             _clear_excluded()
@@ -596,6 +598,7 @@ def run_market_intelligence(market_name: str) -> str:
                 f.write(f"\n\n{ceo_section}\n")
 
         rl.finish(status="success", report_path=report_path)
+        logger.info(f"[run:{run_id}] COMPLETE market={market_name} report={report_path}")
         print(f"\n  Report saved -> {report_path}\n")
         _clear_excluded()
         return report_body
@@ -603,8 +606,8 @@ def run_market_intelligence(market_name: str) -> str:
     except Exception as exc:
         error_msg = str(exc)
         rl.finish(status="failed", error=error_msg)
-        logger.error(f"Run failed for {market_name}: {error_msg}")
-        logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        logger.error(f"[run:{run_id}] FAILED market={market_name}: {error_msg}")
+        logger.error(f"[run:{run_id}] traceback:\n{traceback.format_exc()}")
         _clear_excluded()
         raise
 

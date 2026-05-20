@@ -58,12 +58,12 @@ jobs:
           cache: "pip"
 
       - name: Install test dependencies
-        run: pip install pytest>=7.0 pytest-mock>=3.0 pytest-cov>=4.0 loguru python-dotenv flask psycopg2-binary
+        run: pip install pytest>=7.0 pytest-mock>=3.0 pytest-cov>=4.0 loguru python-dotenv flask psycopg2-binary sqlalchemy
 
       - name: Run unit tests
         env:
           DB_PASSWORD: test_password_for_ci
-        run: pytest tests/ -v --tb=short --cov=. --cov-report=term-missing --cov-fail-under=40
+        run: pytest tests/ -v --tb=short --cov=agents --cov=config --cov=crews --cov=scrapers --cov=utils --cov=dashboard --cov-report=term-missing --cov-fail-under=40
 
   pip-audit:
     name: Dependency Vulnerability Scan
@@ -108,6 +108,9 @@ jobs:
 
       - name: Validate docker-compose.yml
         run: docker compose config --quiet
+
+      - name: Build Docker image
+        run: docker build . --tag re_os:ci --quiet
 
   schema-check:
     name: SQL Schema Syntax

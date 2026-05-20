@@ -33,21 +33,28 @@ class MarketSummaryTool(BaseTool):
     def _run(self, market_name: str) -> str:
         engine = get_engine()
         with engine.connect() as conn:
-            # Inventory overview
-            inventory = conn.execute(
+            # v_market_brief: one query for inventory + grade breakdown + risk counts
+            brief_row = conn.execute(
                 text("""
                 SELECT
-                    COUNT(r.id) as total_projects,
-                    SUM(r.total_units) as total_units,
-                    SUM(r.sold_units) as sold_units,
-                    SUM(r.unsold_units) as unsold_units,
-                    ROUND(AVG(r.absorption_pct), 1) as avg_absorption_pct,
-                    ROUND(AVG(r.price_min_psf), 0) as avg_min_psf,
-                    ROUND(AVG(r.price_max_psf), 0) as avg_max_psf,
-                    COUNT(DISTINCT r.developer_id) as unique_developers
-                FROM rera_projects r
-                JOIN micro_markets m ON r.micro_market_id = m.id
-                WHERE m.name ILIKE :market AND r.is_active = TRUE
+                    total_projects,
+                    total_units,
+                    total_sold      AS sold_units,
+                    total_unsold    AS unsold_units,
+                    avg_absorption_pct,
+                    avg_min_psf,
+                    avg_max_psf,
+                    unique_developers,
+                    grade_a_developers,
+                    grade_b_developers,
+                    low_absorption_projects,
+                    overdue_high_unsold_projects,
+                    floor_psf,
+                    ceiling_psf,
+                    data_as_of
+                FROM v_market_brief
+                WHERE micro_market ILIKE :market
+                LIMIT 1
             """),
                 {"market": f"%{market_name}%"},
             ).fetchone()
@@ -77,25 +84,7 @@ class MarketSummaryTool(BaseTool):
                 {"market": f"%{market_name}%"},
             ).fetchall()
 
-            # Developer breakdown
-            dev_breakdown = conn.execute(
-                text("""
-                SELECT
-                    d.grade,
-                    COUNT(r.id) as projects,
-                    SUM(r.total_units) as units,
-                    ROUND(AVG(r.absorption_pct), 1) as avg_absorption
-                FROM rera_projects r
-                JOIN micro_markets m ON r.micro_market_id = m.id
-                LEFT JOIN developers d ON r.developer_id = d.id
-                WHERE m.name ILIKE :market AND r.is_active = TRUE
-                GROUP BY d.grade
-                ORDER BY d.grade
-            """),
-                {"market": f"%{market_name}%"},
-            ).fetchall()
-
-            # Risk flags: high unsold inventory
+            # Risk flags: distressed projects with detail (names + risk type)
             risk_projects = conn.execute(
                 text("""
                 SELECT
@@ -167,9 +156,8 @@ class MarketSummaryTool(BaseTool):
 
             result = {
                 "market": market_name,
-                "inventory": dict(inventory._mapping) if inventory else {},
+                "inventory": dict(brief_row._mapping) if brief_row else {},
                 "top_projects": [dict(r._mapping) for r in top_projects],
-                "developer_breakdown": [dict(r._mapping) for r in dev_breakdown],
                 "risk_flags": [dict(r._mapping) for r in risk_projects],
                 "kaveri_transactions": (
                     dict(kaveri_data._mapping) if kaveri_data else {}
