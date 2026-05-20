@@ -90,8 +90,14 @@ class DBOrganizer:
                     )
                     failed += 1
 
-            # Single batch UPDATE for all developer grades — replaces N per-record calls
-            self._batch_update_developer_grades(conn, dev_grade_inputs)
+            # Single batch UPDATE for all developer grades — replaces N per-record calls.
+            # Non-fatal: grade data is derived; project upserts are the critical path.
+            try:
+                self._batch_update_developer_grades(conn, dev_grade_inputs)
+            except Exception as grade_exc:
+                logger.warning(
+                    f"[DBOrganizer] Developer grade batch UPDATE failed (non-fatal): {grade_exc}"
+                )
 
         duration = int(time.time() - started)
         stats = {
