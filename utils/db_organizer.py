@@ -843,7 +843,7 @@ class DBOrganizer:
                 COALESCE(:possession_date, possession_date),
                 COALESCE(:plan_approval_date, plan_approval_date),
                 NOW(),
-                'detail_scout',
+                'portal_scraped',
                 CAST(:raw_extra AS jsonb)
             )
             ON CONFLICT (rera_number) DO UPDATE SET
