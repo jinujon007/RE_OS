@@ -91,3 +91,33 @@ def test_health_returns_200():
     body = resp.get_json()
     assert "agents" in body
     assert body["agents"] == "ok"
+    assert "last_run" in body  # field always present (None when DB unreachable)
+
+
+def test_health_last_run_populated_from_db():
+    """When DB is reachable and agent_runs has rows, last_run is populated."""
+    from datetime import datetime
+    from unittest.mock import MagicMock
+
+    client = _client()
+
+    fake_conn = MagicMock()
+    fake_cur = MagicMock()
+    fake_conn.cursor.return_value = fake_cur
+    ts = datetime(2026, 5, 20, 2, 30, 0)
+    fake_cur.fetchone.return_value = ("Yelahanka", "success", ts, 182)
+
+    with (
+        patch("dashboard.app._get_db", return_value=fake_conn),
+        patch("dashboard.app.redis"),  # suppress redis import side-effect
+        patch("dashboard.app.httpx"),  # suppress httpx import side-effect
+    ):
+        resp = client.get("/api/health")
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    last = body.get("last_run")
+    assert last is not None
+    assert last["market"] == "Yelahanka"
+    assert last["status"] == "success"
+    assert last["duration_seconds"] == 182

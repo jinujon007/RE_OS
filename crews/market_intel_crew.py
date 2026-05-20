@@ -50,6 +50,8 @@ from utils.db_organizer import DBOrganizer
 
 _RATE_LIMIT_RETRIES = 3
 
+_DB_STATS_DEFAULT = {"inserted": 0, "updated": 0, "failed": 0, "duration_seconds": 0}
+
 
 def _detect_rate_limited_provider(exc: Exception) -> str | None:
     """Return the provider name if the error is a rate limit from a known provider,
@@ -444,12 +446,6 @@ def run_market_intelligence(market_name: str) -> str:
             )
 
         organizer = DBOrganizer()
-        _DB_STATS_DEFAULT = {
-            "inserted": 0,
-            "updated": 0,
-            "failed": 0,
-            "duration_seconds": 0,
-        }
         try:
             db_stats = organizer.run(market_name, valid)
         except Exception as s2_exc:

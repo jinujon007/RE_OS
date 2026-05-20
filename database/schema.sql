@@ -511,6 +511,29 @@ CREATE INDEX IF NOT EXISTS idx_agent_memories_agent ON agent_memories(agent_id, 
 CREATE INDEX IF NOT EXISTS idx_agent_memories_confidence ON agent_memories(confidence DESC);
 
 -- ============================================================
+-- BOARD SESSIONS
+-- Phase 3 Board Room — CEO pitch decomposition and department responses
+-- ============================================================
+CREATE TABLE IF NOT EXISTS board_sessions (
+    session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    market TEXT NOT NULL,
+    initiated_by TEXT NOT NULL DEFAULT 'ceo',
+    pitch_text TEXT,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'active', 'complete', 'failed')),
+    bd_response TEXT,
+    finance_response TEXT,
+    engineering_response TEXT,
+    ops_response TEXT,
+    ceo_synthesis TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    completed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_board_sessions_market ON board_sessions(market, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_board_sessions_status ON board_sessions(status);
+
+-- ============================================================
 -- SPATIAL INDEXES (PostGIS)
 -- ============================================================
 CREATE INDEX idx_rera_projects_geom ON rera_projects USING GIST(geom);

@@ -119,6 +119,7 @@ services:
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       TARGET_MARKETS: ${TARGET_MARKETS:-Yelahanka,Devanahalli,Hebbal}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ./:/app
       - re_os_outputs:/app/outputs

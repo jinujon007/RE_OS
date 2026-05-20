@@ -5,6 +5,50 @@
 
 ---
 
+## Session — Claude Code 2026-05-20 (5-Round Engineering Audit)
+
+### Round 1 — Runtime correctness (commit 6da457e)
+- `config/llm_router.py`: CEO max_tokens 2048→4096 (Groq); 512→4096 all fallbacks — LLS Action section was being truncated
+- `agents/ceo_agent.py`: replaced stale CEO_TASK_TEMPLATE referencing deprecated Parser+Organizer agents
+- `crews/market_intel_crew.py`: per-stage try/except isolation — Stage 1 failure no longer kills Stage 3
+- `dashboard/app.py`: /api/health now returns last_run (market, status, timestamp, duration)
+- `requirements.txt`: removed selenium==4.44.0 (Playwright replaced it entirely)
+- `.env.example`: corrected LLM routing comment to match actual chain
+
+### Round 2 — Architecture (commit 919efad)
+- `database/schema.sql`: Bug 3 fixed — delay_months GENERATED ALWAYS AS → trigger-computed INTEGER (portable, reinit-safe)
+- `database/migrate_delay_months_trigger.sql`: standalone migration for live DBs
+- `alembic/` (new): full Alembic skeleton — alembic.ini, env.py, script.py.mako, baseline (0001) + Bug3 (0002) migrations
+- `requirements.txt`: alembic>=1.13.0 uncommented
+- `pyproject.toml` (new): [tool.ruff] + [tool.pytest.ini_options] — single config source
+- `.github/workflows/ci.yml`: ruff format --check added to lint job
+- `config/scheduler.py`: Yelahanka dedicated 2:30 AM IST cron (T-189)
+- `dashboard/__init__.py` (new): makes dashboard/ a proper Python package
+
+### Round 3 — Code quality (commit 9ea038e)
+- Dead imports eliminated across 10 files (ruff --fix applied, 22 fixed + 3 manual)
+- `ruff check` passes with zero F/W/E errors codebase-wide
+- `docker-compose.yml`: resource limits — agents (2G/2CPU), scheduler (1G/1CPU)
+- `requirements.txt`: pytest-cov>=4.0 added
+- `.github/workflows/ci.yml`: pytest now runs with --cov --cov-fail-under=40
+
+### Round 4 — ruff format + Stage 2 isolation (commit a18f585)
+- `ruff format` applied to 31 files — CI ruff format --check was guaranteed to fail
+- `crews/market_intel_crew.py`: Stage 2 (organizer.run) wrapped in try/except; db_stats defaults prevent KeyError if DB write fails; Stage 3 continues from cached data
+- `config/scheduler.py`: _run_yelahanka nested function → module-level run_yelahanka_refresh()
+- `README.md`: table count corrected 12→14 (news_articles + agent_memories added in Phase 1/2)
+- `CLAUDE.md`: Phase 2 marked ✅ COMPLETE; Phase 4 note updated
+
+### Round 5 — Completeness (commit this session)
+- `docker-compose.yml`: LOG_LEVEL added to scheduler env block (was missing, agents had it)
+- `crews/market_intel_crew.py`: _DB_STATS_DEFAULT promoted to module-level constant
+- `database/schema.sql`: board_sessions table added (Phase 3 Board Room — T-217)
+- `alembic/versions/0003_board_sessions.py`: migration for board_sessions
+- `tests/unit/test_dashboard_routes.py`: test_health_last_run_populated_from_db added
+- `CHANGELOG.md`: this entry
+
+---
+
 ## Session — Claude Code 2026-05-19 (TPM Review + Task Planning)
 
 ### TASK_QUEUE.md — RECONSTRUCTED
