@@ -40,8 +40,10 @@ pydantic==2.9.2
 loguru==0.7.2
 tenacity>=8.1.0
 
-# Terminal output
-rich>=15.0.0
+# Terminal output — capped by embedchain transitive dep (rich<14.0.0)
+rich>=13.7.0,<14.0.0
+# Chromadb capped by embedchain transitive dep
+chromadb>=0.5.10,<0.6.0
 
 # Future: workflow orchestration
 # prefect>=2.0.0

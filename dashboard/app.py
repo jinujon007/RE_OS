@@ -447,31 +447,54 @@ def _start_pipeline_for_market(market: str):
 
 
 def _stop_pipeline_for_market(market: str):
-    with _lock:
-        entry = _running.get(market)
-        if entry and entry["proc"].poll() is None:
-            entry["proc"].terminate()
-            logger.info(
-                "[DIAG running] terminate requested market=%s pid=%s",
-                market,
-                entry["proc"].pid,
-            )
-            return {"status": "stopped", "market": market}, 200
-    return {"status": "not_running"}, 200
+        with _lock:
+            entry = _running.get(market)
+            if entry:
+                if "proc" in entry and entry["proc"].poll() is None:
+                    entry["proc"].terminate()
+                    logger.info(
+                        "[DIAG running] terminate requested market=%s pid=%s",
+                        market,
+                        entry["proc"].pid,
+                    )
+                    return {"status": "stopped", "market": market}, 200
+                if "job_id" in entry:
+                    from worker import queue
+                    job = queue.fetch_job(entry["job_id"])
+                    if job and job.is_finished is False:
+                        job.cancel()
+                        logger.info(
+                            "[DIAG running] cancel requested market=%s job_id=%s",
+                            market,
+                            entry["job_id"],
+                        )
+                        return {"status": "canceled", "market": market}, 200
+        return {"status": "not_running"}, 200
 
 
 def _running_snapshot():
-    with _lock:
-        snapshot = {}
-        for market, entry in _running.items():
-            rc = entry["proc"].poll()
-            snapshot[market] = {
-                "started": entry.get("started"),
-                "state": "running" if rc is None else ("done" if rc == 0 else "failed"),
-                "returncode": rc,
-                "pid": entry["proc"].pid,
-            }
-    return snapshot
+        with _lock:
+            snapshot = {}
+            for market, entry in _running.items():
+                if "proc" in entry:
+                    rc = entry["proc"].poll()
+                    snapshot[market] = {
+                        "started": entry.get("started"),
+                        "state": "running" if rc is None else ("done" if rc == 0 else "failed"),
+                        "returncode": rc,
+                        "pid": entry["proc"].pid,
+                    }
+                elif "job_id" in entry:
+                    from worker import queue
+                    job = queue.fetch_job(entry["job_id"])
+                    if job:
+                        snapshot[market] = {
+                            "started": entry.get("started"),
+                            "state": "running" if job.is_started else ("done" if job.is_finished else "failed"),
+                            "returncode": None,
+                            "pid": None,
+                        }
+            return snapshot
 
 
 # ── Pages ──────────────────────────────────────────────────────────────────────
@@ -646,21 +669,7 @@ def stop_pipeline(market):
 
 @app.route("/api/status")
 def run_status():
-    with _lock:
-        result = {}
-        for market, entry in _running.items():
-            rc = entry["proc"].poll()
-            if rc is None:
-                result[market] = {"state": "running", "started": entry["started"]}
-            elif rc == 0:
-                result[market] = {"state": "done", "started": entry["started"]}
-            else:
-                result[market] = {
-                    "state": "failed",
-                    "started": entry["started"],
-                    "rc": rc,
-                }
-    return jsonify(result)
+    return jsonify(_running_snapshot())
 
 
 # ── Agent Control / State ──────────────────────────────────────────────────────

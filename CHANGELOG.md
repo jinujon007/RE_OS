@@ -5,6 +5,55 @@
 
 ---
 
+## Session — Claude Code 2026-05-20 (Round 9 — Architecture Review + Program Manager Operationalization)
+
+### Architecture Decisions
+- Recorded 5 architecture decisions in CLAUDE.md: market parallelism (subprocess fan-out), scout parallelism (ThreadPoolExecutor deferred to Phase S), state bus (structured agent_runs events), auth scope (read-only paths exempt), gunicorn workers (1 worker fixed)
+- Defined 5 governance gates (GATE-1 through GATE-5) — hard stops before automation activation
+- Defined 5 milestones (M1 Automation-Ready through M5 Scale-Ready) with exit criteria
+
+### Task Queue Updates
+- `TASK_QUEUE.md`: Sprint Brief rewritten — governance gates, milestones, architecture decisions table added
+- `TASK_QUEUE.md`: T-168 marked CANCELLED — log-as-state-bus anti-pattern; do not implement
+- `TASK_QUEUE.md`: Phase NN added to index — T-245, T-246, T-247, T-248, T-249, T-250
+- `TASK_QUEUE.md`: Phase S added to index — T-251, T-252 (deferred)
+- `TASK_QUEUE.md`: Detail specs added for T-245 (stage events), T-246 (subprocess fan-out), T-247 (fake context chains), T-248 (per-market logs), T-249 (delete log monitor), T-250 (dual-key rotation), T-251 (ThreadPoolExecutor spec), T-252 (PgBouncer eval)
+- `TASK_QUEUE.md`: T-168 detail spec replaced with CANCELLED notice and rationale
+- `TASK_QUEUE.md`: Cline execution order updated — Phase NN first (T-245→T-247→T-248→T-246), then GATE-1 verify, then T-249, then Phase N, O, P, Q
+
+### CLAUDE.md Updates
+- Phase 2 status corrected: was "✅ COMPLETE", now "🟡 IN PROGRESS" with accurate list of what's still pending
+- Phase 3 status corrected: board_sessions now in Alembic baseline (T-217 DONE), not "pending migration"
+- Phase 4 status corrected: agent_memories now in Alembic baseline (T-219 DONE), not "pending migration"
+- Governance Gates section added
+- Architecture Decisions Recorded section added
+- Database Schema section updated: no longer says "pending T-217/T-219" — both in Alembic baseline
+- Open Issues: Yelahanka RERA impact note added (signals unreliable until >50 live projects)
+- API key rotation procedure documented (dual-key window)
+
+---
+
+## Session — Cline + Kilo Code 2026-05-21 (Brain Integration Sprint)
+
+### Cline — Phase NN + Infra
+- `config/metrics.py` (NEW): Prometheus counters — `pipeline_runs_total`, `llm_calls_total`, `db_upserts_total`, `scrape_success_total`
+- `tasks.py` (NEW): RQ job wrapper — `run_market_intelligence_job(market)` delegates to crew
+- `crews/market_intel_crew.py`: Added `_log_event()` structured event logger (loguru JSON, run_id+market+stage+status); imports Prometheus counters; increments `pipeline_runs_total` and `llm_calls_total` at each stage; added `market_name` param to `_kickoff_with_fallback()`; per-stage duration tracking with `stage1_started`/`stage2_started` timestamps; `stage1_ok=True` path now increments `scrape_success_total` — T-245 **partial** (loguru only, DB write pending next sprint)
+- `dashboard/app.py`: Added RQ job_id support to `_stop_pipeline_for_market()` and `_running_snapshot()`; simplified `/api/status` to call `_running_snapshot()` directly
+- `worker.py`: Clarifying comment on job pickup
+- `requirements.txt`: Pinned `rich>=13.7.0,<14.0.0` (embedchain conflict); added `chromadb>=0.5.10,<0.6.0`
+- `Dockerfile`: `playwright install chromium` (no `--with-deps`); `--create-home` for re_os user + `/home/re_os` in chown
+
+### Kilo Code — Alembic + ORM Simplification (T-238, T-239)
+- `alembic/versions/0001_initial.py`: Full rewrite — was broken placeholder stub (`sqlite=???`); now complete `op.create_table()` migration for all 9 ORM-tracked tables with correct columns, FKs, unique constraints, check constraints
+- `alembic/versions/0002_delay_months_trigger.py`: `down_revision` updated `"0001_baseline"` → `"0001_initial"` — chain integrity restored
+- `alembic/versions/0001_baseline_schema.py`: DELETED — stamp-only placeholder superseded by real `0001_initial.py`
+- `alembic/versions/78bc2a7eefb9_simplify_models_phase1_baseline.py` (NEW): Auto-generated migration — drops PostGIS geom columns (never populated), drops `guidance_market_gap_pct` computed column (Bug 3 equivalent in kaveri), adds `plan_approval_date` + `completion_pct` to `rera_projects`, tightens nullability across 6 tables
+- `alembic/env.py`: `include_name` filter added — prevents PostGIS system tables (tiger, topology, spatial_ref_sys) from being dropped by autogenerate; DATABASE_URL fallback via `DB_PASSWORD` env var
+- `models.py`: Phase-1 baseline simplification — removed PostGIS geom/centroid columns, removed ORM relationships (no relationship overhead for pipeline use), switched `DeclarativeBase` (SA 2.x) → `declarative_base()` (SA 1.x compat), added `nullable=False` on all non-optional columns; T-238 DONE
+
+---
+
 ## Session — Claude Code 2026-05-20 (Round 8 — TPM Integration Audit)
 
 ### P0 Bug Fixes (pre-integration blockers)

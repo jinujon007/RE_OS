@@ -33,6 +33,16 @@ from models import Base
 
 target_metadata = Base.metadata
 
+# Only compare tables that are tracked in models.py.
+# PostGIS ships dozens of system tables (tiger, topology, spatial_ref_sys, etc.)
+# into the public schema — without this filter, autogenerate tries to drop them all.
+_MANAGED_TABLES = {m.name for m in Base.metadata.sorted_tables}
+
+def include_name(name, type_, parent_names):
+    if type_ == "table":
+        return name in _MANAGED_TABLES
+    return True
+
 # other values from the config, if any
 # e.g. config.get_main_option("sqlalchemy.url")
 
@@ -40,7 +50,11 @@ target_metadata = Base.metadata
 # It is expected to be set in the environment.
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL environment variable is not set")
+    db_password = os.getenv("DB_PASSWORD", "")
+    if db_password:
+        DATABASE_URL = f"postgresql://re_os_user:{db_password}@localhost:5432/re_os"
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL/alembic sqlalchemy.url is not set")
 
 # create an engine for the migration context
 engine = create_engine(DATABASE_URL, poolclass=pool.NullPool)
@@ -61,6 +75,7 @@ def run_migrations_offline():
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_name=include_name,
     )
 
     with context.begin_transaction():
@@ -78,6 +93,7 @@ def run_migrations_online():
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
+            include_name=include_name,
         )
 
         with context.begin_transaction():

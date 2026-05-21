@@ -25,3 +25,5 @@ if __name__ == "__main__":
         worker = Worker([queue])
         print(f"Starting RQ worker for queue '{QUEUE_NAME}'")
         worker.work()
+        # The worker will automatically pick up jobs that push run_market_intelligence_job
+        # via the queue defined in this module.

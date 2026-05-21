@@ -13,9 +13,11 @@ Multi-agent real estate intelligence OS for LLS. Six AI scouts scrape RERA Karna
 **Questions it answers:** Enter a micro-market at what PSF? Who are Grade A competitors? Which developers are distressed (JD/JV targets)? Absorption trends? Go/no-go on a market right now?
 
 **Phase 1 (Scout Integration): ✅ COMPLETE**
-**Phase 2 (Dashboard): ✅ COMPLETE — Flask server, all API endpoints, SSE log stream, intel cards, auth gate**
-**Phase 3 (Board Room): 🟡 Bootstrap queued (T-217, T-218)**
-**Phase 4 (Agent Memory): 🟡 Schema live (agent_memories table), persistence not yet wired**
+**Phase 2 (Dashboard): 🟡 IN PROGRESS — Flask server + core API endpoints live; dashboard UI panels (T-212–T-216), Phase NN pipeline fixes, and auth hardening still pending**
+**Phase 3 (Board Room): 🟡 Schema live (board_sessions in Alembic baseline); board_room.py skeleton pending T-218**
+**Phase 4 (Agent Memory): 🟡 Schema live (agent_memories in Alembic baseline); read/write/decay logic pending T-220**
+
+**Current sprint:** Phase NN (critical pipeline fixes: structured events, market parallelism, fake context chain removal) → Phase N (integration hardening) → Phase O (dashboard UI panels)
 
 ---
 
@@ -195,6 +197,35 @@ Get-Content logs/crew.log -Wait -Tail 50
 
 ---
 
+## Governance Gates (as of 2026-05-20 — Round 9 Architecture Review)
+
+| Gate | Name | Prerequisite | Unlocks |
+|------|------|-------------|---------|
+| GATE-1 | Pipeline Observability | T-245 DONE + stage events verified in agent_runs | T-249 (delete log monitor) + T-246 (market parallelism) |
+| GATE-2 | Dashboard Smoke Test | T-165 DONE + all 5 endpoints return live data | Phase O dashboard UI build |
+| GATE-3 | Auth Hardening | T-235 + T-250 DONE | DASHBOARD_API_KEY can be set in prod |
+| GATE-4 | Intel Quality Baseline | T-179 + T-205 + T-206 + Kilo audit T-184 pass | Board Room bootstrap |
+| GATE-5 | Log Monitor Eliminated | T-249 DONE | Phase S (scout parallelism) |
+
+**API key rotation procedure (dual-key window, implemented by T-250):**
+1. Set `DASHBOARD_API_KEY_PREV=$OLD_KEY` + `DASHBOARD_API_KEY=$NEW_KEY` → `docker compose restart agents`
+2. Verify new key works: `curl -H "X-API-Key: $NEW_KEY" http://localhost:8050/api/run/yelahanka`
+3. Remove `DASHBOARD_API_KEY_PREV` → `docker compose restart agents`
+
+---
+
+## Architecture Decisions Recorded (2026-05-20)
+
+| Decision | Chosen | Rejected | Rationale |
+|----------|--------|----------|-----------|
+| Market parallelism | `subprocess.Popen` fan-out | ThreadPoolExecutor | Module-global `_excluded_providers` breaks across threads; processes isolate state for free |
+| Scout parallelism | ThreadPoolExecutor (Phase S, deferred) | Immediate | Requires T-248 (per-market logs) + T-247 (fake context chains removed) first |
+| State bus | Structured `agent_runs` events (T-245) | Log polling | Log parsing: non-deterministic, breaks on rotation, can't survive restarts |
+| Auth scope | before_request exempts read-only paths | Gate all /api/* | Read-only endpoints blocked by API key is a UX defect |
+| gunicorn workers | `--workers 1 --threads 8` | `--workers 2` | Multi-worker splits `_running` dict — pipeline status invisible across workers |
+
+---
+
 ## Current State — Open Issues
 
 ### Bug 3 — schema.sql delay_months GENERATED COLUMN (Deferred)
@@ -206,6 +237,7 @@ Get-Content logs/crew.log -Wait -Tail 50
 Yelahanka and Hebbal return 8 hardcoded fallback projects (marked [ESTIMATED]).
 Devanahalli: 317 live projects ✅. Root cause: RERA portal selector `No locality input found`.
 **Fix:** T-207 (rera_detail_scout session state) may help. RERA portal selector fix needed separately.
+**Impact:** At 8 fallback projects, Yelahanka PSF signals are unreliable — flag all Yelahanka output as [ESTIMATED] until >50 live RERA projects confirmed.
 
 ### Kaveri GV Portal Unreachable (Open — Medium)
 `kaveri.karnataka.gov.in` guidance value portal consistently unreachable.
@@ -216,11 +248,11 @@ Devanahalli: 317 live projects ✅. Root cause: RERA portal selector `No localit
 
 ## Database Schema
 
-**14 tables** (12 core + board_sessions + agent_memories — board/memory tables pending migrations):
+**14 tables** (12 core + board_sessions + agent_memories — all in Alembic baseline migration 0001_initial.py):
 `micro_markets`, `developers`, `rera_projects`, `project_snapshots`, `listings`,
 `kaveri_registrations`, `guidance_values`, `regulatory_zones`, `overlay_constraints`,
 `infrastructure_pipeline`, `market_snapshots`, `agent_runs`, `news_articles`,
-`board_sessions` (pending T-217), `agent_memories` (pending T-219)
+`board_sessions`, `agent_memories`
 
 **Views:** `v_active_projects`, `v_market_inventory`, `v_developer_scorecard`, `v_market_brief`
 

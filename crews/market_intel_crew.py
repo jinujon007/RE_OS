@@ -43,6 +43,12 @@ from config.settings import TARGET_MARKETS
 from config.run_logger import RunLogger
 from config.checkpointer import Checkpointer
 from config.llm_router import _exclude, _clear_excluded, _is_excluded
+from config.metrics import (
+    pipeline_runs_total,
+    llm_calls_total,
+    db_upserts_total,
+    scrape_success_total,
+)
 from utils.validator import validate_and_log
 from utils.db_organizer import DBOrganizer
 
@@ -51,6 +57,18 @@ from utils.db_organizer import DBOrganizer
 _RATE_LIMIT_RETRIES = 3
 
 _DB_STATS_DEFAULT = {"inserted": 0, "updated": 0, "failed": 0, "duration_seconds": 0}
+
+
+def _log_event(run_id: str, market: str, stage: str, status: str, **fields):
+    payload = {
+        "event": "pipeline_stage",
+        "run_id": run_id,
+        "market": market,
+        "stage": stage,
+        "status": status,
+    }
+    payload.update(fields)
+    logger.info(payload)
 
 
 def _detect_rate_limited_provider(exc: Exception) -> str | None:
@@ -330,6 +348,7 @@ def _kickoff_with_fallback(
     crew: Crew,
     build_fn,  # callable that returns a new Crew (e.g. lambda: _build_data_crew(market_name))
     stage_name: str,
+    market_name: str,
     max_retries: int = _RATE_LIMIT_RETRIES,
 ):
     """Kickoff a crew, retrying with excluded providers if a rate limit is hit.
@@ -338,6 +357,7 @@ def _kickoff_with_fallback(
     last_error = None
     for attempt in range(1, max_retries + 2):  # first attempt + retries
         try:
+            llm_calls_total.labels(stage=stage_name, market=market_name).inc()
             return crew.kickoff()
         except RateLimitError as exc:
             provider = _detect_rate_limited_provider(exc)
@@ -375,16 +395,18 @@ def _kickoff_with_fallback(
 def run_market_intelligence(market_name: str) -> str:
     rl = RunLogger(market=market_name)
     rl.start()
+    pipeline_runs_total.labels(market=market_name).inc()
     run_id = rl.run_id
     cp = Checkpointer()
 
     _header(market_name, run_id)
-    logger.info(f"[run:{run_id}] START market={market_name}")
+    _log_event(run_id, market_name, "pipeline", "start")
 
     try:
         # ── STAGE 1: Data collection ───────────────────────────────────────────
         _banner("STAGE 1/3", "Scraping RERA Karnataka + listings ...")
-        logger.info(f"[run:{run_id}] STAGE 1 begin")
+        stage1_started = datetime.now()
+        _log_event(run_id, market_name, "stage_1_scrape", "start")
 
         # Skip Stage 1 only when ALL scout checkpoints exist from today's run.
         # RERA-only cache skip caused portal/developer/news scouts to never run,
@@ -397,8 +419,12 @@ def run_market_intelligence(market_name: str) -> str:
         )
         stage1_ok = False
         if scouts_all_cached:
-            logger.info(
-                f"[run:{run_id}] STAGE 1 skip (all checkpoints cached)"
+            _log_event(
+                run_id,
+                market_name,
+                "stage_1_scrape",
+                "skip",
+                reason="all_checkpoints_cached",
             )
             print(
                 "  [Cache] All scouts cached. Delete outputs/{market}/checkpoints/ to force re-scrape."
@@ -410,14 +436,22 @@ def run_market_intelligence(market_name: str) -> str:
             try:
                 data_crew = _build_data_crew(market_name)
                 _kickoff_with_fallback(
-                    data_crew, lambda: _build_data_crew(market_name), "Stage 1 (scrape)"
+                    data_crew,
+                    lambda: _build_data_crew(market_name),
+                    "Stage 1 (scrape)",
+                    market_name,
                 )
                 rl.agent_done("scrape_rera")
                 rl.agent_done("scrape_listings")
                 stage1_ok = True
             except Exception as s1_exc:
-                logger.error(
-                    f"[run:{run_id}] STAGE 1 FAILED: {s1_exc}\n{traceback.format_exc()}"
+                _log_event(
+                    run_id,
+                    market_name,
+                    "stage_1_scrape",
+                    "failed",
+                    error=str(s1_exc),
+                    duration_seconds=round((datetime.now() - stage1_started).total_seconds(), 2),
                 )
                 print(f"\n  [!!] Stage 1 failed: {s1_exc}")
                 print(
@@ -429,10 +463,20 @@ def run_market_intelligence(market_name: str) -> str:
             if stage1_ok
             else "  Stage 1 partial (fallback to cache)."
         )
+        if stage1_ok:
+            scrape_success_total.labels(market=market_name).inc()
+            _log_event(
+                run_id,
+                market_name,
+                "stage_1_scrape",
+                "success",
+                duration_seconds=round((datetime.now() - stage1_started).total_seconds(), 2),
+            )
 
         # ── STAGE 2: Pure Python validate + upsert ────────────────────────────
         _banner("STAGE 2/3", "Validating + writing to PostgreSQL (no LLM) ...")
-        logger.info(f"[run:{run_id}] STAGE 2 begin")
+        stage2_started = datetime.now()
+        _log_event(run_id, market_name, "stage_2_db", "start")
 
         raw_projects = cp.load(market_name, "rera_scraped") or []
         valid, invalid, val_report = validate_and_log(raw_projects, market_name)
@@ -452,14 +496,23 @@ def run_market_intelligence(market_name: str) -> str:
         try:
             db_stats = organizer.run(market_name, valid)
         except Exception as s2_exc:
-            logger.error(
-                f"[run:{run_id}] STAGE 2 DB write FAILED: {s2_exc}\n{traceback.format_exc()}"
+            _log_event(
+                run_id,
+                market_name,
+                "stage_2_db",
+                "failed",
+                error=str(s2_exc),
+                duration_seconds=round((datetime.now() - stage2_started).total_seconds(), 2),
             )
+            logger.error(f"[run:{run_id}] STAGE 2 DB write FAILED: {s2_exc}\n{traceback.format_exc()}")
             print(f"\n  [!!] Stage 2 DB write failed: {s2_exc}")
             print("  [!!] Continuing to Stage 3 with cached/empty data...")
             db_stats = _DB_STATS_DEFAULT
         cp.save(market_name, "db_stats", db_stats)
         rl.agent_done("organizer")
+        db_upserts_total.labels(source="rera", market=market_name).inc(
+            db_stats.get("inserted", 0) + db_stats.get("updated", 0)
+        )
 
         print(
             f"\n  DB write done: {db_stats['inserted']} inserted, "
@@ -473,6 +526,12 @@ def run_market_intelligence(market_name: str) -> str:
         if gv_records or reg_records:
             kaveri_stats = organizer.run_kaveri(market_name, gv_records, reg_records)
             cp.save(market_name, "kaveri_db_stats", kaveri_stats)
+            db_upserts_total.labels(source="kaveri_gv", market=market_name).inc(
+                kaveri_stats.get("gv_inserted", 0) + kaveri_stats.get("gv_updated", 0)
+            )
+            db_upserts_total.labels(source="kaveri_reg", market=market_name).inc(
+                kaveri_stats.get("reg_inserted", 0)
+            )
             print(
                 f"\n  Kaveri DB: GV {kaveri_stats['gv_inserted']}+{kaveri_stats['gv_updated']}, "
                 f"Reg {kaveri_stats['reg_inserted']} inserted "
@@ -488,6 +547,9 @@ def run_market_intelligence(market_name: str) -> str:
         portal_findings = cp.load(market_name, "portal_scout") or []
         if portal_findings:
             portal_stats = organizer.run_portal_scout(market_name, portal_findings)
+            db_upserts_total.labels(source="portal", market=market_name).inc(
+                portal_stats.get("upserted", 0)
+            )
             print(
                 f"\n  Portal Scout DB: {portal_stats.get('upserted', 0)} listings upserted"
             )
@@ -497,6 +559,9 @@ def run_market_intelligence(market_name: str) -> str:
         dev_findings = cp.load(market_name, "developer_scout") or []
         if dev_findings:
             dev_stats = organizer.run_developer_scout(market_name, dev_findings)
+            db_upserts_total.labels(source="developer", market=market_name).inc(
+                dev_stats.get("upserted", 0)
+            )
             print(
                 f"  Developer Scout DB: {dev_stats.get('upserted', 0)} projects upserted"
             )
@@ -505,7 +570,10 @@ def run_market_intelligence(market_name: str) -> str:
 
         news_findings = cp.load(market_name, "news_scout") or []
         if news_findings:
-            organizer.run_news_scout(market_name, news_findings)
+            news_stats = organizer.run_news_scout(market_name, news_findings)
+            db_upserts_total.labels(source="news", market=market_name).inc(
+                news_stats.get("inserted", 0)
+            )
         else:
             logger.info("[Crew] No news_scout checkpoint — skipping")
 
@@ -514,6 +582,9 @@ def run_market_intelligence(market_name: str) -> str:
             detail_stats = organizer.run_rera_detail_scout(
                 market_name, rera_detail_findings
             )
+            db_upserts_total.labels(source="rera_detail", market=market_name).inc(
+                detail_stats.get("inserted", 0) + detail_stats.get("updated", 0)
+            )
             print(
                 f"  RERA Detail Scout: {detail_stats['updated']} updated, "
                 f"{detail_stats['inserted']} inserted"
@@ -521,9 +592,20 @@ def run_market_intelligence(market_name: str) -> str:
         else:
             logger.info("[Crew] No rera_detail_scout checkpoint — skipping")
 
+        _log_event(
+            run_id,
+            market_name,
+            "stage_2_db",
+            "success",
+            duration_seconds=round((datetime.now() - stage2_started).total_seconds(), 2),
+            rera_inserted=db_stats.get("inserted", 0),
+            rera_updated=db_stats.get("updated", 0),
+        )
+
         # ── STAGE 3: Intelligence ──────────────────────────────────────────────
         _banner("STAGE 3/3", "Generating market intelligence (Analyst + CEO) ...")
-        logger.info(f"[run:{run_id}] STAGE 3 begin")
+        stage3_started = datetime.now()
+        _log_event(run_id, market_name, "stage_3_intel", "start")
 
         # Reset provider exclusions — Stage 1 may have excluded Gemini Gemma (LIGHT tier,
         # 15k TPM) which would incorrectly block Gemini Flash (ANALYSIS/HEAVY tier, 250k TPM).
@@ -535,11 +617,18 @@ def run_market_intelligence(market_name: str) -> str:
                 intel_crew,
                 lambda: _build_intel_crew(market_name, db_stats),
                 "Stage 3 (intel)",
+                market_name,
             )
         except Exception as s3_exc:
-            logger.error(
-                f"[run:{run_id}] STAGE 3 FAILED: {s3_exc}\n{traceback.format_exc()}"
+            _log_event(
+                run_id,
+                market_name,
+                "stage_3_intel",
+                "failed",
+                error=str(s3_exc),
+                duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
             )
+            logger.error(f"[run:{run_id}] STAGE 3 FAILED: {s3_exc}\n{traceback.format_exc()}")
             rl.finish(status="failed", error=f"Stage 3: {s3_exc}")
             _clear_excluded()
             raise RuntimeError(
@@ -547,6 +636,13 @@ def run_market_intelligence(market_name: str) -> str:
             ) from s3_exc
         rl.agent_done("analyst")
         rl.agent_done("ceo")
+        _log_event(
+            run_id,
+            market_name,
+            "stage_3_intel",
+            "success",
+            duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
+        )
 
         # Extract outputs — prefer CEO synthesis; fall back to analyst if CEO returned placeholder
         _PLACEHOLDER = "the final answer to the original input question"
@@ -598,7 +694,7 @@ def run_market_intelligence(market_name: str) -> str:
                 f.write(f"\n\n{ceo_section}\n")
 
         rl.finish(status="success", report_path=report_path)
-        logger.info(f"[run:{run_id}] COMPLETE market={market_name} report={report_path}")
+        _log_event(run_id, market_name, "pipeline", "success", report_path=report_path)
         print(f"\n  Report saved -> {report_path}\n")
         _clear_excluded()
         return report_body
@@ -606,7 +702,7 @@ def run_market_intelligence(market_name: str) -> str:
     except Exception as exc:
         error_msg = str(exc)
         rl.finish(status="failed", error=error_msg)
-        logger.error(f"[run:{run_id}] FAILED market={market_name}: {error_msg}")
+        _log_event(run_id, market_name, "pipeline", "failed", error=error_msg)
         logger.error(f"[run:{run_id}] traceback:\n{traceback.format_exc()}")
         _clear_excluded()
         raise
