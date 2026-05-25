@@ -21,7 +21,7 @@ playwright==1.48.0
 httpx[http2]==0.27.2
 
 # Task queue
-redis==5.1.1
+redis==7.4.0
 rq==1.16.1
 
 # Scheduling
