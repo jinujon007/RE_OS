@@ -53,6 +53,7 @@ from config.metrics import (
 )
 from utils.validator import validate_and_log
 from utils.db_organizer import DBOrganizer, _write_stage_event
+from utils.obsidian_sync import sync_to_obsidian
 
 # ── Rate-limit retry: exclude failing providers on the fly ─────────────────────
 
@@ -764,7 +765,7 @@ def run_market_intelligence(market_name: str) -> str:
             report_body = ceo_raw
             ceo_section = ""
 
-        # ── Save report ────────────────────────────────────────────────────────
+         # ── Save report ────────────────────────────────────────────────────────
         output_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "outputs",
@@ -790,6 +791,9 @@ def run_market_intelligence(market_name: str) -> str:
             f.write(report_body)
             if ceo_section:
                 f.write(f"\n\n{ceo_section}\n")
+
+        # Sync to Obsidian vault after CEO synthesis
+        sync_to_obsidian(market_name, report_body)
 
         rl.finish(status="success", report_path=report_path)
         _log_event(run_id, market_name, "pipeline", "success", report_path=report_path)

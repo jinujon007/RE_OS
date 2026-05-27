@@ -4,6 +4,7 @@ T-233 | zombie process cleanup — proc.wait(timeout=0) + terminate+kill on stop
 T-234 | DB pool connect_timeout=5 appended to DSN | DONE | Kilo Code | 2026-05-27
 T-235 | before_request auth — _READ_ONLY_PATHS + _READ_ONLY_PREFIXES exempt set | DONE | Kilo Code | 2026-05-27
 T-250 | dual-key API rotation — DASHBOARD_API_KEY_PREV support in _is_run_api_authorized | DONE | Kilo Code | 2026-05-27
+T-254 | 78bc2a7eefb9 safety audit | DONE | verdict=BLOCKED | Kilo Code | 2026-05-27
 T-279 | analyst guidance_market_gap_pct replaced with inline CASE calculation | DONE | Claude Code | 2026-05-27
 T-180 | analyst 4x tool call loop fix — strict sequence in backstory + task description | DONE | Kilo Code | 2026-05-27
 T-206 | DistressedDeveloperListTool added to analyst_agent.py | DONE | Kilo Code | 2026-05-27
@@ -11,6 +12,8 @@ T-205 | CEO LLS acquisition framing — JD/JV eval, PSF bands, entry timing | DO
 T-183 | [ESTIMATED] prefix — has_fallback_data flag + FALLBACK_FLAG in CEO prompt | DONE | Kilo Code | 2026-05-27
 T-247 | fake context=[] chains removed from 5 Stage 1 scouts (listings,portal,developer,news,kaveri) | DONE | Kilo Code | 2026-05-27
 T-245/T-253 | _write_stage_event_to_db() wired at all 8 pipeline boundaries | DONE | Kilo Code | 2026-05-27
+T-265 | Obsidian sync after CEO synthesis | DONE | Kilo Code | 2026-05-27
+T-218 | crews/board_room.py skeleton — session insert + run_board_session stub | DONE | Kilo Code | 2026-05-27
 BUG-FIX | developer_scout.py line-1 docstring corruption "just ""\"" fixed | DONE | Claude Code | 2026-05-27
 BUG-FIX | developer_scout.py Sobha dict indentation misalign fixed | DONE | Claude Code | 2026-05-27
 BUG-FIX | rera_detail_scout.py — cookie session passthrough from RERAKarnatakaScraper | DONE | Kilo Code | 2026-05-27

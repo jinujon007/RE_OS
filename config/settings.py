@@ -112,6 +112,15 @@ MARKET_RERA_KEYWORDS = {
 RERA_BASE_URL = "https://rera.karnataka.gov.in"
 KAVERI_BASE_URL = "https://kaveri.karnataka.gov.in"
 
+# ── OBSIDIAN VAULT ─────────────────────────────────────────────────────────────────
+OBSIDIAN_VAULT_PATH = os.getenv(
+    "OBSIDIAN_VAULT_PATH",
+    r"D:\\Brain\\JINU JOSHI\\03 LLS\\01 Wiki"
+)
+# ── TELEGRAM ALERTS ─────────────────────────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
 # Scraping intervals (seconds)
 RERA_SCRAPE_INTERVAL = int(os.getenv("RERA_SCRAPE_INTERVAL", "24")) * 3600
 LISTINGS_SCRAPE_INTERVAL = int(os.getenv("LISTINGS_SCRAPE_INTERVAL", "6")) * 3600

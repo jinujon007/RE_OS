@@ -15,7 +15,6 @@ import time
 from datetime import datetime
 from pathlib import Path
 import sys
-
 import psycopg2
 import psycopg2.pool
 from flask import Flask, Response, jsonify, render_template, request
@@ -406,6 +405,17 @@ def health():
         services["last_run"] = None
 
     return jsonify(services)
+
+
+# ── Alert Test ───────────────────────────────────────────────────────────────────
+
+
+@app.route("/api/alert/test", methods=["GET"])
+def test_alert():
+    from utils.notifier import send_alert
+    sent = send_alert("Test from RE_OS", "INFO")
+    return jsonify({"sent": sent})
+
 
 # ── Metrics ─────────────────────────────────────────────────────────────────────
 
