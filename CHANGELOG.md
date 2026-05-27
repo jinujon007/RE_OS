@@ -1,5 +1,7 @@
 ## Session — Kilo Code parallel windows + Claude Code review 2026-05-27
 
+T-218 | crews/board_room.py skeleton — session insert + run_board_session stub | DONE | Kilo Code | 2026-05-27
+
 T-233 | zombie process cleanup — proc.wait(timeout=0) + terminate+kill on stop | DONE | Kilo Code | 2026-05-27
 T-234 | DB pool connect_timeout=5 appended to DSN | DONE | Kilo Code | 2026-05-27
 T-235 | before_request auth — _READ_ONLY_PATHS + _READ_ONLY_PREFIXES exempt set | DONE | Kilo Code | 2026-05-27

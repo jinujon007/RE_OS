@@ -348,6 +348,13 @@ def index():
 # ── Health ─────────────────────────────────────────────────────────────────────
 
 
+@app.route("/api/alert/test")
+def test_alert():
+    from utils.notifier import send_alert
+    sent = send_alert("Test from RE_OS", "INFO")
+    return jsonify({"sent": sent})
+
+
 @app.route("/api/health")
 def health():
     services = {"agents": "ok"}
