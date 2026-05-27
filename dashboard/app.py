@@ -414,6 +414,25 @@ def health():
     return jsonify(services)
 
 
+# ── Board Room API
+
+@app.route("/api/board/session", methods=["POST"])
+def board_session_create():
+    from crews.board_room import run_board_session
+    payload = request.get_json() or {}
+    pitch = payload.get("pitch", "")
+    market = payload.get("market", "")
+    result = run_board_session(pitch, market)
+    return jsonify(result), 200
+
+@app.route("/api/board/session/<session_id>", methods=["GET"])
+def board_session_get(session_id):
+    from crews.board_room import get_board_session
+    session = get_board_session(session_id)
+    if not session:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(session), 200
+
 # ── Alert Test ───────────────────────────────────────────────────────────────────
 
 

@@ -676,6 +676,6 @@ if __name__ == "__main__":
         "--developer", default="", help="Comma-separated developer keys (default: all)"
     )
     args = parser.parse_args()
-    logger.add("logs/developer_scout.log", rotation="10 MB")
+    logger.add("./logs/developer_scout.log", rotation="10 MB")
     devs = [d.strip() for d in args.developer.split(",") if d.strip()] or None
     scout_developers(args.market, developers=devs)
