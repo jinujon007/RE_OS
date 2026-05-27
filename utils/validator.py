@@ -19,6 +19,19 @@ from loguru import logger
 
 RERA_NUMBER_RE = re.compile(r"^PR[A-Z]*/KA/", re.IGNORECASE)
 RERA_NUMBER_LOOSE_RE = re.compile(r"^PRM/", re.IGNORECASE)
+_ESTIMATED_PREFIX = "[ESTIMATED]"
+_ESTIMATED_SOURCES = {"seed_estimated", "fallback_sample"}
+
+
+def _is_estimated_source(raw: dict) -> bool:
+    return str(raw.get("data_source", raw.get("source", ""))).strip().lower() in _ESTIMATED_SOURCES
+
+
+def _ensure_estimated_prefix(text: str) -> str:
+    value = str(text or "").strip()
+    if value.startswith(_ESTIMATED_PREFIX):
+        return value
+    return f"{_ESTIMATED_PREFIX} {value}".strip()
 
 
 def validate_rera_records(records: list) -> tuple:
@@ -52,8 +65,8 @@ def validate_rera_records(records: list) -> tuple:
             )
         else:
             r_out = dict(raw)
-            if str(raw.get("data_source", "")).lower() == "seed_estimated":
-                r_out["project_name"] = f"[ESTIMATED] {raw.get('project_name', '')}"
+            if _is_estimated_source(raw):
+                r_out["project_name"] = _ensure_estimated_prefix(raw.get("project_name", ""))
             valid.append(r_out)
 
     error_summary = []

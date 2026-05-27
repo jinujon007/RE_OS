@@ -665,8 +665,11 @@ class DBOrganizer:
         )
 
     def _insert_news_article(self, conn, rec: dict):
+        cid = str(rec.get("cid", "")).strip()
+        if not cid:
+            raise ValueError("news article missing cid — skipping to prevent blank-key insertion")
         params = {
-            "cid": rec.get("cid", ""),
+            "cid": cid,
             "title": rec.get("title", ""),
             "source": rec.get("source", "unknown"),
             "url": rec.get("url", ""),
@@ -830,11 +833,57 @@ class DBOrganizer:
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
+def _write_stage_event(
+    conn,
+    run_id: str,
+    market: str,
+    event_name: str,
+    status: str,
+    stage: int = 0,
+    **fields,
+):
+    """Insert structured stage event into agent_runs (non-fatal)."""
+    try:
+        extra = {k: str(v) for k, v in fields.items()}
+        meta = {
+            "run_id": run_id,
+            "event_name": event_name,
+            "stage": stage,
+            **extra,
+        }
+        conn.execute(
+            text("""
+            INSERT INTO agent_runs (
+                agent_name, task_type, micro_market, status,
+                metadata, started_at, completed_at
+            ) VALUES (
+                :agent_name, :task_type, :micro_market, :status,
+                CAST(:metadata AS jsonb), NOW(),
+                CASE WHEN :status IN ('success', 'failed', 'skip') THEN NOW() ELSE NULL END
+            )
+            """),
+            {
+                "agent_name": event_name,
+                "task_type": "pipeline_stage_event",
+                "micro_market": market,
+                "status": status,
+                "metadata": json.dumps(meta, default=str),
+            },
+        )
+    except Exception as exc:
+        logger.warning(f"Failed to write stage event {event_name} for {market}: {exc}")
+
+
 def _safe_date(val):
-    """Return val if it looks like a date string, else None."""
+    """Return YYYY-MM-DD string if parseable, else None.
+    Rejects structurally-valid-but-invalid dates like 2024-99-99."""
     if not val:
         return None
-    s = str(val).strip()
-    if len(s) >= 10 and s[4] == "-":  # YYYY-MM-DD prefix check
-        return s[:10]
-    return None
+    s = str(val).strip()[:10]
+    if len(s) < 10:
+        return None
+    try:
+        datetime.strptime(s, "%Y-%m-%d")
+        return s
+    except ValueError:
+        return None

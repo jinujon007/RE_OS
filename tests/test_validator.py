@@ -120,3 +120,29 @@ def test_non_seed_estimated_not_prefixed():
     valid, invalid, report = validate_rera_records([record])
     assert len(valid) == 1
     assert not valid[0]["project_name"].startswith("[ESTIMATED]")
+
+
+def test_fallback_sample_source_gets_estimated_prefix():
+    record = {
+        "rera_number": "PRM/KA/00003",
+        "project_name": "Fallback Project",
+        "developer_name": "Builder Co",
+        "total_units": 75,
+        "source": "fallback_sample",
+    }
+    valid, invalid, report = validate_rera_records([record])
+    assert len(valid) == 1
+    assert valid[0]["project_name"].startswith("[ESTIMATED]")
+
+
+def test_estimated_prefix_not_duplicated():
+    record = {
+        "rera_number": "PRM/KA/00004",
+        "project_name": "[ESTIMATED] Already Tagged",
+        "developer_name": "Builder Co",
+        "total_units": 80,
+        "data_source": "seed_estimated",
+    }
+    valid, invalid, report = validate_rera_records([record])
+    assert len(valid) == 1
+    assert valid[0]["project_name"] == "[ESTIMATED] Already Tagged"

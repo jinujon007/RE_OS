@@ -41,6 +41,8 @@ from agents import (
 )
 from config.settings import TARGET_MARKETS
 from config.run_logger import RunLogger
+from sqlalchemy import create_engine
+from config.settings import DATABASE_URL
 from config.checkpointer import Checkpointer
 from config.llm_router import _exclude, _clear_excluded, _is_excluded
 from config.metrics import (
@@ -50,13 +52,36 @@ from config.metrics import (
     scrape_success_total,
 )
 from utils.validator import validate_and_log
-from utils.db_organizer import DBOrganizer
+from utils.db_organizer import DBOrganizer, _write_stage_event
 
 # ── Rate-limit retry: exclude failing providers on the fly ─────────────────────
 
 _RATE_LIMIT_RETRIES = 3
 
 _DB_STATS_DEFAULT = {"inserted": 0, "updated": 0, "failed": 0, "duration_seconds": 0}
+
+# Single engine shared across all stage event writes in this process.
+# Avoids creating a new connection pool for every one of the 8 stage events per run.
+_stage_event_engine = None
+
+
+def _get_stage_event_engine():
+    global _stage_event_engine
+    if _stage_event_engine is None:
+        # SQLAlchemy engines are thread-safe; a brief duplicate-create race is harmless.
+        _stage_event_engine = create_engine(
+            DATABASE_URL, pool_pre_ping=True, pool_size=2, max_overflow=0
+        )
+    return _stage_event_engine
+
+
+def _write_stage_event_to_db(run_id: str, market: str, event_name: str, status: str, stage: int = 0, **fields):
+    """Fire-and-forget write to agent_runs. DB failure must NOT abort pipeline."""
+    try:
+        with _get_stage_event_engine().begin() as conn:
+            _write_stage_event(conn, run_id, market, event_name, status, stage, **fields)
+    except Exception as exc:
+        logger.warning(f"Failed to write stage event {event_name} for {market}: {exc}")
 
 
 def _log_event(run_id: str, market: str, stage: str, status: str, **fields):
@@ -179,7 +204,6 @@ def _build_data_crew(market_name: str) -> Crew:
         ),
         expected_output=(f"One line: 'Found N listings for {market_name}.'"),
         agent=scraper,
-        context=[scrape_rera_detail],
     )
 
     scrape_portal = Task(
@@ -194,7 +218,6 @@ def _build_data_crew(market_name: str) -> Crew:
             f"One line: 'Found N portal listings for {market_name} (X new discoveries).'"
         ),
         agent=scraper,
-        context=[scrape_listings],
     )
 
     scrape_developer = Task(
@@ -209,7 +232,6 @@ def _build_data_crew(market_name: str) -> Crew:
             f"One line: 'Found N developer projects for {market_name} (X new pre-launch).'"
         ),
         agent=scraper,
-        context=[scrape_portal],
     )
 
     scrape_news = Task(
@@ -223,7 +245,6 @@ def _build_data_crew(market_name: str) -> Crew:
             f"One line: 'Analyzed N articles for {market_name}. Signals: [list signal types found].'"
         ),
         agent=scraper,
-        context=[scrape_developer],
     )
 
     scrape_kaveri = Task(
@@ -241,7 +262,6 @@ def _build_data_crew(market_name: str) -> Crew:
             f"and 'Found N Kaveri registrations for {market_name}.'"
         ),
         agent=scraper,
-        context=[scrape_news],
     )
 
     return Crew(
@@ -263,7 +283,7 @@ def _build_data_crew(market_name: str) -> Crew:
 # ── Stage 3: Intel Crew ────────────────────────────────────────────────────────
 
 
-def _build_intel_crew(market_name: str, db_stats: dict) -> Crew:
+def _build_intel_crew(market_name: str, db_stats: dict, has_fallback_data: bool = False) -> Crew:
     analyst = create_analyst_agent()
     ceo = create_ceo_agent()
     # CEO synthesizes in the intel crew — no re-delegation back to analyst
@@ -277,8 +297,9 @@ def _build_intel_crew(market_name: str, db_stats: dict) -> Crew:
             f"STRICT TOOL CALL SEQUENCE — call each tool EXACTLY ONCE, in order:\n"
             f"  Step 1: market_summary_query with input: {market_name}\n"
             f"  Step 2: competitor_analysis with input: {market_name}\n"
-            f"  Step 3: generate_market_report with input: the exact JSON from Step 1\n"
-            f"  Step 4: Write Final Answer.\n\n"
+            f"  Step 3: distressed_developer_list with input: {market_name}\n"
+            f"  Step 4: generate_market_report with input: the exact JSON from Step 1\n"
+            f"  Step 5: Write Final Answer.\n\n"
             f"DO NOT call any tool more than once. DO NOT call market_summary_query again "
             f"after Step 1. Proceed directly from tool output to Final Answer.\n\n"
             f"For generate_market_report, pass the JSON string from market_summary_query "
@@ -289,12 +310,14 @@ def _build_intel_crew(market_name: str, db_stats: dict) -> Crew:
             f"- GV gap signal (market vs circle rate — what it means for LLS land cost)\n"
             f"- Dominant developer and their positioning\n"
             f"- Pricing white space where LLS could enter\n"
+            f"- Distressed/JD-JV signal from distressed_developer_list "
+            f"(stalled_project_count, debt_flagged_projects, last_launch_date)\n"
             f"- Data quality note: state if data is LIVE or FALLBACK SAMPLE"
         ),
         expected_output=(
             "Formatted market brief with: inventory overview, top 5 projects, developer scorecard, "
-            "risk flags, 5-signal analyst read (absorption, supply pressure, GV gap, "
-            "dominant dev, LLS entry point), data quality note."
+            "risk flags, 6-signal analyst read (absorption, supply pressure, GV gap, "
+            "dominant dev, LLS entry point, distressed/JD-JV signal), data quality note."
         ),
         agent=analyst,
     )
@@ -321,6 +344,9 @@ def _build_intel_crew(market_name: str, db_stats: dict) -> Crew:
             f"  Example: 'Acquire land in Yelahanka North at <₹X/sqft before Brigade "
             f"  prices it higher in next launch.'\n"
             f"  If data is fallback/sample: say so and note confidence is LOW.\n\n"
+            f"FALLBACK_FLAG: {'TRUE' if has_fallback_data else 'FALSE'}\n"
+            f"If FALLBACK_FLAG is TRUE, treat all numeric outputs as estimated. "
+            f"Prefix every number with [ESTIMATED] and add a warning at the top.\n\n"
             f"DATA QUALITY CHECK: If the analyst report says data is FALLBACK SAMPLE, "
             f"prefix every number with [ESTIMATED] and add a warning at the top."
         ),
@@ -401,12 +427,14 @@ def run_market_intelligence(market_name: str) -> str:
 
     _header(market_name, run_id)
     _log_event(run_id, market_name, "pipeline", "start")
+    _write_stage_event_to_db(run_id, market_name, "pipeline_start", "start", stage=0)
 
     try:
         # ── STAGE 1: Data collection ───────────────────────────────────────────
         _banner("STAGE 1/3", "Scraping RERA Karnataka + listings ...")
         stage1_started = datetime.now()
         _log_event(run_id, market_name, "stage_1_scrape", "start")
+        _write_stage_event_to_db(run_id, market_name, "stage_1_start", "start", stage=1)
 
         # Skip Stage 1 only when ALL scout checkpoints exist from today's run.
         # RERA-only cache skip caused portal/developer/news scouts to never run,
@@ -424,6 +452,14 @@ def run_market_intelligence(market_name: str) -> str:
                 market_name,
                 "stage_1_scrape",
                 "skip",
+                reason="all_checkpoints_cached",
+            )
+            _write_stage_event_to_db(
+                run_id,
+                market_name,
+                "stage_1_end",
+                "skip",
+                stage=1,
                 reason="all_checkpoints_cached",
             )
             print(
@@ -453,6 +489,15 @@ def run_market_intelligence(market_name: str) -> str:
                     error=str(s1_exc),
                     duration_seconds=round((datetime.now() - stage1_started).total_seconds(), 2),
                 )
+                _write_stage_event_to_db(
+                    run_id,
+                    market_name,
+                    "stage_1_end",
+                    "failed",
+                    stage=1,
+                    error=str(s1_exc),
+                    duration_seconds=round((datetime.now() - stage1_started).total_seconds(), 2),
+                )
                 print(f"\n  [!!] Stage 1 failed: {s1_exc}")
                 print(
                     "  [!!] Continuing with Stage 2/3 using any cached checkpoints..."
@@ -472,11 +517,20 @@ def run_market_intelligence(market_name: str) -> str:
                 "success",
                 duration_seconds=round((datetime.now() - stage1_started).total_seconds(), 2),
             )
+            _write_stage_event_to_db(
+                run_id,
+                market_name,
+                "stage_1_end",
+                "success",
+                stage=1,
+                duration_seconds=round((datetime.now() - stage1_started).total_seconds(), 2),
+            )
 
         # ── STAGE 2: Pure Python validate + upsert ────────────────────────────
         _banner("STAGE 2/3", "Validating + writing to PostgreSQL (no LLM) ...")
         stage2_started = datetime.now()
         _log_event(run_id, market_name, "stage_2_db", "start")
+        _write_stage_event_to_db(run_id, market_name, "stage_2_start", "start", stage=2)
 
         raw_projects = cp.load(market_name, "rera_scraped") or []
         valid, invalid, val_report = validate_and_log(raw_projects, market_name)
@@ -501,6 +555,15 @@ def run_market_intelligence(market_name: str) -> str:
                 market_name,
                 "stage_2_db",
                 "failed",
+                error=str(s2_exc),
+                duration_seconds=round((datetime.now() - stage2_started).total_seconds(), 2),
+            )
+            _write_stage_event_to_db(
+                run_id,
+                market_name,
+                "stage_2_end",
+                "failed",
+                stage=2,
                 error=str(s2_exc),
                 duration_seconds=round((datetime.now() - stage2_started).total_seconds(), 2),
             )
@@ -601,21 +664,39 @@ def run_market_intelligence(market_name: str) -> str:
             rera_inserted=db_stats.get("inserted", 0),
             rera_updated=db_stats.get("updated", 0),
         )
+        _write_stage_event_to_db(
+            run_id,
+            market_name,
+            "stage_2_end",
+            "success",
+            stage=2,
+            duration_seconds=round((datetime.now() - stage2_started).total_seconds(), 2),
+            rera_inserted=db_stats.get("inserted", 0),
+            rera_updated=db_stats.get("updated", 0),
+        )
 
         # ── STAGE 3: Intelligence ──────────────────────────────────────────────
         _banner("STAGE 3/3", "Generating market intelligence (Analyst + CEO) ...")
         stage3_started = datetime.now()
         _log_event(run_id, market_name, "stage_3_intel", "start")
+        _write_stage_event_to_db(run_id, market_name, "stage_3_start", "start", stage=3)
+
+        has_fallback_data = any(
+            str(r.get("data_source", r.get("source", ""))).strip().lower()
+            in {"fallback_sample", "seed_estimated"}
+            for r in raw_projects
+            if isinstance(r, dict)
+        )
 
         # Reset provider exclusions — Stage 1 may have excluded Gemini Gemma (LIGHT tier,
         # 15k TPM) which would incorrectly block Gemini Flash (ANALYSIS/HEAVY tier, 250k TPM).
         # Both share the "gemini" exclusion key despite being different models and quotas.
         _clear_excluded()
         try:
-            intel_crew = _build_intel_crew(market_name, db_stats)
+            intel_crew = _build_intel_crew(market_name, db_stats, has_fallback_data=has_fallback_data)
             result = _kickoff_with_fallback(
                 intel_crew,
-                lambda: _build_intel_crew(market_name, db_stats),
+                lambda: _build_intel_crew(market_name, db_stats, has_fallback_data=has_fallback_data),
                 "Stage 3 (intel)",
                 market_name,
             )
@@ -625,6 +706,15 @@ def run_market_intelligence(market_name: str) -> str:
                 market_name,
                 "stage_3_intel",
                 "failed",
+                error=str(s3_exc),
+                duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
+            )
+            _write_stage_event_to_db(
+                run_id,
+                market_name,
+                "stage_3_end",
+                "failed",
+                stage=3,
                 error=str(s3_exc),
                 duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
             )
@@ -641,6 +731,14 @@ def run_market_intelligence(market_name: str) -> str:
             market_name,
             "stage_3_intel",
             "success",
+            duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
+        )
+        _write_stage_event_to_db(
+            run_id,
+            market_name,
+            "stage_3_end",
+            "success",
+            stage=3,
             duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
         )
 
@@ -695,6 +793,7 @@ def run_market_intelligence(market_name: str) -> str:
 
         rl.finish(status="success", report_path=report_path)
         _log_event(run_id, market_name, "pipeline", "success", report_path=report_path)
+        _write_stage_event_to_db(run_id, market_name, "pipeline_end", "success", stage=0)
         print(f"\n  Report saved -> {report_path}\n")
         _clear_excluded()
         return report_body
@@ -703,6 +802,14 @@ def run_market_intelligence(market_name: str) -> str:
         error_msg = str(exc)
         rl.finish(status="failed", error=error_msg)
         _log_event(run_id, market_name, "pipeline", "failed", error=error_msg)
+        _write_stage_event_to_db(
+            run_id,
+            market_name,
+            "pipeline_end",
+            "failed",
+            stage=0,
+            error=error_msg,
+        )
         logger.error(f"[run:{run_id}] traceback:\n{traceback.format_exc()}")
         _clear_excluded()
         raise
@@ -711,37 +818,64 @@ def run_market_intelligence(market_name: str) -> str:
 # ── All-markets sweep ──────────────────────────────────────────────────────────
 
 
-def run_all_markets():
-    markets = [m.strip() for m in TARGET_MARKETS]
-    results = {}
+def run_all_markets(markets=None):
+    import subprocess, sys, time as _time
+
+    markets = markets or [m.strip() for m in TARGET_MARKETS]
 
     print(f"\n{'=' * _WIDTH}")
-    print("  RE_OS — Full Market Sweep")
+    print("  RE_OS — Full Market Sweep (parallel)")
     print(f"  Markets : {', '.join(markets)}")
     print(f"  Started : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'=' * _WIDTH}\n")
 
-    for i, market in enumerate(markets, 1):
-        print(f"\n  [{i}/{len(markets)}] Starting: {market}")
-        try:
-            result = run_market_intelligence(market)
-            results[market] = {"status": "success", "summary": result[:300]}
-        except Exception as exc:
-            results[market] = {"status": "failed", "error": str(exc)}
-            logger.error(f"  !! {market} failed: {exc}")
+    procs = {}
+    log_handles = {}
+
+    for market in markets:
+        market_slug = market.lower().replace(" ", "_")
+        log_path = f"logs/{market_slug}.log"
+        os.makedirs("logs", exist_ok=True)
+        fh = open(log_path, "a")
+        cmd = [sys.executable, __file__, "--market", market]
+        p = subprocess.Popen(cmd, stdout=fh, stderr=fh,
+                             env={**os.environ})
+        procs[market] = p
+        log_handles[market] = fh
+        logger.info(f"Launched {market} PID {p.pid} -> {log_path}")
+        print(f"  [>>] {market} started (PID {p.pid})")
+
+    # Wait with 45-minute timeout per market
+    TIMEOUT = 45 * 60
+    deadline = _time.time() + TIMEOUT
+    results = {}
+
+    while procs:
+        for market in list(procs):
+            p = procs[market]
+            ret = p.poll()
+            if ret is not None:
+                log_handles[market].close()
+                results[market] = "success" if ret == 0 else f"failed({ret})"
+                logger.info(f"{market} complete: {results[market]}")
+                print(f"  [{'OK' if ret == 0 else '!!'}] {market}: {results[market]}")
+                del procs[market]
+        if procs and _time.time() > deadline:
+            for market, p in procs.items():
+                p.terminate()
+                log_handles[market].close()
+                results[market] = "timeout"
+                logger.error(f"{market} killed after 45min timeout")
+                print(f"  [!!] {market}: TIMEOUT — killed")
+            break
+        if procs:
+            _time.sleep(5)
 
     print(f"\n{'=' * _WIDTH}")
-    print("  RE_OS — ALL MARKETS COMPLETE")
-    print(f"{'=' * _WIDTH}")
-    ok = sum(1 for r in results.values() if r["status"] == "success")
-    bad = sum(1 for r in results.values() if r["status"] == "failed")
-    for market, r in results.items():
-        icon = "OK" if r["status"] == "success" else "!!"
-        print(f"  [{icon}]  {market}: {r['status']}")
-    print(f"\n  Summary: {ok} succeeded, {bad} failed")
-    print("  Run history -> logs/runs_summary.md")
+    ok = sum(1 for r in results.values() if r == "success")
+    bad = len(results) - ok
+    print(f"  Summary: {ok} succeeded, {bad} failed/timeout")
     print(f"{'=' * _WIDTH}\n")
-
     return results
 
 
@@ -760,6 +894,9 @@ if __name__ == "__main__":
 
     os.makedirs("logs", exist_ok=True)
     logger.add("logs/crew.log", rotation="5 MB", retention=5, level="INFO")
+    if args.market:
+        market_slug = args.market.lower().replace(" ", "_")
+        logger.add(f"logs/{market_slug}.log", rotation="5 MB", retention=5, level="INFO")
 
     if args.history:
         from config.run_logger import print_run_history

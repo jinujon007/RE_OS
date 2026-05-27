@@ -1,3 +1,29 @@
+## Session — Kilo Code parallel windows + Claude Code review 2026-05-27
+
+T-233 | zombie process cleanup — proc.wait(timeout=0) + terminate+kill on stop | DONE | Kilo Code | 2026-05-27
+T-234 | DB pool connect_timeout=5 appended to DSN | DONE | Kilo Code | 2026-05-27
+T-235 | before_request auth — _READ_ONLY_PATHS + _READ_ONLY_PREFIXES exempt set | DONE | Kilo Code | 2026-05-27
+T-250 | dual-key API rotation — DASHBOARD_API_KEY_PREV support in _is_run_api_authorized | DONE | Kilo Code | 2026-05-27
+T-279 | analyst guidance_market_gap_pct replaced with inline CASE calculation | DONE | Claude Code | 2026-05-27
+T-180 | analyst 4x tool call loop fix — strict sequence in backstory + task description | DONE | Kilo Code | 2026-05-27
+T-206 | DistressedDeveloperListTool added to analyst_agent.py | DONE | Kilo Code | 2026-05-27
+T-205 | CEO LLS acquisition framing — JD/JV eval, PSF bands, entry timing | DONE | Kilo Code | 2026-05-27
+T-183 | [ESTIMATED] prefix — has_fallback_data flag + FALLBACK_FLAG in CEO prompt | DONE | Kilo Code | 2026-05-27
+T-247 | fake context=[] chains removed from 5 Stage 1 scouts (listings,portal,developer,news,kaveri) | DONE | Kilo Code | 2026-05-27
+T-245/T-253 | _write_stage_event_to_db() wired at all 8 pipeline boundaries | DONE | Kilo Code | 2026-05-27
+BUG-FIX | developer_scout.py line-1 docstring corruption "just ""\"" fixed | DONE | Claude Code | 2026-05-27
+BUG-FIX | developer_scout.py Sobha dict indentation misalign fixed | DONE | Claude Code | 2026-05-27
+BUG-FIX | rera_detail_scout.py — cookie session passthrough from RERAKarnatakaScraper | DONE | Kilo Code | 2026-05-27
+BUG-FIX | db_organizer.py — news article blank-cid guard + _safe_date() full date validation | DONE | Kilo Code | 2026-05-27
+
+---
+
+TQ-UPDATE | marked 12 target tasks DONE in TASK_QUEUE + checked CURRENT_TASK row | DONE | Cline | 2026-05-26 18:42
+T-165 | dashboard health check | PASS | 200 OK | Cline | 2026-05-26 15:35
+T-247 | fake context=[] chains — verified already clean, no code change needed | PASS | Cline | 2026-05-26
+T-249 | _monitor_agent_states_loop deleted — log-as-state-bus eliminated | DONE | Cline | 2026-05-26
+T-248 | per-market log files — market_slug sink added to crew entrypoint | DONE | Cline | 2026-05-26
+T-246 | subprocess fan-out run_all_markets — parallel=3, timeout=45min | DONE | Cline | 2026-05-26
 # RE_OS — Change Log
 ## Authoritative record of every code, DB, and config edit
 **Format:** Session → Change → Before → After → Why
@@ -34,6 +60,8 @@
 ---
 
 ## Session — Cline + Kilo Code 2026-05-21 (Brain Integration Sprint)
+
+- `T-253 | T-245 DB write complete — stage events in agent_runs | PASS | events_per_run=8 | Cline | 2026-05-26 13:36`
 
 ### Cline — Phase NN + Infra
 - `config/metrics.py` (NEW): Prometheus counters — `pipeline_runs_total`, `llm_calls_total`, `db_upserts_total`, `scrape_success_total`
@@ -745,4 +773,8 @@ Checkpoints cleared. 10 fresh RERA fallback records staged. Pipeline fresh-launc
 
 ---
 T-167 | /api/intel endpoint wired | PASS | /api/intel and /api/intel/download both added to dashboard/app.py | Cline | 2026-05-20 11:37
+
+
+
+
 

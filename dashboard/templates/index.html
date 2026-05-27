@@ -1116,7 +1116,7 @@ async function pollIntel() {
   const wrap = document.getElementById('intel-cards');
   if (!wrap) return;
   try {
-    const data = await fetch('/api/intel').then(r => r.json());
+    const data = await fetch('/api/intel/cards').then(r => r.json());
     if (!data.cards || !data.cards.length) {
       wrap.innerHTML = '<div class="empty-msg">No intel yet</div>';
       return;

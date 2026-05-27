@@ -26,11 +26,21 @@ if _PROJECT_ROOT not in sys.path:
 
 app = Flask(__name__, template_folder="templates")
 
-# Global API authentication – applied to all /api routes except health and status
+# Read-only endpoints — exempt from API key gate (T-235)
+_READ_ONLY_PATHS = frozenset({
+    '/api/health', '/api/status', '/api/agents', '/api/intel',
+    '/api/intel/cards', '/api/intel/download', '/api/db/state', '/api/sentinel/status',
+})
+_READ_ONLY_PREFIXES = ('/api/reports/', '/api/logs/')
+
+
 @app.before_request
 def _require_api_key():
-    # Skip non-API routes and health/status endpoints
-    if not request.path.startswith('/api') or request.path in ['/api/health', '/api/status']:
+    if not request.path.startswith('/api'):
+        return None
+    if request.path in _READ_ONLY_PATHS:
+        return None
+    if any(request.path.startswith(p) for p in _READ_ONLY_PREFIXES):
         return None
     if not _is_run_api_authorized(request):
         return jsonify({"error": "unauthorized"}), 401
@@ -130,8 +140,6 @@ AGENT_ACTIONS: dict[str, list[dict]] = {
     "sentinel": [],
 }
 
-_monitor_thread = None
-
 # Connection pool — avoids opening a raw connection per request.
 # Initialised lazily on first use so the app starts even if DB is briefly unavailable.
 _db_pool: psycopg2.pool.ThreadedConnectionPool | None = None
@@ -146,8 +154,13 @@ def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
                 url = os.environ.get("DATABASE_URL")
                 if not url:
                     raise RuntimeError("DATABASE_URL environment variable is not set")
+                # connect_timeout=5 prevents a brief Postgres outage from hanging
+                # Flask threads for 30s each (T-234)
+                dsn = url if "connect_timeout" in url else (
+                    url + ("&" if "?" in url else "?") + "connect_timeout=5"
+                )
                 _db_pool = psycopg2.pool.ThreadedConnectionPool(
-                    minconn=1, maxconn=5, dsn=url
+                    minconn=1, maxconn=5, dsn=dsn
                 )
     return _db_pool
 
@@ -158,33 +171,17 @@ def _get_db():
 
 
 def _release_db(conn):
-    """Return a connection to the pool."""
+    """Return a connection to the pool, rolling back any open transaction first.
+    Without this, a mid-query error leaves the pooled connection in InFailedSqlTransaction."""
     try:
+        if not conn.autocommit:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         _get_pool().putconn(conn)
     except Exception:
         pass
-
-
-def _read_last_lines(path: str, limit: int = 20):
-    try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
-        return lines[-limit:]
-    except FileNotFoundError:
-        return []
-    except Exception:
-        return []
-
-
-def _clean_log_line(line: str):
-    text = (line or "").strip()
-    if not text:
-        return ""
-    text = re.sub(r"^\[[^\]]+\]\s*", "", text)
-    text = re.sub(r"^\d{4}-\d{2}-\d{2}[T\s][^\s]+\s*[-|]\s*", "", text)
-    text = re.sub(r"^\d{2}:\d{2}:\d{2}\s*[-|]\s*", "", text)
-    text = re.sub(r"\s+", " ", text)
-    return text[:60]
 
 
 def _latest_report_path(market: str = None):
@@ -198,50 +195,6 @@ def _latest_report_path(market: str = None):
             if latest_file is None or cand > latest_file:
                 latest_file = cand
     return latest_file
-
-
-def _set_agent_working(agent_id: str, label: str, started: str, action_line: str):
-    agent = _agent_states[agent_id]
-    agent["state"] = "working"
-    agent["label"] = label
-    agent["started"] = started
-    if action_line:
-        agent["last_action"] = action_line
-
-
-def _reset_pipeline_agents(final_state: str):
-    if final_state == "done":
-        ceo_label = scraper_label = analyst_label = "DONE"
-        ceo_state = scraper_state = analyst_state = "done"
-    elif final_state == "failed":
-        ceo_label = scraper_label = analyst_label = "FAILED"
-        ceo_state = scraper_state = analyst_state = "failed"
-    else:
-        ceo_label = scraper_label = analyst_label = "IDLE"
-        ceo_state = scraper_state = analyst_state = "idle"
-
-    _agent_states["ceo"]["state"] = ceo_state
-    _agent_states["ceo"]["label"] = ceo_label
-    _agent_states["ceo"]["started"] = None
-    if final_state == "idle":
-        _agent_states["ceo"]["last_action"] = "Awaiting pipeline trigger"
-
-    _agent_states["scraper"]["state"] = scraper_state
-    _agent_states["scraper"]["label"] = scraper_label
-    _agent_states["scraper"]["started"] = None
-    _agent_states["scraper"]["terminals"] = {
-        "rera": "idle",
-        "listings": "idle",
-        "kaveri": "idle",
-    }
-    if final_state == "idle":
-        _agent_states["scraper"]["last_action"] = "No recent scrape"
-
-    _agent_states["analyst"]["state"] = analyst_state
-    _agent_states["analyst"]["label"] = analyst_label
-    _agent_states["analyst"]["started"] = None
-    if final_state == "idle":
-        _agent_states["analyst"]["last_action"] = "No recent analysis"
 
 
 def _log_running_lifecycle_locked(context: str):
@@ -261,122 +214,14 @@ def _prune_finished_running_entries_locked():
         market for market, entry in _running.items() if entry["proc"].poll() is not None
     ]
     for market in finished:
-        _running.pop(market, None)
+        entry = _running.pop(market, None)
+        if entry and "proc" in entry:
+            try:
+                entry["proc"].wait(timeout=0)  # reap zombie (T-233)
+            except Exception:
+                pass
     if finished:
         logger.info("[DIAG running] pruned finished markets=%s", finished)
-
-
-def _monitor_agent_states_loop():
-    while True:
-        try:
-            lines = _read_last_lines(LOG_PATH, limit=20)
-            blob = "\n".join(lines).lower()
-
-            recent_line = ""
-            for ln in reversed(lines):
-                cleaned = _clean_log_line(ln)
-                if cleaned:
-                    recent_line = cleaned
-                    break
-
-            with _lock:
-                _log_running_lifecycle_locked("monitor.loop.start")
-
-                active_entries = {
-                    m: e for m, e in _running.items() if e["proc"].poll() is None
-                }
-                completed_entries = {
-                    m: e for m, e in _running.items() if e["proc"].poll() is not None
-                }
-                any_active = len(active_entries) > 0
-                started_ref = None
-                if any_active:
-                    started_candidates = [
-                        e["started"]
-                        for e in active_entries.values()
-                        if e.get("started")
-                    ]
-                    started_ref = (
-                        sorted(started_candidates)[0] if started_candidates else None
-                    )
-
-                stage1_hit = (
-                    "stage 1" in blob
-                    or "rera" in blob
-                    or "listings" in blob
-                    or "kaveri" in blob
-                )
-                stage3_analyst_hit = "stage 3" in blob or "analyst" in blob
-                ceo_hit = "ceo" in blob or "synthesis" in blob
-
-                if any_active and stage1_hit:
-                    _set_agent_working("scraper", "SCRAPING", started_ref, recent_line)
-                    _agent_states["scraper"]["terminals"] = {
-                        "rera": (
-                            "working" if "rera" in blob or "stage 1" in blob else "idle"
-                        ),
-                        "listings": (
-                            "working"
-                            if "listings" in blob or "stage 1" in blob
-                            else "idle"
-                        ),
-                        "kaveri": (
-                            "working"
-                            if "kaveri" in blob or "stage 1" in blob
-                            else "idle"
-                        ),
-                    }
-
-                if any_active and stage3_analyst_hit:
-                    _set_agent_working("analyst", "ANALYZING", started_ref, recent_line)
-
-                if any_active and ceo_hit:
-                    _set_agent_working("ceo", "DIRECTING", started_ref, recent_line)
-
-                # Stage 2 / upsert / organizer: intentionally no label change.
-                # Requirement: keep labels as-is during organizer phase.
-
-                if not any_active:
-                    if completed_entries:
-                        failed = any(
-                            (e["proc"].poll() or 0) != 0
-                            for e in completed_entries.values()
-                        )
-                        if failed:
-                            _reset_pipeline_agents("failed")
-                            logger.info("[DIAG running] resolved terminal state=failed")
-                        else:
-                            _reset_pipeline_agents("done")
-                            logger.info("[DIAG running] resolved terminal state=done")
-                    else:
-                        _reset_pipeline_agents("idle")
-
-                # Always prune completed from _running to prevent stale-failure carryover.
-                _prune_finished_running_entries_locked()
-                _log_running_lifecycle_locked("monitor.loop.end")
-
-                if recent_line:
-                    if any(
-                        k in blob for k in ["stage 1", "rera", "listings", "kaveri"]
-                    ):
-                        _agent_states["scraper"]["last_action"] = recent_line
-                    if any(k in blob for k in ["stage 3", "analyst"]):
-                        _agent_states["analyst"]["last_action"] = recent_line
-                    if any(k in blob for k in ["ceo", "synthesis"]):
-                        _agent_states["ceo"]["last_action"] = recent_line
-
-        except Exception:
-            pass
-
-        time.sleep(2)
-
-
-def _start_monitor_thread_once():
-    global _monitor_thread
-    if _monitor_thread and _monitor_thread.is_alive():
-        return
-    _monitor_thread = threading.Thread(target=_monitor_agent_states_loop, daemon=True)
-    _monitor_thread.start()
 
 
 def _normalize_market(market_raw: str):
@@ -395,12 +240,16 @@ if not _API_KEY:
 
 
 def _is_run_api_authorized(req) -> bool:
-    """Opt-in API key gate. Auth disabled when DASHBOARD_API_KEY is unset (local mode)."""
+    """Opt-in API key gate. Auth disabled when DASHBOARD_API_KEY is unset (local mode).
+    Supports DASHBOARD_API_KEY_PREV for zero-downtime rotation (T-250)."""
     api_key = os.environ.get("DASHBOARD_API_KEY", "")
     if not api_key:
         return True
     provided = req.headers.get("X-API-Key", "") or req.args.get("api_key", "")
-    return provided == api_key
+    if provided == api_key:
+        return True
+    api_key_prev = os.environ.get("DASHBOARD_API_KEY_PREV", "")
+    return bool(api_key_prev and provided == api_key_prev)
 
 
 def _detect_market_from_prompt(prompt: str):
@@ -424,13 +273,23 @@ def _start_pipeline_for_market(market: str):
         if market != "all":
             cmd += ["--market", market]
 
+        # Route output to the per-market log file so SSE /api/logs/stream can tail it.
+        # Parent closes its handle immediately; subprocess keeps its inherited fd open.
+        os.makedirs("/app/logs", exist_ok=True)
+        if market == "all":
+            log_dest = LOG_PATH
+        else:
+            slug = MARKET_SLUG.get(market, market.lower())
+            log_dest = f"/app/logs/{slug}.log"
+        _log_fh = open(log_dest, "a")
         proc = subprocess.Popen(
             cmd,
             cwd="/app",
             shell=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=_log_fh,
+            stderr=_log_fh,
         )
+        _log_fh.close()  # parent releases; subprocess holds its own copy of the fd
         started = datetime.now().isoformat()
         _running[market] = {"proc": proc, "started": started}
         logger.info(
@@ -449,26 +308,18 @@ def _start_pipeline_for_market(market: str):
 def _stop_pipeline_for_market(market: str):
         with _lock:
             entry = _running.get(market)
-            if entry:
-                if "proc" in entry and entry["proc"].poll() is None:
-                    entry["proc"].terminate()
-                    logger.info(
-                        "[DIAG running] terminate requested market=%s pid=%s",
-                        market,
-                        entry["proc"].pid,
-                    )
-                    return {"status": "stopped", "market": market}, 200
-                if "job_id" in entry:
-                    from worker import queue
-                    job = queue.fetch_job(entry["job_id"])
-                    if job and job.is_finished is False:
-                        job.cancel()
-                        logger.info(
-                            "[DIAG running] cancel requested market=%s job_id=%s",
-                            market,
-                            entry["job_id"],
-                        )
-                        return {"status": "canceled", "market": market}, 200
+            if entry and "proc" in entry and entry["proc"].poll() is None:
+                entry["proc"].terminate()
+                try:
+                    entry["proc"].wait(timeout=2)  # reap; kill if stuck (T-233)
+                except subprocess.TimeoutExpired:
+                    entry["proc"].kill()
+                logger.info(
+                    "[DIAG running] terminate requested market=%s pid=%s",
+                    market,
+                    entry["proc"].pid,
+                )
+                return {"status": "stopped", "market": market}, 200
         return {"status": "not_running"}, 200
 
 
@@ -484,16 +335,6 @@ def _running_snapshot():
                         "returncode": rc,
                         "pid": entry["proc"].pid,
                     }
-                elif "job_id" in entry:
-                    from worker import queue
-                    job = queue.fetch_job(entry["job_id"])
-                    if job:
-                        snapshot[market] = {
-                            "started": entry.get("started"),
-                            "state": "running" if job.is_started else ("done" if job.is_finished else "failed"),
-                            "returncode": None,
-                            "pid": None,
-                        }
             return snapshot
 
 
@@ -550,6 +391,7 @@ def health():
             """
         )
         row = cur.fetchone()
+        cur.close()
         _release_db(conn)
         if row:
             services["last_run"] = {
@@ -647,8 +489,6 @@ def db_state():
 
 @app.route("/api/run/<market>", methods=["POST"])
 def run_pipeline(market):
-    if not _is_run_api_authorized(request):
-        return jsonify({"error": "unauthorized"}), 401
     canonical = _normalize_market(market)
     if not canonical:
         return jsonify({"error": "invalid market"}), 400
@@ -658,8 +498,6 @@ def run_pipeline(market):
 
 @app.route("/api/run/<market>", methods=["DELETE"])
 def stop_pipeline(market):
-    if not _is_run_api_authorized(request):
-        return jsonify({"error": "unauthorized"}), 401
     canonical = _normalize_market(market)
     if not canonical:
         return jsonify({"error": "invalid market"}), 400
@@ -715,6 +553,7 @@ def agents_state():
 
         # If we got data from DB, use it; otherwise fall back to in-memory
         if db_agents:
+            cur.close()
             with _lock:
                 states_copy = copy.deepcopy(db_agents)
                 running_copy = {}
@@ -745,6 +584,7 @@ def agents_state():
             _release_db(conn)
             return jsonify(response)
 
+        cur.close()
         _release_db(conn)
     except Exception as e:
         logger.warning(f"[DIAG agents] DB query failed, falling back to in-memory: {e}")
@@ -781,8 +621,6 @@ def agents_state():
 
 @app.route("/api/agents/<agent_id>/command", methods=["POST"])
 def agent_command(agent_id):
-    if not _is_run_api_authorized(request):
-        return jsonify({"error": "unauthorized"}), 401
     body = request.get_json(silent=True) or {}
     prompt = str(body.get("prompt") or "")
     market_from_body = _normalize_market(str(body.get("market") or ""))
@@ -935,8 +773,14 @@ def sentinel_status():
 
 @app.route("/api/logs/stream")
 def stream_logs():
+    # Validate market against known canonical names — prevents path traversal
+    market_raw = request.args.get("market", "").strip().lower()
+    canonical = MARKET_CANONICAL.get(market_raw)
+    slug = MARKET_SLUG.get(canonical) if canonical else None
+    candidate = f"/app/logs/{slug}.log" if slug else None
+    log_path = candidate if (candidate and os.path.exists(candidate)) else LOG_PATH
+
     def generate():
-        log_path = "/app/logs/crew.log"
         # Read at most 32KB from end of file for initial replay (~200 typical log lines).
         # Prevents loading the full file into memory on every client connect/reconnect.
         TAIL_BYTES = 32768
@@ -951,11 +795,18 @@ def stream_logs():
                             f.readline()  # discard partial first line after mid-file seek
                         for line in f.readlines()[-80:]:
                             yield f"data: {json.dumps(line.rstrip())}\n\n"
+                        last_pos = f.tell()
                         while True:
                             line = f.readline()
                             if line:
+                                last_pos = f.tell()
                                 yield f"data: {json.dumps(line.rstrip())}\n\n"
                             else:
+                                # Detect log rotation: file shrank → break to reopen new file
+                                f.seek(0, 2)
+                                if f.tell() < last_pos:
+                                    break
+                                f.seek(last_pos)
                                 yield ": heartbeat\n\n"
                                 time.sleep(0.4)
                 except FileNotFoundError:
@@ -1084,5 +935,4 @@ if __name__ == "__main__":
         level=os.environ.get("DASHBOARD_LOG_LEVEL", "INFO"),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    _start_monitor_thread_once()
     app.run(host="0.0.0.0", port=8050, debug=False, threaded=True)

@@ -60,9 +60,9 @@ class RERAKarnatakaScraper:
         self.session = requests.Session()
         self.session.headers.update(self.HEADERS)
 
-    def scrape_market(self, market_name: str) -> list[dict]:
+    def scrape_market(self, market_name: str) -> tuple[list[dict], list]:
         """
-        Main entry point. Returns list of normalized project dicts for the market.
+        Main entry point. Returns (projects, cookies) for the market.
         Falls back to hardcoded sample data if portal unreachable.
         """
         logger.info(f"Starting RERA scrape for: {market_name}")
@@ -70,7 +70,7 @@ class RERAKarnatakaScraper:
         config = MARKET_RERA_CONFIG.get(market_name)
         if not config:
             logger.warning(f"  No RERA config for '{market_name}' — using fallback")
-            return self._fallback_rera_data(market_name)
+            return self._fallback_rera_data(market_name), []
 
         projects = self._post_search(
             config["district"], config["subdistrict"], market_name
@@ -78,7 +78,7 @@ class RERAKarnatakaScraper:
 
         if not projects:
             logger.warning("  Portal returned 0 results — using fallback sample data")
-            return self._fallback_rera_data(market_name)
+            return self._fallback_rera_data(market_name), []
 
         # Deduplicate by RERA number
         seen = set()
@@ -92,7 +92,8 @@ class RERAKarnatakaScraper:
                 unique.append(p)
 
         logger.info(f"  Found {len(unique)} unique projects in {market_name}")
-        return unique
+        cookies = list(self.session.cookies())
+        return unique, cookies
 
     @retry(
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
@@ -377,7 +378,7 @@ class RERAKarnatakaScraper:
 
 def scrape_market_standalone(market_name: str = "Yelahanka"):
     scraper = RERAKarnatakaScraper()
-    projects = scraper.scrape_market(market_name)
+    projects, _cookies = scraper.scrape_market(market_name)
 
     output_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

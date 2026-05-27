@@ -33,7 +33,7 @@ class RERAScraperTool(BaseTool):
         from config.checkpointer import Checkpointer
 
         scraper = RERAKarnatakaScraper()
-        projects = scraper.scrape_market(market_name)
+        projects, _cookies = scraper.scrape_market(market_name)
         # Save checkpoint — organizer reads from here (not from LLM output string)
         Checkpointer().save(market_name, "rera_scraped", projects)
         return json.dumps(projects, indent=2, default=str)

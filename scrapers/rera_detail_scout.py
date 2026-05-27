@@ -232,11 +232,18 @@ class RERADetailScout:
     Output: list of enriched project dicts with is_new flag from ScoutMemory
     """
 
-    def __init__(self, market: str, memory: ScoutMemory | None = None):
+    def __init__(
+        self,
+        market: str,
+        memory: ScoutMemory | None = None,
+        cookies: list | None = None,
+    ):
         self.market = market
         self.memory = memory or ScoutMemory(market)
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
+        if cookies:
+            self.session.cookies.update(cookies)
 
     def scout(
         self, projects: list[dict] | None = None, max_projects: int = 30
@@ -403,9 +410,17 @@ class RERADetailScout:
 
 
 def scout_market_rera_details(market: str) -> list[dict]:
+    from scrapers.rera_karnataka import RERAKarnatakaScraper
+
+    cp = Checkpointer()
     memory = ScoutMemory(market)
-    scout = RERADetailScout(market, memory)
-    results = scout.scout()
+    scraper = RERAKarnatakaScraper()
+    projects, cookies = scraper.scrape_market(market)
+    if not projects:
+        projects = cp.load(market, "rera_scraped") or []
+
+    scout = RERADetailScout(market, memory, cookies)
+    results = scout.scout(projects=projects)
 
     output_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

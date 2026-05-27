@@ -67,6 +67,10 @@ DEVELOPER_SITES: dict[str, dict] = {
             "north bangalore",
             "devanahalli",
             "bagalur",
+            "yelahanka new town",
+            "yelahanka satellite town",
+            "yelahanka phase 2",
+            "yelahanka phase 3",
         ],
     },
     "Prestige": {
@@ -82,6 +86,10 @@ DEVELOPER_SITES: dict[str, dict] = {
             "thanisandra",
             "jakkur",
             "finsbury",
+            "yelahanka new town",
+            "yelahanka satellite town",
+            "yelahanka phase 2",
+            "yelahanka phase 3",
         ],
     },
     "Sobha": {
@@ -95,6 +103,10 @@ DEVELOPER_SITES: dict[str, dict] = {
             "north bangalore",
             "hebbal",
             "jakkur",
+            "yelahanka new town",
+            "yelahanka satellite town",
+            "yelahanka phase 2",
+            "yelahanka phase 3",
         ],
     },
     "Godrej": {

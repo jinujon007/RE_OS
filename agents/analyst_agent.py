@@ -118,7 +118,10 @@ class MarketSummaryTool(BaseTool):
                 SELECT
                     ROUND(AVG(kr.transaction_amount / NULLIF(kr.area_sqft, 0)), 0)
                         AS avg_actual_psf,
-                    ROUND(AVG(kr.guidance_market_gap_pct), 1)
+                    ROUND(AVG(CASE
+                        WHEN kr.guidance_value > 0
+                        THEN ((kr.transaction_amount - kr.guidance_value) / kr.guidance_value) * 100
+                        ELSE NULL END), 1)
                         AS avg_guidance_gap_pct,
                     ROUND(AVG(kr.guidance_value / NULLIF(kr.area_sqft, 0)), 0)
                         AS avg_guidance_psf,
@@ -202,6 +205,50 @@ class CompetitorAnalysisTool(BaseTool):
             ).fetchall()
 
             return json.dumps([dict(r._mapping) for r in result], indent=2, default=str)
+
+
+class DistressedDeveloperListTool(BaseTool):
+    name: str = "distressed_developer_list"
+    description: str = (
+        "Finds potential distressed/JD-JV target developers in a micro-market. "
+        "Input: market name. "
+        "Returns: stalled project count, debt/distress flags, and last launch date by developer."
+    )
+
+    def _run(self, market_name: str) -> str:
+        engine = get_engine()
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("""
+                SELECT
+                    d.name AS developer,
+                    d.grade,
+                    COUNT(r.id) FILTER (
+                        WHERE COALESCE(r.delay_months, 0) >= 12
+                           OR (r.possession_date < CURRENT_DATE AND COALESCE(r.unsold_units, 0) > 50)
+                           OR (COALESCE(r.absorption_pct, 100) < 35 AND COALESCE(r.total_units, 0) >= 100)
+                    ) AS stalled_project_count,
+                    COUNT(r.id) FILTER (
+                        WHERE LOWER(COALESCE(r.risk_flags::text, '')) ~ '(debt|insolvency|nclt|default|restructur|cashflow|liquidity|distress)'
+                    ) AS debt_flagged_projects,
+                    MAX(r.launch_date) AS last_launch_date,
+                    ROUND(AVG(r.delay_months), 1) AS avg_delay_months,
+                    SUM(COALESCE(r.unsold_units, 0)) AS total_unsold_units
+                FROM rera_projects r
+                JOIN micro_markets m ON r.micro_market_id = m.id
+                LEFT JOIN developers d ON r.developer_id = d.id
+                WHERE m.name ILIKE :market
+                  AND r.is_active = TRUE
+                  AND d.name IS NOT NULL
+                GROUP BY d.id, d.name, d.grade
+                HAVING COUNT(r.id) > 0
+                ORDER BY stalled_project_count DESC, debt_flagged_projects DESC, total_unsold_units DESC
+                LIMIT 15
+            """),
+                {"market": f"%{market_name}%"},
+            ).fetchall()
+
+            return json.dumps([dict(r._mapping) for r in rows], indent=2, default=str)
 
 
 class ReportGeneratorTool(BaseTool):
@@ -300,11 +347,16 @@ def create_analyst_agent() -> Agent:
             "Yelahanka New Town. You know what an absorption rate below 40% signals. "
             "You know the difference between Grade A developer unsold inventory "
             "(pricing issue) vs Grade C developer unsold inventory (product/trust issue). "
-            "You produce intelligence that leads to decisions, not reports that get filed."
+            "You produce intelligence that leads to decisions, not reports that get filed. "
+            "STRICT TOOL CALL SEQUENCE: Always call tools in this exact order with no skips "
+            "and no repeats: (1) market_summary_query, (2) competitor_analysis, "
+            "(3) distressed_developer_list, (4) generate_market_report. "
+            "If a tool returns empty data, continue to the next tool once; do not retry."
         ),
         tools=[
             MarketSummaryTool(),
             CompetitorAnalysisTool(),
+            DistressedDeveloperListTool(),
             ReportGeneratorTool(),
         ],
         llm=get_analysis_llm(),
