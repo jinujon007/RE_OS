@@ -39,6 +39,7 @@ from agents import (
     create_scraper_agent,
     create_analyst_agent,
 )
+from utils.agent_memory import read_memories, write_memory
 from config.settings import TARGET_MARKETS
 from config.run_logger import RunLogger
 from sqlalchemy import create_engine
@@ -284,11 +285,18 @@ def _build_data_crew(market_name: str) -> Crew:
 # ── Stage 3: Intel Crew ────────────────────────────────────────────────────────
 
 
-def _build_intel_crew(market_name: str, db_stats: dict, has_fallback_data: bool = False) -> Crew:
+def _build_intel_crew(market_name: str, db_stats: dict, has_fallback_data: bool = False, 
+                      ceo_memory_context: str = "", analyst_memory_context: str = "") -> Crew:
     analyst = create_analyst_agent()
     ceo = create_ceo_agent()
     # CEO synthesizes in the intel crew — no re-delegation back to analyst
     ceo.allow_delegation = False
+    
+    # Inject memory contexts into agent backstories
+    if ceo_memory_context:
+        ceo.backstory += f"\n\nINSTITUTIONAL MEMORY — confirmed facts from previous runs:\n{ceo_memory_context}"
+    if analyst_memory_context:
+        analyst.backstory += f"\n\nINSTITUTIONAL MEMORY — confirmed facts from previous runs:\n{analyst_memory_context}"
 
     analyze = Task(
         description=(
@@ -689,15 +697,33 @@ def run_market_intelligence(market_name: str) -> str:
             if isinstance(r, dict)
         )
 
+        # Load institutional memory for CEO + Analyst agents (T-255)
+        ceo_memories = read_memories("ceo", market_name, limit=5)
+        analyst_memories = read_memories("analyst", market_name, limit=5)
+        ceo_memory_context = ""
+        analyst_memory_context = ""
+        if ceo_memories:
+            ceo_memory_context = "\n".join(
+                [f"- {m['fact']} (confidence: {m['confidence']:.2f})" for m in ceo_memories]
+            )
+        if analyst_memories:
+            analyst_memory_context = "\n".join(
+                [f"- {m['fact']} (confidence: {m['confidence']:.2f})" for m in analyst_memories]
+            )
+
         # Reset provider exclusions — Stage 1 may have excluded Gemini Gemma (LIGHT tier,
         # 15k TPM) which would incorrectly block Gemini Flash (ANALYSIS/HEAVY tier, 250k TPM).
         # Both share the "gemini" exclusion key despite being different models and quotas.
         _clear_excluded()
         try:
-            intel_crew = _build_intel_crew(market_name, db_stats, has_fallback_data=has_fallback_data)
+            intel_crew = _build_intel_crew(market_name, db_stats, has_fallback_data=has_fallback_data,
+                                         ceo_memory_context=ceo_memory_context,
+                                         analyst_memory_context=analyst_memory_context)
             result = _kickoff_with_fallback(
                 intel_crew,
-                lambda: _build_intel_crew(market_name, db_stats, has_fallback_data=has_fallback_data),
+                lambda: _build_intel_crew(market_name, db_stats, has_fallback_data=has_fallback_data,
+                                        ceo_memory_context=ceo_memory_context,
+                                        analyst_memory_context=analyst_memory_context),
                 "Stage 3 (intel)",
                 market_name,
             )
@@ -794,6 +820,44 @@ def run_market_intelligence(market_name: str) -> str:
 
         # Sync to Obsidian vault after CEO synthesis
         sync_to_obsidian(market_name, report_body)
+
+        # --- CEO memory write post-synthesis (T-256) ---
+        # Only attempt if we have a valid CEO synthesis (not placeholder and sufficient length)
+        if _PLACEHOLDER not in ceo_raw.lower() and len(ceo_raw.strip()) >= 50:
+            synthesis_text = ceo_raw
+            try:
+                # Use Cerebras 8b (LIGHT tier) to extract 3 key facts
+                from litellm import completion
+                import json
+                from config.settings import CEREBRAS_API_KEY, CEREBRAS_BASE_URL, CEREBRAS_MODEL
+
+                extraction_prompt = f"""From this market report, extract exactly 3 key facts as JSON list.
+Each fact: one sentence, specific number included if available.
+Format: [{{"fact": "...", "confidence": 0.6}}, ...]
+Report: {synthesis_text[:2000]}"""
+
+                response = completion(
+                    model=f"openai/{CEREBRAS_MODEL}",
+                    api_key=CEREBRAS_API_KEY,
+                    base_url=CEREBRAS_BASE_URL,
+                    messages=[{"role": "user", "content": extraction_prompt}],
+                    temperature=0.2,
+                    max_tokens=500,
+                )
+                extracted = response.choices[0].message.content
+                # Parse the JSON
+                facts = json.loads(extracted)
+                if not isinstance(facts, list):
+                    facts = []
+                for fact_dict in facts:
+                    if isinstance(fact_dict, dict) and "fact" in fact_dict and "confidence" in fact_dict:
+                        fact = str(fact_dict["fact"])
+                        confidence = float(fact_dict["confidence"])
+                        # Clamp confidence to [0, 1]
+                        confidence = max(0.0, min(1.0, confidence))
+                        write_memory("ceo", market_name, fact, confidence)
+            except Exception as exc:
+                logger.warning(f"CEO memory write failed: {exc}")
 
         rl.finish(status="success", report_path=report_path)
         _log_event(run_id, market_name, "pipeline", "success", report_path=report_path)

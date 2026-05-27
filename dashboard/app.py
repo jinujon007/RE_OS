@@ -433,15 +433,6 @@ def board_session_get(session_id):
         return jsonify({"error": "not found"}), 404
     return jsonify(session), 200
 
-# ── Alert Test ───────────────────────────────────────────────────────────────────
-
-
-@app.route("/api/alert/test", methods=["GET"])
-def test_alert():
-    from utils.notifier import send_alert
-    sent = send_alert("Test from RE_OS", "INFO")
-    return jsonify({"sent": sent})
-
 
 # ── Metrics ─────────────────────────────────────────────────────────────────────
 
