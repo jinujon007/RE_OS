@@ -13,11 +13,11 @@ Multi-agent real estate intelligence OS for LLS. Six AI scouts scrape RERA Karna
 **Questions it answers:** Enter a micro-market at what PSF? Who are Grade A competitors? Which developers are distressed (JD/JV targets)? Absorption trends? Go/no-go on a market right now?
 
 **Phase 1 (Scout Integration): ✅ COMPLETE**
-**Phase 2 (Dashboard): 🟡 IN PROGRESS — Flask server + core API endpoints live; dashboard UI panels (T-212–T-216), Phase NN pipeline fixes, and auth hardening still pending**
-**Phase 3 (Board Room): 🟡 Schema live (board_sessions in Alembic baseline); board_room.py skeleton pending T-218**
-**Phase 4 (Agent Memory): 🟡 Schema live (agent_memories in Alembic baseline); read/write/decay logic pending T-220**
+**Phase 2 (Dashboard): 🟡 IN PROGRESS — All 5 API endpoints live; all 5 GATE checks passed; UI panels (T-212/213/214/215/216) pending**
+**Phase 3 (Board Room): 🟡 IN PROGRESS — board_room.py + DB + API live (T-218/T-260 done); dept-head agents (T-257/258/259) next**
+**Phase 4 (Agent Memory): ✅ COMPLETE — read/write/decay implemented + injected into pipeline**
 
-**Current sprint:** Phase NN (critical pipeline fixes: structured events, market parallelism, fake context chain removal) → Phase N (integration hardening) → Phase O (dashboard UI panels)
+**Current sprint (Round 13):** Dashboard UI panels (M2) + Board Room dept-head agents (M4). See CURRENT_TASK.md.
 
 ---
 
