@@ -21,18 +21,28 @@ from config.settings import TARGET_MARKETS
 
 def run_rera_refresh():
     """Daily RERA data pull for all target markets."""
-    from crews.market_intel_crew import run_all_markets
     from config.llm_router import _clear_excluded
+    import subprocess, sys, os
 
     # Reset provider exclusions so stale rate-limit state from the previous
     # run doesn't carry over — each scheduled run starts with a clean slate.
     _clear_excluded()
-    logger.info("Scheduler: Starting daily RERA refresh")
-    try:
-        run_all_markets()
-        logger.info("Scheduler: RERA refresh complete")
-    except Exception as e:
-        logger.error(f"Scheduler: RERA refresh failed — {e}")
+    logger.info("Scheduler: Starting daily RERA refresh (spawning per-market processes)")
+
+    # Launch a separate process for each market to avoid blocking the scheduler thread.
+    # Each process writes to its own log file under logs/{slug}.log
+    for market in TARGET_MARKETS:
+        market_slug = market.strip().lower().replace(" ", "_")
+        log_path = f"logs/{market_slug}.log"
+        cmd = [sys.executable, "-m", "crews.market_intel_crew", "--market", market]
+        try:
+            with open(log_path, "a") as fh:
+                subprocess.Popen(cmd, stdout=fh, stderr=fh, env=os.environ)
+            logger.info(f"Spawned market process: {market} -> {log_path}")
+        except Exception as e:
+            logger.error(f"Failed to spawn process for {market}: {e}")
+
+    logger.info("Scheduler: daily RERA refresh spawned — returning immediately")
 
 
 def run_listings_scan():

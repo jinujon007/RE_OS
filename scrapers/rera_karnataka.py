@@ -34,6 +34,12 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import MARKET_RERA_CONFIG
 
+# Alternate subdistrict spellings to try when first attempt returns 0 results
+ALT_SUBDISTRICTS = {
+    "Hebbal": ["Bangalore North"],
+    "Yelahanka": ["Bengaluru North"],
+}
+
 
 class RERAKarnatakaScraper:
     """
@@ -75,6 +81,16 @@ class RERAKarnatakaScraper:
         projects = self._post_search(
             config["district"], config["subdistrict"], market_name
         )
+
+        if not projects:
+            # Try alternate subdistrict spellings
+            alt_subdistricts = ALT_SUBDISTRICTS.get(market_name, [])
+            for alt in alt_subdistricts:
+                logger.info(f"  Trying alternate subdistrict '{alt}' for {market_name}")
+                alt_projects = self._post_search(config["district"], alt, market_name)
+                if alt_projects:
+                    projects = alt_projects
+                    break
 
         if not projects:
             logger.warning("  Portal returned 0 results — using fallback sample data")
@@ -125,7 +141,13 @@ class RERAKarnatakaScraper:
                 f"  [POST] {district}/{subdistrict} → {resp.status_code}, {size_mb:.1f} MB"
             )
 
-            return self._parse_html_table(resp.text, market_name)
+            projects = self._parse_html_table(resp.text, market_name)
+            if not projects:
+                logger.warning(
+                    f"  [POST] 0 projects returned for {district}/{subdistrict}. "
+                    f"Raw HTML (first 500 chars): {resp.text[:500]}"
+                )
+            return projects
 
         except requests.exceptions.RequestException as e:
             logger.warning(f"  [POST] Request failed: {e}")

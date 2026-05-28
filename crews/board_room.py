@@ -210,13 +210,50 @@ def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def _extract_actions(dept_responses: dict, pitch: str, market: str) -> list:
+    """Extract concrete actions from department responses using Cerebras 8b (LIGHT tier).
+    Returns a list of action dicts or empty list on failure.
+    """
+    try:
+        from litellm import completion
+        from config.settings import CEREBRAS_API_KEY, CEREBRAS_BASE_URL, CEREBRAS_MODEL
+
+        prompt = (
+            "Extract 3-5 concrete actions from these board department responses. "
+            "Return ONLY a JSON array, each item: {\"action\": \"...\", \"owner\": \"bd|finance|engineering|ops\", \"priority\": \"high|medium|low\"}. "
+            "If insufficient information, return [].\n\n"
+            f"Market: {market}\nPitch: {pitch}\n"
+            f"BD: {dept_responses.get('bd', '')[:500]}\n"
+            f"Finance: {dept_responses.get('finance', '')[:500]}\n"
+            f"Engineering: {dept_responses.get('engineering', '')[:500]}\n"
+            f"Ops: {dept_responses.get('ops', '')[:500]}\n"
+        )
+        response = completion(
+            model=f"openai/{CEREBRAS_MODEL}",
+            api_key=CEREBRAS_API_KEY,
+            base_url=CEREBRAS_BASE_URL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=600,
+        )
+        raw = response.choices[0].message.content
+        actions = json.loads(raw)
+        if isinstance(actions, list):
+            return actions
+        logger.warning(f"board_room: action extraction returned non-list: {actions}")
+        return []
+    except Exception as exc:
+        logger.warning(f"board_room: action extraction failed: {exc}")
+        return []
+
 def _run_board_session_bg(session_id: str, pitch: str, market: str) -> None:
-    """Background worker: run dept heads, update session row to complete or failed."""
+    """Background worker: run dept heads, extract actions, update session row to complete or failed."""
     try:
         _update_session_row(session_id, "active", {"status": "active", "responses": {}})
         decomposition = _ceo_decompose(pitch, market)
         dept_responses = _run_dept_heads(pitch, market, decomposition)
-        transcript = {"status": "complete", "responses": dept_responses}
+        actions = _extract_actions(dept_responses, pitch, market)
+        transcript = {"status": "complete", "responses": dept_responses, "actions": actions}
         if decomposition is not None:
             transcript["ceo_decomposition"] = decomposition
         _update_session_row(session_id, "complete", transcript)

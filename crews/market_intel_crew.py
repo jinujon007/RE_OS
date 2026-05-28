@@ -756,6 +756,7 @@ def run_market_intelligence(market_name: str) -> str:
                 stage=3,
                 error=str(s3_exc),
                 duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
+                metadata={"has_fallback": has_fallback_data},
             )
             logger.error(f"[run:{run_id}] STAGE 3 FAILED: {s3_exc}\n{traceback.format_exc()}")
             rl.finish(status="failed", error=f"Stage 3: {s3_exc}")

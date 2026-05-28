@@ -39,6 +39,7 @@ Runtime fallback:
 import os
 import sys
 import threading
+from datetime import datetime, UTC
 from loguru import logger
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -70,6 +71,20 @@ from config.settings import (
 _EXCLUDED: set = set()
 _EXCLUDED_LOCK = threading.Lock()
 
+# DAILY_LIMITS config — limits are per calendar day UTC, reset at midnight
+DAILY_LIMITS = {
+    "cerebras": 1_000_000,
+    "groq": 500_000,
+    "gemini": 3_500_000,
+    "nvidia": 2_000_000,
+    "openrouter": 500_000
+}
+
+# In-process daily token counters — reset automatically at UTC midnight
+_daily_counts: dict[str, int] = {}
+_last_counts_date: str = None
+_counts_lock = threading.Lock()
+
 
 def _is_excluded(provider: str) -> bool:
     with _EXCLUDED_LOCK:
@@ -86,12 +101,39 @@ def _clear_excluded() -> None:
         _EXCLUDED.clear()
 
 
+def _reset_daily_counts_if_needed() -> None:
+    """Reset daily token counters at UTC midnight."""
+    global _last_counts_date, _daily_counts
+    with _counts_lock:
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
+        if _last_counts_date != today:
+            _daily_counts = {}
+            _last_counts_date = today
+            logger.info("[Router] Daily token counters reset for {} UTC", today)
+
+
+def record_token_usage(provider: str, tokens: int) -> None:
+    """Record token usage for a provider. Call after each LLM invocation."""
+    _reset_daily_counts_if_needed()
+    with _counts_lock:
+        _daily_counts[provider] = _daily_counts.get(provider, 0) + tokens
+
+
+def is_near_quota(provider: str) -> bool:
+    """Return True if provider has used >90% of daily limit."""
+    _reset_daily_counts_if_needed()
+    with _counts_lock:
+        limit = DAILY_LIMITS.get(provider, 0)
+        used = _daily_counts.get(provider, 0)
+        return used >= limit * 0.9 if limit > 0 else False
+
+
 def get_heavy_llm(temperature: float = 0.1) -> LLM:
     """
     CEO Agent — orchestration and final synthesis.
     Groq Scout (30k TPM) primary. Gemini fallback for long-context synthesis.
     """
-    if GROQ_API_KEY and not _is_excluded("groq"):
+    if GROQ_API_KEY and not _is_excluded("groq") and not is_near_quota("groq"):
         logger.info(f"[Router] HEAVY tier → Groq {GROQ_CEO_MODEL} (30k TPM)")
         return LLM(
             model=f"groq/{GROQ_CEO_MODEL}",
@@ -100,7 +142,7 @@ def get_heavy_llm(temperature: float = 0.1) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
-    if GEMINI_API_KEY and not _is_excluded("gemini"):
+    if GEMINI_API_KEY and not _is_excluded("gemini") and not is_near_quota("gemini"):
         logger.info(
             f"[Router] HEAVY fallback → Google AI Studio {GEMINI_CEO_MODEL} (250k TPM)"
         )
@@ -111,7 +153,7 @@ def get_heavy_llm(temperature: float = 0.1) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
-    if NVIDIA_API_KEY and not _is_excluded("nvidia"):
+    if NVIDIA_API_KEY and not _is_excluded("nvidia") and not is_near_quota("nvidia"):
         logger.info("[Router] HEAVY fallback → NVIDIA NIM 405B")
         return LLM(
             model=f"openai/{NVIDIA_CEO_MODEL}",
@@ -121,7 +163,7 @@ def get_heavy_llm(temperature: float = 0.1) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
-    if OPENROUTER_API_KEY and not _is_excluded("openrouter"):
+    if OPENROUTER_API_KEY and not _is_excluded("openrouter") and not is_near_quota("openrouter"):
         logger.info("[Router] HEAVY fallback → OpenRouter")
         return LLM(
             model=f"openrouter/{OPENROUTER_MODEL}",
@@ -145,7 +187,7 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
     Groq Scout backup: shares CEO's 30k TPM bucket only if Cerebras unavailable.
     Gemini 2.5 Flash backup: 250k TPM if Groq also exhausted.
     """
-    if CEREBRAS_API_KEY and not _is_excluded("cerebras"):
+    if CEREBRAS_API_KEY and not _is_excluded("cerebras") and not is_near_quota("cerebras"):
         logger.info(f"[Router] ANALYSIS tier → Cerebras {CEREBRAS_MODEL} (1M tok/day)")
         return LLM(
             model=f"openai/{CEREBRAS_MODEL}",
@@ -155,7 +197,7 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
-    if GROQ_API_KEY and not _is_excluded("groq"):
+    if GROQ_API_KEY and not _is_excluded("groq") and not is_near_quota("groq"):
         logger.info(
             f"[Router] ANALYSIS fallback → Groq {GROQ_ANALYST_MODEL} (shares CEO 30k TPM)"
         )
@@ -166,7 +208,7 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
-    if GEMINI_API_KEY and not _is_excluded("gemini"):
+    if GEMINI_API_KEY and not _is_excluded("gemini") and not is_near_quota("gemini"):
         logger.info(
             f"[Router] ANALYSIS fallback → Google AI Studio {GEMINI_CEO_MODEL} (250k TPM)"
         )
@@ -177,7 +219,7 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
-    if NVIDIA_API_KEY and not _is_excluded("nvidia"):
+    if NVIDIA_API_KEY and not _is_excluded("nvidia") and not is_near_quota("nvidia"):
         logger.info(
             f"[Router] ANALYSIS fallback → NVIDIA NIM {NVIDIA_ANALYST_MODEL} (40 req/min)"
         )
@@ -204,7 +246,7 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
     Google Gemma 3 27B backup: 15k TPM, 14,400 req/day — near-unlimited daily quota.
     NVIDIA backup: 40 req/min, no TPM cap.
     """
-    if CEREBRAS_API_KEY and not _is_excluded("cerebras"):
+    if CEREBRAS_API_KEY and not _is_excluded("cerebras") and not is_near_quota("cerebras"):
         logger.info(
             f"[Router] LIGHT tier → Cerebras {CEREBRAS_MODEL} (1M tok/day, fastest)"
         )
@@ -216,7 +258,7 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
             max_tokens=512,
             num_retries=3,
         )
-    if GEMINI_API_KEY and not _is_excluded("gemini"):
+    if GEMINI_API_KEY and not _is_excluded("gemini") and not is_near_quota("gemini"):
         logger.info(
             f"[Router] LIGHT fallback → Google AI Studio {GEMINI_LIGHT_MODEL} (15k TPM)"
         )
@@ -227,7 +269,7 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
             max_tokens=512,
             num_retries=3,
         )
-    if NVIDIA_API_KEY and not _is_excluded("nvidia"):
+    if NVIDIA_API_KEY and not _is_excluded("nvidia") and not is_near_quota("nvidia"):
         logger.info(
             f"[Router] LIGHT fallback → NVIDIA NIM {NVIDIA_LIGHT_MODEL} (40 req/min)"
         )

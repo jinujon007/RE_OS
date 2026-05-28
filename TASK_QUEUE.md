@@ -4,13 +4,15 @@
 
 ---
 
-## SPRINT BRIEF — Round 14 (updated 2026-05-28)
+## SPRINT BRIEF — Round 15 (updated 2026-05-28)
 
-**Phase 2 (Dashboard):** All 5 API endpoints live. UI panels still pending (T-280/282/283/284/286). GATE-2 blocked on these.
-**Phase 3 (Board Room):** Dept-head agents live (T-257/258 ✅). CEO decompose live (T-287 ✅). Action extraction (T-288) is next.
-**Phase 4 (Agent Memory):** Complete — CEO + Analyst read/write both live. Decay scheduler hook (T-298) pending.
+**Phase 2 (Dashboard):** All 5 API endpoints live. UI panels pending (T-280/282/283/284/286). GATE-2 blocked on these.
+**Phase 3 (Board Room):** Dept-heads ✅, CEO decompose ✅, Action extraction ✅ (T-288). Per-agent task prompts (T-294) next.
+**Phase 4 (Agent Memory):** Complete — CEO + Analyst read/write live. Row cap (T-297) + decay hook (T-298) pending.
+**LLM Router:** Daily token quota tracking live (T-290 ✅). Callers to record_token_usage() needed.
+**Scheduler:** Per-market log fan-out live (T-292 ✅).
 **GATE-2:** Requires T-280+282+283+284+286 + smoke test (T-293).
-**GATE-4:** RERA fix (T-281) is the remaining blocker — T-285 ✅ + T-287 ✅ already done.
+**GATE-4:** RERA alternate subdistrict retry live (T-281 partial). Root cause investigation ongoing.
 
 ---
 
@@ -37,6 +39,9 @@
 | T-299 | Obsidian sync: confidence/sources/is_estimated + daily log append | Cline | 1481cfc |
 | T-304 | agent_factory.py — all 9 agent roles registered | Cline+fix | 1481cfc |
 | T-305 | get_board_session() named column access via .mappings() | Claude | 1481cfc |
+| T-288 | Board Room: action extraction via Cerebras 8b post dept-heads | Kilo+fix | Round 15 |
+| T-290 | LLM Router: daily token usage tracking + is_near_quota() wired | Kilo | Round 15 |
+| T-292 | Scheduler: per-market subprocess fan-out, non-blocking thread | Kilo+fix | Round 15 |
 
 ---
 
@@ -59,8 +64,9 @@ Call `GET /api/intel/cards` on page load. Render 3 cards (Yelahanka, Devanahalli
 
 **Assignee:** Kilo Code | **Priority:** P0 — GATE-4 blocker
 **File:** `scrapers/rera_karnataka.py`
+**Partial done (Round 15):** `ALT_SUBDISTRICTS` retry loop added. Hebbal tries `Bangalore North`, Yelahanka tries `Bengaluru North`. Logs raw HTML on failure.
 
-Yelahanka and Hebbal return 8 hardcoded fallback projects. Devanahalli (317 projects) works via POST to `https://rera.karnataka.gov.in/projectViewDetails`. Read `MARKET_RERA_CONFIG` in `config/settings.py` — compare working Devanahalli vs failing Yelahanka/Hebbal configs. The issue is likely the `subdistrict` field value. For Hebbal: try `Bangalore North` as alternate spelling of `Bengaluru North`. Add retry with alternate spelling if first POST returns 0 rows + HTTP 200. Log first 500 chars of raw response HTML at WARNING on failure.
+**Remaining:** Run a live scrape in Docker and check the logs. If still 0 results, inspect raw HTML (logged at WARNING) to find the correct subdistrict value or whether the POST payload needs a different field. May need `taluk` field or different payload structure.
 
 **Done when:** Yelahanka or Hebbal returns >50 live RERA projects, OR root cause documented in CHANGELOG.md with exact HTTP response and subdistrict values tried.
 
@@ -101,16 +107,6 @@ Log tail box connected to `GET /api/logs/stream?market={market}` via SSE (EventS
 
 ---
 
-### T-285 — Agent Memory: Analyst Memory Write
-
-**Assignee:** Kilo Code | **Priority:** P1
-**File:** `crews/market_intel_crew.py`
-
-Agent memories are read for the Analyst before Stage 3 but never written after. After the analyst task completes (before CEO synthesis), extract 2-3 market facts from `analyst_raw` using the same Cerebras LiteLLM extraction pattern already in the file (see CEO memory write block, ~lines 848-882). Write with `write_memory("analyst", market_name, fact, confidence)`. Wrap in try/except — failure must not abort pipeline.
-
-**Done when:** After a successful pipeline run, `SELECT * FROM agent_memories WHERE agent_id = 'analyst'` returns rows.
-
----
 
 ### T-286 — Dashboard UI: Sentinel Status Footer
 
@@ -134,42 +130,8 @@ Before the 4 dept heads run in `_run_dept_heads`, add Stage 0: call `_ceo_decomp
 
 ---
 
-### T-288 — Board Room: Action Extraction
 
-**Assignee:** Kilo Code | **Priority:** P1
-**File:** `crews/board_room.py`
 
-After dept heads complete in `_run_board_session_bg`, add `_extract_actions(dept_responses, pitch, market)`: a Cerebras 8b LiteLLM call (same pattern as CEO memory write) that reads the 4 dept responses and extracts 3-5 concrete actions as JSON list: `[{"action": "...", "owner": "bd|finance|engineering|ops", "priority": "high|medium|low"}]`. Write to `board_sessions.transcript.actions`. Wrap in try/except — failure sets `actions: []`, does not crash the session.
-
-**Done when:** Board session transcript includes `actions` array with at least 1 extracted action after a real pitch.
-
----
-
-### T-289 — Pipeline Observability: Stage Event Metadata Column
-Status: IN-PROGRESS
-**Assignee:** Kilo Code | **Priority:** P1
-**Files:** `database/` (new migration SQL), `utils/db_organizer.py`, `crews/market_intel_crew.py`
-
-Create `database/migrate_add_stage_metadata.sql`:
-```sql
-ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
-```
-Update `_write_stage_event` in `utils/db_organizer.py` to accept a `metadata: dict = None` kwarg and write it to the new column. Update `_write_stage_event_to_db` calls in `market_intel_crew.py` to pass: Stage 1 `{"records_scraped": N}`, Stage 2 `{"inserted": N, "updated": N, "failed": N}`, Stage 3 `{"has_fallback": bool}`.
-
-**Done when:** `SELECT metadata FROM agent_runs ORDER BY created_at DESC LIMIT 5` returns non-null JSONB after a pipeline run.
-
----
-
-### T-290 — LLM Router: Daily Token Usage Tracking
-
-**Assignee:** Kilo Code | **Priority:** P1
-**File:** `config/llm_router.py`
-
-Add per-provider daily token counters (in-process dict, reset at UTC midnight). Add `DAILY_LIMITS` dict: `cerebras=1_000_000, groq=500_000, gemini=3_500_000, nvidia=2_000_000, openrouter=500_000`. Add `record_token_usage(provider, tokens)` and `is_near_quota(provider) -> bool` (True if >90% of daily limit used). Call `is_near_quota(provider)` inside `get_light_llm()`, `get_analysis_llm()`, `get_heavy_llm()` — if True, treat as excluded and try next provider. Estimate token count from character count / 4.
-
-**Done when:** When a provider is manually set to 90% quota in a unit test, `get_light_llm()` skips it and returns the next available provider.
-
----
 
 ### T-291 — Security: Rate Limiting on Write Endpoints
 
@@ -187,16 +149,6 @@ Return 429 with `{"error": "rate limit exceeded"}` on breach. Read-only endpoint
 
 ---
 
-### T-292 — Scheduler: Per-Market Log Files
-
-**Assignee:** Kilo Code | **Priority:** P1
-**File:** `config/scheduler.py`
-
-The scheduled 2AM RERA job currently calls `run_market_intelligence()` inline — this blocks the APScheduler thread for the full pipeline duration and logs to shared `crew.log`. Change to `subprocess.Popen` fan-out (same pattern as `run_all_markets()` in `crews/market_intel_crew.py`): each market spawns its own subprocess writing to `/app/logs/{slug}.log`. Scheduler thread returns immediately after spawning all subprocesses.
-
-**Done when:** After the scheduled job fires, each market has its own log file, and the APScheduler thread is not blocked (verify with a short test job that fires immediately).
-
----
 
 ### T-293 — GATE-2 Smoke Test Pass
 
