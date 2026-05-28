@@ -45,7 +45,60 @@
 
 ---
 
-## PENDING — Round 14 Kilo Code Tasks
+## PENDING — Round 16 Kilo Code Tasks
+
+---
+
+### T-306 — LLM Router: Wire record_token_usage() into pipeline
+
+**Assignee:** Kilo Code | **Priority:** P1
+**File:** `config/llm_router.py`, `crews/market_intel_crew.py`
+
+T-290 added `record_token_usage(provider, tokens)` and `is_near_quota()` but nothing calls `record_token_usage()` — quota counters are always 0, protection is dormant.
+
+**The hook:** litellm has a global callback system. Add a litellm success callback in `llm_router.py` that fires after every LLM call:
+```python
+import litellm
+def _litellm_usage_callback(kwargs, completion_response, start_time, end_time):
+    try:
+        provider = kwargs.get("model", "").split("/")[0]
+        tokens = completion_response.usage.total_tokens if completion_response.usage else 0
+        record_token_usage(provider, tokens)
+    except Exception:
+        pass
+litellm.success_callback = [_litellm_usage_callback]
+```
+Register this callback at module import time (outside any function). Providers in kwargs model strings: `"openai/llama-..."` → provider is `"openai"` — you need to map to our provider names. Use the API key to determine actual provider: if `api_key == CEREBRAS_API_KEY` → "cerebras", if `base_url` contains "groq" → "groq", etc. Use kwargs `"api_base"` or `"api_key"` to distinguish.
+
+**Done when:** After a full pipeline run, `config.llm_router._daily_counts` has non-zero values for at least one provider. Confirm by adding a temporary log line at the end of `run_market_intelligence()`: `logger.info(f"[Router] Daily counts: {_daily_counts}")`.
+
+---
+
+### T-307 — GATE-1 Verify: Stage events in agent_runs
+
+**Assignee:** Kilo Code | **Priority:** P1 — unlocks GATE-1
+**Depends on:** Docker stack running with data
+
+Run the pipeline for Devanahalli (it has live RERA data, most reliable):
+```bash
+docker compose exec agents python crews/market_intel_crew.py --market Devanahalli
+```
+Then query:
+```sql
+SELECT event_type, stage, status, metadata, duration_seconds
+FROM agent_runs
+WHERE market = 'Devanahalli'
+ORDER BY created_at DESC LIMIT 15;
+```
+Expected: at least 3 rows — stage_start/stage_complete events for stages 1, 2, 3. `metadata` column should be non-null JSONB for Stage 1 (records_scraped), Stage 2 (inserted/updated/failed), Stage 3 (has_fallback).
+
+If metadata is null or missing for any stage: check `_write_stage_event_to_db()` call sites in `market_intel_crew.py` — find which calls don't pass the `metadata=` kwarg and add it.
+
+**Done when:** All 3 stages show non-null metadata in agent_runs. Document the query output in `CHANGELOG.md` under `## GATE-1 — 2026-05-28`. GATE-1 is then passed.
+
+---
+
+## PENDING — Round 16 Cline Tasks
 
 ---
 
@@ -119,35 +172,10 @@ Sticky footer bar at bottom of page. Calls `GET /api/sentinel/status` on load an
 
 ---
 
-### T-287 — Board Room: CEO Decomposition Stage
-
-**Assignee:** Kilo Code | **Priority:** P1
-**File:** `crews/board_room.py`
-
-Before the 4 dept heads run in `_run_dept_heads`, add Stage 0: call `_ceo_decompose(pitch, market)` which uses the CEO agent (HEAVY tier from `config/llm_router.get_heavy_llm()`) to decompose the pitch into 4 dept-specific sub-questions as JSON: `{"bd": "...", "finance": "...", "engineering": "...", "ops": "..."}`. Each dept head then receives its specific sub-question as the task description instead of the raw pitch. Store the decomposition result in the board session transcript under the key `ceo_decomposition`. Fall back to raw pitch for all agents if decomposition fails or JSON is malformed.
-
-**Done when:** Board session transcript includes `ceo_decomposition` with 4 department sub-questions after a real pitch.
-
----
 
 
 
 
-### T-291 — Security: Rate Limiting on Write Endpoints
-
-**Assignee:** Kilo Code | **Priority:** P1
-**Files:** `dashboard/app.py`, `requirements.txt`
-
-Add `flask-limiter>=3.5` to `requirements.txt`. Initialize `Limiter` with in-memory storage (no Redis dependency needed — `storage_uri="memory://"`). Apply limits:
-- `POST /api/run/<market>` → 10 per hour per IP
-- `POST /api/board/session` → 20 per hour per IP
-- `POST /api/agents/<id>/command` → 30 per hour per IP
-
-Return 429 with `{"error": "rate limit exceeded"}` on breach. Read-only endpoints exempt.
-
-**Done when:** After 11 rapid POST requests to `/api/run/yelahanka`, the 11th returns 429. Normal usage (< limit) returns 200.
-
----
 
 
 ### T-293 — GATE-2 Smoke Test Pass
