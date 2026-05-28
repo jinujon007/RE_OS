@@ -1,71 +1,81 @@
 """
-RE_OS — Obsidian Sync Utility
-Handles synchronization of market briefs to Obsidian vault
+RE_OS — Obsidian Sync
+Writes market brief to the LLS wiki vault after every CEO synthesis.
+Target: D:\Brain\JINU JOSHI\03 LLS\01 Wiki\markets\{market}.md
 """
 
-import os
-import json
 from datetime import datetime
 from pathlib import Path
+
+from loguru import logger
+
 from config.settings import OBSIDIAN_VAULT_PATH
 
 
-def sync_to_obsidian(market: str, synthesis_text: str) -> bool:
-    """
-    Sync market brief to Obsidian vault
-    
+def sync_to_obsidian(
+    market: str,
+    synthesis_text: str,
+    confidence: float = 0.7,
+    sources: int = 1,
+    is_estimated: bool = False,
+) -> bool:
+    """Write market brief to Obsidian wiki vault.
+
     Args:
-        market: Market name (e.g., 'Yelahanka')
-        synthesis_text: CEO synthesis text to write
-        
+        market: Market name (e.g. 'Yelahanka').
+        synthesis_text: CEO synthesis to write as body.
+        confidence: Data confidence score 0-1 (pass is_estimated=True to cap at 0.5).
+        sources: Number of data sources contributing to this brief.
+        is_estimated: True when data is FALLBACK/ESTIMATED — caps confidence at 0.5.
+
     Returns:
-        bool: True if sync successful, False otherwise
+        True on success, False on any filesystem error.
     """
     try:
-        # Target path: D:\Brain\JINU JOSHI\03 LLS\01 Wiki\markets\{market}.md
+        if is_estimated:
+            confidence = min(confidence, 0.5)
+        confidence = round(max(0.0, min(1.0, confidence)), 2)
+
         vault_path = Path(OBSIDIAN_VAULT_PATH)
         market_file = vault_path / "markets" / f"{market}.md"
-        
-        # Ensure markets directory exists
         market_file.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Generate frontmatter
-        frontmatter = {
-            "type": "wiki",
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "area": "lls",
-            "market": market,
-            "confidence": 0.8,  # Default confidence for AI-generated content
-            "ai_generated": True
-        }
-        
-        # Create markdown content
-        markdown_content = f"---\n"
-        for key, value in frontmatter.items():
-            markdown_content += f"{key}: {value}\n"
-        markdown_content += f"---\n\n"
-        markdown_content += f"# {market} Market Brief\n\n"
-        markdown_content += synthesis_text.strip()
-        
-        # Write file (overwrite if exists)
-        with open(market_file, 'w', encoding='utf-8') as f:
-            f.write(markdown_content)
-            
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        frontmatter_lines = [
+            "---",
+            "type: wiki",
+            f"date: {today}",
+            "area: lls",
+            f"market: {market}",
+            f"confidence: {confidence}",
+            f"sources: {sources}",
+            f"last_confirmed: {today}",
+            "ai_generated: true",
+            "---",
+            "",
+        ]
+        body = "\n".join(frontmatter_lines)
+        body += f"# {market} Market Brief\n\n"
+        if is_estimated:
+            body += "> **Data quality: ESTIMATED** — live RERA scrape unavailable. Confidence capped at 0.5.\n\n"
+        body += synthesis_text.strip()
+
+        with open(market_file, "w", encoding="utf-8") as f:
+            f.write(body)
+
+        logger.info(f"[ObsidianSync] {market} → {market_file} (confidence={confidence})")
+
+        # Append one-liner to today's daily log (T-299)
+        try:
+            daily_log = vault_path.parent / "01 Daily" / f"[AI] {today}.md"
+            daily_log.parent.mkdir(parents=True, exist_ok=True)
+            with open(daily_log, "a", encoding="utf-8") as f:
+                f.write(f"\n- RE_OS: {market} market brief synced (confidence: {confidence}, sources: {sources})\n")
+        except Exception as log_exc:
+            logger.warning(f"[ObsidianSync] daily log append failed for {market}: {log_exc}")
+
         return True
-        
-    except Exception as e:
-        # Log error but don't abort pipeline
-        print(f"Obsidian sync failed for {market}: {str(e)}")
+
+    except Exception as exc:
+        logger.warning(f"[ObsidianSync] sync failed for {market}: {exc}")
         return False
-
-
-if __name__ == "__main__":
-    # Test function
-    test_market = "Yelahanka"
-    test_synthesis = """This is a test synthesis for Yelahanka market.
-    Current trends show increasing demand for residential properties.
-    PSF range: ₹5500-₹7500.
-    Recommendation: Proceed with caution due to market volatility."""
-    
-    result = sync_to_obsidian(test_market, test_synthesis)
-    print(f"Obsidian sync test: {'SUCCESS' if result else 'FAILED'}")

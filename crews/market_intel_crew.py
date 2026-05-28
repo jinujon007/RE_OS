@@ -436,7 +436,7 @@ def run_market_intelligence(market_name: str) -> str:
 
     _header(market_name, run_id)
     _log_event(run_id, market_name, "pipeline", "start")
-    _write_stage_event_to_db(run_id, market_name, "pipeline_start", "start", stage=0)
+    _write_stage_event_to_db(run_id, market_name, "pipeline_start", "start", stage=0, metadata={})
 
     try:
         # ── STAGE 1: Data collection ───────────────────────────────────────────
@@ -455,6 +455,7 @@ def run_market_intelligence(market_name: str) -> str:
             and cp.exists(market_name, "news_scout")
         )
         stage1_ok = False
+        records_scraped = 0  # Initialize records scraped counter
         if scouts_all_cached:
             _log_event(
                 run_id,
@@ -470,6 +471,7 @@ def run_market_intelligence(market_name: str) -> str:
                 "skip",
                 stage=1,
                 reason="all_checkpoints_cached",
+                metadata={"records_scraped": records_scraped},
             )
             print(
                 "  [Cache] All scouts cached. Delete outputs/{market}/checkpoints/ to force re-scrape."
@@ -477,6 +479,12 @@ def run_market_intelligence(market_name: str) -> str:
             rl.agent_done("scrape_rera")
             rl.agent_done("scrape_listings")
             stage1_ok = True
+            # Get records scraped from checkpoint for metadata
+            raw_projects = cp.load(market_name, "rera_scraped") or []
+            records_scraped = len(raw_projects)
+            # Get records scraped from checkpoint for metadata
+            raw_projects = cp.load(market_name, "rera_scraped") or []
+            records_scraped = len(raw_projects)
         else:
             try:
                 data_crew = _build_data_crew(market_name)
@@ -506,6 +514,7 @@ def run_market_intelligence(market_name: str) -> str:
                     stage=1,
                     error=str(s1_exc),
                     duration_seconds=round((datetime.now() - stage1_started).total_seconds(), 2),
+                    metadata={"records_scraped": records_scraped},
                 )
                 print(f"\n  [!!] Stage 1 failed: {s1_exc}")
                 print(
@@ -533,6 +542,7 @@ def run_market_intelligence(market_name: str) -> str:
                 "success",
                 stage=1,
                 duration_seconds=round((datetime.now() - stage1_started).total_seconds(), 2),
+                metadata={"records_scraped": records_scraped},
             )
 
         # ── STAGE 2: Pure Python validate + upsert ────────────────────────────
@@ -575,6 +585,7 @@ def run_market_intelligence(market_name: str) -> str:
                 stage=2,
                 error=str(s2_exc),
                 duration_seconds=round((datetime.now() - stage2_started).total_seconds(), 2),
+                metadata={"inserted": db_stats.get("inserted", 0), "updated": db_stats.get("updated", 0), "failed": db_stats.get("failed", 0)},
             )
             logger.error(f"[run:{run_id}] STAGE 2 DB write FAILED: {s2_exc}\n{traceback.format_exc()}")
             print(f"\n  [!!] Stage 2 DB write failed: {s2_exc}")
@@ -682,6 +693,7 @@ def run_market_intelligence(market_name: str) -> str:
             duration_seconds=round((datetime.now() - stage2_started).total_seconds(), 2),
             rera_inserted=db_stats.get("inserted", 0),
             rera_updated=db_stats.get("updated", 0),
+            metadata={"inserted": db_stats.get("inserted", 0), "updated": db_stats.get("updated", 0), "failed": db_stats.get("failed", 0)},
         )
 
         # ── STAGE 3: Intelligence ──────────────────────────────────────────────
@@ -767,6 +779,7 @@ def run_market_intelligence(market_name: str) -> str:
             "success",
             stage=3,
             duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
+            metadata={"has_fallback": has_fallback_data},
         )
 
         # Extract outputs — prefer CEO synthesis; fall back to analyst if CEO returned placeholder
@@ -780,6 +793,39 @@ def run_market_intelligence(market_name: str) -> str:
             elif len(result.tasks_output) == 1:
                 analyst_raw = result.tasks_output[0].raw or ""
         ceo_raw = ceo_raw or (result.raw if hasattr(result, "raw") else str(result))
+
+        # --- Analyst memory write (T-285) ---
+        if analyst_raw and len(analyst_raw.strip()) >= 50:
+            try:
+                from litellm import completion
+                import json
+                from config.settings import CEREBRAS_API_KEY, CEREBRAS_BASE_URL, CEREBRAS_MODEL
+
+                extraction_prompt = f"""From this analyst market brief, extract exactly 3 key facts as JSON list.
+Each fact: one sentence, specific number included if available.
+Format: [{{"fact": "...", "confidence": 0.6}}, ...]
+Brief: {analyst_raw[:2000]}"""
+
+                response = completion(
+                    model=f"openai/{CEREBRAS_MODEL}",
+                    api_key=CEREBRAS_API_KEY,
+                    base_url=CEREBRAS_BASE_URL,
+                    messages=[{"role": "user", "content": extraction_prompt}],
+                    temperature=0.2,
+                    max_tokens=500,
+                )
+                extracted = response.choices[0].message.content
+                facts = json.loads(extracted)
+                if not isinstance(facts, list):
+                    facts = []
+                for fact_dict in facts:
+                    if isinstance(fact_dict, dict) and "fact" in fact_dict and "confidence" in fact_dict:
+                        fact = str(fact_dict["fact"])
+                        confidence = float(fact_dict["confidence"])
+                        confidence = max(0.0, min(1.0, confidence))
+                        write_memory("analyst", market_name, fact, confidence)
+            except Exception as exc:
+                logger.warning(f"Analyst memory write failed: {exc}")
 
         if _PLACEHOLDER in ceo_raw.lower() or len(ceo_raw.strip()) < 50:
             logger.warning(
@@ -819,7 +865,13 @@ def run_market_intelligence(market_name: str) -> str:
                 f.write(f"\n\n{ceo_section}\n")
 
         # Sync to Obsidian vault after CEO synthesis
-        sync_to_obsidian(market_name, report_body)
+        sync_to_obsidian(
+            market_name,
+            report_body,
+            confidence=0.5 if has_fallback_data else 0.8,
+            sources=db_stats.get("inserted", 0) + db_stats.get("updated", 0),
+            is_estimated=has_fallback_data,
+        )
 
         # --- CEO memory write post-synthesis (T-256) ---
         # Only attempt if we have a valid CEO synthesis (not placeholder and sufficient length)

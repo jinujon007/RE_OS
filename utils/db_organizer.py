@@ -840,34 +840,36 @@ def _write_stage_event(
     event_name: str,
     status: str,
     stage: int = 0,
+    metadata: dict = None,
     **fields,
 ):
     """Insert structured stage event into agent_runs (non-fatal)."""
     try:
-        extra = {k: str(v) for k, v in fields.items()}
-        meta = {
-            "run_id": run_id,
-            "event_name": event_name,
-            "stage": stage,
-            **extra,
-        }
+        if metadata is None:
+            extra = {k: str(v) for k, v in fields.items()}
+            metadata = {
+                "run_id": run_id,
+                "event_name": event_name,
+                "stage": stage,
+                **extra,
+            }
         conn.execute(
             text("""
-            INSERT INTO agent_runs (
-                agent_name, task_type, micro_market, status,
-                metadata, started_at, completed_at
-            ) VALUES (
-                :agent_name, :task_type, :micro_market, :status,
-                CAST(:metadata AS jsonb), NOW(),
-                CASE WHEN :status IN ('success', 'failed', 'skip') THEN NOW() ELSE NULL END
-            )
+                INSERT INTO agent_runs (
+                    agent_name, task_type, micro_market, status,
+                    metadata, started_at, completed_at
+                ) VALUES (
+                    :agent_name, :task_type, :micro_market, :status,
+                    CAST(:metadata AS jsonb), NOW(),
+                    CASE WHEN :status IN ('success', 'failed', 'skip') THEN NOW() ELSE NULL END
+                )
             """),
             {
                 "agent_name": event_name,
                 "task_type": "pipeline_stage_event",
                 "micro_market": market,
                 "status": status,
-                "metadata": json.dumps(meta, default=str),
+                "metadata": json.dumps(metadata, default=str),
             },
         )
     except Exception as exc:

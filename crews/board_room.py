@@ -1,17 +1,18 @@
 """
-RE_OS — Board Room Crew (Phase 3 skeleton)
-──────────────────────────────────────────
-CEO decomposes a pitch → 4 dept heads respond concurrently → actions extracted.
+RE_OS — Board Room Crew
+───────────────────────
+POST /api/board/session → creates session row, fires 4 dept-head agents in
+a background thread, returns session_id immediately.
+GET  /api/board/session/<id> → polls DB for pending|active|complete|failed.
 
-Phase 3 is NOT YET IMPLEMENTED. This skeleton:
-  • Defines the session data contract (BoardSession)
-  • Creates a board_sessions DB row and returns session_id
-  • Stubs run_board_session() so T-258 (concurrent runner) can build on it
+Dept heads: BD, Finance, Engineering, Ops — each a single-agent CrewAI Crew
+running concurrently via ThreadPoolExecutor with a 90-second timeout guard.
 
-See: VISION.md § Phase 3, TASK_QUEUE.md T-218, T-257, T-258, T-259, T-260
+Action extraction (T-259) is next. See TASK_QUEUE.md.
 """
 
 import json
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -21,6 +22,7 @@ from loguru import logger
 from sqlalchemy import create_engine, text
 
 from config.settings import DATABASE_URL
+from config.llm_router import get_heavy_llm
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 
@@ -51,7 +53,108 @@ class BoardSession:
     created_at: Optional[str] = None
 
 
+def _ceo_decompose(pitch: str, market: str) -> Optional[dict]:
+    """Use the CEO agent to decompose the pitch into 4 dept-specific sub-questions.
+    Returns a dict with keys 'bd', 'finance', 'engineering', 'ops' or None on failure.
+    """
+    try:
+        llm = get_heavy_llm()
+        prompt = (
+            f"You are the CEO of a real estate investment firm. Given the following pitch for a market, "
+            f"decompose it into four specific sub-questions, one for each department head: "
+            f"Business Development (BD), Finance, Engineering, and Operations. "
+            f"Each sub-question should be tailored to that department's expertise and concerns. "
+            f"Return ONLY a JSON object with exactly four keys: 'bd', 'finance', 'engineering', 'ops'. "
+            f"Each value should be a string containing the sub-question for that department. "
+            f"Do not include any extra text or explanation.\n\n"
+            f"Market: {market}\n"
+            f"Pitch: {pitch}\n"
+        )
+        response = llm.call(prompt)
+        # Try to parse the JSON
+        decomposed = json.loads(response)
+        # Validate that we have the four keys and they are strings
+        if isinstance(decomposed, dict) and all(k in decomposed for k in ("bd", "finance", "engineering", "ops")):
+            # Ensure each value is a string (or convert to string)
+            for key in ("bd", "finance", "engineering", "ops"):
+                if not isinstance(decomposed[key], str):
+                    decomposed[key] = str(decomposed[key])
+            return decomposed
+        else:
+            logger.warning(f"board_room: CEO decomposition returned invalid structure: {decomposed}")
+            return None
+    except Exception as exc:
+        logger.warning(f"board_room: CEO decomposition failed: {exc}")
+        return None
+
+
 # ── DB helpers ────────────────────────────────────────────────────────────────
+
+def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = None) -> dict:
+    """Run the four department-head agents concurrently via single-agent Crews.
+    Returns a dict with keys 'bd', 'finance', 'engineering', 'ops'.
+    Enforces a 90-second timeout guard.
+    """
+    from crewai import Task, Crew, Process
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from agents.board_room.bd_head import build_bd_head_agent
+    from agents.board_room.finance_head import build_finance_head_agent
+    from agents.board_room.engineering_head import build_engineering_head_agent
+    from agents.board_room.ops_head import build_ops_head_agent
+
+    def run_single_agent(builder_fn, key: str) -> str:
+        agent = builder_fn()
+        # Build task description: if decomposition is available and has the key, use it; else use default.
+        if decomposition and key in decomposition and isinstance(decomposition[key], str) and decomposition[key].strip():
+            dept_specific = decomposition[key]
+            task_description = (
+                f"Market: {market}\n"
+                f"Sub-question for {key.upper()}: {dept_specific}\n\n"
+                "Provide your department's full assessment of this sub-question."
+            )
+        else:
+            # Fallback to original
+            task_description = (
+                f"Market: {market}\nPitch: {pitch}\n\n"
+                "Provide your department's full assessment of this pitch."
+            )
+        task = Task(
+            description=task_description,
+            expected_output=(
+                "A structured one-page assessment with a clear verdict "
+                "(e.g. GO/NO-GO or VIABLE/CONDITIONAL/UNVIABLE) and supporting points."
+            ),
+            agent=agent,
+        )
+        crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False)
+        result = crew.kickoff()
+        if hasattr(result, "tasks_output") and result.tasks_output:
+            return result.tasks_output[0].raw or ""
+        return getattr(result, "raw", str(result))
+
+    builders = {
+        "bd": build_bd_head_agent,
+        "finance": build_finance_head_agent,
+        "engineering": build_engineering_head_agent,
+        "ops": build_ops_head_agent,
+    }
+    responses: dict = {}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        future_to_key = {executor.submit(run_single_agent, fn, key): key for key, fn in builders.items()}
+        try:
+            for future in as_completed(future_to_key, timeout=90):
+                key = future_to_key[future]
+                try:
+                    responses[key] = future.result()
+                except Exception as exc:
+                    responses[key] = f"Error: {exc}"
+                    logger.warning(f"board_room: dept-head '{key}' raised: {exc}")
+        except TimeoutError:
+            for f in future_to_key:
+                f.cancel()
+            logger.warning("board_room: dept-head timeout — partial responses returned")
+    return responses
 
 def _create_session_row(session_id: str, pitch: str, market: Optional[str]) -> bool:
     """Insert a pending session row into board_sessions. Non-fatal on failure."""
@@ -80,7 +183,8 @@ def _create_session_row(session_id: str, pitch: str, market: Optional[str]) -> b
 
 
 def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
-    """Update an existing session row with final status + transcript."""
+    """Update session row. Sets completed_at only on terminal states."""
+    is_terminal = status in ("complete", "failed")
     try:
         with _get_engine().begin() as conn:
             conn.execute(
@@ -88,13 +192,14 @@ def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
                 UPDATE board_sessions
                 SET status = :status,
                     transcript = CAST(:transcript AS jsonb),
-                    completed_at = NOW()
+                    completed_at = CASE WHEN :is_terminal THEN NOW() ELSE completed_at END
                 WHERE session_id = :session_id
                 """),
                 {
                     "session_id": session_id,
                     "status": status,
                     "transcript": json.dumps(transcript, default=str),
+                    "is_terminal": is_terminal,
                 },
             )
         return True
@@ -105,28 +210,48 @@ def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def _run_board_session_bg(session_id: str, pitch: str, market: str) -> None:
+    """Background worker: run dept heads, update session row to complete or failed."""
+    try:
+        _update_session_row(session_id, "active", {"status": "active", "responses": {}})
+        decomposition = _ceo_decompose(pitch, market)
+        dept_responses = _run_dept_heads(pitch, market, decomposition)
+        transcript = {"status": "complete", "responses": dept_responses}
+        if decomposition is not None:
+            transcript["ceo_decomposition"] = decomposition
+        _update_session_row(session_id, "complete", transcript)
+    except Exception as exc:
+        logger.error(f"board_room bg worker failed for {session_id}: {exc}")
+        _update_session_row(session_id, "failed", {"status": "failed", "error": str(exc)})
+
+
 def run_board_session(pitch: str, market: str) -> dict:
-    """Create a board session and return its ID.
+    """Create a board session row, start dept-head agents in a background thread, return immediately.
 
-    Phase 3 NOT YET IMPLEMENTED — actual dept-head agent calls are in T-257/T-258.
-    This stub creates the DB row and returns a valid session_id so the API layer
-    (T-260) can track session state.
-
-    Returns:
-        {"session_id": str, "status": "pending", "message": str}
+    Callers poll GET /api/board/session/{session_id} for status changes:
+      pending → active → complete | failed
     """
     session_id = str(uuid.uuid4())
     created = _create_session_row(session_id, pitch, market)
-    status = "pending" if created else "error"
+    if not created:
+        return {
+            "session_id": session_id,
+            "status": "error",
+            "market": market,
+            "message": "DB row creation failed — check logs.",
+        }
+    t = threading.Thread(
+        target=_run_board_session_bg,
+        args=(session_id, pitch, market),
+        daemon=True,
+        name=f"board-{session_id[:8]}",
+    )
+    t.start()
     return {
         "session_id": session_id,
-        "status": status,
+        "status": "pending",
         "market": market,
-        "message": (
-            "Session created. Board Room Phase 3 pending T-257/T-258 implementation."
-            if created else
-            "Session ID generated but DB write failed — check logs."
-        ),
+        "message": "Session created. Poll GET /api/board/session/{session_id} for results.",
     }
 
 
@@ -141,17 +266,17 @@ def get_board_session(session_id: str) -> Optional[dict]:
                 WHERE session_id = :session_id
                 """),
                 {"session_id": session_id},
-            ).fetchone()
+            ).mappings().fetchone()
             if row is None:
                 return None
             return {
-                "session_id": row[0],
-                "pitch": row[1],
-                "market": row[2],
-                "status": row[3],
-                "transcript": row[4],
-                "created_at": str(row[5]),
-                "completed_at": str(row[6]) if row[6] else None,
+                "session_id": row["session_id"],
+                "pitch": row["pitch"],
+                "market": row["market"],
+                "status": row["status"],
+                "transcript": row["transcript"],
+                "created_at": str(row["created_at"]),
+                "completed_at": str(row["completed_at"]) if row["completed_at"] else None,
             }
     except Exception as exc:
         logger.warning(f"board_room: get_board_session failed for {session_id}: {exc}")

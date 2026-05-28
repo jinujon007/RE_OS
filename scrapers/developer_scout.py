@@ -1,4 +1,4 @@
-"""
+r"""
 RE_OS — Developer Scout
 ────────────────────────
 Goes directly to developer websites — not the portals, not RERA.
@@ -55,8 +55,8 @@ from scrapers.scout_memory import ScoutMemory
 DEVELOPER_SITES: dict[str, dict] = {
     "Brigade": {
         "name": "Brigade Enterprises",
-        "projects_url": "https://www.brigade.in/all-properties?city=bangalore",
-        "alt_url": "https://www.brigade.in/residential",
+        "projects_url": "https://www.brigadegroup.com/residential",
+        "alt_url": "https://www.brigadegroup.com/residential?location=yelahanka",
         "use_playwright": True,
         "north_blr_keywords": [
             "yelahanka",
@@ -75,8 +75,8 @@ DEVELOPER_SITES: dict[str, dict] = {
     },
     "Prestige": {
         "name": "Prestige Group",
-        "projects_url": "https://www.prestige.co.in/residential-projects/bangalore",
-        "alt_url": "https://www.prestige.co.in/all-projects",
+        "projects_url": "https://www.prestigeconstructions.com/residential-projects/bangalore",
+        "alt_url": "https://www.prestigeconstructions.com/residential-projects/bangalore?search=finsbury",
         "use_playwright": True,
         "north_blr_keywords": [
             "yelahanka",
@@ -676,6 +676,6 @@ if __name__ == "__main__":
         "--developer", default="", help="Comma-separated developer keys (default: all)"
     )
     args = parser.parse_args()
-    logger.add("./logs/developer_scout.log", rotation="10 MB")
+    logger.add("/tmp/logs/developer_scout.log", rotation="10 MB")
     devs = [d.strip() for d in args.developer.split(",") if d.strip()] or None
     scout_developers(args.market, developers=devs)

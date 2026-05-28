@@ -18,12 +18,27 @@ import sys
 import psycopg2
 import psycopg2.pool
 from flask import Flask, Response, jsonify, render_template, request
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 _PROJECT_ROOT = str(Path(__file__).resolve().parents[1])
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 app = Flask(__name__, template_folder="templates")
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    storage_uri="memory://",
+    strategy="fixed-window",
+)
+
+
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    return jsonify({"error": "rate limit exceeded"}), 429
+
 
 # Read-only endpoints — exempt from API key gate (T-235)
 _READ_ONLY_PATHS = frozenset({
@@ -416,6 +431,7 @@ def health():
 
 # ── Board Room API
 
+@limiter.limit("20 per hour")
 @app.route("/api/board/session", methods=["POST"])
 def board_session_create():
     from crews.board_room import run_board_session
@@ -514,6 +530,7 @@ def db_state():
 # ── Pipeline Control ───────────────────────────────────────────────────────────
 
 
+@limiter.limit("10 per hour")
 @app.route("/api/run/<market>", methods=["POST"])
 def run_pipeline(market):
     canonical = _normalize_market(market)
@@ -646,6 +663,7 @@ def agents_state():
     return jsonify(response)
 
 
+@limiter.limit("30 per hour")
 @app.route("/api/agents/<agent_id>/command", methods=["POST"])
 def agent_command(agent_id):
     body = request.get_json(silent=True) or {}

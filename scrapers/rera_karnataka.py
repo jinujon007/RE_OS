@@ -112,6 +112,7 @@ class RERAKarnatakaScraper:
             "regNo": "",
             "district": district,
             "subdistrict": subdistrict,
+            "taluk": subdistrict,
             "btn1": "Search",
         }
 
