@@ -703,7 +703,7 @@ SELECT
     COUNT(CASE WHEN r.project_status = 'Completed' THEN 1 END) AS completed,
     COUNT(CASE WHEN r.delay_months > 0 THEN 1 END) AS delayed,
     ROUND(AVG(r.delay_months), 1) AS avg_delay_months,
-    STRING_AGG(DISTINCT mm.name, ', ') AS markets_active_in
+    STRING_AGG(DISTINCT mm.name, ', ' ORDER BY mm.name) AS markets_active_in
 FROM developers d
 LEFT JOIN rera_projects r ON r.developer_id = d.id
 LEFT JOIN micro_markets mm ON r.micro_market_id = mm.id

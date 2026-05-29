@@ -132,7 +132,7 @@ def _get_stage_event_engine():
     if _stage_event_engine is None:
         # SQLAlchemy engines are thread-safe; a brief duplicate-create race is harmless.
         _stage_event_engine = create_engine(
-            DATABASE_URL, pool_pre_ping=True, pool_size=2, max_overflow=0
+            DATABASE_URL, pool_pre_ping=True, pool_size=5, max_overflow=2
         )
     return _stage_event_engine
 

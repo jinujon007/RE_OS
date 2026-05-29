@@ -65,6 +65,7 @@ ollama-pull:
 
 lint:
 	ruff check .
+	ruff format --check .
 
 format:
 	ruff format .

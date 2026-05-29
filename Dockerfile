@@ -7,8 +7,6 @@ RUN apt-get update && apt-get install -y \
     gcc \
     libpq-dev \
     curl \
-    chromium \
-    chromium-driver \
     && rm -rf /var/lib/apt/lists/*
 
 # Python dependencies (installed before COPY . . for layer caching)
@@ -39,7 +37,5 @@ RUN groupadd --gid 1001 re_os \
 USER re_os
 
 ENV PYTHONUNBUFFERED=1
-ENV CHROME_BIN=/usr/bin/chromium
-ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
 CMD ["python", "crews/market_intel_crew.py"]

@@ -85,12 +85,12 @@ TARGET_MARKETS = os.getenv("TARGET_MARKETS", "Yelahanka,Devanahalli,Hebbal").spl
 # Response: server-rendered HTML, all rows in one response, no JS needed
 MARKET_RERA_CONFIG = {
     "Yelahanka": {
-        "district": "Bengaluru Urban",
+        "district": "Bengaluru  Urban",  # two spaces — mirrors Devanahalli Rural pattern
         "subdistrict": "Yelahanka",
         "expected_rows": 165,
     },
     "Hebbal": {
-        "district": "Bengaluru Urban",
+        "district": "Bengaluru  Urban",  # two spaces — mirrors Devanahalli Rural pattern
         "subdistrict": "Bengaluru North",
         "expected_rows": 734,
     },

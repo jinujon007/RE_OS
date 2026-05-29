@@ -65,6 +65,27 @@ jobs:
           DB_PASSWORD: test_password_for_ci
         run: pytest tests/ -v -m unit --tb=short --cov=agents --cov=config --cov=crews --cov=scrapers --cov=utils --cov=dashboard --cov-report=term-missing --cov-fail-under=50
 
+  secrets-scan:
+    name: Secrets Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: lint
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: detect-secrets scan
+        run: |
+          pip install detect-secrets
+          detect-secrets scan --baseline .secrets.baseline
+
   pip-audit:
     name: Dependency Vulnerability Scan
     runs-on: ubuntu-latest

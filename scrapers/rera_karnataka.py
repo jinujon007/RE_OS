@@ -35,10 +35,18 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import MARKET_RERA_CONFIG
 
-# Alternate subdistrict spellings to try when first attempt returns 0 results
+# Alternate subdistrict spellings to try when first attempt returns 0 results.
+# Ordered by decreasing likelihood. Scraper walks this list until non-zero results.
 ALT_SUBDISTRICTS = {
-    "Hebbal": ["Bangalore North"],
-    "Yelahanka": ["Bengaluru North"],
+    "Hebbal": ["Bangalore North", "Bengaluru North", "Hebbal"],
+    "Yelahanka": ["Bengaluru North", "Bangalore North", "Yelahanka New Town"],
+}
+
+# Alternate district spellings — tries single-space variant as fallback
+# (portal historically used double-space for 'Rural'; 'Urban' may vary by portal version)
+ALT_DISTRICTS = {
+    "Yelahanka": ["Bengaluru Urban", "Bangalore Urban"],
+    "Hebbal": ["Bengaluru Urban", "Bangalore Urban"],
 }
 
 
@@ -111,13 +119,28 @@ class RERAKarnatakaScraper:
         )
 
         if not projects:
-            # Try alternate subdistrict spellings
+            # Try alternate subdistrict spellings (same district)
             alt_subdistricts = ALT_SUBDISTRICTS.get(market_name, [])
             for alt in alt_subdistricts:
                 logger.info(f"  Trying alternate subdistrict '{alt}' for {market_name}")
                 alt_projects = self._post_search(config["district"], alt, market_name)
                 if alt_projects:
                     projects = alt_projects
+                    break
+
+        if not projects:
+            # Try alternate district spellings (original subdistrict + all alt subdistricts)
+            alt_districts = ALT_DISTRICTS.get(market_name, [])
+            subdistricts_to_try = [config["subdistrict"]] + ALT_SUBDISTRICTS.get(market_name, [])
+            for alt_district in alt_districts:
+                for sub in subdistricts_to_try:
+                    logger.info(f"  Trying district='{alt_district}' subdistrict='{sub}'")
+                    alt_projects = self._post_search(alt_district, sub, market_name)
+                    if alt_projects:
+                        projects = alt_projects
+                        logger.info(f"  Live data found with district='{alt_district}' sub='{sub}'")
+                        break
+                if projects:
                     break
 
         if not projects:

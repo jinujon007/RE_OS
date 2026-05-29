@@ -94,6 +94,14 @@ except ImportError:
     sys.modules["flask_limiter"] = _fl
     sys.modules["flask_limiter.util"] = _fl_util
 
+# ── flask_cors stub ───────────────────────────────────────────────────────────
+try:
+    import flask_cors as _fc_check  # noqa: F401
+except ImportError:
+    _fc = types.ModuleType("flask_cors")
+    _fc.CORS = MagicMock()
+    sys.modules["flask_cors"] = _fc
+
 # ── psycopg2 stub ──────────────────────────────────────────────────────────────
 try:
     import psycopg2 as _pg2_check  # noqa: F401

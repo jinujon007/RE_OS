@@ -53,6 +53,7 @@ alembic>=1.13.0
 
 # Dashboard
 flask>=3.0.0
+flask-cors>=4.0.0
 gunicorn>=21.2.0
 prometheus-client>=0.21.0
 flask-limiter>=3.5

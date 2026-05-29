@@ -29,6 +29,11 @@ if _PROJECT_ROOT not in sys.path:
 
 app = Flask(__name__, template_folder="templates")
 
+# CORS configuration – allowlist via env var
+from flask_cors import CORS
+_ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("DASHBOARD_ALLOWED_ORIGINS", "http://localhost:8050").split(",") if o.strip()]
+CORS(app, origins=_ALLOWED_ORIGINS)
+
 limiter = Limiter(
     get_remote_address,
     app=app,
@@ -40,6 +45,15 @@ limiter = Limiter(
 @app.errorhandler(429)
 def ratelimit_handler(e):
     return jsonify({"error": "rate limit exceeded"}), 429
+
+
+@app.after_request
+def _add_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-XSS-Protection"] = "0"
+    return response
 
 
 # Read-only endpoints — exempt from API key gate (T-235)

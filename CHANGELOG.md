@@ -1,3 +1,15 @@
+## Session — Claude Code 2026-05-29 (Round 24 — Kilo Transition + Final Tasks)
+
+OPS | AGENTS.md + KILO_BRIEF.md + CLINE_BRIEF.md + CURRENT_TASK.md + DISPATCH.md | Cline retired; Kilo Code is sole implementer; all coordination files rewritten for single-brain workflow | Claude Code | 2026-05-29
+REFACTOR | scrapers/rera_karnataka.py + config/settings.py | T-281: district "Bengaluru  Urban" (double-space, mirrors Rural pattern) + exhaustive alt-district retry loop added | Claude Code | 2026-05-29
+INFRA | database/schema.sql | T-323: STRING_AGG ORDER BY mm.name in v_developer_scorecard — deterministic sort | Claude Code | 2026-05-29
+INFRA | docker-compose.yml | T-324: alembic upgrade head runs before gunicorn on agents container start | Claude Code | 2026-05-29
+SECURITY | .github/workflows/ci.yml + .secrets.baseline | T-336: detect-secrets CI job added; baseline committed (6 files, all false positives — test passwords, placeholder keys) | Claude Code | 2026-05-29
+BUG-FIX | tests/conftest.py | flask_cors stub added — dashboard tests now collect without Docker | Claude Code | 2026-05-29
+OPS | TASK_QUEUE.md | All T-281 through T-341 marked DONE; queue restructured for single-brain (no Brain column, simplified protocol) | Claude Code | 2026-05-29
+
+---
+
 ## Session — Claude Code 2026-05-29 (Round 23 — Cline Sprint Completion)
 
 BUG-FIX | config/scheduler.py | Duplicate run_market_snapshot() definition removed + misindented except clause fixed (was inside with block, not try block — syntax error) | Claude Code | 2026-05-29
@@ -16,7 +28,7 @@ FEATURE | tests/test_dashboard_routes.py | T-328: 5 route tests — health no-au
 BUG-FIX | tests/test_dashboard.py | test_intel_returns_200 + test_intel_is_read_only updated to test_intel_returns_404 — endpoint deleted by T-317 | Claude Code | 2026-05-29
 BUG-FIX | tests/conftest.py | flask_limiter + psycopg2 stubs added — dashboard tests now run without Docker install | Claude Code | 2026-05-29
 BUG-FIX | tests/test_run_logger.py + utils/notifier.py | Pre-existing ruff E741/E401 violations fixed (ambiguous var l, multiple imports on one line) | Claude Code | 2026-05-29
-OPS | TASK_QUEUE.md | T-302/317/318/321/322/328/329/337/338/339/340/341 marked DONE | Claude Code | 2026-05-29
+OPS | TASK_QUEUE.md | T-302/317/318/319/321/322/328/329/337/338/339/340/341 marked DONE | Claude Code | 2026-05-29
 
 ---
 

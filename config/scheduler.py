@@ -16,6 +16,26 @@ import os
 import sys
 
 from config.settings import TARGET_MARKETS
+from sqlalchemy import create_engine, text
+from config.settings import DATABASE_URL
+import threading
+
+_scheduler_engine = None
+_scheduler_engine_lock = threading.Lock()
+
+
+def _get_scheduler_engine():
+    global _scheduler_engine
+    if _scheduler_engine is None:
+        with _scheduler_engine_lock:
+            if _scheduler_engine is None:
+                _scheduler_engine = create_engine(
+                    DATABASE_URL,
+                    pool_pre_ping=True,
+                    pool_size=3,
+                    max_overflow=1,
+                )
+    return _scheduler_engine
 
 
 def run_rera_refresh():
@@ -97,12 +117,10 @@ def run_yelahanka_refresh():
 def run_market_snapshot():
     """Generate market snapshots for all active markets."""
     logger.info("Scheduler: Generating market snapshots")
-    from sqlalchemy import create_engine, text
-    from config.settings import DATABASE_URL
 
     for market in TARGET_MARKETS:
         market = market.strip()
-        engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+        engine = _get_scheduler_engine()
         try:
             with engine.begin() as conn:
                 conn.execute(
@@ -152,11 +170,9 @@ def run_market_snapshot():
 
 def recover_stuck_board_sessions():
     """Set board sessions stuck at 'active' for >30 minutes to 'failed'."""
-    from sqlalchemy import create_engine, text
-    from config.settings import DATABASE_URL
 
     try:
-        engine = create_engine(DATABASE_URL)
+        engine = _get_scheduler_engine()
         with engine.begin() as conn:
             result = conn.execute(
                 text("""
