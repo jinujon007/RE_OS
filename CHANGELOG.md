@@ -1,3 +1,51 @@
+## Session — Claude Code 2026-05-29 (Round 23 — Cline Sprint Completion)
+
+BUG-FIX | config/scheduler.py | Duplicate run_market_snapshot() definition removed + misindented except clause fixed (was inside with block, not try block — syntax error) | Claude Code | 2026-05-29
+FEATURE | dashboard/app.py | T-317: Deleted deprecated GET /api/intel file-read endpoint — /api/intel/cards supersedes it | Claude Code | 2026-05-29
+INFRA | crews/board_room.py | T-318: pool_size=2 max_overflow=0 → pool_size=5 max_overflow=2 in _get_engine() | Claude Code | 2026-05-29
+REFACTOR | crews/market_intel_crew.py | T-321: _daily_counts import replaced with get_router_status() — eliminates dict-iteration race condition | Claude Code | 2026-05-29
+INFRA | database/schema.sql + alembic/versions/0005_drop_superseded_by.py | T-322: superseded_by FK removed from agent_memories — dead column, never written | Claude Code | 2026-05-29
+INFRA | utils/db_organizer.py | T-329: data_source validated against VALID_DATA_SOURCES before INSERT — invalid values log warning and fall back to seed_estimated | Claude Code | 2026-05-29
+INFRA | database/schema.sql | T-341: absorption_pct GENERATED ALWAYS uses NULLIF(total_units,0) — returns NULL instead of crashing on zero-unit rows | Claude Code | 2026-05-29
+FEATURE | utils/db.py | T-337: New shared SQLAlchemy engine singleton — thread-safe, pool_pre_ping=True, pool_size=5 | Claude Code | 2026-05-29
+REFACTOR | agents/analyst_agent.py | T-337/T-339: Replaced bare create_engine(DATABASE_URL) with get_engine() from utils.db — adds pool_pre_ping + correct pool settings | Claude Code | 2026-05-29
+BUG-FIX | scrapers/kaveri_transaction_scout.py | T-337: create_engine(DATABASE_URL) replaced with get_engine(); DBOrganizer(engine) call fixed to DBOrganizer() — constructor takes no args | Claude Code | 2026-05-29
+FEATURE | database/schema.sql + alembic/versions/0006_add_last_scraped_at.py + utils/db_organizer.py | T-340: last_scraped_at TIMESTAMPTZ added to micro_markets; db_organizer.run() stamps it after each RERA upsert batch | Claude Code | 2026-05-29
+FEATURE | pytest.ini + tests/ (all files) | T-338: unit/integration pytest markers defined; all mock-based test files marked @unit; CI updated to pytest -m unit | Claude Code | 2026-05-29
+FEATURE | tests/test_dashboard_routes.py | T-328: 5 route tests — health no-auth 200, run 401 without key, run 200 with key, db/state no-auth, invalid market 400 | Claude Code | 2026-05-29
+BUG-FIX | tests/test_dashboard.py | test_intel_returns_200 + test_intel_is_read_only updated to test_intel_returns_404 — endpoint deleted by T-317 | Claude Code | 2026-05-29
+BUG-FIX | tests/conftest.py | flask_limiter + psycopg2 stubs added — dashboard tests now run without Docker install | Claude Code | 2026-05-29
+BUG-FIX | tests/test_run_logger.py + utils/notifier.py | Pre-existing ruff E741/E401 violations fixed (ambiguous var l, multiple imports on one line) | Claude Code | 2026-05-29
+OPS | TASK_QUEUE.md | T-302/317/318/321/322/328/329/337/338/339/340/341 marked DONE | Claude Code | 2026-05-29
+
+---
+
+## Session — Claude Code 2026-05-29 (Round 22 — Engineering Lead Sprint Plan)
+
+OPS | TASK_QUEUE.md | T-315 status corrected PENDING → DONE (recover_stuck_board_sessions fully implemented in scheduler.py — queue was stale) | Claude Code | 2026-05-29
+OPS | TASK_QUEUE.md | Added T-325 through T-341 (17 new tasks) — targets GATE-8 Security ≥80, GATE-9 Prod Readiness ≥75, engine leak fix, sys.path cleanup, security headers, shared DB factory, pytest markers, DB schema hardening | Claude Code | 2026-05-29
+OPS | TASK_QUEUE.md | Added GATE-8 (Security ≥80) and GATE-9 (Prod Readiness ≥75) to gate registry | Claude Code | 2026-05-29
+OPS | TASK_BRIEFS.md | Full execution briefs written for T-325 through T-341 with done-when checklists | Claude Code | 2026-05-29
+OPS | TASK_QUEUE.md | Next task ID advanced to T-342 | Claude Code | 2026-05-29
+
+---
+
+## Session — Claude Code 2026-05-29 (Round 21 — World-Class Engineering Audit)
+
+BUG-FIX | docker-compose.yml | CEREBRAS_MODEL default corrected `llama3.1-8b` → `gpt-oss-120b` in both agents + scheduler services — wrong default caused 404 on all LIGHT/ANALYSIS LLM calls on any fresh deploy without explicit .env entry | Claude Code | 2026-05-29
+BUG-FIX | docker-compose.yml | Added `DASHBOARD_API_KEY_PREV` to agents service env block — was present in scheduler but missing from agents, breaking zero-downtime API key rotation (T-250) for the only container that serves the API | Claude Code | 2026-05-29
+INFRA | docker-compose.yml | Added `PYTHONPATH: /app` to both services — eliminates the `sys.path.append(...)` workaround needed in every module | Claude Code | 2026-05-29
+BUG-FIX | config/llm_router.py | `litellm.success_callback` now appends instead of replacing — previous assignment `= [fn]` wiped any callbacks litellm registered internally, degrading retry telemetry | Claude Code | 2026-05-29
+BUG-FIX | dashboard/app.py | `intel_cards()`: replaced container-internal absolute path `/app/outputs/.../intel_report.txt` with `download_url` relative API path — old value was unusable by dashboard JS clients | Claude Code | 2026-05-29
+REFACTOR | utils/db_organizer.py | Added `_get_organizer_engine()` module-level singleton — `DBOrganizer.__init__` was creating a new SQLAlchemy connection pool on every instantiation (7+ times per pipeline run) | Claude Code | 2026-05-29
+SECURITY | dashboard/app.py | `db_state()` + `intel_cards()`: `str(e)` replaced with generic "database query failed" message — internal exception strings (SQL, paths, credentials) no longer leak to API clients | Claude Code | 2026-05-29
+INFRA | dashboard/app.py | Rate limiting added to `db_state` (60/min), `intel_cards` (60/min), `get_report` (30/min), `board_session_get` (120/min) — DB-touching read endpoints were unlimited | Claude Code | 2026-05-29
+BUG-FIX | crews/market_intel_crew.py | Cache-skip `scouts_all_cached` now checks `kaveri_gv_scraped` checkpoint — was skipping Stage 1 without verifying kaveri was also cached, causing stale kaveri data to be used | Claude Code | 2026-05-29
+INFRA | requirements.txt | Added explicit `litellm>=1.40.0,<2.0.0` pin — previously only a transitive crewai dep; used directly via `from litellm import completion` and `litellm.success_callback` | Claude Code | 2026-05-29
+BUG-FIX | crews/market_intel_crew.py | Typo `KNWON_OPENAI_MODELS` → `KNOWN_OPENAI_MODELS` in `_detect_api_error_provider` | Claude Code | 2026-05-29
+
+---
+
 ## Session — Claude Code 2026-05-29 (Round 20 — Test Coverage + Board Room Schema Fix)
 
 FEATURE | tests/test_board_room.py | T-301: 12 tests — run_board_session (session_id/status/market/DB failure), get_board_session (None/fields), dept template validation | Claude Code | 2026-05-29

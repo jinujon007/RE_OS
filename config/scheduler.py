@@ -15,14 +15,15 @@ from loguru import logger
 import os
 import sys
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import TARGET_MARKETS
 
 
 def run_rera_refresh():
     """Daily RERA data pull for all target markets."""
     from config.llm_router import _clear_excluded
-    import subprocess, sys, os
+    import subprocess
+    import sys
+    import os
 
     # Reset provider exclusions so stale rate-limit state from the previous
     # run doesn't carry over — each scheduled run starts with a clean slate.
@@ -99,14 +100,11 @@ def run_market_snapshot():
     from sqlalchemy import create_engine, text
     from config.settings import DATABASE_URL
 
-    engine = create_engine(DATABASE_URL)
-
-    with engine.begin() as conn:
-        for market in TARGET_MARKETS:
-            market = market.strip()
-            try:
-                # Compute and insert snapshot
-                # avg_psf_sale: use listing PSF (rera_projects.price_avg_psf always NULL)
+    for market in TARGET_MARKETS:
+        market = market.strip()
+        engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+        try:
+            with engine.begin() as conn:
                 conn.execute(
                     text("""
                     INSERT INTO market_snapshots (
@@ -145,12 +143,34 @@ def run_market_snapshot():
                         unsold_rera_units = EXCLUDED.unsold_rera_units,
                         avg_absorption_pct = EXCLUDED.avg_absorption_pct,
                         avg_psf_sale = EXCLUDED.avg_psf_sale
-                """),
+                    """),
                     {"market": f"%{market}%"},
                 )
-                logger.info(f"  Snapshot created for: {market}")
-            except Exception as e:
-                logger.error(f"  Snapshot failed for {market}: {e}")
+        except Exception as e:
+            logger.error(f"  Snapshot failed for {market}: {e}")
+
+
+def recover_stuck_board_sessions():
+    """Set board sessions stuck at 'active' for >30 minutes to 'failed'."""
+    from sqlalchemy import create_engine, text
+    from config.settings import DATABASE_URL
+
+    try:
+        engine = create_engine(DATABASE_URL)
+        with engine.begin() as conn:
+            result = conn.execute(
+                text("""
+                UPDATE board_sessions
+                SET status = 'failed',
+                    completed_at = NOW()
+                WHERE status = 'active'
+                  AND created_at < NOW() - INTERVAL '30 minutes'
+                """)
+            )
+            rowcount = result.rowcount
+        logger.info(f"[Scheduler] Recovered {rowcount} stuck board sessions")
+    except Exception as e:
+        logger.warning(f"[Scheduler] Failed to recover stuck board sessions: {e}")
 
 
 if __name__ == "__main__":
@@ -194,11 +214,21 @@ if __name__ == "__main__":
         misfire_grace_time=3600,
     )
 
+    # Stuck board session recovery — every hour (T-315)
+    scheduler.add_job(
+        recover_stuck_board_sessions,
+        "interval", hours=1,
+        id="recover_board_sessions",
+        name="Recover Stuck Board Sessions",
+        replace_existing=True,
+    )
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
     logger.info("  2:00 AM IST — RERA full refresh (all markets)")
     logger.info("  6:00 AM IST — Market snapshots")
     logger.info("  Every 6 hrs — Listings scan")
+    logger.info("  Every 1 hr  — Board session recovery (T-315)")
     logger.info("  Monday 03:00 UTC — Agent memory decay")
     logger.info(f"Active jobs: {[j.id for j in scheduler.get_jobs()]}")
 

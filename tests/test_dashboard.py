@@ -15,6 +15,8 @@ from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 
 # ── App fixture ────────────────────────────────────────────────────────────────
 
@@ -123,20 +125,13 @@ def test_agents_contains_running_markets_key(client, mock_db):
     assert data is not None
 
 
-# ── /api/intel ─────────────────────────────────────────────────────────────────
+# ── /api/intel (deleted T-317) ────────────────────────────────────────────────
 
 
-def test_intel_returns_200(client):
-    with patch("dashboard.app.glob.glob", return_value=[]):
-        resp = client.get("/api/intel")
-    assert resp.status_code == 200
-
-
-def test_intel_is_read_only(client):
-    with patch.dict(os.environ, {"DASHBOARD_API_KEY": "secret"}), \
-         patch("dashboard.app.glob.glob", return_value=[]):
-        resp = client.get("/api/intel")
-    assert resp.status_code == 200
+def test_intel_returns_404(client):
+    """GET /api/intel was deleted (T-317) — endpoint no longer exists."""
+    resp = client.get("/api/intel")
+    assert resp.status_code == 404
 
 
 # ── /api/intel/cards ───────────────────────────────────────────────────────────

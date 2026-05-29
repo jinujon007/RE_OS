@@ -73,6 +73,12 @@ body {
   font-size: 9px;
   white-space: nowrap;
 }
+.last-updated {
+  font-family: 'Press Start 2P', cursive;
+  color: #6b7280;
+  font-size: 7px;
+  white-space: nowrap;
+}
 
 /* ── Main Grid ── */
 .main-grid {
@@ -473,6 +479,11 @@ body {
   text-decoration: none;
 }
 .intel-link:hover { text-decoration: underline; }
+.intel-actions { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+.intel-signal { font-family: 'Press Start 2P', cursive; font-size: 7px; }
+.intel-signal.go { color: #3fb950; }
+.intel-signal.watch { color: #f0a020; }
+.intel-signal.no-go { color: #f85149; }
 
 .org-chart {
   display: grid;
@@ -730,6 +741,7 @@ body {
     <div class="health-item"><span class="health-dot checking" id="health-ollama"></span><span>OLLAMA</span></div>
     <div class="health-item"><span class="health-dot checking" id="health-agents"></span><span>AGENTS</span></div>
   </div>
+  <span class="last-updated" id="last-updated">UPDATED —</span>
   <span class="clock" id="clock"></span>
 </div>
 
@@ -952,6 +964,7 @@ body {
 
     <div class="infra-section">
       <div class="infra-title">INTEL SNAPSHOT</div>
+      <a class="intel-link" href="/api/intel/download?format=csv&market=all" id="intel-csv-download" download>Download CSV</a>
       <div class="intel-cards" id="intel-cards">
         <div class="empty-msg">Loading intel…</div>
       </div>
@@ -1019,6 +1032,13 @@ const AGENT_ACTIONS = {
 };
 const feedbackTimers = new Map();
 
+function markUpdated(label) {
+  const el = document.getElementById('last-updated');
+  if (!el) return;
+  const ts = new Date().toLocaleTimeString('en-IN', { hour12: false });
+  el.textContent = `UPDATED ${ts} · ${label}`;
+}
+
 // ── Clock ──
 function tick() {
   const now = new Date();
@@ -1043,6 +1063,7 @@ async function pollHealth() {
     document.getElementById('infra-db').textContent = data.postgres || 'error';
     document.getElementById('infra-redis').textContent = data.redis || 'error';
     document.getElementById('infra-ollama').textContent = data.ollama || 'warn';
+    markUpdated('health');
   } catch (e) {
     ['db', 'redis', 'ollama', 'agents'].forEach(s => {
       const el = document.getElementById('health-' + s);
@@ -1083,6 +1104,7 @@ async function pollDbState() {
     } else {
       runsEl.innerHTML = '<div class="empty-msg">No runs yet</div>';
     }
+    markUpdated('db');
   } catch (e) {
     console.error('DB state poll error:', e);
   }
@@ -1156,6 +1178,7 @@ async function pollAgents() {
       });
     }
 
+    markUpdated('agents');
   } catch (e) {
     // Offline
     ['ceo', 'analyst', 'scraper', 'processor'].forEach(agent => {
@@ -1275,7 +1298,7 @@ function updateAgent(agent, state) {
 }
 
 pollAgents();
-setInterval(pollAgents, 2000);
+setInterval(pollAgents, 30000);
 
 // ── Command Panel Toggle ──
 function toggleCommand(agent) {
@@ -1434,18 +1457,24 @@ async function pollIntel() {
       const psf = c.avg_psf != null ? `₹${c.avg_psf}/sqft` : '—';
       const projectCount = c.projects ?? c.active_projects ?? 0;
       const slug = encodeURIComponent(market.toLowerCase());
+      const signal = String(c.go_no_go || 'WATCH').toLowerCase();
       return `
         <div class="intel-card">
           <div class="intel-head">
             <span>${market}</span>
             ${estimated ? '<span class="intel-badge">ESTIMATED DATA</span>' : ''}
           </div>
-          <div class="intel-meta">Projects: ${projectCount}</div>
+          <div class="intel-meta">Active Projects: ${projectCount}</div>
           <div class="intel-meta">Avg PSF: ${psf}</div>
-          <a class="intel-link" href="/api/intel/download?market=${slug}" download>Download Report</a>
+          <div class="intel-actions">
+            <span class="intel-signal ${signal}">${escapeHtml(c.go_no_go || 'WATCH')}</span>
+            <a class="intel-link" href="/api/intel/download?market=${slug}" download>TXT</a>
+            <a class="intel-link" href="/api/intel/download?format=csv&market=${slug}" download>CSV</a>
+          </div>
         </div>
       `;
     }).join('');
+    markUpdated('intel');
   } catch (e) {
     wrap.innerHTML = '<div class="empty-msg">Intel unavailable</div>';
   }
@@ -1547,10 +1576,11 @@ async function pollPipelineStatus() {
       badge.textContent = st.toUpperCase();
       badge.className = 'pipeline-badge ' + st;
     });
+    markUpdated('status');
   } catch (e) { /* ignore */ }
 }
 pollPipelineStatus();
-setInterval(pollPipelineStatus, 5000);
+setInterval(pollPipelineStatus, 30000);
 
 // ── Log Streaming (SSE) — with market selector + auto-reconnect (T-283) ──
 const feedArea = document.getElementById('feed-area');
@@ -1716,7 +1746,7 @@ function _pollBoardSession(sessionId) {
         statusEl.textContent = `Status: ${data.status}…`;
       }
     } catch { /* network blip — keep polling */ }
-  }, 5000);
+  }, 3000);
 }
 
 function _renderBoardResult(transcript, el) {
@@ -1726,13 +1756,15 @@ function _renderBoardResult(transcript, el) {
   for (const [key, label] of Object.entries(depts)) {
     const resp = transcript.responses[key] || '';
     if (!resp) continue;
-    html += `<div style="margin-bottom:10px;"><div style="color:#9b7ec7;font-family:'Press Start 2P',cursive;font-size:7px;margin-bottom:4px;">${label}</div>`;
-    html += `<div style="white-space:pre-wrap;font-size:9px;color:#c9d1d9;">${resp.slice(0, 600)}${resp.length > 600 ? '…' : ''}</div></div>`;
+    const shortResp = String(resp).slice(0, 600) + (String(resp).length > 600 ? '…' : '');
+    html += `<div style="margin-bottom:10px;"><div style="color:#9b7ec7;font-family:'Press Start 2P',cursive;font-size:7px;margin-bottom:4px;">${escapeHtml(label)}</div>`;
+    html += `<div style="white-space:pre-wrap;font-size:9px;color:#c9d1d9;">${escapeHtml(shortResp)}</div></div>`;
   }
   if (transcript.actions && transcript.actions.length) {
     html += `<div style="margin-top:8px;"><div style="color:#f0a020;font-family:'Press Start 2P',cursive;font-size:7px;margin-bottom:4px;">ACTIONS</div>`;
     for (const a of transcript.actions) {
-      html += `<div style="margin-bottom:3px;"><span style="color:#58a6ff;">[${(a.priority||'').toUpperCase()}]</span> <span style="color:#c9d1d9;">${a.action}</span> <span style="color:#6b7280;">→ ${a.owner}</span></div>`;
+      const timeline = a.timeline ? ` · ${a.timeline}` : '';
+      html += `<div style="margin-bottom:3px;"><span style="color:#58a6ff;">[${escapeHtml((a.priority||'').toUpperCase())}]</span> <span style="color:#c9d1d9;">${escapeHtml(a.action)}</span> <span style="color:#6b7280;">→ ${escapeHtml(a.owner)}${escapeHtml(timeline)}</span></div>`;
     }
     html += '</div>';
   }

@@ -11,6 +11,8 @@ import pytest
 
 from crews.market_intel_crew import _extract_report_body
 
+pytestmark = pytest.mark.unit
+
 
 def _make_result(analyst_raw: str, ceo_raw: str):
     """Build a mock crew result with two task outputs."""

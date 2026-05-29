@@ -14,6 +14,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 from config.checkpointer import Checkpointer
 
 

@@ -17,6 +17,8 @@ import pytest
 import config.run_logger as rl_mod
 from config.run_logger import RunLogger
 
+pytestmark = pytest.mark.unit
+
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 
@@ -62,7 +64,7 @@ def test_start_writes_jsonl(isolated_logs):
     rl.start()
     history = isolated_logs / "run_history.jsonl"
     assert history.exists()
-    lines = [l for l in history.read_text().splitlines() if l.strip()]
+    lines = [ln for ln in history.read_text().splitlines() if ln.strip()]
     assert len(lines) == 1
     record = json.loads(lines[0])
     assert record["status"] == "running"
@@ -96,9 +98,9 @@ def test_finish_success_updates_record(isolated_logs):
     rl.start()
     rl.finish(status="success", report_path="outputs/yelahanka/intel_report.txt")
 
-    lines = [l for l in (isolated_logs / "run_history.jsonl").read_text().splitlines() if l.strip()]
+    lines = [ln for ln in (isolated_logs / "run_history.jsonl").read_text().splitlines() if ln.strip()]
     # start() + finish() both write — finish() overwrites the same run_id entry
-    records = [json.loads(l) for l in lines]
+    records = [json.loads(ln) for ln in lines]
     final = next(r for r in records if r["run_id"] == rl.run_id)
     assert final["status"] == "success"
     assert final["report_path"] == "outputs/yelahanka/intel_report.txt"
@@ -123,8 +125,8 @@ def test_finish_failed_records_error_type(isolated_logs):
     rl.start()
     rl.finish(status="failed", error="rate_limit exceeded by groq")
 
-    lines = [l for l in (isolated_logs / "run_history.jsonl").read_text().splitlines() if l.strip()]
-    records = [json.loads(l) for l in lines]
+    lines = [ln for ln in (isolated_logs / "run_history.jsonl").read_text().splitlines() if ln.strip()]
+    records = [json.loads(ln) for ln in lines]
     final = next(r for r in records if r["run_id"] == rl.run_id)
     assert final["status"] == "failed"
     assert final["error_type"] == "GROQ_RATE_LIMIT"

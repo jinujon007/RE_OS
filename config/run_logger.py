@@ -20,11 +20,8 @@ Usage:
 
 import json
 import os
-import sys
 from datetime import datetime
 from pathlib import Path
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 LOGS_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "logs"
 HISTORY_FILE = LOGS_DIR / "run_history.jsonl"

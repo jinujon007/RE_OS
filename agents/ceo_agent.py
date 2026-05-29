@@ -7,10 +7,7 @@ Uses the best available model — OpenRouter free tier for reasoning.
 """
 
 from crewai import Agent
-import sys
-import os
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.llm_router import get_heavy_llm
 
 

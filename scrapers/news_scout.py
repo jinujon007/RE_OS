@@ -31,7 +31,6 @@ import argparse
 import json
 import os
 import re
-import sys
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
@@ -41,7 +40,6 @@ import requests
 from bs4 import BeautifulSoup
 from loguru import logger
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import (
     GEMINI_API_KEY,
     GEMINI_CEO_MODEL,

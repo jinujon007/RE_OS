@@ -26,10 +26,7 @@ import time
 from datetime import datetime
 from loguru import logger
 from sqlalchemy import create_engine, text
-import sys
-import os
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import (
     DATABASE_URL,
     GRADE_A_DEVELOPERS,
@@ -38,15 +35,32 @@ from config.settings import (
     MARKET_RERA_KEYWORDS,
 )
 
+# Module-level shared engine — avoids creating a new connection pool on every
+# DBOrganizer() instantiation. SQLAlchemy engines are thread-safe.
+_SHARED_ENGINE = None
+_ENGINE_LOCK = __import__("threading").Lock()
+
+
+def _get_organizer_engine():
+    global _SHARED_ENGINE
+    if _SHARED_ENGINE is None:
+        with _ENGINE_LOCK:
+            if _SHARED_ENGINE is None:
+                _SHARED_ENGINE = create_engine(
+                    DATABASE_URL, pool_pre_ping=True, pool_size=5, max_overflow=2
+                )
+    return _SHARED_ENGINE
+
+
 
 class DBOrganizer:
     """
     Handles all DB writes for one market run.
-    Thread-safe per instance (each call to run() creates its own engine connection).
+    Uses a module-level shared engine — no new pool per instantiation.
     """
 
     def __init__(self):
-        self.engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+        self.engine = _get_organizer_engine()
 
     # ── Public ─────────────────────────────────────────────────────────────────
 
@@ -98,6 +112,19 @@ class DBOrganizer:
                 logger.warning(
                     f"[DBOrganizer] Developer grade batch UPDATE failed (non-fatal): {grade_exc}"
                 )
+
+            # Stamp last_scraped_at so dashboard can show data freshness.
+            try:
+                conn.execute(
+                    text("""
+                    UPDATE micro_markets
+                    SET last_scraped_at = NOW()
+                    WHERE name ILIKE :market
+                    """),
+                    {"market": market_name},
+                )
+            except Exception as ts_exc:
+                logger.warning("[DBOrganizer] last_scraped_at update failed (non-fatal): %s", ts_exc)
 
         duration = int(time.time() - started)
         stats = {
@@ -367,10 +394,20 @@ class DBOrganizer:
 
     # ── RERA project ───────────────────────────────────────────────────────────
 
+    _VALID_DATA_SOURCES = {"portal_scraped", "seed_estimated", "api_fetched"}
+
     def _upsert_project(
         self, conn, project: dict, dev_id: str | None, market_id: str | None
     ) -> str:
         """Returns 'inserted' or 'updated'."""
+
+        data_source = str(project.get("data_source", "seed_estimated") or "seed_estimated").strip()
+        if data_source not in self._VALID_DATA_SOURCES:
+            logger.warning(
+                "[Organizer] Invalid data_source '%s' — defaulting to 'seed_estimated'",
+                data_source,
+            )
+            data_source = "seed_estimated"
 
         # Check if already exists
         existing = conn.execute(
@@ -397,6 +434,7 @@ class DBOrganizer:
             "possession_date": _safe_date(project.get("possession_date")),
             "registration_date": _safe_date(project.get("registration_date")),
             "raw_data": raw_data_json,
+            "data_source": data_source,
         }
 
         conn.execute(
@@ -414,7 +452,7 @@ class DBOrganizer:
                 :project_type, :project_status,
                 :total_units, :sold_units, :unsold_units,
                 :possession_date, :registration_date,
-                CAST(:raw_data AS jsonb), NOW(), 'portal_scraped'
+                CAST(:raw_data AS jsonb), NOW(), :data_source
             )
             ON CONFLICT (rera_number) DO UPDATE SET
                 project_name    = EXCLUDED.project_name,
@@ -427,7 +465,7 @@ class DBOrganizer:
                 possession_date = EXCLUDED.possession_date,
                 raw_data        = EXCLUDED.raw_data,
                 last_scraped_at = NOW(),
-                data_source     = 'portal_scraped',
+                data_source     = EXCLUDED.data_source,
                 updated_at      = NOW()
         """),
             params,

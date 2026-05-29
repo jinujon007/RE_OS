@@ -12,6 +12,8 @@ with a MagicMock that records constructor calls.
 import pytest
 import config.llm_router as r
 
+pytestmark = pytest.mark.unit
+
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 

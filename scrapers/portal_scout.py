@@ -24,7 +24,6 @@ import argparse
 import json
 import os
 import re
-import sys
 import time
 from datetime import datetime
 
@@ -32,7 +31,6 @@ import requests
 from bs4 import BeautifulSoup
 from loguru import logger
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import (
     CEREBRAS_API_KEY,
     CEREBRAS_BASE_URL,

@@ -36,13 +36,9 @@ Runtime fallback:
   fallback without reconstructing agents.
 """
 
-import os
-import sys
 import threading
 from datetime import datetime, UTC
 from loguru import logger
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from crewai import LLM
 from config.settings import (
@@ -103,7 +99,10 @@ def _litellm_usage_callback(kwargs, completion_response, start_time, end_time):
     except Exception:
         pass
 
-litellm.success_callback = [_litellm_usage_callback]
+if not isinstance(litellm.success_callback, list):
+    litellm.success_callback = []
+if _litellm_usage_callback not in litellm.success_callback:
+    litellm.success_callback.append(_litellm_usage_callback)
 
 # Runtime provider exclusion — thread-safe shared set.
 # All reads and writes go through helpers below so parallel market runs don't race.

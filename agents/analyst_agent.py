@@ -8,18 +8,11 @@ Claude tokens for strategic decisions.
 
 from crewai import Agent
 from crewai.tools import BaseTool
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 import json
-import sys
-import os
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config.settings import DATABASE_URL
 from config.llm_router import get_analysis_llm
-
-
-def get_engine():
-    return create_engine(DATABASE_URL)
+from utils.db import get_engine
 
 
 class MarketSummaryTool(BaseTool):

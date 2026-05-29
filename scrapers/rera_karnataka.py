@@ -136,7 +136,7 @@ class RERAKarnatakaScraper:
                 unique.append(p)
 
         logger.info(f"  Found {len(unique)} unique projects in {market_name}")
-        cookies = list(self.session.cookies())
+        cookies = list(self.session.cookies)
         return unique, cookies
 
     @retry(

@@ -11,6 +11,8 @@ DB connection is mocked via unittest.mock — no live Postgres needed.
 import pytest
 from unittest.mock import MagicMock, patch
 
+pytestmark = pytest.mark.unit
+
 # Import the module-level helpers directly
 from utils.db_organizer import _safe_date, DBOrganizer
 
@@ -289,3 +291,17 @@ def test_run_developer_scout_failing_record_counts_failed(org):
 
     assert stats["total"] == 1
     assert stats["failed"] == 1
+
+
+# ── utils/db.py singleton ──────────────────────────────────────────────────────
+
+
+def test_get_engine_returns_engine():
+    """get_engine() returns a non-None engine without hitting the DB."""
+    with patch("utils.db.create_engine") as mock_ce:
+        mock_ce.return_value = MagicMock(name="mock_engine")
+        import utils.db as db_mod
+        db_mod._engine = None  # reset singleton for test isolation
+        engine = db_mod.get_engine()
+        assert engine is not None
+        db_mod._engine = None  # clean up

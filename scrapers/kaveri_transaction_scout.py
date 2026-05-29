@@ -43,8 +43,7 @@ from datetime import date, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from loguru import logger
-from config.settings import DATABASE_URL
-from sqlalchemy import create_engine
+from utils.db import get_engine
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -161,8 +160,7 @@ def _insert_transactions(records: list[dict], market: str = "Devanahalli") -> No
     if not records:
         return
     db_records = [_to_db_format(r) for r in records]
-    engine = create_engine(DATABASE_URL, connect_args={"connect_timeout": 5})
-    organizer = DBOrganizer(engine)
+    organizer = DBOrganizer()
     stats = organizer.run_kaveri(market, [], db_records)
     logger.info(f"Inserted {stats.get('reg_inserted', 0)} transaction records into kaveri_registrations")
 

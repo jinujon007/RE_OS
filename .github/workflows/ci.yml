@@ -63,7 +63,7 @@ jobs:
       - name: Run unit tests
         env:
           DB_PASSWORD: test_password_for_ci
-        run: pytest tests/ -v --tb=short --cov=agents --cov=config --cov=crews --cov=scrapers --cov=utils --cov=dashboard --cov-report=term-missing --cov-fail-under=50
+        run: pytest tests/ -v -m unit --tb=short --cov=agents --cov=config --cov=crews --cov=scrapers --cov=utils --cov=dashboard --cov-report=term-missing --cov-fail-under=50
 
   pip-audit:
     name: Dependency Vulnerability Scan

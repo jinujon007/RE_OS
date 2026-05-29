@@ -4,7 +4,9 @@ Runs inside the agents container. Access at http://localhost:8050
 """
 
 import copy
+import csv
 import glob
+import io
 import json
 import logging
 import os
@@ -473,6 +475,7 @@ def board_session_create():
     result = run_board_session(pitch, market)
     return jsonify(result), 200
 
+@limiter.limit("120 per minute")
 @app.route("/api/board/session/<session_id>", methods=["GET"])
 def board_session_get(session_id):
     from crews.board_room import get_board_session
@@ -500,6 +503,7 @@ def metrics():
 # ── DB State ───────────────────────────────────────────────────────────────────
 
 
+@limiter.limit("60 per minute")
 @app.route("/api/db/state")
 def db_state():
     conn = None
@@ -558,7 +562,8 @@ def db_state():
         return jsonify(state)
     except Exception as e:
         exc = True
-        return jsonify({"error": str(e)}), 500
+        logger.error("[db_state] %s", e)
+        return jsonify({"error": "database query failed"}), 500
     finally:
         if conn:
             _release_db(conn, reset=exc)
@@ -893,6 +898,7 @@ def stream_logs():
 # ── Reports ────────────────────────────────────────────────────────────────────
 
 
+@limiter.limit("30 per minute")
 @app.route("/api/reports/<market>")
 def get_report(market):
     canonical = _normalize_market(market)
@@ -911,6 +917,7 @@ def get_report(market):
     return jsonify({"content": content, "file": os.path.basename(latest)})
 
 
+@limiter.limit("60 per minute")
 @app.route("/api/intel/cards", methods=["GET"])
 def intel_cards():
     """DB-backed market summary cards for dashboard UI."""
@@ -959,9 +966,11 @@ def intel_cards():
             cards.append(
                 {
                     "market": market_name,
+                    "active_projects": int(row[1] or 0),
                     "projects": int(row[1] or 0),
                     "avg_psf": int(row[2]) if row[2] else None,
-                    "latest_report": _latest_report_path(market_name),
+                    "go_no_go": _market_go_no_go(int(row[1] or 0), int(row[2]) if row[2] else None, is_estimated),
+                    "download_url": f"/api/intel/download?market={slug}" if slug else None,
                     "estimated": is_estimated,
                 }
             )
@@ -969,46 +978,33 @@ def intel_cards():
         return jsonify({"cards": cards})
     except Exception as e:
         exc = True
-        return jsonify({"error": str(e)}), 500
+        logger.error("[intel_cards] %s", e)
+        return jsonify({"error": "failed to load market cards"}), 500
     finally:
         if conn:
             _release_db(conn, reset=exc)
 
 
+def _market_go_no_go(active_projects: int, avg_psf: int | None, estimated: bool) -> str:
+    if estimated or active_projects < 3 or avg_psf is None:
+        return "WATCH"
+    if 3500 <= avg_psf <= 9000 and active_projects >= 8:
+        return "GO"
+    return "NO-GO"
+
+
 # ── Intel API ──────────────────────────────────────────────────────────────────
-
-
-@app.route("/api/intel")
-def get_intel():
-    result = {}
-    for market in ["Yelahanka", "Devanahalli", "Hebbal"]:
-        slug = MARKET_SLUG.get(market)
-        pattern = f"/app/outputs/{slug}/intel_report_*.txt"
-        files = sorted(glob.glob(pattern))
-        if files:
-            latest = files[-1]
-            with open(latest, encoding="utf-8") as f:
-                content = f.read()
-            # Extract timestamp from filename: intel_report_20260519_1430.txt -> "2026-05-19 14:30"
-            fname = os.path.basename(latest)
-            result[market] = {
-                "last_report": fname,
-                "summary": content[:500],
-                "estimated": "[ESTIMATED DATA" in content,
-            }
-        else:
-            result[market] = {
-                "last_report": None,
-                "summary": "No reports yet",
-                "estimated": False,
-            }
-    return jsonify(result)
 
 
 @app.route("/api/intel/download")
 def download_intel():
     market_raw = request.args.get("market", "")
     canonical = _normalize_market(market_raw)
+    fmt = request.args.get("format", "txt").lower()
+
+    if fmt == "csv":
+        return _download_intel_csv(canonical)
+
     if not canonical or canonical == "all":
         return jsonify({"error": "invalid market"}), 400
     slug = MARKET_SLUG.get(canonical)
@@ -1019,6 +1015,79 @@ def download_intel():
     with open(files[-1], encoding="utf-8") as f:
         content = f.read()
     return Response(content, mimetype="text/plain")
+
+
+def _download_intel_csv(canonical: str | None):
+    if not canonical:
+        return jsonify({"error": "invalid market"}), 400
+
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+
+        params = []
+        where = ""
+        if canonical != "all":
+            where = "WHERE mm.name = %s"
+            params.append(canonical)
+
+        cur.execute(
+            f"""
+            SELECT mm.name,
+                   COUNT(DISTINCT rp.id)               AS active_projects,
+                   ROUND(AVG(l.price_psf)::numeric, 0) AS avg_psf
+            FROM micro_markets mm
+            LEFT JOIN rera_projects rp ON rp.micro_market_id = mm.id
+            LEFT JOIN listings l ON l.micro_market_id = mm.id
+                                AND l.price_psf IS NOT NULL
+                                AND l.price_psf > 1000
+                                AND l.price_psf < 50000
+            {where}
+            GROUP BY mm.name
+            ORDER BY mm.name
+            """,
+            params,
+        )
+
+        out = io.StringIO()
+        writer = csv.writer(out)
+        writer.writerow(["market", "active_projects", "avg_psf", "go_no_go", "estimated"])
+        now = time.time()
+        for market_name, active_projects, avg_psf in cur.fetchall():
+            slug = MARKET_SLUG.get(market_name, market_name.lower())
+            cached = _estimated_cache.get(market_name)
+            if cached and cached[1] > now:
+                estimated = cached[0]
+            else:
+                report_files = sorted(glob.glob(f"/app/outputs/{slug}/intel_report_*.txt"))
+                estimated = False
+                if report_files:
+                    try:
+                        with open(report_files[-1], encoding="utf-8") as rf:
+                            estimated = "[ESTIMATED DATA" in rf.read(4096)
+                    except Exception:
+                        pass
+                _estimated_cache[market_name] = (estimated, now + _ESTIMATED_CACHE_TTL)
+
+            projects = int(active_projects or 0)
+            psf = int(avg_psf) if avg_psf else None
+            writer.writerow([market_name, projects, psf or "", _market_go_no_go(projects, psf, estimated), estimated])
+
+        filename = "intel_cards.csv" if canonical == "all" else f"intel_{MARKET_SLUG.get(canonical, canonical.lower())}.csv"
+        return Response(
+            out.getvalue(),
+            mimetype="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+    except Exception as e:
+        exc = True
+        logger.error("[download_intel_csv] %s", e)
+        return jsonify({"error": "failed to export intel csv"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

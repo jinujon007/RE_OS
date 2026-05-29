@@ -10,10 +10,7 @@ The real intelligence is in the tools, not the LLM here.
 from crewai import Agent
 from crewai.tools import BaseTool
 import json
-import sys
-import os
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.llm_router import get_light_llm
 
 

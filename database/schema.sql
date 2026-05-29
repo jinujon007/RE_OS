@@ -22,6 +22,7 @@ CREATE TABLE micro_markets (
     geom GEOMETRY(POLYGON, 4326),                -- boundary polygon (optional, add later)
     centroid GEOMETRY(POINT, 4326),              -- center point
     priority INTEGER DEFAULT 0,                  -- 1 = active, 0 = queued
+    last_scraped_at TIMESTAMPTZ,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -77,9 +78,7 @@ CREATE TABLE rera_projects (
     blocked_units INTEGER DEFAULT 0,
     absorption_pct DECIMAL(5,2)
         GENERATED ALWAYS AS (
-            CASE WHEN total_units > 0
-                 THEN ROUND((sold_units::DECIMAL / total_units) * 100, 2)
-                 ELSE 0 END
+            ROUND((sold_units::DECIMAL / NULLIF(total_units, 0)) * 100, 2)
         ) STORED,
 
     -- Area details
@@ -503,7 +502,6 @@ CREATE TABLE IF NOT EXISTS agent_memories (
     confidence FLOAT DEFAULT 0.6 CHECK (confidence BETWEEN 0.0 AND 1.0),
     source_count INT DEFAULT 1,
     last_confirmed DATE DEFAULT CURRENT_DATE,
-    superseded_by UUID REFERENCES agent_memories(memory_id),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

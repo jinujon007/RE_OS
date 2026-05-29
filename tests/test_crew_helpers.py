@@ -8,10 +8,13 @@ create_ceo_agent, create_analyst_agent.
 """
 
 import io
+import json
 import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+pytestmark = pytest.mark.unit
 
 
 # ── Import helpers without triggering Crew-level side effects ──────────────────
@@ -119,12 +122,18 @@ def test_detect_returns_none_for_unrelated_error():
 # ── _log_event ─────────────────────────────────────────────────────────────────
 
 
+def _mock_logger(logged):
+    def _bind(**kwargs):
+        return MagicMock(info=lambda msg, *a, **kw: logged.append(msg.format(*a)))
+    return MagicMock(bind=_bind)
+
+
 def test_log_event_calls_logger(monkeypatch):
     logged = []
-    monkeypatch.setattr("crews.market_intel_crew.logger", MagicMock(info=lambda x: logged.append(x)))
+    monkeypatch.setattr("crews.market_intel_crew.logger", _mock_logger(logged))
     _log_event("run123", "Yelahanka", "stage1", "start")
     assert len(logged) == 1
-    payload = logged[0]
+    payload = json.loads(logged[0].split(" | ")[1])
     assert payload["run_id"] == "run123"
     assert payload["market"] == "Yelahanka"
     assert payload["stage"] == "stage1"
@@ -133,17 +142,18 @@ def test_log_event_calls_logger(monkeypatch):
 
 def test_log_event_includes_extra_fields(monkeypatch):
     logged = []
-    monkeypatch.setattr("crews.market_intel_crew.logger", MagicMock(info=lambda x: logged.append(x)))
+    monkeypatch.setattr("crews.market_intel_crew.logger", _mock_logger(logged))
     _log_event("run123", "Hebbal", "stage2", "done", projects=42)
-    payload = logged[0]
+    payload = json.loads(logged[0].split(" | ")[1])
     assert payload["projects"] == 42
 
 
 def test_log_event_event_key_is_pipeline_stage(monkeypatch):
     logged = []
-    monkeypatch.setattr("crews.market_intel_crew.logger", MagicMock(info=lambda x: logged.append(x)))
+    monkeypatch.setattr("crews.market_intel_crew.logger", _mock_logger(logged))
     _log_event("x", "Devanahalli", "s3", "ok")
-    assert logged[0]["event"] == "pipeline_stage"
+    payload = json.loads(logged[0].split(" | ")[1])
+    assert payload["event"] == "pipeline_stage"
 
 
 # ── _banner ────────────────────────────────────────────────────────────────────

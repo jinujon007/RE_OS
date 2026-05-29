@@ -34,8 +34,6 @@ from datetime import datetime
 from crewai import Crew, Task, Process
 from loguru import logger
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from agents import (
     create_ceo_agent,
     create_scraper_agent,
@@ -48,7 +46,7 @@ from config.run_logger import RunLogger
 from sqlalchemy import create_engine
 from config.settings import DATABASE_URL
 from config.checkpointer import Checkpointer
-from config.llm_router import _exclude, _clear_excluded, _is_excluded, _daily_counts
+from config.llm_router import _exclude, _clear_excluded, _is_excluded, get_router_status
 from config.metrics import (
     pipeline_runs_total,
     llm_calls_total,
@@ -64,6 +62,29 @@ from utils.obsidian_sync import sync_to_obsidian
 _RATE_LIMIT_RETRIES = 3
 
 _DB_STATS_DEFAULT = {"inserted": 0, "updated": 0, "failed": 0, "duration_seconds": 0}
+_MARKET_LOG_SINKS = {}
+
+
+def _market_slug(market: str) -> str:
+    return (market or "all").strip().lower().replace(" ", "_")
+
+
+def _ensure_market_log_sink(market: str) -> None:
+    """Route loguru records bound with market=<market> to /app/logs/{slug}.log."""
+    slug = _market_slug(market)
+    if slug in _MARKET_LOG_SINKS:
+        return
+    log_dir = "/app/logs" if os.path.isdir("/app") else "logs"
+    os.makedirs(log_dir, exist_ok=True)
+    path = os.path.join(log_dir, f"{slug}.log")
+    sink_id = logger.add(
+        path,
+        rotation="5 MB",
+        retention=5,
+        level="INFO",
+        filter=lambda record, m=market: record["extra"].get("market") == m,
+    )
+    _MARKET_LOG_SINKS[slug] = sink_id
 
 
 def _extract_and_write_memories(agent_id: str, market: str, text: str) -> None:
@@ -126,6 +147,7 @@ def _write_stage_event_to_db(run_id: str, market: str, event_name: str, status: 
 
 
 def _log_event(run_id: str, market: str, stage: str, status: str, **fields):
+    _ensure_market_log_sink(market)
     payload = {
         "event": "pipeline_stage",
         "run_id": run_id,
@@ -134,7 +156,7 @@ def _log_event(run_id: str, market: str, stage: str, status: str, **fields):
         "status": status,
     }
     payload.update(fields)
-    logger.info(payload)
+    logger.bind(market=market).info("pipeline_event | {}", json.dumps(payload))
 
 
 def _gemini_exclusion_key(model_str: str) -> str:
@@ -159,8 +181,8 @@ def _detect_api_error_provider(exc: Exception) -> str | None:
         # litellm maps Cerebras to "openai" since it's OpenAI-compatible
         if p == "openai":
             model_prefix = getattr(exc, "model", "") or ""
-            KNWON_OPENAI_MODELS = ("llama3.1-8b", "llama3.1-70b", "llama-3.3-70b")
-            if any(m in model_prefix for m in KNWON_OPENAI_MODELS):
+            KNOWN_OPENAI_MODELS = ("llama3.1-8b", "llama3.1-70b", "llama-3.3-70b")
+            if any(m in model_prefix for m in KNOWN_OPENAI_MODELS):
                 return "cerebras"
             model_base = getattr(exc, "base_url", None) or ""
             if "cerebras" in model_base:
@@ -553,6 +575,8 @@ def _extract_report_body(result) -> tuple[str, str, str, str]:
 
 
 def run_market_intelligence(market_name: str) -> str:
+    _ensure_market_log_sink(market_name)
+    market_logger = logger.bind(market=market_name)
     rl = RunLogger(market=market_name)
     rl.start()
     pipeline_runs_total.labels(market=market_name).inc()
@@ -578,6 +602,7 @@ def run_market_intelligence(market_name: str) -> str:
             and cp.exists(market_name, "portal_scout")
             and cp.exists(market_name, "developer_scout")
             and cp.exists(market_name, "news_scout")
+            and cp.exists(market_name, "kaveri_gv_scraped")
         )
         stage1_ok = False
         records_scraped = 0  # Initialize records scraped counter
@@ -709,7 +734,7 @@ def run_market_intelligence(market_name: str) -> str:
                 duration_seconds=round((datetime.now() - stage2_started).total_seconds(), 2),
                 metadata={"inserted": db_stats.get("inserted", 0), "updated": db_stats.get("updated", 0), "failed": db_stats.get("failed", 0)},
             )
-            logger.error(f"[run:{run_id}] STAGE 2 DB write FAILED: {s2_exc}\n{traceback.format_exc()}")
+            market_logger.error(f"[run:{run_id}] STAGE 2 DB write FAILED: {s2_exc}\n{traceback.format_exc()}")
             print(f"\n  [!!] Stage 2 DB write failed: {s2_exc}")
             print("  [!!] Continuing to Stage 3 with cached/empty data...")
             db_stats = _DB_STATS_DEFAULT
@@ -744,7 +769,7 @@ def run_market_intelligence(market_name: str) -> str:
             )
         else:
             kaveri_stats = {}
-            logger.info(
+            market_logger.info(
                 "[Crew] No Kaveri checkpoints found — skipping Kaveri DB upsert"
             )
 
@@ -968,7 +993,7 @@ def run_market_intelligence(market_name: str) -> str:
         _write_stage_event_to_db(run_id, market_name, "pipeline_end", "success", stage=0)
         print(f"\n  Report saved -> {report_path}\n")
         _clear_excluded()
-        logger.info(f"[Router] Daily counts: {_daily_counts}")
+        logger.info("[Router] Daily counts: {}", get_router_status().get("excluded", "n/a"))
         return report_body
 
     except Exception as exc:
@@ -985,7 +1010,7 @@ def run_market_intelligence(market_name: str) -> str:
         )
         logger.error(f"[run:{run_id}] traceback:\n{traceback.format_exc()}")
         _clear_excluded()
-        logger.info(f"[Router] Daily counts: {_daily_counts}")
+        logger.info("[Router] Daily counts: {}", get_router_status().get("excluded", "n/a"))
         raise
 
 

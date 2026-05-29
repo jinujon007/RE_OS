@@ -73,3 +73,36 @@ except ImportError:
     _sa.create_engine = MagicMock(return_value=MagicMock())
     _sa.text = MagicMock(side_effect=lambda s: s)
     sys.modules["sqlalchemy"] = _sa
+
+# ── flask_limiter stub ─────────────────────────────────────────────────────────
+try:
+    import flask_limiter as _fl_check  # noqa: F401
+except ImportError:
+    _fl = types.ModuleType("flask_limiter")
+    _fl_util = types.ModuleType("flask_limiter.util")
+    _fl_util.get_remote_address = MagicMock(return_value="127.0.0.1")
+
+    class _FakeLimiter:
+        def __init__(self, *a, **kw): pass
+        def init_app(self, *a, **kw): pass
+        def limit(self, *a, **kw):
+            def decorator(f): return f
+            return decorator
+        def exempt(self, f): return f
+
+    _fl.Limiter = _FakeLimiter
+    sys.modules["flask_limiter"] = _fl
+    sys.modules["flask_limiter.util"] = _fl_util
+
+# ── psycopg2 stub ──────────────────────────────────────────────────────────────
+try:
+    import psycopg2 as _pg2_check  # noqa: F401
+except ImportError:
+    _pg2 = types.ModuleType("psycopg2")
+    _pg2_pool = types.ModuleType("psycopg2.pool")
+    _pg2.pool = _pg2_pool
+    _pg2.OperationalError = Exception
+    _pg2.connect = MagicMock()
+    _pg2_pool.ThreadedConnectionPool = MagicMock()
+    sys.modules["psycopg2"] = _pg2
+    sys.modules["psycopg2.pool"] = _pg2_pool

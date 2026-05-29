@@ -1,4 +1,6 @@
-import requests, os
+import os
+
+import requests
 from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
 def send_alert(message: str, level: str = "INFO") -> bool:

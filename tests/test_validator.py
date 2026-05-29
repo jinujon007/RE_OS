@@ -1,6 +1,8 @@
 import pytest
 from utils.validator import validate_rera_records, _check_record
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture
 def sample_records():

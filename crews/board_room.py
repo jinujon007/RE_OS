@@ -22,7 +22,7 @@ from loguru import logger
 from sqlalchemy import create_engine, text
 
 from config.settings import DATABASE_URL
-from config.llm_router import get_heavy_llm
+from config.llm_router import get_analysis_llm, get_heavy_llm
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ _engine = None
 def _get_engine():
     global _engine
     if _engine is None:
-        _engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=2, max_overflow=0)
+        _engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=5, max_overflow=2)
     return _engine
 
 
@@ -139,6 +139,69 @@ _DEPT_TASK_TEMPLATES = {
 }
 
 
+def _build_bd_agent():
+    from crewai import Agent
+
+    return Agent(
+        role="VP — Business Development & Investment Decisions",
+        goal="Evaluate market pitch and deliver GO/NO-GO with 3 risks and 3 upsides.",
+        backstory="""Sharp, numbers-first real-estate operator who turns noisy market intelligence into investment decisions.
+        Tracks absorption, competitor launches, developer credibility, pricing power, and land-entry timing.
+        Challenges every optimistic assumption and converts field signals into a clear GO/NO-GO recommendation.""",
+        llm=get_analysis_llm(),
+        max_iter=2,
+        allow_delegation=False,
+        verbose=False,
+    )
+
+
+def _build_finance_agent():
+    from crewai import Agent
+
+    return Agent(
+        role="VP — Finance & Capital Strategy",
+        goal="Assess deal viability, break-even PSF, IRR range, downside risk, and funding structure.",
+        backstory="""Conservative finance leader focused on margin of safety, cash conversion, land-cost discipline,
+        debt exposure, and scenario-adjusted returns. Converts market pitch assumptions into capital allocation logic.""",
+        llm=get_analysis_llm(),
+        max_iter=2,
+        allow_delegation=False,
+        verbose=False,
+    )
+
+
+def _build_engineering_agent():
+    from crewai import Agent
+
+    return Agent(
+        role="VP — Engineering & Technical Delivery",
+        goal="Assess feasibility and technical risks of land pitches, providing FEASIBLE/CONDITIONAL/NOT_FEASIBLE verdict with engineering budget delta.",
+        backstory="""Principal architect-engineer who translates market intel into buildable reality.
+        Understands FAR, setbacks, septic systems, road access constraints, BDA masterplan zones, and RERA compliance.
+        Flags approval bottlenecks and design assumptions that could consume margin before ground is broken.""",
+        llm=get_analysis_llm(),
+        max_iter=2,
+        allow_delegation=False,
+        verbose=False,
+    )
+
+
+def _build_ops_agent():
+    from crewai import Agent
+
+    return Agent(
+        role="VP — Operations & Market Execution",
+        goal="Define the go-to-market playbook: channel strategy, sales velocity assumption, partner network, and KPIs.",
+        backstory="""Operations director experienced in Bengaluru residential launches. Treats every project as a sales problem first
+        and construction problem second. Interrogates buyer profile, launch differentiation, channel mix, partner readiness,
+        quarterly sales velocity, and Day-1 execution KPIs.""",
+        llm=get_analysis_llm(),
+        max_iter=2,
+        allow_delegation=False,
+        verbose=False,
+    )
+
+
 def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = None,
                     _session_excluded: set = None) -> dict:
     """Run the four department-head agents concurrently via single-agent Crews.
@@ -147,12 +210,7 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
     _session_excluded: per-session exclusion set — never mutates global _EXCLUDED.
     """
     from crewai import Task, Crew, Process
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    from agents.board_room.bd_head import build_bd_head_agent
-    from agents.board_room.finance_head import build_finance_head_agent
-    from agents.board_room.engineering_head import build_engineering_head_agent
-    from agents.board_room.ops_head import build_ops_head_agent
+    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 
     _excl = _session_excluded if _session_excluded is not None else set()
 
@@ -185,10 +243,10 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
         return getattr(result, "raw", str(result))
 
     builders = {
-        "bd": build_bd_head_agent,
-        "finance": build_finance_head_agent,
-        "engineering": build_engineering_head_agent,
-        "ops": build_ops_head_agent,
+        "bd": _build_bd_agent,
+        "finance": _build_finance_agent,
+        "engineering": _build_engineering_agent,
+        "ops": _build_ops_agent,
     }
     responses: dict = {}
     with ThreadPoolExecutor(max_workers=4) as executor:
@@ -201,7 +259,7 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                 except Exception as exc:
                     responses[key] = f"Error: {exc}"
                     logger.warning(f"board_room: dept-head '{key}' raised: {exc}")
-        except TimeoutError:
+        except FuturesTimeoutError:
             for f in future_to_key:
                 f.cancel()
             logger.warning("board_room: dept-head timeout — partial responses returned")
@@ -298,7 +356,7 @@ def _extract_actions(dept_responses: dict, pitch: str, market: str) -> list:
 
         prompt = (
             "Extract 3-5 concrete actions from these board department responses. "
-            "Return ONLY a JSON array, each item: {\"action\": \"...\", \"owner\": \"bd|finance|engineering|ops\", \"priority\": \"high|medium|low\"}. "
+            "Return ONLY a JSON array, each item: {\"action\": \"...\", \"owner\": \"bd|finance|engineering|ops\", \"priority\": \"high|medium|low\", \"timeline\": \"...\"}. "
             "If insufficient information, return [].\n\n"
             f"Market: {market}\nPitch: {pitch}\n"
             f"BD: {dept_responses.get('bd', '')[:500]}\n"
@@ -317,7 +375,17 @@ def _extract_actions(dept_responses: dict, pitch: str, market: str) -> list:
         raw = response.choices[0].message.content
         actions = json.loads(raw)
         if isinstance(actions, list):
-            return actions
+            cleaned = []
+            for item in actions:
+                if not isinstance(item, dict):
+                    continue
+                cleaned.append({
+                    "owner": str(item.get("owner") or ""),
+                    "action": str(item.get("action") or ""),
+                    "priority": str(item.get("priority") or "medium"),
+                    "timeline": str(item.get("timeline") or "TBD"),
+                })
+            return cleaned
         logger.warning(f"board_room: action extraction returned non-list: {actions}")
         return []
     except Exception as exc:
