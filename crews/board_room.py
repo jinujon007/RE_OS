@@ -207,24 +207,31 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
             logger.warning("board_room: dept-head timeout — partial responses returned")
     return responses
 
+def _to_uuid(s: str):
+    from uuid import UUID
+    return UUID(s)
+
+
 def _create_session_row(session_id: str, pitch: str, market: Optional[str]) -> bool:
-    """Insert a pending session row into board_sessions. Non-fatal on failure."""
+    """Insert a pending session row into board_sessions. Non-fatal on failure.
+
+    Schema: pitch_text, individual dept columns, no JSONB transcript.
+    Passes session_id as uuid.UUID object — psycopg2 handles the type mapping.
+    """
     try:
         with _get_engine().begin() as conn:
             conn.execute(
                 text("""
                 INSERT INTO board_sessions (
-                    session_id, pitch, market, status, transcript, created_at
+                    session_id, pitch_text, market, status, initiated_by, created_at
                 ) VALUES (
-                    :session_id, :pitch, :market, 'pending',
-                    CAST(:transcript AS jsonb), NOW()
+                    :session_id, :pitch_text, :market, 'pending', 'ceo', NOW()
                 )
                 """),
                 {
-                    "session_id": session_id,
-                    "pitch": pitch,
+                    "session_id": _to_uuid(session_id),
+                    "pitch_text": pitch,
                     "market": market or "",
-                    "transcript": json.dumps({"status": "pending", "responses": {}}),
                 },
             )
         return True
@@ -234,22 +241,42 @@ def _create_session_row(session_id: str, pitch: str, market: Optional[str]) -> b
 
 
 def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
-    """Update session row. Sets completed_at only on terminal states."""
+    """Update session row with individual dept-head column values.
+
+    transcript dict keys: status, responses (bd/finance/engineering/ops),
+    actions (list), ceo_decomposition (optional).
+    Sets completed_at only on terminal states (complete/failed).
+    """
     is_terminal = status in ("complete", "failed")
+    responses = transcript.get("responses", {})
+    ceo_extra = {
+        "actions": transcript.get("actions", []),
+        "ceo_decomposition": transcript.get("ceo_decomposition"),
+        "error": transcript.get("error"),
+    }
+    ceo_synthesis = json.dumps(ceo_extra, default=str) if any(ceo_extra.values()) else None
     try:
         with _get_engine().begin() as conn:
             conn.execute(
                 text("""
                 UPDATE board_sessions
-                SET status = :status,
-                    transcript = CAST(:transcript AS jsonb),
-                    completed_at = CASE WHEN :is_terminal THEN NOW() ELSE completed_at END
+                SET status               = :status,
+                    bd_response          = :bd,
+                    finance_response     = :finance,
+                    engineering_response = :engineering,
+                    ops_response         = :ops,
+                    ceo_synthesis        = :ceo_synthesis,
+                    completed_at         = CASE WHEN :is_terminal THEN NOW() ELSE completed_at END
                 WHERE session_id = :session_id
                 """),
                 {
-                    "session_id": session_id,
+                    "session_id": _to_uuid(session_id),
                     "status": status,
-                    "transcript": json.dumps(transcript, default=str),
+                    "bd": responses.get("bd") or None,
+                    "finance": responses.get("finance") or None,
+                    "engineering": responses.get("engineering") or None,
+                    "ops": responses.get("ops") or None,
+                    "ceo_synthesis": ceo_synthesis,
                     "is_terminal": is_terminal,
                 },
             )
@@ -346,25 +373,57 @@ def run_board_session(pitch: str, market: str) -> dict:
 
 
 def get_board_session(session_id: str) -> Optional[dict]:
-    """Fetch a board session from DB by session_id. Returns None if not found."""
+    """Fetch a board session from DB by session_id. Returns None if not found.
+
+    Synthesises a 'transcript' dict from individual dept-head columns so the
+    API response matches the shape the dashboard JS expects.
+    """
     try:
         with _get_engine().connect() as conn:
             row = conn.execute(
                 text("""
-                SELECT session_id, pitch, market, status, transcript, created_at, completed_at
+                SELECT session_id, pitch_text, market, status,
+                       bd_response, finance_response, engineering_response,
+                       ops_response, ceo_synthesis,
+                       created_at, completed_at
                 FROM board_sessions
                 WHERE session_id = :session_id
                 """),
-                {"session_id": session_id},
+                {"session_id": _to_uuid(session_id)},
             ).mappings().fetchone()
             if row is None:
                 return None
+
+            # Build transcript dict for API/dashboard compatibility
+            responses = {
+                "bd": row["bd_response"],
+                "finance": row["finance_response"],
+                "engineering": row["engineering_response"],
+                "ops": row["ops_response"],
+            }
+            ceo_extra = {}
+            if row["ceo_synthesis"]:
+                try:
+                    ceo_extra = json.loads(row["ceo_synthesis"]) if isinstance(row["ceo_synthesis"], str) else dict(row["ceo_synthesis"])
+                except Exception:
+                    pass
+
+            transcript = {
+                "status": row["status"],
+                "responses": {k: v for k, v in responses.items() if v},
+                "actions": ceo_extra.get("actions", []),
+            }
+            if ceo_extra.get("ceo_decomposition"):
+                transcript["ceo_decomposition"] = ceo_extra["ceo_decomposition"]
+            if ceo_extra.get("error"):
+                transcript["error"] = ceo_extra["error"]
+
             return {
-                "session_id": row["session_id"],
-                "pitch": row["pitch"],
+                "session_id": str(row["session_id"]),
+                "pitch": row["pitch_text"],
                 "market": row["market"],
                 "status": row["status"],
-                "transcript": row["transcript"],
+                "transcript": transcript,
                 "created_at": str(row["created_at"]),
                 "completed_at": str(row["completed_at"]) if row["completed_at"] else None,
             }

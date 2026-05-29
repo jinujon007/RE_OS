@@ -516,6 +516,39 @@ def _kickoff_with_fallback(
     raise last_error or RuntimeError(f"{stage_name} failed after {max_retries} retries")
 
 
+# ── Output extraction helper ───────────────────────────────────────────────────
+
+
+def _extract_report_body(result) -> tuple[str, str, str, str]:
+    """Extract analyst_raw, ceo_raw, report_body, ceo_section from a crew result.
+
+    CEO output shorter than 100 chars is treated as a failed/placeholder synthesis —
+    report falls back to the analyst output.
+
+    Returns:
+        (analyst_raw, ceo_raw, report_body, ceo_section)
+    """
+    ceo_raw = ""
+    analyst_raw = ""
+    if hasattr(result, "tasks_output") and result.tasks_output:
+        if len(result.tasks_output) >= 2:
+            analyst_raw = result.tasks_output[0].raw or ""
+            ceo_raw = result.tasks_output[1].raw or ""
+        elif len(result.tasks_output) == 1:
+            analyst_raw = result.tasks_output[0].raw or ""
+    ceo_raw = ceo_raw or (result.raw if hasattr(result, "raw") else str(result))
+
+    if len(ceo_raw.strip()) < 100:
+        logger.warning("[CEO] Short/placeholder output — falling back to analyst report")
+        report_body = analyst_raw or str(result)
+        ceo_section = "[CEO synthesis unavailable — see analyst report above]"
+    else:
+        report_body = ceo_raw
+        ceo_section = ""
+
+    return analyst_raw, ceo_raw, report_body, ceo_section
+
+
 # ── Main run function ──────────────────────────────────────────────────────────
 
 
@@ -881,29 +914,11 @@ def run_market_intelligence(market_name: str) -> str:
         )
 
         # Extract outputs — prefer CEO synthesis; fall back to analyst if CEO returned placeholder
-        ceo_raw = ""
-        analyst_raw = ""
-        if hasattr(result, "tasks_output") and result.tasks_output:
-            if len(result.tasks_output) >= 2:
-                analyst_raw = result.tasks_output[0].raw or ""
-                ceo_raw = result.tasks_output[1].raw or ""
-            elif len(result.tasks_output) == 1:
-                analyst_raw = result.tasks_output[0].raw or ""
-        ceo_raw = ceo_raw or (result.raw if hasattr(result, "raw") else str(result))
+        analyst_raw, ceo_raw, report_body, ceo_section = _extract_report_body(result)
 
         # --- Analyst memory write (T-285) ---
         if analyst_raw and len(analyst_raw.strip()) >= 50:
             _extract_and_write_memories("analyst", market_name, analyst_raw)
-
-        if len(ceo_raw.strip()) < 100:
-            logger.warning(
-                "[CEO] Placeholder detected — using analyst output as report body"
-            )
-            report_body = analyst_raw or str(result)
-            ceo_section = "[CEO synthesis unavailable — see analyst report above]"
-        else:
-            report_body = ceo_raw
-            ceo_section = ""
 
          # ── Save report ────────────────────────────────────────────────────────
         output_dir = os.path.join(
