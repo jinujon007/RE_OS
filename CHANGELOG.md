@@ -1,3 +1,28 @@
+## Session — Claude Code 2026-05-29 (Round 18 — Review Fixes)
+
+BUG-FIX | crews/market_intel_crew.py | Move litellm module-level imports to local scope — fixes ImportError in test collection | Claude Code | 2026-05-29
+BUG-FIX | crews/market_intel_crew.py | CEO placeholder detection: replace fragile string match with len < 100 gate | Claude Code | 2026-05-29
+BUG-FIX | crews/market_intel_crew.py | sync_to_obsidian: wrap in try/except — pipeline abort on sync failure eliminated | Claude Code | 2026-05-29
+FEATURE | crews/market_intel_crew.py | Add _detect_rate_limited_provider alias for backward compat with tests | Claude Code | 2026-05-29
+BUG-FIX | tests/conftest.py | Add NotFoundError + completion mock to litellm stub — was missing, caused ImportError | Claude Code | 2026-05-29
+BUG-FIX | tests/test_crew_helpers.py | Update gemini detection assertion to accept gemini_flash/gemini_gemma (T-314 split) | Claude Code | 2026-05-29
+BUG-FIX | tests/test_llm_router.py | Update 3 stale assertions: gemini exclusion key + Cerebras model name (T-312/T-314) | Claude Code | 2026-05-29
+FEATURE | utils/db_organizer.py | Compute price_psf = listed_price / area_sqft in _upsert_listing_by_cid — RERA has no pricing; listings are only PSF source | Claude Code | 2026-05-29
+INFRA | database | Back-populate price_psf for 6 existing listing rows from raw_data.area_sqft | Claude Code | 2026-05-29
+FEATURE | database/schema.sql | v_market_inventory + v_market_brief: add avg_listing_psf via listings LEFT JOIN | Claude Code | 2026-05-29
+FEATURE | agents/analyst_agent.py | market_summary query: include avg_listing_psf from v_market_brief | Claude Code | 2026-05-29
+FEATURE | dashboard/app.py | db_state + intel_cards: pull avg_psf from listings.price_psf (was always NULL from rera_projects) | Claude Code | 2026-05-29
+FEATURE | dashboard/app.py | TTL cache (120s) for intel_cards estimated flag — eliminates 3 file reads per poll | Claude Code | 2026-05-29
+BUG-FIX | dashboard/app.py | agents_state(): leaked connections on DB failure path — add finally block with reset=True | Claude Code | 2026-05-29
+BUG-FIX | dashboard/app.py | health(): test connection with SELECT 1 instead of silent get+release — pool leak on broken conn | Claude Code | 2026-05-29
+BUG-FIX | dashboard/app.py | _release_db(): check conn.closed before rollback attempt | Claude Code | 2026-05-29
+FEATURE | crews/board_room.py | T-294: per-agent task prompts — BD/Finance/Engineering/Ops structured templates with verdict + numbered outputs | Claude Code | 2026-05-29
+BUG-FIX | crews/board_room.py | Thread-safe local exclusion set per board session — never touches global pipeline _EXCLUDED | Claude Code | 2026-05-29
+FEATURE | config/llm_router.py | get_heavy_llm: accept optional excluded param for board room session isolation | Claude Code | 2026-05-29
+FEATURE | dashboard/templates/index.html | Board Room panel: market selector + pitch textarea + CONVENE BOARD + poll loop + dept response renderer | Claude Code | 2026-05-29
+
+---
+
 ## GATE-2 — 2026-05-29
 
 | Check | Result | Detail |

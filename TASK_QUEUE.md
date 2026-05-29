@@ -4,6 +4,26 @@
 
 ---
 
+## SPRINT BRIEF — Round 18 (updated 2026-05-29)
+
+**Review fixes (all done):**
+- T-R18-1 ✅ CI unblocked — litellm imports local, alias added, 189/189 pass
+- T-R18-2 ✅ PSF data live — Yelahanka ₹11,041 / Devanahalli ₹9,666 (from listings)
+- T-R18-3 ✅ Connection pool leak fixed — agents_state finally block + health SELECT 1
+- T-R18-4 ✅ Board Room thread safety — per-session `_session_excluded` set
+- T-R18-5 ✅ T-294 per-agent prompts — BD/Finance/Engineering/Ops structured templates
+- T-R18-6 ✅ CEO placeholder detection — length gate (< 100 chars) replaces string match
+- T-R18-7 ✅ sync_to_obsidian guarded — non-fatal, logged at WARNING
+- T-R18-8 ✅ intel/cards TTL cache — 120s, eliminates 3 file reads per poll
+- T-R18-9 ✅ Board Room UI panel — pitch + market + CONVENE BOARD + poll + render
+
+**Next priorities:**
+- T-297 (memory row cap) + T-298 (decay hook) — Agent Memory Phase 4 completion
+- GATE-6 — run pipeline to confirm avg_listing_psf appears in Analyst brief output
+- T-294 validation — trigger a real board session to confirm dept-head responses are structurally differentiated
+
+---
+
 ## SPRINT BRIEF — Round 17 (updated 2026-05-29)
 
 **Phase 2 (Dashboard):** T-280 ✅, T-282 ✅, T-283 ✅, T-286 ✅, T-293 ✅ done. T-284 panel exists. GATE-2 PASSED.
