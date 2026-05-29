@@ -4,6 +4,31 @@
 
 ---
 
+## SPRINT BRIEF — Round 20 (updated 2026-05-29)
+
+**Test coverage: 214 passed, 0 failed** (was 189 at start of Round 18)
+
+**T-301 ✅** — `tests/test_board_room.py`: 12 tests — session_id, status, DB failure, named column access, dept template structure
+**T-303 ✅** — `tests/test_intel_output.py`: 13 tests — CEO fallback logic, boundary at 100 chars, return types
+**T-294 ✅ VALIDATED** — Live board session returned 4 structurally differentiated responses:
+  - BD: Conditional GO, entry PSF 6200–7200, 3 risks + 3 upsides
+  - Finance: CONDITIONAL, break-even ₹10,925, IRR 5%/9%/2% base/bull/bear
+  - Engineering: FEASIBLE–CONDITIONAL, BDA+RERA+BBMP, 30/45/25 BHK mix
+  - Ops: 45%CP/30%direct/25%digital, Q1-Q4 velocity 30-35-35-27, August 2026 launch
+
+**Board Room schema fixed:**
+- `_create_session_row`: was writing to wrong columns (pitch/transcript → pitch_text/dept columns)
+- `_update_session_row`: now writes bd_response/finance_response/engineering_response/ops_response
+- `get_board_session`: reads individual columns, synthesises transcript dict for dashboard
+- Bug: `::uuid` cast in SQLAlchemy text() strips bind parameter — fixed via `uuid.UUID()` objects
+
+**T-295 ✅** / **T-296 ✅** — Already implemented in Round 16. Marked done.
+**T-304 ✅** / **T-305 ✅** — Already implemented. Marked done.
+
+**Next:** Phase S (scout parallelism) — needs T-247 (remove fake context chains) first. GATE-4 (Yelahanka/Hebbal live RERA).
+
+---
+
 ## SPRINT BRIEF — Round 19 (updated 2026-05-29)
 
 **Phase 4 (Agent Memory): ✅ COMPLETE**

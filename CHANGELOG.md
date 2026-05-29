@@ -1,3 +1,16 @@
+## Session — Claude Code 2026-05-29 (Round 20 — Test Coverage + Board Room Schema Fix)
+
+FEATURE | tests/test_board_room.py | T-301: 12 tests — run_board_session (session_id/status/market/DB failure), get_board_session (None/fields), dept template validation | Claude Code | 2026-05-29
+FEATURE | tests/test_intel_output.py | T-303: 13 tests for _extract_report_body — CEO fallback, short output, whitespace, boundary at 100 chars, return types | Claude Code | 2026-05-29
+REFACTOR | crews/market_intel_crew.py | Extract _extract_report_body() from run_market_intelligence — same logic, now importable for tests | Claude Code | 2026-05-29
+BUG-FIX | crews/board_room.py | _create_session_row: wrong columns (pitch/transcript) → correct (pitch_text + individual dept cols) | Claude Code | 2026-05-29
+BUG-FIX | crews/board_room.py | _update_session_row: was writing to non-existent transcript JSONB → now writes bd/finance/engineering/ops/ceo_synthesis columns | Claude Code | 2026-05-29
+BUG-FIX | crews/board_room.py | get_board_session: reads individual columns, synthesises transcript dict for dashboard compatibility | Claude Code | 2026-05-29
+BUG-FIX | crews/board_room.py | ::uuid in SQLAlchemy text() strips bind parameter — fixed via _to_uuid() passing uuid.UUID objects | Claude Code | 2026-05-29
+VALIDATED | T-294 | Live board session: BD/Finance/Engineering/Ops returned structurally differentiated responses with specific numbers, verdicts, and action items | Claude Code | 2026-05-29
+
+---
+
 ## Session — Claude Code 2026-05-29 (Round 19 — Memory Phase 4 Complete + GATE-6)
 
 FEATURE | utils/agent_memory.py | T-297: row cap 500/agent+market — prune lowest-confidence excess in same transaction | Claude Code | 2026-05-29
