@@ -1,3 +1,16 @@
+## Session — Claude Code 2026-05-29 (Round 19 — Memory Phase 4 Complete + GATE-6)
+
+FEATURE | utils/agent_memory.py | T-297: row cap 500/agent+market — prune lowest-confidence excess in same transaction | Claude Code | 2026-05-29
+BUG-FIX | utils/agent_memory.py | ON CONFLICT (agent_id, market, fact) was silently failing — no UNIQUE constraint existed; writes always returned False | Claude Code | 2026-05-29
+BUG-FIX | utils/agent_memory.py | decay_memories SQL: column is memory_id not id — pre-existing bug from schema mismatch | Claude Code | 2026-05-29
+INFRA | database/schema.sql | ADD CONSTRAINT agent_memories_unique_fact UNIQUE (agent_id, market, fact) — applied live + persisted | Claude Code | 2026-05-29
+FEATURE | config/scheduler.py | T-298: weekly memory decay job — Monday 03:00 UTC, APScheduler, confirmed in startup log | Claude Code | 2026-05-29
+BUG-FIX | config/scheduler.py | run_market_snapshot: avg_psf_sale was using price_avg_psf (always NULL) → now uses listings subquery | Claude Code | 2026-05-29
+FEATURE | scrapers/rera_karnataka.py | T-300: UA rotation — 4 Chrome UAs, itertools.cycle, _rotate_ua() on every _post_search() attempt | Claude Code | 2026-05-29
+GATE | GATE-6 | ✅ PASSED — MarketSummaryTool returns avg_listing_psf=9666 (Devanahalli), floor=8216, ceiling=11115 | Claude Code | 2026-05-29
+
+---
+
 ## Session — Claude Code 2026-05-29 (Round 18 — Review Fixes)
 
 BUG-FIX | crews/market_intel_crew.py | Move litellm module-level imports to local scope — fixes ImportError in test collection | Claude Code | 2026-05-29

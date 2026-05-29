@@ -4,6 +4,32 @@
 
 ---
 
+## SPRINT BRIEF — Round 19 (updated 2026-05-29)
+
+**Phase 4 (Agent Memory): ✅ COMPLETE**
+- T-297 ✅ Row cap: 500 per agent+market, prune lowest-confidence on overflow
+- T-298 ✅ Decay hook: Monday 03:00 UTC in APScheduler, confirmed in startup log
+- T-299 ✅ Obsidian daily log append: live (implemented in earlier round)
+- Bug fix: UNIQUE constraint on (agent_id, market, fact) — ON CONFLICT was silently failing
+- Bug fix: decay_memories SQL: column is memory_id not id
+
+**T-300 ✅ RERA UA rotation:** 4 UA strings, itertools.cycle, rotates on every retry
+
+**GATE-6: ✅ PASSED (2026-05-29)**
+- MarketSummaryTool returns avg_listing_psf=9666 (Devanahalli), floor=8216, ceiling=11115
+- Analyst Stage 3 now sees real PSF range — CEO briefs will cite actual numbers
+
+**Scheduler bonus:** avg_psf_sale in market_snapshots now uses listing PSF (was always NULL)
+
+**Test suite: 189 passed, 0 failed** — maintained across both rounds
+
+**Next priorities:**
+- T-294 validation: trigger real board session, confirm 4 dept responses are structurally differentiated
+- Phase S (scout parallelism): requires T-247 (fake context chains removed) first
+- GATE-4: RERA live data for Yelahanka/Hebbal (currently fallback sample)
+
+---
+
 ## SPRINT BRIEF — Round 18 (updated 2026-05-29)
 
 **Review fixes (all done):**
@@ -645,7 +671,7 @@ Kaveri Online (`kaveri.karnataka.gov.in`) holds actual property registration tra
 | GATE-3 | Auth Hardening | T-296 | ✅ PASSED (T-296 + T-295 done Round 16) |
 | GATE-4 | Intel Quality Baseline | T-281+T-287+T-288 | PENDING — T-281 partial |
 | GATE-5 | Log Monitor Eliminated | T-292 | ✅ PASSED |
-| GATE-6 | Intelligence OS — Appreciation Layer Live | T-308+T-309+T-310 done; Analyst output contains PSF trajectory for at least one market | PENDING |
+| GATE-6 | Intelligence OS — Appreciation Layer Live | T-308+T-309+T-310 done; Analyst output contains PSF trajectory for at least one market | ✅ PASSED (2026-05-29) |
 
 ---
 
