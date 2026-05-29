@@ -1,3 +1,52 @@
+## Session — Claude Code 2026-05-29 (Round 17 Integration — Kilo+Cline audit + T-311 fix)
+
+FEATURE | utils/appreciation_model.py | T-309: Appreciation forecasting model — pincode lookup + infra events + zone-based rates + water risk penalty → 3yr/5yr/10yr forecast dicts | Kilo Code | 2026-05-29
+FEATURE | data/bangalore_infrastructure_timeline.json | T-308: 18-project infra timeline (STRR/PRR/Metro/Airport/Industrial) with pincodes + PSF appreciation coefficients | Kilo Code | 2026-05-29
+FEATURE | tests/test_appreciation_model.py | T-309: 3 pytest fixtures — Hoskote STRR pincode, Yelahanka urban, Devanahalli market lookup | Kilo Code | 2026-05-29
+FEATURE | crews/market_intel_crew.py | T-310: Appreciation forecasts injected into Analyst Stage 3 — `get_pincodes_for_market()` + `get_appreciation_forecast()` top-5 pincodes serialized to JSON, passed into analyst task description | Kilo Code | 2026-05-29
+FEATURE | config/llm_router.py | T-306: litellm success callback wired — `_litellm_usage_callback` fires after every LLM call; maps api_key/base_url to provider; calls `record_token_usage()` | Kilo Code | 2026-05-29
+REFACTOR | config/llm_router.py | T-314: Gemini exclusion keys split — `gemini_flash` (CEO/Analysis) and `gemini_gemma` (Light) are now independent exclusion keys; `DAILY_LIMITS` updated; `get_router_status()` shows both | Kilo Code | 2026-05-29
+REFACTOR | config/settings.py | T-312: Cerebras model updated `llama3.1-8b` → `gpt-oss-120b` — fixes 404 on all LIGHT+ANALYSIS tier calls | Kilo Code | 2026-05-29
+FEATURE | scrapers/developer_scout.py | T-313: Two-URL strategy — `listing_url` (all-projects page) tried first; `projects_url` is fallback if listing returns <1000 chars. Brigade/Prestige/Sobha updated | Kilo Code | 2026-05-29
+FEATURE | scrapers/kaveri_transaction_scout.py | T-311: Kaveri transaction scraper — Playwright → POST → fallback for Devanahalli sale deeds (90-day window) | Kilo Code | 2026-05-29
+BUG-FIX | scrapers/kaveri_transaction_scout.py | T-311: Fixed broken DB insertion — removed `from utils.models import KaveriRegistration` (module doesn't exist) + replaced nonexistent `DBOrganizer.insert_bulk()` with `DBOrganizer().run_kaveri()` using proper dict format | Claude Code | 2026-05-29
+
+---
+
+## Session — Claude Code 2026-05-28 (World-Class Audit — Round 16, Pass 2)
+
+FEATURE | dashboard/app.py | `intel_cards()` now includes `estimated: true/false` per card — reads latest report file header to detect [ESTIMATED DATA flag | Claude Code | 2026-05-28
+BUG-FIX | utils/db_organizer.py | `_get_market_id_by_name` ILIKE '%market%' → LOWER(name) = LOWER(:n) exact match — prevents phantom multi-market matches if names overlap | Claude Code | 2026-05-28
+REFACTOR | crews/market_intel_crew.py | Moved `subprocess` and `time` imports from inside `run_all_markets()` to module-level top imports | Claude Code | 2026-05-28
+INFRA | docker-compose.yml | Added `DASHBOARD_API_KEY` + `DASHBOARD_API_KEY_PREV` to scheduler service env block — was missing, required for dual-key rotation | Claude Code | 2026-05-28
+FEATURE | dashboard/templates/index.html | Pipeline Control panel (T-282): API key input + per-market ▶ Run / ⏹ Stop buttons, polls /api/status every 5s for badge state | Claude Code | 2026-05-28
+FEATURE | dashboard/templates/index.html | Log stream market selector (T-283): dropdown switches SSE stream per-market; auto-reconnect with exponential backoff (1s→30s) | Claude Code | 2026-05-28
+FEATURE | dashboard/templates/index.html | Sentinel sticky footer (T-286): polls /api/sentinel/status every 30s; shows last run badge (OK/ERR), timestamp, and next run label | Claude Code | 2026-05-28
+CI | .github/workflows/ci.yml | Coverage threshold raised 40% → 50% | Claude Code | 2026-05-28
+
+---
+
+## Session — Claude Code 2026-05-28 (World-Class Audit — Round 16)
+
+BUG-FIX | developer_scout.py:1 | `tr"""` → `"""` — corrupted module docstring (SyntaxError in Python tokenizer) | Claude Code | 2026-05-28
+BUG-FIX | dashboard/app.py | Removed `conn.set_session(readonly=True)` from `db_state()` — pool-poisoning bug: session attribute persisted across pool reuse, silently breaking all subsequent write operations on that connection | Claude Code | 2026-05-28
+SECURITY | dashboard/app.py | `/metrics` endpoint now auth-gated when `DASHBOARD_API_KEY` is set (T-296) — was unauthenticated and leaking pipeline telemetry | Claude Code | 2026-05-28
+FEATURE | dashboard/app.py | `POST /api/board/session` input validation (T-295): empty pitch → 400; pitch >2000 chars → 400; invalid market → 400 | Claude Code | 2026-05-28
+REFACTOR | dashboard/app.py | Fixed 8-space body indentation in `_stop_pipeline_for_market` and `_running_snapshot` to standard 4-space | Claude Code | 2026-05-28
+BUG-FIX | crews/market_intel_crew.py | Removed duplicate `cp.load("rera_scraped")` + `records_scraped` assignment in cache-skip branch (loaded same checkpoint twice) | Claude Code | 2026-05-28
+REFACTOR | crews/market_intel_crew.py | Extracted near-identical CEO + Analyst memory-write blocks into `_extract_and_write_memories(agent_id, market, text)` helper — ~50 lines of duplication eliminated | Claude Code | 2026-05-28
+REFACTOR | crews/market_intel_crew.py | Moved `from litellm import completion` and `import json` from inside function bodies to module-level top imports | Claude Code | 2026-05-28
+DOCS | TASK_QUEUE.md | GATE-1 status corrected: PENDING → ✅ PASSED (2026-05-28) — was inconsistent with T-307 result | Claude Code | 2026-05-28
+
+---
+
+## Session — Cline 2026-05-28
+
+T-208 | developer_scout.py Yelahanka developer URLs updated | DONE | Cline | 2026-05-28
+- Brigade → https://www.brigadegroup.com/residential/projects/bengaluru/brigade-insignia | HTTP 200 | hits: brigade, yelahanka, insignia, bhk, apartment
+- Prestige → https://www.prestigeconstructions.com/residential-projects/bangalore/prestige-finsbury-park | HTTP 200 | hits: prestige, north bangalore, finsbury, bhk, apartment
+- Sobha → https://www.sobha.com/bengaluru/sobha-palm-court/ | HTTP 200 | hits: sobha, yelahanka, north bangalore, palm court, bhk, apartment
+
 ## Session — Kilo Code parallel windows + Claude Code review 2026-05-27
 
 T-218 | crews/board_room.py skeleton — session insert + run_board_session stub | DONE | Kilo Code | 2026-05-27
@@ -778,6 +827,7 @@ Checkpoints cleared. 10 fresh RERA fallback records staged. Pipeline fresh-launc
 
 ---
 T-167 | /api/intel endpoint wired | PASS | /api/intel and /api/intel/download both added to dashboard/app.py | Cline | 2026-05-20 11:37
+
 
 
 

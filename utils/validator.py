@@ -44,7 +44,7 @@ def validate_rera_records(records: list) -> tuple:
         report  — dict with counts and error summary
     """
     if not records:
-        return [], [], {"total": 0, "valid": 0, "invalid": 0, "error_summary": []}
+        return [], [], {"total": 0, "valid": 0, "invalid": 0, "pass_rate_pct": 0, "error_summary": []}
 
     valid = []
     invalid = []

@@ -50,7 +50,13 @@ _READ_ONLY_PREFIXES = ('/api/reports/', '/api/logs/')
 
 @app.before_request
 def _require_api_key():
-    if not request.path.startswith('/api'):
+    if not request.path.startswith('/api') and request.path != '/metrics':
+        return None
+    # /metrics leaks pipeline telemetry — gate it when a key is configured (T-296)
+    if request.path == '/metrics':
+        api_key = os.environ.get("DASHBOARD_API_KEY", "")
+        if api_key and not _is_run_api_authorized(request):
+            return jsonify({"error": "unauthorized"}), 401
         return None
     if request.path in _READ_ONLY_PATHS:
         return None
@@ -174,7 +180,7 @@ def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
                     url + ("&" if "?" in url else "?") + "connect_timeout=5"
                 )
                 _db_pool = psycopg2.pool.ThreadedConnectionPool(
-                    minconn=1, maxconn=5, dsn=dsn
+                    minconn=1, maxconn=10, dsn=dsn
                 )
     return _db_pool
 
@@ -184,15 +190,20 @@ def _get_db():
     return _get_pool().getconn()
 
 
-def _release_db(conn):
+def _release_db(conn, reset: bool = False):
     """Return a connection to the pool, rolling back any open transaction first.
-    Without this, a mid-query error leaves the pooled connection in InFailedSqlTransaction."""
+    Without this, a mid-query error leaves the pooled connection in InFailedSqlTransaction.
+    Set reset=True to force-close the connection instead of returning to pool."""
     try:
+        if reset:
+            _get_pool().putconn(conn, close=True)
+            return
         if not conn.autocommit:
             try:
                 conn.rollback()
             except Exception:
-                pass
+                _get_pool().putconn(conn, close=True)
+                return
         _get_pool().putconn(conn)
     except Exception:
         pass
@@ -320,36 +331,36 @@ def _start_pipeline_for_market(market: str):
 
 
 def _stop_pipeline_for_market(market: str):
-        with _lock:
-            entry = _running.get(market)
-            if entry and "proc" in entry and entry["proc"].poll() is None:
-                entry["proc"].terminate()
-                try:
-                    entry["proc"].wait(timeout=2)  # reap; kill if stuck (T-233)
-                except subprocess.TimeoutExpired:
-                    entry["proc"].kill()
-                logger.info(
-                    "[DIAG running] terminate requested market=%s pid=%s",
-                    market,
-                    entry["proc"].pid,
-                )
-                return {"status": "stopped", "market": market}, 200
-        return {"status": "not_running"}, 200
+    with _lock:
+        entry = _running.get(market)
+        if entry and "proc" in entry and entry["proc"].poll() is None:
+            entry["proc"].terminate()
+            try:
+                entry["proc"].wait(timeout=2)  # reap; kill if stuck (T-233)
+            except subprocess.TimeoutExpired:
+                entry["proc"].kill()
+            logger.info(
+                "[DIAG running] terminate requested market=%s pid=%s",
+                market,
+                entry["proc"].pid,
+            )
+            return {"status": "stopped", "market": market}, 200
+    return {"status": "not_running"}, 200
 
 
 def _running_snapshot():
-        with _lock:
-            snapshot = {}
-            for market, entry in _running.items():
-                if "proc" in entry:
-                    rc = entry["proc"].poll()
-                    snapshot[market] = {
-                        "started": entry.get("started"),
-                        "state": "running" if rc is None else ("done" if rc == 0 else "failed"),
-                        "returncode": rc,
-                        "pid": entry["proc"].pid,
-                    }
-            return snapshot
+    with _lock:
+        snapshot = {}
+        for market, entry in _running.items():
+            if "proc" in entry:
+                rc = entry["proc"].poll()
+                snapshot[market] = {
+                    "started": entry.get("started"),
+                    "state": "running" if rc is None else ("done" if rc == 0 else "failed"),
+                    "returncode": rc,
+                    "pid": entry["proc"].pid,
+                }
+        return snapshot
 
 
 # ── Pages ──────────────────────────────────────────────────────────────────────
@@ -431,13 +442,19 @@ def health():
 
 # ── Board Room API
 
+_VALID_BOARD_MARKETS = {"Yelahanka", "Devanahalli", "Hebbal", ""}
+
 @limiter.limit("20 per hour")
 @app.route("/api/board/session", methods=["POST"])
 def board_session_create():
     from crews.board_room import run_board_session
     payload = request.get_json() or {}
-    pitch = payload.get("pitch", "")
-    market = payload.get("market", "")
+    pitch = str(payload.get("pitch") or "").strip()
+    market = str(payload.get("market") or "").strip()
+    if not pitch or len(pitch) > 2000:
+        return jsonify({"error": "pitch required and must be under 2000 characters"}), 400
+    if market not in _VALID_BOARD_MARKETS:
+        return jsonify({"error": "invalid market — must be Yelahanka, Devanahalli, or Hebbal"}), 400
     result = run_board_session(pitch, market)
     return jsonify(result), 200
 
@@ -471,10 +488,10 @@ def metrics():
 @app.route("/api/db/state")
 def db_state():
     conn = None
+    exc = False
     try:
         conn = _get_db()
         cur = conn.cursor()
-        conn.set_session(readonly=True)
 
         state = {}
 
@@ -521,10 +538,11 @@ def db_state():
 
         return jsonify(state)
     except Exception as e:
+        exc = True
         return jsonify({"error": str(e)}), 500
     finally:
         if conn:
-            _release_db(conn)
+            _release_db(conn, reset=exc)
 
 
 # ── Pipeline Control ───────────────────────────────────────────────────────────
@@ -892,6 +910,7 @@ def get_report(market):
 def intel_cards():
     """DB-backed market summary cards for dashboard UI."""
     conn = None
+    exc = False
     try:
         conn = _get_db()
         cur = conn.cursor()
@@ -909,21 +928,33 @@ def intel_cards():
             """
         )
         for row in cur.fetchall():
+            market_name = row[0]
+            slug = MARKET_SLUG.get(market_name, market_name.lower())
+            report_files = sorted(glob.glob(f"/app/outputs/{slug}/intel_report_*.txt"))
+            is_estimated = False
+            if report_files:
+                try:
+                    with open(report_files[-1], encoding="utf-8") as rf:
+                        is_estimated = "[ESTIMATED DATA" in rf.read(4096)
+                except Exception:
+                    pass
             cards.append(
                 {
-                    "market": row[0],
+                    "market": market_name,
                     "projects": int(row[1] or 0),
                     "avg_psf": int(row[2]) if row[2] else None,
-                    "latest_report": _latest_report_path(row[0]),
+                    "latest_report": _latest_report_path(market_name),
+                    "estimated": is_estimated,
                 }
             )
 
         return jsonify({"cards": cards})
     except Exception as e:
+        exc = True
         return jsonify({"error": str(e)}), 500
     finally:
         if conn:
-            _release_db(conn)
+            _release_db(conn, reset=exc)
 
 
 # ── Intel API ──────────────────────────────────────────────────────────────────

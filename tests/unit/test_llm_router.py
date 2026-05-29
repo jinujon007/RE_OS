@@ -83,7 +83,7 @@ def test_heavy_falls_back_to_ollama_when_all_excluded():
         NVIDIA_API_KEY="test-nvidia",
         OPENROUTER_API_KEY="test-openrouter",
         LLM=mock_llm_cls,
-        _EXCLUDED={"groq", "gemini", "nvidia", "openrouter"},
+        _EXCLUDED={"groq", "gemini_flash", "nvidia", "openrouter"},
     ):
         import config.llm_router as router
 
@@ -151,7 +151,7 @@ def test_analysis_falls_back_to_ollama_when_all_excluded():
         GEMINI_API_KEY="test-gemini",
         NVIDIA_API_KEY="test-nvidia",
         LLM=mock_llm_cls,
-        _EXCLUDED={"cerebras", "groq", "gemini", "nvidia"},
+        _EXCLUDED={"cerebras", "groq", "gemini_flash", "nvidia"},
     ):
         import config.llm_router as router
 

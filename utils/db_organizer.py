@@ -508,10 +508,10 @@ class DBOrganizer:
     # ── Kaveri — guidance values ───────────────────────────────────────────────
 
     def _get_market_id_by_name(self, conn, market_name: str) -> str | None:
-        """Look up micro_market.id directly by name (no keyword matching needed)."""
+        """Look up micro_market.id by exact case-insensitive name match."""
         row = conn.execute(
-            text("SELECT id FROM micro_markets WHERE name ILIKE :n LIMIT 1"),
-            {"n": f"%{market_name}%"},
+            text("SELECT id FROM micro_markets WHERE LOWER(name) = LOWER(:n) LIMIT 1"),
+            {"n": market_name},
         ).fetchone()
         return str(row[0]) if row else None
 
@@ -833,6 +833,14 @@ class DBOrganizer:
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
+_STAGE_STATUS_MAP = {
+    "start": "in_progress",
+    "success": "completed",
+    "failed": "failed",
+    "skip": "skipped",
+}
+
+
 def _write_stage_event(
     conn,
     run_id: str,
@@ -853,6 +861,7 @@ def _write_stage_event(
                 "stage": stage,
                 **extra,
             }
+        db_status = _STAGE_STATUS_MAP.get(status, status)
         conn.execute(
             text("""
                 INSERT INTO agent_runs (
@@ -861,14 +870,14 @@ def _write_stage_event(
                 ) VALUES (
                     :agent_name, :task_type, :micro_market, :status,
                     CAST(:metadata AS jsonb), NOW(),
-                    CASE WHEN :status IN ('success', 'failed', 'skip') THEN NOW() ELSE NULL END
+                    CASE WHEN :status IN ('completed', 'failed', 'skipped') THEN NOW() ELSE NULL END
                 )
             """),
             {
                 "agent_name": event_name,
                 "task_type": "pipeline_stage_event",
                 "micro_market": market,
-                "status": status,
+                "status": db_status,
                 "metadata": json.dumps(metadata, default=str),
             },
         )

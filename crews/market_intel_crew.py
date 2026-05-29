@@ -23,14 +23,19 @@ Run:
 """
 
 import argparse
+import json
 import os
+import subprocess
 import sys
+import time as _time
 import traceback
 from datetime import datetime
 
+from litellm import completion as litellm_completion
+
 from crewai import Crew, Task, Process
 from loguru import logger
-from litellm.exceptions import RateLimitError
+from litellm.exceptions import RateLimitError, NotFoundError
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -40,12 +45,13 @@ from agents import (
     create_analyst_agent,
 )
 from utils.agent_memory import read_memories, write_memory
-from config.settings import TARGET_MARKETS
+from utils.appreciation_model import get_pincodes_for_market, get_appreciation_forecast
+from config.settings import TARGET_MARKETS, GEMINI_CEO_MODEL, GEMINI_LIGHT_MODEL
 from config.run_logger import RunLogger
 from sqlalchemy import create_engine
 from config.settings import DATABASE_URL
 from config.checkpointer import Checkpointer
-from config.llm_router import _exclude, _clear_excluded, _is_excluded
+from config.llm_router import _exclude, _clear_excluded, _is_excluded, _daily_counts
 from config.metrics import (
     pipeline_runs_total,
     llm_calls_total,
@@ -61,6 +67,41 @@ from utils.obsidian_sync import sync_to_obsidian
 _RATE_LIMIT_RETRIES = 3
 
 _DB_STATS_DEFAULT = {"inserted": 0, "updated": 0, "failed": 0, "duration_seconds": 0}
+
+
+def _extract_and_write_memories(agent_id: str, market: str, text: str) -> None:
+    """Extract 3 key facts from text and persist them to agent_memories table.
+    Uses Cerebras 8b (LIGHT tier). Non-fatal — logged at WARNING on failure."""
+    from config.settings import CEREBRAS_API_KEY as _CKEY, CEREBRAS_BASE_URL as _CBASE, CEREBRAS_MODEL as _CMODEL
+    try:
+        extraction_prompt = (
+            f"From this market brief, extract exactly 3 key facts as JSON list.\n"
+            f"Each fact: one sentence, specific number included if available.\n"
+            f'Format: [{{"fact": "...", "confidence": 0.6}}, ...]\n'
+            f"Brief: {text[:2000]}"
+        )
+        response = litellm_completion(
+            model=f"openai/{_CMODEL}",
+            api_key=_CKEY,
+            base_url=_CBASE,
+            messages=[{"role": "user", "content": extraction_prompt}],
+            temperature=0.2,
+            max_tokens=500,
+        )
+        facts = json.loads(response.choices[0].message.content)
+        if not isinstance(facts, list):
+            return
+        for fact_dict in facts:
+            if isinstance(fact_dict, dict) and "fact" in fact_dict and "confidence" in fact_dict:
+                write_memory(
+                    agent_id,
+                    market,
+                    str(fact_dict["fact"]),
+                    max(0.0, min(1.0, float(fact_dict["confidence"]))),
+                )
+    except Exception as exc:
+        logger.warning(f"[Memory] {agent_id} write failed for {market}: {exc}")
+
 
 # Single engine shared across all stage event writes in this process.
 # Avoids creating a new connection pool for every one of the 8 stage events per run.
@@ -98,10 +139,17 @@ def _log_event(run_id: str, market: str, stage: str, status: str, **fields):
     logger.info(payload)
 
 
-def _detect_rate_limited_provider(exc: Exception) -> str | None:
-    """Return the provider name if the error is a rate limit from a known provider,
-    or None otherwise."""
-    # LiteLLM sets llm_provider on its exception objects — check that first
+def _gemini_exclusion_key(model_str: str) -> str:
+    """Return the split exclusion key for a Gemini model."""
+    if "gemma" in model_str.lower():
+        return "gemini_gemma"
+    return "gemini_flash"
+
+
+def _detect_api_error_provider(exc: Exception) -> str | None:
+    """Return the provider name if the error is a known API failure (rate limit, 404, auth),
+    or None otherwise.
+    Handles: RateLimitError, NotFoundError, AuthenticationError, and generic failures."""
     provider_attr = getattr(exc, "llm_provider", None)
     if provider_attr:
         p = provider_attr.lower()
@@ -109,21 +157,59 @@ def _detect_rate_limited_provider(exc: Exception) -> str | None:
             if name in p:
                 return name
         if "gemini" in p or "google" in p:
-            return "gemini"
+            return _gemini_exclusion_key(getattr(exc, "model", "") or "")
+        # litellm maps Cerebras to "openai" since it's OpenAI-compatible
+        if p == "openai":
+            model_prefix = getattr(exc, "model", "") or ""
+            KNWON_OPENAI_MODELS = ("llama3.1-8b", "llama3.1-70b", "llama-3.3-70b")
+            if any(m in model_prefix for m in KNWON_OPENAI_MODELS):
+                return "cerebras"
+            model_base = getattr(exc, "base_url", None) or ""
+            if "cerebras" in model_base:
+                return "cerebras"
 
+    model = getattr(exc, "model", None) or ""
+    model_base = getattr(exc, "base_url", None) or ""
     msg = str(exc).lower()
+    full_msg = str(exc)
     if "cerebras" in msg or "token_quota_exceeded" in msg or "tokens per day" in msg:
         return "cerebras"
     if "groq" in msg:
         return "groq"
     if "gemini" in msg or "google" in msg or "aistudio" in msg:
-        return "gemini"
+        return _gemini_exclusion_key(model)
     if "nvidia" in msg:
-        return "nvidia"
-    if ("404" in msg or "page not found" in msg) and not _is_excluded("nvidia"):
         return "nvidia"
     if "openrouter" in msg:
         return "openrouter"
+    # NotFoundError with "model does not exist" or "model not found": extract provider from URL
+    if type(exc).__name__ in ("NotFoundError", "AuthenticationError", "BadRequestError"):
+        if "cerebras" in full_msg or "cerebras" in model:
+            return "cerebras"
+        if "api.cerebras.ai" in full_msg or "api.cerebras" in full_msg:
+            return "cerebras"
+        if "groq" in full_msg or "groq" in model:
+            return "groq"
+        if "api.groq.com" in full_msg:
+            return "groq"
+        if "gemini" in full_msg or "google" in full_msg or "aistudio" in full_msg:
+            return _gemini_exclusion_key(model)
+    # Generic 404 — infer provider from model prefix first, else first non-excluded
+    if "404" in msg or "not found" in msg or "model does not exist" in msg:
+        prefix_to_provider = {
+            "openai/": "cerebras",
+            "groq/": "groq",
+            "google/": "gemini_flash",
+            "gemini/": "gemini_flash",
+            "nvidia/": "nvidia",
+            "openrouter/": "openrouter",
+        }
+        for prefix, provider in prefix_to_provider.items():
+            if prefix in model and not _is_excluded(provider):
+                return provider
+        for provider in ("cerebras", "groq", "gemini_flash", "gemini_gemma", "nvidia", "openrouter"):
+            if not _is_excluded(provider):
+                return provider
     # Cerebras rate limit says "OpenAIException - Requests per minute limit exceeded" (no
     # "cerebras" in the message). Groq sometimes returns "Invalid response from LLM call -
     # None or empty" instead of a 429 when overloaded or output is truncated. Treat both as
@@ -135,7 +221,7 @@ def _detect_rate_limited_provider(exc: Exception) -> str | None:
         or "none or empty" in msg
         or "invalid response from llm" in msg
     ):
-        for provider in ("cerebras", "groq", "gemini", "nvidia", "openrouter"):
+        for provider in ("cerebras", "groq", "gemini_flash", "gemini_gemma", "nvidia", "openrouter"):
             if not _is_excluded(provider):
                 return provider
     return None
@@ -285,8 +371,9 @@ def _build_data_crew(market_name: str) -> Crew:
 # ── Stage 3: Intel Crew ────────────────────────────────────────────────────────
 
 
-def _build_intel_crew(market_name: str, db_stats: dict, has_fallback_data: bool = False, 
-                      ceo_memory_context: str = "", analyst_memory_context: str = "") -> Crew:
+def _build_intel_crew(market_name: str, db_stats: dict, has_fallback_data: bool = False,
+                      ceo_memory_context: str = "", analyst_memory_context: str = "",
+                      appreciation_forecasts_json: str = "") -> Crew:
     analyst = create_analyst_agent()
     ceo = create_ceo_agent()
     # CEO synthesizes in the intel crew — no re-delegation back to analyst
@@ -322,6 +409,10 @@ def _build_intel_crew(market_name: str, db_stats: dict, has_fallback_data: bool 
             f"- Distressed/JD-JV signal from distressed_developer_list "
             f"(stalled_project_count, debt_flagged_projects, last_launch_date)\n"
             f"- Data quality note: state if data is LIVE or FALLBACK SAMPLE"
+            + (f"\n\n## Appreciation Forecasts (pre-computed)\n{appreciation_forecasts_json}\n\n"
+               f"Use the pre-computed appreciation forecasts in the context. "
+               f"Do not invent PSF projections — cite the forecast data."
+               if appreciation_forecasts_json else "")
         ),
         expected_output=(
             "Formatted market brief with: inventory overview, top 5 projects, developer scorecard, "
@@ -386,7 +477,7 @@ def _kickoff_with_fallback(
     market_name: str,
     max_retries: int = _RATE_LIMIT_RETRIES,
 ):
-    """Kickoff a crew, retrying with excluded providers if a rate limit is hit.
+    """Kickoff a crew, retrying with excluded providers if a rate limit or API error is hit.
     build_fn is called to rebuild the crew with fallback LLMs after excluding a provider.
     """
     last_error = None
@@ -394,28 +485,26 @@ def _kickoff_with_fallback(
         try:
             llm_calls_total.labels(stage=stage_name, market=market_name).inc()
             return crew.kickoff()
-        except RateLimitError as exc:
-            provider = _detect_rate_limited_provider(exc)
+        except (RateLimitError, NotFoundError) as exc:
+            provider = _detect_api_error_provider(exc)
             if provider and attempt <= max_retries:
                 _exclude(provider)
                 logger.warning(
-                    f"[Retry] {stage_name}: {provider} rate-limited, excluding and retrying (attempt {attempt}/{max_retries})"
+                    f"[Retry] {stage_name}: {provider} failed ({type(exc).__name__}), excluding and retrying (attempt {attempt}/{max_retries})"
                 )
                 print(
-                    f"\n  [Retry] {provider} quota exhausted → rebuilding crew with fallback LLM..."
+                    f"\n  [Retry] {provider} unavailable → rebuilding crew with fallback LLM..."
                 )
-                crew = (
-                    build_fn()
-                )  # rebuild crew so it picks up the new LLM from get_*_llm()
+                crew = build_fn()
                 last_error = exc
             else:
                 raise
         except Exception as exc:
-            provider = _detect_rate_limited_provider(exc)
+            provider = _detect_api_error_provider(exc)
             if provider and attempt <= max_retries:
                 _exclude(provider)
                 logger.warning(
-                    f"[Retry] {stage_name}: possible {provider} limit, excluding and retrying (attempt {attempt}/{max_retries})"
+                    f"[Retry] {stage_name}: possible {provider} failure ({type(exc).__name__}), excluding and retrying (attempt {attempt}/{max_retries})"
                 )
                 crew = build_fn()
                 last_error = exc
@@ -479,10 +568,6 @@ def run_market_intelligence(market_name: str) -> str:
             rl.agent_done("scrape_rera")
             rl.agent_done("scrape_listings")
             stage1_ok = True
-            # Get records scraped from checkpoint for metadata
-            raw_projects = cp.load(market_name, "rera_scraped") or []
-            records_scraped = len(raw_projects)
-            # Get records scraped from checkpoint for metadata
             raw_projects = cp.load(market_name, "rera_scraped") or []
             records_scraped = len(raw_projects)
         else:
@@ -554,11 +639,12 @@ def run_market_intelligence(market_name: str) -> str:
         raw_projects = cp.load(market_name, "rera_scraped") or []
         valid, invalid, val_report = validate_and_log(raw_projects, market_name)
 
+        pass_rate = val_report.get('pass_rate_pct', 0)
         print(
             f"\n  Validation: {val_report['valid']} valid / "
             f"{val_report['invalid']} rejected / "
             f"{val_report['total']} total  "
-            f"({val_report['pass_rate_pct']}% pass rate)"
+            f"({pass_rate}% pass rate)"
         )
         if invalid:
             print(
@@ -723,19 +809,27 @@ def run_market_intelligence(market_name: str) -> str:
                 [f"- {m['fact']} (confidence: {m['confidence']:.2f})" for m in analyst_memories]
             )
 
-        # Reset provider exclusions — Stage 1 may have excluded Gemini Gemma (LIGHT tier,
-        # 15k TPM) which would incorrectly block Gemini Flash (ANALYSIS/HEAVY tier, 250k TPM).
-        # Both share the "gemini" exclusion key despite being different models and quotas.
-        _clear_excluded()
+        # Compute appreciation forecasts for market pincodes (T-313)
+        pincodes = get_pincodes_for_market(market_name)
+        forecasts = []
+        for pincode in pincodes[:5]:
+            try:
+                forecasts.append(get_appreciation_forecast(pincode))
+            except Exception:
+                pass
+        appreciation_forecasts_json = json.dumps(forecasts, indent=2) if forecasts else ""
+
         try:
             intel_crew = _build_intel_crew(market_name, db_stats, has_fallback_data=has_fallback_data,
                                          ceo_memory_context=ceo_memory_context,
-                                         analyst_memory_context=analyst_memory_context)
+                                         analyst_memory_context=analyst_memory_context,
+                                         appreciation_forecasts_json=appreciation_forecasts_json)
             result = _kickoff_with_fallback(
                 intel_crew,
                 lambda: _build_intel_crew(market_name, db_stats, has_fallback_data=has_fallback_data,
                                         ceo_memory_context=ceo_memory_context,
-                                        analyst_memory_context=analyst_memory_context),
+                                        analyst_memory_context=analyst_memory_context,
+                                        appreciation_forecasts_json=appreciation_forecasts_json),
                 "Stage 3 (intel)",
                 market_name,
             )
@@ -797,36 +891,7 @@ def run_market_intelligence(market_name: str) -> str:
 
         # --- Analyst memory write (T-285) ---
         if analyst_raw and len(analyst_raw.strip()) >= 50:
-            try:
-                from litellm import completion
-                import json
-                from config.settings import CEREBRAS_API_KEY, CEREBRAS_BASE_URL, CEREBRAS_MODEL
-
-                extraction_prompt = f"""From this analyst market brief, extract exactly 3 key facts as JSON list.
-Each fact: one sentence, specific number included if available.
-Format: [{{"fact": "...", "confidence": 0.6}}, ...]
-Brief: {analyst_raw[:2000]}"""
-
-                response = completion(
-                    model=f"openai/{CEREBRAS_MODEL}",
-                    api_key=CEREBRAS_API_KEY,
-                    base_url=CEREBRAS_BASE_URL,
-                    messages=[{"role": "user", "content": extraction_prompt}],
-                    temperature=0.2,
-                    max_tokens=500,
-                )
-                extracted = response.choices[0].message.content
-                facts = json.loads(extracted)
-                if not isinstance(facts, list):
-                    facts = []
-                for fact_dict in facts:
-                    if isinstance(fact_dict, dict) and "fact" in fact_dict and "confidence" in fact_dict:
-                        fact = str(fact_dict["fact"])
-                        confidence = float(fact_dict["confidence"])
-                        confidence = max(0.0, min(1.0, confidence))
-                        write_memory("analyst", market_name, fact, confidence)
-            except Exception as exc:
-                logger.warning(f"Analyst memory write failed: {exc}")
+            _extract_and_write_memories("analyst", market_name, analyst_raw)
 
         if _PLACEHOLDER in ceo_raw.lower() or len(ceo_raw.strip()) < 50:
             logger.warning(
@@ -875,48 +940,15 @@ Brief: {analyst_raw[:2000]}"""
         )
 
         # --- CEO memory write post-synthesis (T-256) ---
-        # Only attempt if we have a valid CEO synthesis (not placeholder and sufficient length)
         if _PLACEHOLDER not in ceo_raw.lower() and len(ceo_raw.strip()) >= 50:
-            synthesis_text = ceo_raw
-            try:
-                # Use Cerebras 8b (LIGHT tier) to extract 3 key facts
-                from litellm import completion
-                import json
-                from config.settings import CEREBRAS_API_KEY, CEREBRAS_BASE_URL, CEREBRAS_MODEL
-
-                extraction_prompt = f"""From this market report, extract exactly 3 key facts as JSON list.
-Each fact: one sentence, specific number included if available.
-Format: [{{"fact": "...", "confidence": 0.6}}, ...]
-Report: {synthesis_text[:2000]}"""
-
-                response = completion(
-                    model=f"openai/{CEREBRAS_MODEL}",
-                    api_key=CEREBRAS_API_KEY,
-                    base_url=CEREBRAS_BASE_URL,
-                    messages=[{"role": "user", "content": extraction_prompt}],
-                    temperature=0.2,
-                    max_tokens=500,
-                )
-                extracted = response.choices[0].message.content
-                # Parse the JSON
-                facts = json.loads(extracted)
-                if not isinstance(facts, list):
-                    facts = []
-                for fact_dict in facts:
-                    if isinstance(fact_dict, dict) and "fact" in fact_dict and "confidence" in fact_dict:
-                        fact = str(fact_dict["fact"])
-                        confidence = float(fact_dict["confidence"])
-                        # Clamp confidence to [0, 1]
-                        confidence = max(0.0, min(1.0, confidence))
-                        write_memory("ceo", market_name, fact, confidence)
-            except Exception as exc:
-                logger.warning(f"CEO memory write failed: {exc}")
+            _extract_and_write_memories("ceo", market_name, ceo_raw)
 
         rl.finish(status="success", report_path=report_path)
         _log_event(run_id, market_name, "pipeline", "success", report_path=report_path)
         _write_stage_event_to_db(run_id, market_name, "pipeline_end", "success", stage=0)
         print(f"\n  Report saved -> {report_path}\n")
         _clear_excluded()
+        logger.info(f"[Router] Daily counts: {_daily_counts}")
         return report_body
 
     except Exception as exc:
@@ -933,6 +965,7 @@ Report: {synthesis_text[:2000]}"""
         )
         logger.error(f"[run:{run_id}] traceback:\n{traceback.format_exc()}")
         _clear_excluded()
+        logger.info(f"[Router] Daily counts: {_daily_counts}")
         raise
 
 
@@ -940,8 +973,6 @@ Report: {synthesis_text[:2000]}"""
 
 
 def run_all_markets(markets=None):
-    import subprocess, sys, time as _time
-
     markets = markets or [m.strip() for m in TARGET_MARKETS]
 
     print(f"\n{'=' * _WIDTH}")

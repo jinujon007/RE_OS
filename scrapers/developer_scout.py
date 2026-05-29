@@ -1,4 +1,4 @@
-r"""
+"""
 RE_OS — Developer Scout
 ────────────────────────
 Goes directly to developer websites — not the portals, not RERA.
@@ -55,8 +55,9 @@ from scrapers.scout_memory import ScoutMemory
 DEVELOPER_SITES: dict[str, dict] = {
     "Brigade": {
         "name": "Brigade Enterprises",
-        "projects_url": "https://www.brigadegroup.com/residential",
-        "alt_url": "https://www.brigadegroup.com/residential?location=yelahanka",
+        "listing_url": "https://www.brigadegroup.com/residential/projects/bengaluru",
+        "projects_url": "https://www.brigadegroup.com/residential/projects/bengaluru/brigade-insignia",
+        "alt_url": "https://www.brigadegroup.com/residential/projects/bengaluru/brigade-insignia",
         "use_playwright": True,
         "north_blr_keywords": [
             "yelahanka",
@@ -75,8 +76,9 @@ DEVELOPER_SITES: dict[str, dict] = {
     },
     "Prestige": {
         "name": "Prestige Group",
-        "projects_url": "https://www.prestigeconstructions.com/residential-projects/bangalore",
-        "alt_url": "https://www.prestigeconstructions.com/residential-projects/bangalore?search=finsbury",
+        "listing_url": "https://www.prestigeconstructions.com/residential-projects/bangalore",
+        "projects_url": "https://www.prestigeconstructions.com/residential-projects/bangalore/prestige-finsbury-park",
+        "alt_url": "https://www.prestigeconstructions.com/residential-projects/bangalore/prestige-finsbury-park",
         "use_playwright": True,
         "north_blr_keywords": [
             "yelahanka",
@@ -94,8 +96,9 @@ DEVELOPER_SITES: dict[str, dict] = {
     },
     "Sobha": {
         "name": "Sobha Limited",
-        "projects_url": "https://www.sobha.com/ongoing-projects/bengaluru/",
-        "alt_url": "https://www.sobha.com/projects/",
+        "listing_url": "https://www.sobha.com/locations/bengaluru/",
+        "projects_url": "https://www.sobha.com/bengaluru/sobha-palm-court/",
+        "alt_url": "https://www.sobha.com/bengaluru/sobha-palm-court/",
         "use_playwright": False,
         "north_blr_keywords": [
             "yelahanka",
@@ -560,22 +563,38 @@ class DeveloperScout:
         return all_findings
 
     def _scout_developer(self, dev_key: str, dev_info: dict) -> list[dict]:
+        listing_url = dev_info.get("listing_url", "")
         url = dev_info["projects_url"]
         alt_url = dev_info.get("alt_url", "")
         developer_name = dev_info["name"]
 
-        # Fetch raw HTML + cleaned text; extract DOM snippets for targeted extraction
-        if dev_info.get("use_playwright"):
-            raw_html = self._playwright_fetch_raw(url)
-            if len(raw_html) < 500 and alt_url:
+        raw_html = ""
+        fetch_url = ""
+
+        if listing_url:
+            if dev_info.get("use_playwright"):
+                raw_html = self._playwright_fetch_raw(listing_url)
+            else:
+                raw_html = self._requests_fetch_raw(listing_url)
+            fetch_url = listing_url
+            if len(raw_html) < 1000 and url:
+                logger.debug(f"[DeveloperScout][{dev_key}] Listing page too short ({len(raw_html)} chars), falling back to {url}")
+                if dev_info.get("use_playwright"):
+                    raw_html = self._playwright_fetch_raw(url)
+                else:
+                    raw_html = self._requests_fetch_raw(url)
+                fetch_url = url
+
+        if len(raw_html) < 500 and alt_url:
+            logger.debug(f"[DeveloperScout][{dev_key}] Still insufficient, trying alt: {alt_url}")
+            if dev_info.get("use_playwright"):
                 raw_html = self._playwright_fetch_raw(alt_url)
-        else:
-            raw_html = self._requests_fetch_raw(url)
-            if len(raw_html) < 500 and alt_url:
+            else:
                 raw_html = self._requests_fetch_raw(alt_url)
+            fetch_url = alt_url
 
         if len(raw_html) < 500:
-            logger.debug(f"[DeveloperScout][{dev_key}] No usable content from {url}")
+            logger.debug(f"[DeveloperScout][{dev_key}] No usable content from any URL")
             return []
 
         text = _clean_html(raw_html)
@@ -584,7 +603,7 @@ class DeveloperScout:
             text, developer_name, dom_snippets=dom_snippets
         )
         results = [
-            _normalize_developer_finding(r, dev_key, developer_name, self.market, url)
+            _normalize_developer_finding(r, dev_key, developer_name, self.market, fetch_url)
             for r in raw_items
         ]
         return [r for r in results if r is not None]

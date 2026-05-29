@@ -11,12 +11,12 @@ THREE TIERS — deliberately separated to eliminate TPM conflicts:
     BACKUP 4:  Ollama local
 
   ANALYSIS (Analyst):
-    PRIMARY:   Cerebras  llama3.1-8b                            — 60-100k TPM, 1M tok/day
+    PRIMARY:   Cerebras  gpt-oss-120b                            — 60-100k TPM, 1M tok/day
     BACKUP 1:  Groq  meta-llama/llama-4-scout-17b-16e-instruct  — 30,000 TPM (shared with CEO)
     BACKUP 2:  Ollama local
 
   LIGHT (Scraper + Parser + Organizer):
-    PRIMARY:   Cerebras  llama3.1-8b                            — 60-100k TPM, 1M tok/day
+    PRIMARY:   Cerebras  gpt-oss-120b                            — 60-100k TPM, 1M tok/day
     BACKUP 1:  Google AI Studio  gemma-3-27b-it                 — 15,000 TPM, 14,400 req/day
     BACKUP 2:  NVIDIA NIM  llama-3.3-70b                       — 40 req/min
     BACKUP 3:  Ollama local
@@ -66,6 +66,45 @@ from config.settings import (
     OPENROUTER_MODEL,
 )
 
+# Register litellm callback for token tracking
+import litellm
+def _litellm_usage_callback(kwargs, completion_response, start_time, end_time):
+    try:
+        api_key = kwargs.get("api_key")
+        base_url = kwargs.get("base_url")
+        model = kwargs.get("model", "")
+        provider = None
+        if api_key == CEREBRAS_API_KEY:
+            provider = "cerebras"
+        elif base_url and "groq" in base_url:
+            provider = "groq"
+        elif base_url and "nvidia" in base_url:
+            provider = "nvidia"
+        elif base_url and ("google" in base_url or "aistudio" in base_url):
+            provider = "gemini_flash"
+            if "gemma" in model.lower():
+                provider = "gemini_gemma"
+        elif base_url and "openrouter" in base_url:
+            provider = "openrouter"
+        else:
+            provider_part = model.split("/")[0].lower()
+            provider_map = {
+                "openai": "cerebras",
+                "groq": "groq",
+                "google": "gemini_flash",
+                "nvidia": "nvidia",
+                "openrouter": "openrouter",
+                "ollama": "ollama"
+            }
+            provider = provider_map.get(provider_part, provider_part)
+        tokens = completion_response.usage.total_tokens if completion_response.usage else 0
+        record_token_usage(provider, tokens)
+        logger.debug(f"[Router] Token usage recorded: {provider} {tokens}")
+    except Exception:
+        pass
+
+litellm.success_callback = [_litellm_usage_callback]
+
 # Runtime provider exclusion — thread-safe shared set.
 # All reads and writes go through helpers below so parallel market runs don't race.
 _EXCLUDED: set = set()
@@ -75,7 +114,8 @@ _EXCLUDED_LOCK = threading.Lock()
 DAILY_LIMITS = {
     "cerebras": 1_000_000,
     "groq": 500_000,
-    "gemini": 3_500_000,
+    "gemini_flash": 1_000_000,
+    "gemini_gemma": 500_000,
     "nvidia": 2_000_000,
     "openrouter": 500_000
 }
@@ -142,7 +182,7 @@ def get_heavy_llm(temperature: float = 0.1) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
-    if GEMINI_API_KEY and not _is_excluded("gemini") and not is_near_quota("gemini"):
+    if GEMINI_API_KEY and not _is_excluded("gemini_flash") and not is_near_quota("gemini_flash"):
         logger.info(
             f"[Router] HEAVY fallback → Google AI Studio {GEMINI_CEO_MODEL} (250k TPM)"
         )
@@ -208,7 +248,7 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
-    if GEMINI_API_KEY and not _is_excluded("gemini") and not is_near_quota("gemini"):
+    if GEMINI_API_KEY and not _is_excluded("gemini_flash") and not is_near_quota("gemini_flash"):
         logger.info(
             f"[Router] ANALYSIS fallback → Google AI Studio {GEMINI_CEO_MODEL} (250k TPM)"
         )
@@ -258,7 +298,7 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
             max_tokens=512,
             num_retries=3,
         )
-    if GEMINI_API_KEY and not _is_excluded("gemini") and not is_near_quota("gemini"):
+    if GEMINI_API_KEY and not _is_excluded("gemini_gemma") and not is_near_quota("gemini_gemma"):
         logger.info(
             f"[Router] LIGHT fallback → Google AI Studio {GEMINI_LIGHT_MODEL} (15k TPM)"
         )
@@ -302,7 +342,8 @@ def get_router_status() -> dict:
         "providers": {
             "groq": g,
             "cerebras": c,
-            "gemini": gem,
+            "gemini_flash": gem,
+            "gemini_gemma": gem,
             "nvidia": n,
             "openrouter": o,
             "ollama": True,
@@ -310,14 +351,14 @@ def get_router_status() -> dict:
         "excluded": excl,
         "heavy_chain": f"Groq({GROQ_CEO_MODEL}, 30k TPM)"
         if g
-        else ("Gemini(250k TPM)" if gem else "NVIDIA→OpenRouter→Ollama"),
+        else ("Gemini Flash(250k TPM)" if gem else "NVIDIA→OpenRouter→Ollama"),
         "analysis_chain": f"Cerebras({CEREBRAS_MODEL}, 8k ctx, 1M tok/day)"
         if c
         else (f"Groq({GROQ_ANALYST_MODEL})" if g else "Ollama"),
         "light_chain": f"Cerebras({CEREBRAS_MODEL}, 8k ctx, 1M tok/day)"
         if c
         else (
-            f"Gemini({GEMINI_LIGHT_MODEL})"
+            f"Gemma({GEMINI_LIGHT_MODEL})"
             if gem
             else ("NVIDIA" if n else "Ollama(slow)")
         ),

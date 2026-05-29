@@ -459,6 +459,20 @@ body {
   margin-bottom: 6px;
 }
 .intel-meta { color: #8b949e; font-size: 9px; }
+.intel-badge {
+  background: #f0a020;
+  color: #0a0e1a;
+  border-radius: 3px;
+  padding: 2px 5px;
+  font-family: 'Press Start 2P', cursive;
+  font-size: 6px;
+}
+.intel-link {
+  color: #58a6ff;
+  font-size: 9px;
+  text-decoration: none;
+}
+.intel-link:hover { text-decoration: underline; }
 
 /* ── Live Feed ── */
 .feed-header {
@@ -530,6 +544,126 @@ body {
   font-style: italic;
   font-size: 10px;
 }
+
+/* ── Pipeline Control Section ── */
+.api-key-wrap {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.api-key-input {
+  flex: 1;
+  background: #0f1520;
+  border: 1px solid #2a3a55;
+  color: #c9d1d9;
+  padding: 5px 8px;
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  border-radius: 4px;
+}
+.api-key-input::placeholder { color: #484f58; }
+.api-key-toggle {
+  background: transparent;
+  border: 1px solid #2a3a55;
+  color: #6b7280;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 10px;
+}
+.pipeline-market-select {
+  width: 100%;
+  background: #0f1520;
+  border: 1px solid #2a3a55;
+  color: #c9d1d9;
+  padding: 5px 8px;
+  font-family: 'Press Start 2P', cursive;
+  font-size: 7px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.pipeline-market-select:focus { outline: none; border-color: #3a5a85; }
+.pipeline-bulk-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.pipeline-bulk-row .pipeline-market-select { flex: 1; }
+.pipeline-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid #1a2235;
+}
+.pipeline-row:last-child { border-bottom: none; }
+.pipeline-market { flex: 1; font-size: 10px; color: #c9d1d9; }
+.pipeline-badge {
+  font-size: 8px;
+  font-family: 'Press Start 2P', cursive;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: #1a2235;
+  color: #6b7280;
+  min-width: 50px;
+  text-align: center;
+}
+.pipeline-badge.running { background: #1a3a1a; color: #3fb950; animation: pulse 1.5s ease-in-out infinite; }
+.pipeline-badge.done { background: #1a2a1a; color: #3fb950; }
+.pipeline-badge.failed { background: #3a1a1a; color: #f85149; }
+.pipeline-run-btn, .pipeline-stop-btn {
+  background: #1a2235;
+  border: 1px solid #2a3a55;
+  color: #8b949e;
+  padding: 3px 7px;
+  font-size: 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.pipeline-run-btn:hover { background: #1a3a1a; border-color: #3fb950; color: #3fb950; }
+.pipeline-stop-btn:hover { background: #3a1a1a; border-color: #f85149; color: #f85149; }
+
+/* ── Feed market selector ── */
+.feed-market-select {
+  background: #0f1520;
+  border: 1px solid #2a3a55;
+  color: #8b949e;
+  padding: 3px 6px;
+  font-family: 'Press Start 2P', cursive;
+  font-size: 7px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.feed-market-select:focus { outline: none; border-color: #3a5a85; }
+
+/* ── Sentinel Footer ── */
+.sentinel-footer {
+  flex-shrink: 0;
+  background: #0f1520;
+  border-top: 1px solid #2a3a55;
+  padding: 5px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 9px;
+  color: #484f58;
+  font-family: 'Press Start 2P', cursive;
+}
+.sentinel-footer-label { color: #7b5ea7; font-size: 8px; }
+.sentinel-footer-badge {
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 7px;
+  background: #3d2d5a;
+  color: #9b7ec7;
+}
+.sentinel-footer-badge.ok { background: #1a3a1a; color: #3fb950; }
+.sentinel-footer-badge.error { background: #3a1a1a; color: #f85149; }
+.sentinel-footer-spacer { margin-left: auto; }
+.sentinel-footer-unavail { color: #f85149; font-size: 7px; }
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; }
@@ -675,6 +809,44 @@ body {
     </div>
 
     <div class="infra-section">
+      <div class="infra-title">PIPELINE CONTROL</div>
+      <div class="api-key-wrap">
+        <input type="password" class="api-key-input" id="pipeline-api-key" placeholder="API Key (leave blank if unset)">
+        <button class="api-key-toggle" onclick="toggleApiKeyVis()" title="Show/hide">👁</button>
+      </div>
+      <div class="pipeline-bulk-row">
+        <select class="pipeline-market-select" id="pipeline-market-select" onchange="selectPipelineMarket()">
+          <option value="yelahanka">Yelahanka</option>
+          <option value="devanahalli">Devanahalli</option>
+          <option value="hebbal">Hebbal</option>
+          <option value="all">All</option>
+        </select>
+        <button class="pipeline-run-btn" onclick="runSelectedMarket()">▶ Run</button>
+        <button class="pipeline-stop-btn" onclick="stopSelectedMarket()">⏹ Stop</button>
+      </div>
+      <div id="pipeline-market-rows">
+        <div class="pipeline-row" id="prow-yelahanka">
+          <span class="pipeline-market">Yelahanka</span>
+          <span class="pipeline-badge" id="pbadge-yelahanka">—</span>
+          <button class="pipeline-run-btn" onclick="runMarket('yelahanka')">▶ Run</button>
+          <button class="pipeline-stop-btn" onclick="stopMarket('yelahanka')">⏹ Stop</button>
+        </div>
+        <div class="pipeline-row" id="prow-devanahalli">
+          <span class="pipeline-market">Devanahalli</span>
+          <span class="pipeline-badge" id="pbadge-devanahalli">—</span>
+          <button class="pipeline-run-btn" onclick="runMarket('devanahalli')">▶ Run</button>
+          <button class="pipeline-stop-btn" onclick="stopMarket('devanahalli')">⏹ Stop</button>
+        </div>
+        <div class="pipeline-row" id="prow-hebbal">
+          <span class="pipeline-market">Hebbal</span>
+          <span class="pipeline-badge" id="pbadge-hebbal">—</span>
+          <button class="pipeline-run-btn" onclick="runMarket('hebbal')">▶ Run</button>
+          <button class="pipeline-stop-btn" onclick="stopMarket('hebbal')">⏹ Stop</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="infra-section">
       <div class="infra-title">DATABASE</div>
       <div class="infra-item">
         <span class="infra-label">RERA Projects</span>
@@ -726,6 +898,12 @@ body {
   <div class="live-feed">
     <div class="feed-header">
       <span class="feed-title">LIVE FEED</span>
+      <select class="feed-market-select" id="log-market-select" onchange="switchLogMarket()">
+        <option value="">All</option>
+        <option value="yelahanka">Yelahanka</option>
+        <option value="devanahalli">Devanahalli</option>
+        <option value="hebbal">Hebbal</option>
+      </select>
       <div class="feed-controls">
         <button class="feed-btn active" id="autoscroll-btn" onclick="toggleAutoScroll()">AUTO-SCROLL</button>
         <button class="feed-btn" onclick="clearFeed()">CLEAR</button>
@@ -734,6 +912,15 @@ body {
     <div class="feed-area" id="feed-area"></div>
   </div>
 
+</div>
+
+<!-- ── SENTINEL FOOTER ── -->
+<div class="sentinel-footer" id="sentinel-footer">
+  <span class="sentinel-footer-label">SENTINEL</span>
+  <span class="sentinel-footer-badge" id="footer-sentinel-badge">—</span>
+  <span id="footer-sentinel-last">Last: —</span>
+  <span class="sentinel-footer-spacer"></span>
+  <span id="footer-sentinel-next">Next run: —</span>
 </div>
 
 <script>
@@ -1116,19 +1303,31 @@ async function pollIntel() {
   const wrap = document.getElementById('intel-cards');
   if (!wrap) return;
   try {
-    const data = await fetch('/api/intel/cards').then(r => r.json());
-    if (!data.cards || !data.cards.length) {
+    const [cardsData, legacyIntel] = await Promise.all([
+      fetch('/api/intel/cards').then(r => r.json()),
+      fetch('/api/intel').then(r => r.json()).catch(() => ({}))
+    ]);
+    if (!cardsData.cards || !cardsData.cards.length) {
       wrap.innerHTML = '<div class="empty-msg">No intel yet</div>';
       return;
     }
-    wrap.innerHTML = data.cards.map(c => {
+    const targetMarkets = ['Yelahanka', 'Devanahalli', 'Hebbal'];
+    const byMarket = new Map(cardsData.cards.map(c => [String(c.market || '').toLowerCase(), c]));
+    wrap.innerHTML = targetMarkets.map(market => {
+      const c = byMarket.get(market.toLowerCase()) || { market, projects: 0, avg_psf: null };
+      const estimated = Boolean(c.estimated || legacyIntel?.[market]?.estimated);
       const psf = c.avg_psf != null ? `₹${c.avg_psf}/sqft` : '—';
-      const rpt = c.latest_report ? c.latest_report.split('/').pop() : 'no report';
+      const projectCount = c.projects ?? c.active_projects ?? 0;
+      const slug = encodeURIComponent(market.toLowerCase());
       return `
         <div class="intel-card">
-          <div class="intel-head"><span>${c.market}</span><span>${c.projects} proj</span></div>
+          <div class="intel-head">
+            <span>${market}</span>
+            ${estimated ? '<span class="intel-badge">ESTIMATED DATA</span>' : ''}
+          </div>
+          <div class="intel-meta">Projects: ${projectCount}</div>
           <div class="intel-meta">Avg PSF: ${psf}</div>
-          <div class="intel-meta">Report: ${rpt}</div>
+          <a class="intel-link" href="/api/intel/download?market=${slug}" download>Download Report</a>
         </div>
       `;
     }).join('');
@@ -1139,8 +1338,110 @@ async function pollIntel() {
 pollIntel();
 setInterval(pollIntel, 30000);
 
-// ── Log Streaming (SSE) ──
+// ── Pipeline Control (T-282) ──
+const PIPELINE_SLUGS = ['yelahanka', 'devanahalli', 'hebbal'];
+
+function _getApiKey() {
+  return (document.getElementById('pipeline-api-key').value || '').trim();
+}
+
+function toggleApiKeyVis() {
+  const el = document.getElementById('pipeline-api-key');
+  el.type = el.type === 'password' ? 'text' : 'password';
+}
+
+function _syncLogMarket(slug) {
+  const logSel = document.getElementById('log-market-select');
+  const market = slug === 'all' ? '' : slug;
+  if (logSel && logSel.value !== market) logSel.value = market;
+  clearFeed();
+  connectSse(market);
+}
+
+function selectPipelineMarket() {
+  const sel = document.getElementById('pipeline-market-select');
+  _syncLogMarket(sel ? sel.value : 'all');
+}
+
+async function runSelectedMarket() {
+  const sel = document.getElementById('pipeline-market-select');
+  await runMarket(sel ? sel.value : 'all');
+}
+
+async function stopSelectedMarket() {
+  const sel = document.getElementById('pipeline-market-select');
+  await stopMarket(sel ? sel.value : 'all');
+}
+
+function _setPipelineBadge(slug, text, cls) {
+  if (slug === 'all') {
+    PIPELINE_SLUGS.forEach(s => _setPipelineBadge(s, text, cls));
+    return;
+  }
+  const badge = document.getElementById('pbadge-' + slug);
+  if (!badge) return;
+  badge.textContent = text;
+  badge.className = cls || 'pipeline-badge';
+}
+
+async function runMarket(slug) {
+  const key = _getApiKey();
+  const headers = { 'Content-Type': 'application/json' };
+  if (key) headers['X-API-Key'] = key;
+  _syncLogMarket(slug);
+  try {
+    const res = await fetch(`/api/run/${slug}`, { method: 'POST', headers });
+    const data = await res.json();
+    _setPipelineBadge(slug, res.ok ? 'STARTED' : (data.error || 'ERR'), 'pipeline-badge' + (res.ok ? ' running' : ' failed'));
+    // Immediately refresh status
+    pollPipelineStatus();
+  } catch (e) {
+    _setPipelineBadge(slug, 'ERR', 'pipeline-badge failed');
+  }
+}
+
+async function stopMarket(slug) {
+  const key = _getApiKey();
+  const headers = {};
+  if (key) headers['X-API-Key'] = key;
+  _syncLogMarket(slug);
+  try {
+    await fetch(`/api/run/${slug}`, { method: 'DELETE', headers });
+    pollPipelineStatus();
+  } catch (e) { /* ignore */ }
+}
+
+async function pollPipelineStatus() {
+  try {
+    const data = await fetch('/api/status').then(r => r.json());
+    // Build a slug-to-canonical map: API returns canonical "Yelahanka" etc.
+    const bySlug = {};
+    for (const [market, info] of Object.entries(data || {})) {
+      bySlug[market.toLowerCase()] = info;
+    }
+    PIPELINE_SLUGS.forEach(slug => {
+      const badge = document.getElementById('pbadge-' + slug);
+      if (!badge) return;
+      const info = bySlug[slug];
+      if (!info) {
+        badge.textContent = '—';
+        badge.className = 'pipeline-badge';
+        return;
+      }
+      const st = info.state || '—';
+      badge.textContent = st.toUpperCase();
+      badge.className = 'pipeline-badge ' + st;
+    });
+  } catch (e) { /* ignore */ }
+}
+pollPipelineStatus();
+setInterval(pollPipelineStatus, 5000);
+
+// ── Log Streaming (SSE) — with market selector + auto-reconnect (T-283) ──
 const feedArea = document.getElementById('feed-area');
+let _sseSource = null;
+let _sseReconnectDelay = 1000;
+let _sseMarket = '';
 
 function classifyLog(line) {
   const l = line.toLowerCase();
@@ -1163,18 +1464,41 @@ function appendLog(line) {
   while (feedArea.children.length > 800) feedArea.removeChild(feedArea.firstChild);
 }
 
-const evtSource = new EventSource('/api/logs/stream');
-evtSource.onmessage = e => {
-  try {
-    const line = JSON.parse(e.data);
-    appendLog(line);
-  } catch {
-    appendLog(e.data);
-  }
-};
-evtSource.onerror = () => {
-  console.warn('SSE connection error');
-};
+function _buildSseUrl(market) {
+  return market ? `/api/logs/stream?market=${encodeURIComponent(market)}` : '/api/logs/stream';
+}
+
+function connectSse(market) {
+  if (_sseSource) { _sseSource.close(); _sseSource = null; }
+  _sseMarket = market || '';
+  const src = new EventSource(_buildSseUrl(_sseMarket));
+  _sseSource = src;
+
+  src.onmessage = e => {
+    _sseReconnectDelay = 1000; // reset backoff on success
+    try { appendLog(JSON.parse(e.data)); } catch { appendLog(e.data); }
+  };
+
+  src.onerror = () => {
+    src.close();
+    _sseSource = null;
+    // Exponential backoff: 1s → 2s → 4s → 8s → max 30s
+    const delay = Math.min(_sseReconnectDelay, 30000);
+    _sseReconnectDelay = Math.min(_sseReconnectDelay * 2, 30000);
+    appendLog(`[SSE] Disconnected. Reconnecting in ${Math.round(delay / 1000)}s…`);
+    setTimeout(() => connectSse(_sseMarket), delay);
+  };
+}
+
+function switchLogMarket() {
+  const sel = document.getElementById('log-market-select');
+  const pipelineSel = document.getElementById('pipeline-market-select');
+  if (pipelineSel) pipelineSel.value = sel && sel.value ? sel.value : 'all';
+  clearFeed();
+  connectSse(sel ? sel.value : '');
+}
+
+connectSse('');
 
 function clearFeed() {
   feedArea.innerHTML = '';
@@ -1186,6 +1510,43 @@ function toggleAutoScroll() {
   btn.className = 'feed-btn' + (autoScroll ? ' active' : '');
   if (autoScroll) feedArea.scrollTop = feedArea.scrollHeight;
 }
+
+// ── Sentinel Footer (T-286) ──
+async function pollSentinelFooter() {
+  const badge = document.getElementById('footer-sentinel-badge');
+  const lastEl = document.getElementById('footer-sentinel-last');
+  const nextEl = document.getElementById('footer-sentinel-next');
+  if (!badge) return;
+  try {
+    const data = await fetch('/api/sentinel/status').then(r => r.json());
+    const last = data.last_run || {};
+    const next = data.next_run || {};
+    if (last.error) {
+      badge.textContent = 'ERR';
+      badge.className = 'sentinel-footer-badge error';
+      if (lastEl) lastEl.textContent = 'Last: error';
+    } else if (last.status) {
+      const ok = last.status === 'completed' || last.status === 'success';
+      badge.textContent = ok ? 'OK' : (last.status || '—').toUpperCase();
+      badge.className = 'sentinel-footer-badge' + (ok ? ' ok' : ' error');
+      const market = last.micro_market || last.market || '';
+      const ts = last.started_at
+        ? new Date(last.started_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', hour12: false })
+        : '';
+      if (lastEl) lastEl.textContent = `Last: ${market} ${ts}`.trim();
+    } else {
+      badge.textContent = '—';
+      badge.className = 'sentinel-footer-badge';
+      if (lastEl) lastEl.textContent = 'Last: no data';
+    }
+    if (nextEl) nextEl.textContent = 'Next: ' + (next.label || '—');
+  } catch {
+    if (badge) { badge.textContent = '—'; badge.className = 'sentinel-footer-badge'; }
+    if (nextEl) nextEl.textContent = 'Sentinel unavailable';
+  }
+}
+pollSentinelFooter();
+setInterval(pollSentinelFooter, 30000);
 
 </script>
 </body>

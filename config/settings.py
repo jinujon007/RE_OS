@@ -32,7 +32,7 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 # Sign up: cloud.cerebras.ai
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
 CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
-CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "llama3.1-8b")
+CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b")
 
 # Tier 2 — Groq: free tier, 1,000 req/day, fast cloud inference
 # CEO uses llama-4-scout: 30,000 TPM (2.5× better than 70B's 12k)

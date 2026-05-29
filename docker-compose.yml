@@ -127,6 +127,8 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       TARGET_MARKETS: ${TARGET_MARKETS:-Yelahanka,Devanahalli,Hebbal}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DASHBOARD_API_KEY: ${DASHBOARD_API_KEY:-}
+      DASHBOARD_API_KEY_PREV: ${DASHBOARD_API_KEY_PREV:-}
     volumes:
       - ./:/app
       - re_os_outputs:/app/outputs
