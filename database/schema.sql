@@ -509,6 +509,9 @@ CREATE TABLE IF NOT EXISTS agent_memories (
 
 CREATE INDEX IF NOT EXISTS idx_agent_memories_agent ON agent_memories(agent_id, market);
 CREATE INDEX IF NOT EXISTS idx_agent_memories_confidence ON agent_memories(confidence DESC);
+-- Unique constraint required for ON CONFLICT upsert in write_memory()
+ALTER TABLE agent_memories
+  ADD CONSTRAINT IF NOT EXISTS agent_memories_unique_fact UNIQUE (agent_id, market, fact);
 
 -- ============================================================
 -- BOARD SESSIONS

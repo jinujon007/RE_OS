@@ -73,6 +73,13 @@ def run_listings_scan():
     )
 
 
+def run_memory_decay():
+    """Weekly memory decay — reduce confidence of stale facts, delete below 0.3 (T-298)."""
+    from utils.agent_memory import decay_memories
+    n = decay_memories(days=30, decay_amount=0.1)
+    logger.info(f"[Scheduler] Memory decay: {n} rows deleted")
+
+
 def run_yelahanka_refresh():
     """
     REMOVED — Yelahanka already runs as the first market in run_rera_refresh()
@@ -99,6 +106,7 @@ def run_market_snapshot():
             market = market.strip()
             try:
                 # Compute and insert snapshot
+                # avg_psf_sale: use listing PSF (rera_projects.price_avg_psf always NULL)
                 conn.execute(
                     text("""
                     INSERT INTO market_snapshots (
@@ -111,13 +119,20 @@ def run_market_snapshot():
                         m.id,
                         CURRENT_DATE,
                         'daily',
-                        COUNT(r.id),
-                        COUNT(CASE WHEN r.is_active THEN 1 END),
+                        COUNT(DISTINCT r.id),
+                        COUNT(DISTINCT CASE WHEN r.is_active THEN r.id END),
                         SUM(r.total_units),
                         SUM(r.sold_units),
                         SUM(r.unsold_units),
                         ROUND(AVG(r.absorption_pct), 2),
-                        ROUND(AVG(r.price_avg_psf), 0)
+                        ROUND((
+                            SELECT AVG(l.price_psf)
+                            FROM listings l
+                            WHERE l.micro_market_id = m.id
+                              AND l.price_psf IS NOT NULL
+                              AND l.price_psf > 1000
+                              AND l.price_psf < 50000
+                        ), 0)
                     FROM micro_markets m
                     LEFT JOIN rera_projects r ON r.micro_market_id = m.id
                     WHERE m.name ILIKE :market
@@ -170,10 +185,21 @@ if __name__ == "__main__":
         name="6-Hourly Listings Scan",
     )
 
+    # Weekly memory decay — Monday 03:00 UTC (T-298)
+    scheduler.add_job(
+        run_memory_decay,
+        CronTrigger(day_of_week="mon", hour=3, minute=0, timezone="UTC"),
+        id="memory_decay",
+        name="Weekly Agent Memory Decay",
+        misfire_grace_time=3600,
+    )
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
     logger.info("  2:00 AM IST — RERA full refresh (all markets)")
     logger.info("  6:00 AM IST — Market snapshots")
     logger.info("  Every 6 hrs — Listings scan")
+    logger.info("  Monday 03:00 UTC — Agent memory decay")
+    logger.info(f"Active jobs: {[j.id for j in scheduler.get_jobs()]}")
 
     scheduler.start()

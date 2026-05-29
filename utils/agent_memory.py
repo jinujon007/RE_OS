@@ -60,11 +60,16 @@ def read_memories(agent_id: str, market: str, limit: int = 5) -> list[dict]:
         return []
 
 
+_MEMORY_ROW_CAP = 500
+
+
 def write_memory(agent_id: str, market: str, fact: str, confidence: float = 0.6) -> bool:
     """Insert a new memory fact. Confidence starts at 0.6 per spec (T-244).
 
     If the exact same fact already exists for this agent+market, update confidence
     instead of inserting a duplicate (upsert on fact text).
+    After insert, enforces a row cap of 500 per agent+market — drops lowest-confidence
+    rows beyond 500 (T-297).
     Returns True on success, False on DB error.
     """
     if not fact or not fact.strip():
@@ -88,6 +93,34 @@ def write_memory(agent_id: str, market: str, fact: str, confidence: float = 0.6)
                     "confidence": confidence,
                 },
             )
+
+            # T-297: cap rows at 500 per agent+market — delete lowest-confidence excess
+            count_row = conn.execute(
+                text("""
+                SELECT COUNT(*) FROM agent_memories
+                WHERE agent_id = :agent_id AND market = :market
+                """),
+                {"agent_id": agent_id, "market": market},
+            ).fetchone()
+            row_count = count_row[0] if count_row else 0
+            excess = row_count - _MEMORY_ROW_CAP
+            if excess > 0:
+                conn.execute(
+                    text("""
+                    DELETE FROM agent_memories WHERE memory_id IN (
+                        SELECT memory_id FROM agent_memories
+                        WHERE agent_id = :agent_id AND market = :market
+                        ORDER BY confidence ASC, created_at ASC
+                        LIMIT :excess
+                    )
+                    """),
+                    {"agent_id": agent_id, "market": market, "excess": excess},
+                )
+                logger.debug(
+                    f"[Memory] Row cap: pruned {excess} low-confidence rows "
+                    f"for {agent_id}/{market} (was {row_count}, capped at {_MEMORY_ROW_CAP})"
+                )
+
         return True
     except Exception as exc:
         logger.warning(f"agent_memory.write_memory failed ({agent_id}/{market}): {exc}")
@@ -98,7 +131,7 @@ def decay_memories(days: int = 30, decay_amount: float = 0.1) -> int:
     """Reduce confidence of facts not confirmed in the last `days` days.
 
     Facts that decay below 0.3 are deleted.
-    Returns count of rows affected, -1 on error.
+    Returns count of rows deleted, -1 on error.
     """
     cutoff = datetime.utcnow() - timedelta(days=days)
     try:
@@ -109,10 +142,12 @@ def decay_memories(days: int = 30, decay_amount: float = 0.1) -> int:
                     UPDATE agent_memories
                     SET confidence = confidence - :decay
                     WHERE created_at < :cutoff
-                    RETURNING id, confidence
+                    RETURNING memory_id, confidence
                 )
                 DELETE FROM agent_memories
-                WHERE id IN (SELECT id FROM decayed WHERE confidence < 0.3)
+                WHERE memory_id IN (
+                    SELECT memory_id FROM decayed WHERE confidence < 0.3
+                )
                 """),
                 {"decay": decay_amount, "cutoff": cutoff},
             )

@@ -20,6 +20,7 @@ Note: listing page has project name, developer, RERA no, status, type, dates.
 Run standalone: python scrapers/rera_karnataka.py --market Yelahanka
 """
 
+import itertools
 import requests
 from bs4 import BeautifulSoup
 import json
@@ -41,6 +42,32 @@ ALT_SUBDISTRICTS = {
 }
 
 
+_UA_POOL = [
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0"
+    ),
+    (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/123.0.0.0 Safari/537.36"
+    ),
+    (
+        "Mozilla/5.0 (X11; Linux x86_64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+]
+
+_UA_CYCLE = itertools.cycle(_UA_POOL)
+
+
 class RERAKarnatakaScraper:
     """
     Scrapes RERA Karnataka project listing via direct HTTP POST.
@@ -50,12 +77,7 @@ class RERAKarnatakaScraper:
     BASE_URL = "https://rera.karnataka.gov.in"
     SEARCH_URL = f"{BASE_URL}/projectViewDetails"
 
-    HEADERS = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
+    _BASE_HEADERS = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-IN,en;q=0.9",
         "Referer": "https://rera.karnataka.gov.in/viewAllProjects",
@@ -64,7 +86,13 @@ class RERAKarnatakaScraper:
 
     def __init__(self):
         self.session = requests.Session()
-        self.session.headers.update(self.HEADERS)
+        self._rotate_ua()  # set initial UA
+
+    def _rotate_ua(self) -> str:
+        ua = next(_UA_CYCLE)
+        self.session.headers.update({**self._BASE_HEADERS, "User-Agent": ua})
+        logger.debug(f"[RERA] UA rotated → {ua[:60]}…")
+        return ua
 
     def scrape_market(self, market_name: str) -> tuple[list[dict], list]:
         """
@@ -121,6 +149,7 @@ class RERAKarnatakaScraper:
         POST to /projectViewDetails and parse the HTML table response.
         All rows are server-rendered — no JS interception needed.
         """
+        self._rotate_ua()  # T-300: rotate UA on every attempt (including retries)
         payload = {
             "project": "",
             "firm": "",
