@@ -31,11 +31,8 @@ import time as _time
 import traceback
 from datetime import datetime
 
-from litellm import completion as litellm_completion
-
 from crewai import Crew, Task, Process
 from loguru import logger
-from litellm.exceptions import RateLimitError, NotFoundError
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -72,6 +69,7 @@ _DB_STATS_DEFAULT = {"inserted": 0, "updated": 0, "failed": 0, "duration_seconds
 def _extract_and_write_memories(agent_id: str, market: str, text: str) -> None:
     """Extract 3 key facts from text and persist them to agent_memories table.
     Uses Cerebras 8b (LIGHT tier). Non-fatal — logged at WARNING on failure."""
+    from litellm import completion as litellm_completion
     from config.settings import CEREBRAS_API_KEY as _CKEY, CEREBRAS_BASE_URL as _CBASE, CEREBRAS_MODEL as _CMODEL
     try:
         extraction_prompt = (
@@ -225,6 +223,10 @@ def _detect_api_error_provider(exc: Exception) -> str | None:
             if not _is_excluded(provider):
                 return provider
     return None
+
+
+# Alias for backward compatibility with tests and external callers
+_detect_rate_limited_provider = _detect_api_error_provider
 
 
 # ── Stage banner ───────────────────────────────────────────────────────────────
@@ -480,6 +482,7 @@ def _kickoff_with_fallback(
     """Kickoff a crew, retrying with excluded providers if a rate limit or API error is hit.
     build_fn is called to rebuild the crew with fallback LLMs after excluding a provider.
     """
+    from litellm.exceptions import RateLimitError, NotFoundError
     last_error = None
     for attempt in range(1, max_retries + 2):  # first attempt + retries
         try:
@@ -878,7 +881,6 @@ def run_market_intelligence(market_name: str) -> str:
         )
 
         # Extract outputs — prefer CEO synthesis; fall back to analyst if CEO returned placeholder
-        _PLACEHOLDER = "the final answer to the original input question"
         ceo_raw = ""
         analyst_raw = ""
         if hasattr(result, "tasks_output") and result.tasks_output:
@@ -893,7 +895,7 @@ def run_market_intelligence(market_name: str) -> str:
         if analyst_raw and len(analyst_raw.strip()) >= 50:
             _extract_and_write_memories("analyst", market_name, analyst_raw)
 
-        if _PLACEHOLDER in ceo_raw.lower() or len(ceo_raw.strip()) < 50:
+        if len(ceo_raw.strip()) < 100:
             logger.warning(
                 "[CEO] Placeholder detected — using analyst output as report body"
             )
@@ -930,17 +932,20 @@ def run_market_intelligence(market_name: str) -> str:
             if ceo_section:
                 f.write(f"\n\n{ceo_section}\n")
 
-        # Sync to Obsidian vault after CEO synthesis
-        sync_to_obsidian(
-            market_name,
-            report_body,
-            confidence=0.5 if has_fallback_data else 0.8,
-            sources=db_stats.get("inserted", 0) + db_stats.get("updated", 0),
-            is_estimated=has_fallback_data,
-        )
+        # Sync to Obsidian vault after CEO synthesis — non-fatal (vault may not be mounted)
+        try:
+            sync_to_obsidian(
+                market_name,
+                report_body,
+                confidence=0.5 if has_fallback_data else 0.8,
+                sources=db_stats.get("inserted", 0) + db_stats.get("updated", 0),
+                is_estimated=has_fallback_data,
+            )
+        except Exception as obs_exc:
+            logger.warning(f"[Obsidian] sync failed (non-fatal): {obs_exc}")
 
         # --- CEO memory write post-synthesis (T-256) ---
-        if _PLACEHOLDER not in ceo_raw.lower() and len(ceo_raw.strip()) >= 50:
+        if len(ceo_raw.strip()) >= 100:
             _extract_and_write_memories("ceo", market_name, ceo_raw)
 
         rl.finish(status="success", report_path=report_path)

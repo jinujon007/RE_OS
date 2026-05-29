@@ -616,6 +616,16 @@ class DBOrganizer:
             params,
         )
 
+    @staticmethod
+    def _parse_area_sqft(raw) -> float:
+        """Parse area from various string forms: '1187.0 Sq-ft', '1187', 1187."""
+        if not raw:
+            return 0.0
+        import re as _re
+        s = str(raw)
+        m = _re.search(r"[\d,]+\.?\d*", s.replace(",", ""))
+        return float(m.group()) if m else 0.0
+
     def _upsert_listing_by_cid(self, conn, rec: dict, market_id: str | None):
         cid = str(rec.get("cid", "")).strip()
         if not cid:
@@ -629,16 +639,21 @@ class DBOrganizer:
         )
         listed_price = float(rec.get("price_min", 0) or 0)
 
+        # Compute PSF from listed_price ÷ area_sqft — RERA portal has no pricing,
+        # so listings are the only source of market-rate PSF data.
+        area_sqft = self._parse_area_sqft(rec.get("area_sqft"))
+        price_psf = round(listed_price / area_sqft, 0) if area_sqft > 0 and listed_price > 0 else None
+
         conn.execute(
             text("""
             INSERT INTO listings (
                 source, source_listing_id, micro_market_id,
-                address, locality, listed_price,
+                address, locality, listed_price, price_psf,
                 listed_at, first_seen_at, last_seen_at,
                 raw_data, data_source
             ) VALUES (
                 :source, :cid, :market_id,
-                :project_name, :locality, :listed_price,
+                :project_name, :locality, :listed_price, :price_psf,
                 :listed_at, NOW(), NOW(),
                 CAST(:raw_data AS jsonb), 'portal_scraped'
             )
@@ -647,6 +662,7 @@ class DBOrganizer:
                 address = EXCLUDED.address,
                 locality = EXCLUDED.locality,
                 listed_price = EXCLUDED.listed_price,
+                price_psf = COALESCE(EXCLUDED.price_psf, listings.price_psf),
                 listed_at = EXCLUDED.listed_at,
                 last_seen_at = NOW(),
                 raw_data = EXCLUDED.raw_data,
@@ -659,6 +675,7 @@ class DBOrganizer:
                 "project_name": project_name,
                 "locality": locality,
                 "listed_price": listed_price,
+                "price_psf": price_psf,
                 "listed_at": scraped_at,
                 "raw_data": json.dumps(rec, default=str),
             },

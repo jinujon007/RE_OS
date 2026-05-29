@@ -168,12 +168,15 @@ def is_near_quota(provider: str) -> bool:
         return used >= limit * 0.9 if limit > 0 else False
 
 
-def get_heavy_llm(temperature: float = 0.1) -> LLM:
+def get_heavy_llm(temperature: float = 0.1, excluded: set = None) -> LLM:
     """
     CEO Agent — orchestration and final synthesis.
     Groq Scout (30k TPM) primary. Gemini fallback for long-context synthesis.
+    excluded: optional per-session exclusion set (board room sessions) — does NOT
+    touch the global _EXCLUDED used by the pipeline.
     """
-    if GROQ_API_KEY and not _is_excluded("groq") and not is_near_quota("groq"):
+    def _excl(p): return _is_excluded(p) or (excluded is not None and p in excluded)
+    if GROQ_API_KEY and not _excl("groq") and not is_near_quota("groq"):
         logger.info(f"[Router] HEAVY tier → Groq {GROQ_CEO_MODEL} (30k TPM)")
         return LLM(
             model=f"groq/{GROQ_CEO_MODEL}",
@@ -182,7 +185,7 @@ def get_heavy_llm(temperature: float = 0.1) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
-    if GEMINI_API_KEY and not _is_excluded("gemini_flash") and not is_near_quota("gemini_flash"):
+    if GEMINI_API_KEY and not _excl("gemini_flash") and not is_near_quota("gemini_flash"):
         logger.info(
             f"[Router] HEAVY fallback → Google AI Studio {GEMINI_CEO_MODEL} (250k TPM)"
         )
@@ -193,7 +196,7 @@ def get_heavy_llm(temperature: float = 0.1) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
-    if NVIDIA_API_KEY and not _is_excluded("nvidia") and not is_near_quota("nvidia"):
+    if NVIDIA_API_KEY and not _excl("nvidia") and not is_near_quota("nvidia"):
         logger.info("[Router] HEAVY fallback → NVIDIA NIM 405B")
         return LLM(
             model=f"openai/{NVIDIA_CEO_MODEL}",
@@ -203,7 +206,7 @@ def get_heavy_llm(temperature: float = 0.1) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
-    if OPENROUTER_API_KEY and not _is_excluded("openrouter") and not is_near_quota("openrouter"):
+    if OPENROUTER_API_KEY and not _excl("openrouter") and not is_near_quota("openrouter"):
         logger.info("[Router] HEAVY fallback → OpenRouter")
         return LLM(
             model=f"openrouter/{OPENROUTER_MODEL}",

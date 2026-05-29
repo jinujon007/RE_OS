@@ -1,3 +1,19 @@
+## GATE-2 — 2026-05-29
+
+| Check | Result | Detail |
+|-------|--------|--------|
+| `GET /api/health` | ✅ HTTP 200 | `{"postgres":"ok","redis":"ok","agents":"ok","ollama":"ok"}` |
+| `GET /api/intel/cards` | ✅ HTTP 200 | Non-empty JSON — 12 market cards; Devanahalli 290 projects |
+| `GET /api/db/state` | ✅ HTTP 200 | 453 RERA projects, 13 listings, 45 kaveri, 15 guidance values |
+| `GET /api/sentinel/status` | ✅ HTTP 200 | `{"last_run":{"status":"completed","micro_market":"Devanahalli"}}` |
+| `GET /api/agents` | ✅ HTTP 200 | All agents listed — Director/Analyst/Scout/Processor in correct states |
+| Browser render | ✅ All panels render | Director, Analyst, Scout, Processor, Sentinel, Pipeline Control, DB panel, Live Feed all visible |
+| JS console errors | ✅ Zero | `(no console messages)` |
+
+**GATE-2 STATUS: ✅ PASSED** — 2026-05-29 | Claude Code
+
+---
+
 ## Session — Claude Code 2026-05-29 (Round 17 Integration — Kilo+Cline audit + T-311 fix)
 
 FEATURE | utils/appreciation_model.py | T-309: Appreciation forecasting model — pincode lookup + infra events + zone-based rates + water risk penalty → 3yr/5yr/10yr forecast dicts | Kilo Code | 2026-05-29

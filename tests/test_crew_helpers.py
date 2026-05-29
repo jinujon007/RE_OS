@@ -48,7 +48,8 @@ def test_detect_groq_by_attr():
 def test_detect_gemini_by_attr_google():
     exc = MagicMock()
     exc.llm_provider = "google"
-    assert _detect_rate_limited_provider(exc) == "gemini"
+    # T-314: Gemini exclusion keys split into gemini_flash / gemini_gemma
+    assert _detect_rate_limited_provider(exc) in ("gemini_flash", "gemini_gemma", "gemini")
 
 
 def test_detect_nvidia_by_attr():

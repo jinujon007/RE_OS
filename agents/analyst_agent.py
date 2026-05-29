@@ -34,6 +34,7 @@ class MarketSummaryTool(BaseTool):
         engine = get_engine()
         with engine.connect() as conn:
             # v_market_brief: one query for inventory + grade breakdown + risk counts
+            # avg_listing_psf is the authoritative PSF from portal listings (RERA has no pricing)
             brief_row = conn.execute(
                 text("""
                 SELECT
@@ -44,6 +45,7 @@ class MarketSummaryTool(BaseTool):
                     avg_absorption_pct,
                     avg_min_psf,
                     avg_max_psf,
+                    avg_listing_psf,
                     unique_developers,
                     grade_a_developers,
                     grade_b_developers,

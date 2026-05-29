@@ -43,8 +43,16 @@ if "litellm" not in sys.modules:
             super().__init__(*args, **kwargs)
             self.llm_provider = llm_provider
 
+    class _NotFoundError(Exception):
+        def __init__(self, *args, llm_provider=None, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.llm_provider = llm_provider
+
     _litellm_exc.RateLimitError = _RateLimitError
+    _litellm_exc.NotFoundError = _NotFoundError
     _litellm_mod.exceptions = _litellm_exc
+    _litellm_mod.completion = MagicMock(return_value=MagicMock())
+    _litellm_mod.success_callback = []
     sys.modules["litellm"] = _litellm_mod
     sys.modules["litellm.exceptions"] = _litellm_exc
 

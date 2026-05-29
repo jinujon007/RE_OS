@@ -6,12 +6,12 @@
 
 ## SPRINT BRIEF — Round 17 (updated 2026-05-29)
 
-**Phase 2 (Dashboard):** T-280 ✅, T-282 ✅, T-283 ✅, T-286 ✅ done. T-284 panel exists. GATE-2 requires smoke test (T-293).
+**Phase 2 (Dashboard):** T-280 ✅, T-282 ✅, T-283 ✅, T-286 ✅, T-293 ✅ done. T-284 panel exists. GATE-2 PASSED.
 **Phase 3 (Board Room):** Dept-heads ✅, CEO decompose ✅, Action extraction ✅. Per-agent task prompts (T-294) next.
 **Phase 4 (Agent Memory):** Complete — CEO + Analyst read/write live. Row cap (T-297) + decay hook (T-298) pending.
 **Intelligence OS Phase 2:** T-306 ✅, T-308 ✅, T-309 ✅, T-310 ✅, T-311 ✅, T-312 ✅, T-313 ✅, T-314 ✅ — Appreciation layer + Kaveri txn scout integrated.
 **GATE-1:** ✅ PASSED (2026-05-28)
-**GATE-2:** Pending T-293 smoke test only — all UI panels implemented.
+**GATE-2:** ✅ PASSED (2026-05-29) — all 5 endpoints 200, all UI panels render, zero JS errors.
 **GATE-4:** RERA alternate subdistrict retry live (T-281). Root cause resolved.
 **GATE-6:** T-308+T-309+T-310 all done → pending one pipeline run to confirm Analyst output contains PSF trajectory.
 
@@ -189,7 +189,7 @@ Sticky footer bar at bottom of page. Calls `GET /api/sentinel/status` on load an
 
 
 
-### T-293 — GATE-2 Smoke Test Pass
+### T-293 — GATE-2 Smoke Test Pass ✅ DONE 2026-05-29
 
 **Assignee:** Kilo Code | **Priority:** P0 — run last, after T-280/282/283/284/286
 **Depends on:** T-280, T-282, T-283, T-284, T-286
@@ -621,7 +621,7 @@ Kaveri Online (`kaveri.karnataka.gov.in`) holds actual property registration tra
 | Gate | Name | Unlocked By | Status |
 |------|------|-------------|--------|
 | GATE-1 | Pipeline Observability | T-289 + stage events verified in agent_runs | ✅ PASSED (2026-05-28) |
-| GATE-2 | Dashboard Smoke Test | T-280+282+283+284+286+293 | 🟡 UI done, T-293 smoke test pending |
+| GATE-2 | Dashboard Smoke Test | T-280+282+283+284+286+293 | ✅ PASSED (2026-05-29) |
 | GATE-3 | Auth Hardening | T-296 | ✅ PASSED (T-296 + T-295 done Round 16) |
 | GATE-4 | Intel Quality Baseline | T-281+T-287+T-288 | PENDING — T-281 partial |
 | GATE-5 | Log Monitor Eliminated | T-292 | ✅ PASSED |

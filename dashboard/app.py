@@ -73,6 +73,10 @@ _lock = threading.Lock()
 _diag_agents_contract_logged = False
 _diag_running_last_signature = None
 
+# TTL cache for intel/cards estimated flag — avoids opening report files on every poll
+_estimated_cache: dict[str, tuple[bool, float]] = {}  # market → (is_estimated, expiry_ts)
+_ESTIMATED_CACHE_TTL = 120  # seconds
+
 LOG_PATH = "/app/logs/crew.log"
 VALID_MARKETS = {"Yelahanka", "Devanahalli", "Hebbal", "all"}
 # Canonical market name lookup — only keys in this map are valid URL path segments
@@ -193,9 +197,14 @@ def _get_db():
 def _release_db(conn, reset: bool = False):
     """Return a connection to the pool, rolling back any open transaction first.
     Without this, a mid-query error leaves the pooled connection in InFailedSqlTransaction.
-    Set reset=True to force-close the connection instead of returning to pool."""
+    Set reset=True to force-close the connection instead of returning to pool.
+    Always closes if the connection is broken (handles server-side terminations)."""
     try:
         if reset:
+            _get_pool().putconn(conn, close=True)
+            return
+        # Check connection health before returning to pool
+        if conn.closed:
             _get_pool().putconn(conn, close=True)
             return
         if not conn.autocommit:
@@ -385,11 +394,17 @@ def test_alert():
 def health():
     services = {"agents": "ok"}
 
+    conn = None
     try:
         conn = _get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.close()
         _release_db(conn)
         services["postgres"] = "ok"
     except Exception:
+        if conn:
+            _release_db(conn, reset=True)
         services["postgres"] = "error"
 
     try:
@@ -510,9 +525,13 @@ def db_state():
         cur.execute("""
             SELECT mm.name,
                    COUNT(DISTINCT rp.id)              AS projects,
-                   AVG(rp.price_avg_psf)::numeric(10,0) AS avg_psf
+                   ROUND(AVG(l.price_psf)::numeric, 0) AS avg_psf
             FROM micro_markets mm
             LEFT JOIN rera_projects rp ON rp.micro_market_id = mm.id
+            LEFT JOIN listings l ON l.micro_market_id = mm.id
+                                AND l.price_psf IS NOT NULL
+                                AND l.price_psf > 1000
+                                AND l.price_psf < 50000
             GROUP BY mm.name
             ORDER BY mm.name
         """)
@@ -579,11 +598,12 @@ def run_status():
 def agents_state():
     global _diag_agents_contract_logged
     # Try to get live data from database first
+    conn = None
+    _conn_exc = False
     try:
         conn = _get_db()
         cur = conn.cursor()
 
-        # Execute the SQL query as specified in T-166
         cur.execute("""
             SELECT agent_name, status, MAX(created_at) as last_run, COUNT(*) as total_runs
             FROM agent_runs
@@ -591,11 +611,9 @@ def agents_state():
             ORDER BY last_run DESC
         """)
 
-        # Build results in the format specified: {name, status, last_run, total_runs} per agent
         db_agents = {}
         for row in cur.fetchall():
             agent_name, status, last_run, total_runs = row
-            # Convert to the expected format matching the original _agent_states structure
             if agent_name not in db_agents:
                 db_agents[agent_name] = {
                     "id": agent_name,
@@ -603,54 +621,41 @@ def agents_state():
                     "role": agent_name.replace("_", " ").title(),
                     "label": status.upper() if status else "IDLE",
                     "state": status if status else "idle",
-                    "last_action": f"Last run: {last_run}"
-                    if last_run
-                    else "No recent activity",
-                    "started": last_run.isoformat()
-                    if hasattr(last_run, "isoformat")
-                    else str(last_run)
-                    if last_run
-                    else None,
+                    "last_action": f"Last run: {last_run}" if last_run else "No recent activity",
+                    "started": last_run.isoformat() if hasattr(last_run, "isoformat") else str(last_run) if last_run else None,
                 }
 
-        # If we got data from DB, use it; otherwise fall back to in-memory
+        cur.close()
+
         if db_agents:
-            cur.close()
             with _lock:
                 states_copy = copy.deepcopy(db_agents)
-                running_copy = {}
-                for market, entry in _running.items():
-                    rc = entry["proc"].poll()
-                    running_copy[market] = {
+                running_copy = {
+                    market: {
                         "started": entry.get("started"),
-                        "state": "running"
-                        if rc is None
-                        else ("done" if rc == 0 else "failed"),
-                        "returncode": rc,
+                        "state": "running" if entry["proc"].poll() is None else ("done" if entry["proc"].poll() == 0 else "failed"),
+                        "returncode": entry["proc"].poll(),
                         "pid": entry["proc"].pid,
                     }
+                    for market, entry in _running.items()
+                }
 
             response = {"agents": states_copy, "running_markets": running_copy}
-
-            # Backward + forward compatibility: expose both nested and top-level agent keys.
             response.update(states_copy)
 
             if not _diag_agents_contract_logged:
-                logger.info(
-                    "[DIAG agents] /api/agents keys=%s nested_agents=%s (from DB)",
-                    sorted(response.keys()),
-                    sorted(states_copy.keys()),
-                )
+                logger.info("[DIAG agents] /api/agents keys=%s nested_agents=%s (from DB)", sorted(response.keys()), sorted(states_copy.keys()))
                 _diag_agents_contract_logged = True
 
             _release_db(conn)
             return jsonify(response)
 
-        cur.close()
-        _release_db(conn)
     except Exception as e:
+        _conn_exc = True
         logger.warning(f"[DIAG agents] DB query failed, falling back to in-memory: {e}")
-        # Fall through to in-memory implementation below
+    finally:
+        if conn and _conn_exc:
+            _release_db(conn, reset=True)  # always release on exception path
 
     # Fallback to original in-memory implementation if DB fails or returns no data
     with _lock:
@@ -919,25 +924,38 @@ def intel_cards():
         cur.execute(
             """
             SELECT mm.name,
-                   COUNT(DISTINCT rp.id) AS projects,
-                   AVG(rp.price_avg_psf)::numeric(10,0) AS avg_psf
+                   COUNT(DISTINCT rp.id)              AS projects,
+                   ROUND(AVG(l.price_psf)::numeric, 0) AS avg_psf
             FROM micro_markets mm
             LEFT JOIN rera_projects rp ON rp.micro_market_id = mm.id
+            LEFT JOIN listings l ON l.micro_market_id = mm.id
+                                AND l.price_psf IS NOT NULL
+                                AND l.price_psf > 1000
+                                AND l.price_psf < 50000
             GROUP BY mm.name
             ORDER BY mm.name
             """
         )
+        now = time.time()
         for row in cur.fetchall():
             market_name = row[0]
             slug = MARKET_SLUG.get(market_name, market_name.lower())
-            report_files = sorted(glob.glob(f"/app/outputs/{slug}/intel_report_*.txt"))
-            is_estimated = False
-            if report_files:
-                try:
-                    with open(report_files[-1], encoding="utf-8") as rf:
-                        is_estimated = "[ESTIMATED DATA" in rf.read(4096)
-                except Exception:
-                    pass
+
+            # TTL-cached estimated flag — avoids reading report files on every poll
+            cached = _estimated_cache.get(market_name)
+            if cached and cached[1] > now:
+                is_estimated = cached[0]
+            else:
+                report_files = sorted(glob.glob(f"/app/outputs/{slug}/intel_report_*.txt"))
+                is_estimated = False
+                if report_files:
+                    try:
+                        with open(report_files[-1], encoding="utf-8") as rf:
+                            is_estimated = "[ESTIMATED DATA" in rf.read(4096)
+                    except Exception:
+                        pass
+                _estimated_cache[market_name] = (is_estimated, now + _ESTIMATED_CACHE_TTL)
+
             cards.append(
                 {
                     "market": market_name,

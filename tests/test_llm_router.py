@@ -90,7 +90,7 @@ def test_heavy_falls_back_to_nvidia_when_groq_gemini_excluded(monkeypatch, mock_
     monkeypatch.setattr(r, "GEMINI_API_KEY", "test-gemini-key")
     monkeypatch.setattr(r, "NVIDIA_API_KEY", "test-nvidia-key")
     r._exclude("groq")
-    r._exclude("gemini")
+    r._exclude("gemini_flash")  # T-314: split key
     r.get_heavy_llm()
     call_kwargs = mock_llm.call_args
     model = call_kwargs.kwargs.get("model", "") or (
@@ -135,7 +135,8 @@ def test_analysis_uses_cerebras_primary(monkeypatch, mock_llm):
     model = call_kwargs.kwargs.get("model", "") or (
         call_kwargs.args[0] if call_kwargs.args else ""
     )
-    assert "cerebras" in model.lower() or "llama3" in model.lower()
+    # T-312: Cerebras model changed from llama3.1-8b to gpt-oss-120b
+    assert "cerebras" in model.lower() or "llama3" in model.lower() or "gpt-oss" in model.lower()
 
 
 def test_analysis_falls_back_to_groq_when_cerebras_excluded(monkeypatch, mock_llm):
@@ -173,7 +174,8 @@ def test_light_uses_cerebras_primary(monkeypatch, mock_llm):
     model = call_kwargs.kwargs.get("model", "") or (
         call_kwargs.args[0] if call_kwargs.args else ""
     )
-    assert "cerebras" in model.lower() or "llama3" in model.lower()
+    # T-312: Cerebras model changed from llama3.1-8b to gpt-oss-120b
+    assert "cerebras" in model.lower() or "llama3" in model.lower() or "gpt-oss" in model.lower()
 
 
 def test_light_falls_back_to_gemini_when_cerebras_excluded(monkeypatch, mock_llm):

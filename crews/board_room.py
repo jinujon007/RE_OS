@@ -53,12 +53,13 @@ class BoardSession:
     created_at: Optional[str] = None
 
 
-def _ceo_decompose(pitch: str, market: str) -> Optional[dict]:
+def _ceo_decompose(pitch: str, market: str, _session_excluded: set) -> Optional[dict]:
     """Use the CEO agent to decompose the pitch into 4 dept-specific sub-questions.
     Returns a dict with keys 'bd', 'finance', 'engineering', 'ops' or None on failure.
+    _session_excluded: per-session provider exclusion set — never touches the global _EXCLUDED.
     """
     try:
-        llm = get_heavy_llm()
+        llm = get_heavy_llm(excluded=_session_excluded)
         prompt = (
             f"You are the CEO of a real estate investment firm. Given the following pitch for a market, "
             f"decompose it into four specific sub-questions, one for each department head: "
@@ -90,10 +91,60 @@ def _ceo_decompose(pitch: str, market: str) -> Optional[dict]:
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
-def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = None) -> dict:
+_DEPT_TASK_TEMPLATES = {
+    "bd": (
+        "You are the BD Head reviewing a real estate pitch.\n"
+        "Market: {market}\n"
+        "CEO Sub-question: {dept_question}\n\n"
+        "Deliver:\n"
+        "1. GO / NO-GO verdict with one-sentence rationale\n"
+        "2. Absorption rate signal for this market (cite a number)\n"
+        "3. Three specific risks (each: risk + who it hurts)\n"
+        "4. Three specific upsides (each: upside + magnitude estimate)\n"
+        "5. Recommended entry PSF range for LLS"
+    ),
+    "finance": (
+        "You are the Finance Head reviewing a real estate pitch.\n"
+        "Market: {market}\n"
+        "CEO Sub-question: {dept_question}\n\n"
+        "Deliver:\n"
+        "1. VIABLE / CONDITIONAL / UNVIABLE verdict\n"
+        "2. Break-even PSF calculation (land cost + construction + margin)\n"
+        "3. IRR range estimate (base / bull / bear scenario)\n"
+        "4. Key financial risk and its quantified impact\n"
+        "5. Recommended financial structure (equity/debt split)"
+    ),
+    "engineering": (
+        "You are the Engineering Head reviewing a real estate pitch.\n"
+        "Market: {market}\n"
+        "CEO Sub-question: {dept_question}\n\n"
+        "Deliver:\n"
+        "1. FEASIBLE / CONDITIONAL / NOT_FEASIBLE verdict\n"
+        "2. Top 3 regulatory or approval blockers (RERA, BDA, BBMP, STRR)\n"
+        "3. Construction cost risk (₹/sqft range + key driver)\n"
+        "4. Recommended product mix (1BHK/2BHK/3BHK % split) for this market\n"
+        "5. Timeline estimate from land acquisition to RERA registration"
+    ),
+    "ops": (
+        "You are the Operations Head reviewing a real estate pitch.\n"
+        "Market: {market}\n"
+        "CEO Sub-question: {dept_question}\n\n"
+        "Deliver:\n"
+        "1. Recommended channel mix (channel partner % / direct % / digital %)\n"
+        "2. Quarterly sales velocity assumption (units/quarter)\n"
+        "3. Three launch KPIs with target numbers\n"
+        "4. Biggest operational risk in this market\n"
+        "5. Suggested launch window (month + rationale)"
+    ),
+}
+
+
+def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = None,
+                    _session_excluded: set = None) -> dict:
     """Run the four department-head agents concurrently via single-agent Crews.
     Returns a dict with keys 'bd', 'finance', 'engineering', 'ops'.
     Enforces a 90-second timeout guard.
+    _session_excluded: per-session exclusion set — never mutates global _EXCLUDED.
     """
     from crewai import Task, Crew, Process
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -103,27 +154,27 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
     from agents.board_room.engineering_head import build_engineering_head_agent
     from agents.board_room.ops_head import build_ops_head_agent
 
+    _excl = _session_excluded if _session_excluded is not None else set()
+
     def run_single_agent(builder_fn, key: str) -> str:
         agent = builder_fn()
-        # Build task description: if decomposition is available and has the key, use it; else use default.
-        if decomposition and key in decomposition and isinstance(decomposition[key], str) and decomposition[key].strip():
-            dept_specific = decomposition[key]
-            task_description = (
-                f"Market: {market}\n"
-                f"Sub-question for {key.upper()}: {dept_specific}\n\n"
-                "Provide your department's full assessment of this sub-question."
-            )
-        else:
-            # Fallback to original
-            task_description = (
-                f"Market: {market}\nPitch: {pitch}\n\n"
-                "Provide your department's full assessment of this pitch."
-            )
+        dept_question = (
+            decomposition.get(key, "").strip()
+            if decomposition and isinstance(decomposition.get(key), str)
+            else ""
+        ) or pitch
+
+        template = _DEPT_TASK_TEMPLATES.get(key)
+        task_description = template.format(market=market, dept_question=dept_question) if template else (
+            f"Market: {market}\nSub-question: {dept_question}\n\n"
+            "Provide a structured one-page assessment with a clear verdict."
+        )
+
         task = Task(
             description=task_description,
             expected_output=(
-                "A structured one-page assessment with a clear verdict "
-                "(e.g. GO/NO-GO or VIABLE/CONDITIONAL/UNVIABLE) and supporting points."
+                "A structured assessment with: verdict (GO/NO-GO or VIABLE/CONDITIONAL/UNVIABLE or FEASIBLE/CONDITIONAL/NOT_FEASIBLE), "
+                "numbered supporting points, and at least one specific number per point."
             ),
             agent=agent,
         )
@@ -247,11 +298,13 @@ def _extract_actions(dept_responses: dict, pitch: str, market: str) -> list:
         return []
 
 def _run_board_session_bg(session_id: str, pitch: str, market: str) -> None:
-    """Background worker: run dept heads, extract actions, update session row to complete or failed."""
+    """Background worker: run dept heads, extract actions, update session row to complete or failed.
+    Uses a per-session provider exclusion set — never touches the global pipeline _EXCLUDED."""
+    _session_excluded: set = set()
     try:
         _update_session_row(session_id, "active", {"status": "active", "responses": {}})
-        decomposition = _ceo_decompose(pitch, market)
-        dept_responses = _run_dept_heads(pitch, market, decomposition)
+        decomposition = _ceo_decompose(pitch, market, _session_excluded)
+        dept_responses = _run_dept_heads(pitch, market, decomposition, _session_excluded)
         actions = _extract_actions(dept_responses, pitch, market)
         transcript = {"status": "complete", "responses": dept_responses, "actions": actions}
         if decomposition is not None:
