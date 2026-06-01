@@ -13,6 +13,10 @@ import json
 
 from config.llm_router import get_analysis_llm
 from utils.db import get_engine
+from utils.feasibility import LandFeasibility, feasibility_summary
+from utils.fsi_calculator import calculate_fsi
+from utils.irr_model import calc_land_cost, calc_gdv, calc_irr, compare_scenarios
+from agents.architect_agent import FSICalculatorTool, TypologyRecommenderTool, GreenCoverageTool
 
 
 class MarketSummaryTool(BaseTool):
@@ -325,6 +329,98 @@ class ReportGeneratorTool(BaseTool):
         return "\n".join(lines)
 
 
+class FeasibilityTool(BaseTool):
+    name: str = "land_feasibility"
+    description: str = (
+        "Runs a quick land acquisition feasibility check. "
+        "Input: JSON with keys 'land_area_sqft' (float), 'land_cost_psf' (float), "
+        "'target_sell_psf' (float, use avg_listing_psf from market_summary_query), "
+        "and optionally 'construction_cost_psf', 'efficiency_ratio', 'fsi', "
+        "'timeline_months'. "
+        "Returns: land cost, construction cost, GDV, break-even PSF, profit margin %, "
+        "simple IRR %, and GO / MARGINAL / NO-GO verdict."
+    )
+
+    def _run(self, params_json: str) -> str:
+        try:
+            params = json.loads(params_json)
+        except (json.JSONDecodeError, TypeError):
+            return json.dumps({"error": "Invalid JSON input"})
+        f = LandFeasibility(
+            land_area_sqft=float(params.get("land_area_sqft", 0)),
+            land_cost_psf=float(params.get("land_cost_psf", 0)),
+            construction_cost_psf=float(params.get("construction_cost_psf", 2200)),
+            target_sell_psf=float(params.get("target_sell_psf", 0)),
+            efficiency_ratio=float(params.get("efficiency_ratio", 0.65)),
+            fsi=float(params.get("fsi", 2.0)),
+            timeline_months=int(params.get("timeline_months", 36)),
+        )
+        return json.dumps(feasibility_summary(f), indent=2)
+
+
+class FeasibilityAnalystTool(BaseTool):
+    name: str = "full_feasibility"
+    description: str = (
+        "Run a complete LLS feasibility model for a land parcel. "
+        "Input: JSON with 'land_area_sqft' (float), 'sell_psf' (float -- use avg_listing_psf from "
+        "market_summary_query), 'guidance_value_psf' (float -- from kaveri data, or use 4000 as default "
+        "for Yelahanka), 'negotiation_discount_pct' (float, default 10), 'efficiency_ratio' (default 0.65), "
+        "'zone' (default R2), 'market' (market name). "
+        "Returns: land cost, construction cost, GDV, base/bull/bear IRR, verdict, recommendation."
+    )
+
+    def _run(self, input_str: str) -> str:
+        try:
+            params = json.loads(input_str)
+        except (json.JSONDecodeError, TypeError):
+            return json.dumps({"error": "invalid JSON input"})
+        try:
+            land_area   = float(params.get("land_area_sqft", 0))
+            sell_psf    = float(params.get("sell_psf", 0))
+            if sell_psf <= 0:
+                return json.dumps({"error": "sell_psf must be > 0 — use avg_listing_psf from market_summary_query"})
+            gv_psf      = float(params.get("guidance_value_psf", 4000))
+            disc        = float(params.get("negotiation_discount_pct", 10.0))
+            efficiency  = float(params.get("efficiency_ratio", 0.65))
+            zone        = str(params.get("zone", "R2"))
+            market      = params.get("market")
+
+            fsi_r       = calculate_fsi(land_area, zone, efficiency, market)
+            lc_r        = calc_land_cost(land_area, gv_psf, disc)
+            scenarios   = compare_scenarios(lc_r.negotiated_land_cost, fsi_r.sellable_area_sqft, sell_psf)
+
+            return json.dumps({
+                "inputs": {
+                    "land_area_sqft": land_area,
+                    "zone": zone,
+                    "market": market,
+                    "sell_psf": sell_psf,
+                    "guidance_value_psf": gv_psf,
+                    "negotiation_discount_pct": disc,
+                },
+                "fsi": {
+                    "buildable_sqft": fsi_r.buildable_area_sqft,
+                    "sellable_sqft": fsi_r.sellable_area_sqft,
+                    "max_floors": fsi_r.max_floors,
+                },
+                "financials": {
+                    "land_cost": scenarios.base.land_cost,
+                    "construction_cost": scenarios.base.construction_cost,
+                    "total_project_cost": scenarios.base.total_project_cost,
+                    "equity_required": scenarios.base.equity_required,
+                    "gdv": scenarios.base.gdv,
+                },
+                "scenarios": {
+                    "base":  {"irr_pct": scenarios.base.simple_irr_pct,  "verdict": scenarios.base.verdict},
+                    "bull":  {"irr_pct": scenarios.bull.simple_irr_pct,  "verdict": scenarios.bull.verdict},
+                    "bear":  {"irr_pct": scenarios.bear.simple_irr_pct,  "verdict": scenarios.bear.verdict},
+                },
+                "recommendation": scenarios.recommendation,
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
 def create_analyst_agent() -> Agent:
     return Agent(
         role="Real Estate Market Intelligence Analyst",
@@ -346,13 +442,24 @@ def create_analyst_agent() -> Agent:
             "STRICT TOOL CALL SEQUENCE: Always call tools in this exact order with no skips "
             "and no repeats: (1) market_summary_query, (2) competitor_analysis, "
             "(3) distressed_developer_list, (4) generate_market_report. "
-            "If a tool returns empty data, continue to the next tool once; do not retry."
+            "If a tool returns empty data, continue to the next tool once; do not retry. "
+            "ADJUNCT TOOL — land_feasibility: Call only when asked to evaluate a specific "
+            "land acquisition. Use avg_listing_psf from market_summary_query as "
+            "target_sell_psf. Not part of the standard pipeline sequence. "
+            "ADJUNCT TOOLS — fsi_calculator / typology_recommender / green_coverage: Call only when evaluating a specific land parcel. Use avg_listing_psf from market_summary_query as input to typology_recommender. Not part of standard pipeline sequence. "
+            "ADJUNCT TOOL — full_feasibility: Call when financial feasibility of a specific land parcel is requested. "
+            "Returns base/bull/bear IRR with GO/MARGINAL/NO-GO verdict."
         ),
         tools=[
             MarketSummaryTool(),
             CompetitorAnalysisTool(),
             DistressedDeveloperListTool(),
             ReportGeneratorTool(),
+            FeasibilityTool(),
+            FSICalculatorTool(),
+            TypologyRecommenderTool(),
+            GreenCoverageTool(),
+            FeasibilityAnalystTool(),
         ],
         llm=get_analysis_llm(),
         verbose=True,

@@ -4,7 +4,9 @@ RE_OS — Scheduler
 Runs the agent crew on schedule. Runs inside Docker as a separate service.
 
 Schedule:
-- RERA data refresh: daily at 2:00 AM IST
+- RERA Yelahanka: daily at 2:30 AM IST
+- RERA Devanahalli: daily at 3:00 AM IST
+- RERA Hebbal: daily at 3:30 AM IST
 - Listings scan: every 6 hours
 - Market snapshot generation: daily at 6:00 AM IST (before Jinu's morning)
 """
@@ -16,54 +18,73 @@ import os
 import sys
 
 from config.settings import TARGET_MARKETS
-from sqlalchemy import create_engine, text
-from config.settings import DATABASE_URL
-import threading
-
-_scheduler_engine = None
-_scheduler_engine_lock = threading.Lock()
+from sqlalchemy import text
+from utils.db import get_engine
+from utils.scheduler_helpers import safe_job as _safe_job
 
 
-def _get_scheduler_engine():
-    global _scheduler_engine
-    if _scheduler_engine is None:
-        with _scheduler_engine_lock:
-            if _scheduler_engine is None:
-                _scheduler_engine = create_engine(
-                    DATABASE_URL,
-                    pool_pre_ping=True,
-                    pool_size=3,
-                    max_overflow=1,
-                )
-    return _scheduler_engine
+def _send_rera_alert(market: str, job_start) -> None:
+    """Query new RERA projects since job_start and send Discord alert."""
+    try:
+        from utils.discord_notifier import send_rera_alert
+        with get_engine().connect() as conn:
+            rows = conn.execute(text("""
+                SELECT rp.project_name, d.name AS developer_name
+                FROM rera_projects rp
+                LEFT JOIN developers d ON d.id = rp.developer_id
+                LEFT JOIN micro_markets mm ON mm.id = rp.micro_market_id
+                WHERE mm.name ILIKE :market
+                  AND rp.created_at >= :job_start
+                ORDER BY rp.created_at DESC
+                LIMIT 20
+            """), {"market": f"%{market}%", "job_start": job_start}).fetchall()
+        if rows:
+            developers = list({r[1] for r in rows if r[1]})
+            send_rera_alert(market, len(rows), developers)
+    except Exception as e:
+        logger.warning(f"  RERA alert failed for {market}: {e}")
 
 
-def run_rera_refresh():
-    """Daily RERA data pull for all target markets."""
+def run_single_market_rera(market: str):
+    """Independent RERA data pull for a single market."""
     from config.llm_router import _clear_excluded
+    from datetime import datetime, timezone
     import subprocess
-    import sys
-    import os
 
-    # Reset provider exclusions so stale rate-limit state from the previous
-    # run doesn't carry over — each scheduled run starts with a clean slate.
     _clear_excluded()
-    logger.info("Scheduler: Starting daily RERA refresh (spawning per-market processes)")
+    job_start = datetime.now(timezone.utc)
+    logger.info(f"Scheduler: Starting RERA refresh for {market}")
 
-    # Launch a separate process for each market to avoid blocking the scheduler thread.
-    # Each process writes to its own log file under logs/{slug}.log
-    for market in TARGET_MARKETS:
-        market_slug = market.strip().lower().replace(" ", "_")
-        log_path = f"logs/{market_slug}.log"
-        cmd = [sys.executable, "-m", "crews.market_intel_crew", "--market", market]
-        try:
-            with open(log_path, "a") as fh:
-                subprocess.Popen(cmd, stdout=fh, stderr=fh, env=os.environ)
-            logger.info(f"Spawned market process: {market} -> {log_path}")
-        except Exception as e:
-            logger.error(f"Failed to spawn process for {market}: {e}")
+    cmd = [sys.executable, "scrapers/rera_karnataka.py", "--market", market]
+    slug = market.lower().replace(" ", "_")
+    log_path = os.path.join("logs", f"{slug}.log")
+    os.makedirs("logs", exist_ok=True)
 
-    logger.info("Scheduler: daily RERA refresh spawned — returning immediately")
+    # Phase 1: Spawn
+    try:
+        log_fh = open(log_path, "a")
+        proc = subprocess.Popen(cmd, env=os.environ, stdout=log_fh, stderr=log_fh)
+        log_fh.close()
+        logger.info(f"  Spawned RERA process for {market} (PID {proc.pid}) → {log_path}")
+    except Exception as e:
+        logger.error(f"  Failed to spawn RERA process for {market}: {e}")
+        return
+
+    # Phase 2: Wait with timeout
+    try:
+        proc.wait(timeout=1800)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        logger.warning(f"  RERA process for {market} timed out after 1800s — killed")
+        return
+
+    # Phase 3: Check exit code
+    if proc.returncode != 0:
+        logger.warning(f"  RERA process for {market} exited with code {proc.returncode} — skipping alert")
+        return
+
+    # Phase 4: Alert on new projects
+    _send_rera_alert(market, job_start)
 
 
 def run_listings_scan():
@@ -103,14 +124,12 @@ def run_memory_decay():
 
 def run_yelahanka_refresh():
     """
-    REMOVED — Yelahanka already runs as the first market in run_rera_refresh()
-    at 2:00 AM IST (TARGET_MARKETS order: Yelahanka, Devanahalli, Hebbal).
-    Running it again at 2:30 AM caused double LLM cost and checkpoint overwrites.
+    REMOVED — Yelahanka runs as its own independent job (rera_yelahanka at 2:30 AM IST).
     This function is kept as a no-op stub so any existing cron references don't crash.
     """
     logger.info(
         "Scheduler: run_yelahanka_refresh is a no-op — "
-        "Yelahanka already covered by run_rera_refresh at 2:00 AM IST"
+        "Yelahanka handled by independent cron job rera_yelahanka at 2:30 AM IST"
     )
 
 
@@ -118,9 +137,9 @@ def run_market_snapshot():
     """Generate market snapshots for all active markets."""
     logger.info("Scheduler: Generating market snapshots")
 
+    engine = get_engine()
     for market in TARGET_MARKETS:
         market = market.strip()
-        engine = _get_scheduler_engine()
         try:
             with engine.begin() as conn:
                 conn.execute(
@@ -172,7 +191,7 @@ def recover_stuck_board_sessions():
     """Set board sessions stuck at 'active' for >30 minutes to 'failed'."""
 
     try:
-        engine = _get_scheduler_engine()
+        engine = get_engine()
         with engine.begin() as conn:
             result = conn.execute(
                 text("""
@@ -195,18 +214,35 @@ if __name__ == "__main__":
 
     scheduler = BlockingScheduler(timezone="Asia/Kolkata")
 
-    # Daily RERA refresh — all markets at 2 AM IST
+    # Independent RERA cron jobs — one per market, staggered 30 min apart
     scheduler.add_job(
-        run_rera_refresh,
-        CronTrigger(hour=2, minute=0),
-        id="rera_refresh",
-        name="Daily RERA Data Refresh (all markets)",
+        run_single_market_rera,
+        CronTrigger(hour=2, minute=30),
+        kwargs={"market": "Yelahanka"},
+        id="rera_yelahanka",
+        name="RERA refresh — Yelahanka",
+        misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        run_single_market_rera,
+        CronTrigger(hour=3, minute=0),
+        kwargs={"market": "Devanahalli"},
+        id="rera_devanahalli",
+        name="RERA refresh — Devanahalli",
+        misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        run_single_market_rera,
+        CronTrigger(hour=3, minute=30),
+        kwargs={"market": "Hebbal"},
+        id="rera_hebbal",
+        name="RERA refresh — Hebbal",
         misfire_grace_time=3600,
     )
 
     # Market snapshots at 6 AM IST (ready for morning)
     scheduler.add_job(
-        run_market_snapshot,
+        lambda: _safe_job(run_market_snapshot, "market_snapshot"),
         CronTrigger(hour=6, minute=0),
         id="market_snapshot",
         name="Daily Market Snapshot",
@@ -215,7 +251,7 @@ if __name__ == "__main__":
 
     # Listings scan every 6 hours
     scheduler.add_job(
-        run_listings_scan,
+        lambda: _safe_job(run_listings_scan, "listings_scan"),
         CronTrigger(hour="*/6"),
         id="listings_scan",
         name="6-Hourly Listings Scan",
@@ -241,7 +277,9 @@ if __name__ == "__main__":
 
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
-    logger.info("  2:00 AM IST — RERA full refresh (all markets)")
+    logger.info("  2:30 AM IST — RERA Yelahanka")
+    logger.info("  3:00 AM IST — RERA Devanahalli")
+    logger.info("  3:30 AM IST — RERA Hebbal")
     logger.info("  6:00 AM IST — Market snapshots")
     logger.info("  Every 6 hrs — Listings scan")
     logger.info("  Every 1 hr  — Board session recovery (T-315)")

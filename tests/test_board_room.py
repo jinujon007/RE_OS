@@ -20,6 +20,7 @@ MOCK_DEPT_RESPONSES = {
     "finance": "VIABLE — Break-even PSF ₹5,800. IRR range 18–24% base/bull. Recommend 60:40 equity/debt.",
     "engineering": "FEASIBLE — BDA approval required. Construction cost ₹2,200/sqft. Timeline: 18 months to RERA registration.",
     "ops": "Channel mix: 60% CP / 25% direct / 15% digital. Velocity: 12 units/quarter. Launch Q3 2026.",
+    "legal": "CLEAR — RERA registered, BDA approved, clear title, no encumbrances, agricultural conversion done, no regulatory overlays.",
 }
 
 
@@ -35,6 +36,7 @@ def patched_board():
             "finance": "Calculate break-even PSF and IRR for Yelahanka entry",
             "engineering": "Identify approval blockers and construction cost risk",
             "ops": "Recommend channel mix and launch KPIs",
+            "legal": "Evaluate RERA compliance and title risk for Yelahanka entry",
         }),
         patch("crews.board_room._extract_actions", return_value=[
             {"action": "Acquire land in Yelahanka North", "owner": "bd", "priority": "high"},
@@ -90,7 +92,7 @@ def test_get_board_session_returns_none_for_missing(monkeypatch):
     mock_conn.execute.return_value.mappings.return_value.fetchone.return_value = None
     mock_engine.connect.return_value = mock_conn
 
-    with patch("crews.board_room._get_engine", return_value=mock_engine):
+    with patch("crews.board_room.get_engine", return_value=mock_engine):
         from crews.board_room import get_board_session
         result = get_board_session("00000000-0000-0000-0000-000000000000")
     assert result is None
@@ -109,6 +111,7 @@ def test_get_board_session_returns_all_fields(monkeypatch):
         "finance_response": "VIABLE — IRR 22%",
         "engineering_response": "FEASIBLE — BDA needed",
         "ops_response": "45% CP mix",
+        "legal_response": "CLEAR — RERA registered, BDA approved, clear title, no encumbrances.",
         "ceo_synthesis": None,
         "created_at": "2026-05-29 06:00:00",
         "completed_at": "2026-05-29 06:01:30",
@@ -120,7 +123,7 @@ def test_get_board_session_returns_all_fields(monkeypatch):
     mock_conn.execute.return_value.mappings.return_value.fetchone.return_value = fake_row
     mock_engine.connect.return_value = mock_conn
 
-    with patch("crews.board_room._get_engine", return_value=mock_engine):
+    with patch("crews.board_room.get_engine", return_value=mock_engine):
         from crews.board_room import get_board_session
         result = get_board_session(session_id)
 
@@ -131,13 +134,14 @@ def test_get_board_session_returns_all_fields(monkeypatch):
     assert result["completed_at"] == "2026-05-29 06:01:30"
     assert "responses" in result["transcript"]
     assert result["transcript"]["responses"]["bd"] == "GO — strong absorption"
+    assert result["transcript"]["responses"]["legal"] == "CLEAR — RERA registered, BDA approved, clear title, no encumbrances."
 
 
 # ── dept-head task templates ───────────────────────────────────────────────────
 
-def test_dept_task_templates_all_four_keys():
+def test_dept_task_templates_all_five_keys():
     from crews.board_room import _DEPT_TASK_TEMPLATES
-    for key in ("bd", "finance", "engineering", "ops"):
+    for key in ("bd", "finance", "engineering", "ops", "legal"):
         assert key in _DEPT_TASK_TEMPLATES
         assert "{market}" in _DEPT_TASK_TEMPLATES[key]
         assert "{dept_question}" in _DEPT_TASK_TEMPLATES[key]

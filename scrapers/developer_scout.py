@@ -667,7 +667,20 @@ def scout_developers(market: str, developers: list[str] | None = None) -> list[d
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(findings, f, indent=2, default=str)
 
-    new_total = sum(1 for f in findings if f.get("is_new"))
+    new_findings = [f for f in findings if f.get("is_new")]
+    new_total = len(new_findings)
+    try:
+        from utils.discord_notifier import send_competitor_alert
+        for project in new_findings:
+            dev = project.get("developer") or project.get("developer_name") or "Unknown"
+            send_competitor_alert(
+                developer=dev,
+                project=project.get("project_name", "Unknown"),
+                market=market,
+            )
+    except Exception as _alert_err:
+        logger.warning(f"[DeveloperScout] Competitor alert failed for {market}: {_alert_err}")
+
     print(f"\n{'=' * 55}")
     print(f"DEVELOPER SCOUT — {market.upper()}")
     print(f"{'=' * 55}")

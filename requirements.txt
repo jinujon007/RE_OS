@@ -62,6 +62,12 @@ flask-limiter>=3.5
 price-parser>=0.3.4
 dateparser>=1.2.0
 
+# PDF extraction (MIT — machine-readable RERA PDFs, sale deeds, encumbrance certs)
+pdfplumber>=0.11.0
+
+# Evaluation — ROUGE quality metrics for analyst briefs (no torch required)
+rouge-score>=0.1.2
+
 # Testing
 pytest>=7.0
 pytest-mock>=3.0

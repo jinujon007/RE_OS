@@ -390,6 +390,28 @@ def scout_market(market: str, sources: list[str] | None = None) -> list[dict]:
         json.dump(findings, f, indent=2, default=str)
 
     new_total = sum(1 for f in findings if f.get("is_new"))
+    try:
+        from utils.db import get_engine
+        from utils.discord_notifier import send_price_alert
+        from sqlalchemy import text
+        with get_engine().connect() as conn:
+            prev = conn.execute(text("""
+                SELECT avg_psf_sale FROM market_snapshots
+                WHERE micro_market_id = (SELECT id FROM micro_markets WHERE name ILIKE :m)
+                ORDER BY snapshot_date DESC LIMIT 1
+            """), {"m": f"%{market}%"}).fetchone()
+            curr = conn.execute(text("""
+                SELECT ROUND(AVG(price_psf)) FROM listings l
+                JOIN micro_markets mm ON mm.id = l.micro_market_id
+                WHERE mm.name ILIKE :m AND price_psf > 1000 AND price_psf < 50000
+            """), {"m": f"%{market}%"}).fetchone()
+        if prev and prev[0] and curr and curr[0]:
+            old_psf, new_psf = float(prev[0]), float(curr[0])
+            if abs((new_psf - old_psf) / max(old_psf, 1)) >= 0.05:
+                send_price_alert(market, old_psf, new_psf)
+    except Exception as _alert_err:
+        logger.warning(f"[PortalScout] Price alert failed for {market}: {_alert_err}")
+
     print(f"\n{'=' * 55}")
     print(f"PORTAL SCOUT — {market.upper()}")
     print(f"{'=' * 55}")

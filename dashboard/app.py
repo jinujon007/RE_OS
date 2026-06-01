@@ -14,18 +14,13 @@ import re
 import subprocess
 import threading
 import time
+import uuid
 from datetime import datetime
-from pathlib import Path
-import sys
 import psycopg2
 import psycopg2.pool
 from flask import Flask, Response, jsonify, render_template, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-
-_PROJECT_ROOT = str(Path(__file__).resolve().parents[1])
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
 
 app = Flask(__name__, template_folder="templates")
 
@@ -58,8 +53,13 @@ def _add_security_headers(response):
 
 # Read-only endpoints — exempt from API key gate (T-235)
 _READ_ONLY_PATHS = frozenset({
-    '/api/health', '/api/status', '/api/agents', '/api/intel',
+    '/api/health', '/api/status', '/api/agents',
     '/api/intel/cards', '/api/intel/download', '/api/db/state', '/api/sentinel/status',
+    '/api/board/sessions', '/api/db/tables',
+    '/api/tasks',
+    '/api/engineering/brief',
+    '/api/finance/brief',
+    '/api/alerts',
 })
 _READ_ONLY_PREFIXES = ('/api/reports/', '/api/logs/')
 
@@ -74,7 +74,7 @@ def _require_api_key():
         if api_key and not _is_run_api_authorized(request):
             return jsonify({"error": "unauthorized"}), 401
         return None
-    if request.path in _READ_ONLY_PATHS:
+    if request.path in _READ_ONLY_PATHS and request.method in ("GET", "HEAD", "OPTIONS"):
         return None
     if any(request.path.startswith(p) for p in _READ_ONLY_PREFIXES):
         return None
@@ -499,6 +499,285 @@ def board_session_get(session_id):
     return jsonify(session), 200
 
 
+@limiter.limit("60 per minute")
+@app.route("/api/board/sessions", methods=["GET"])
+def board_sessions():
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT session_id, market, status, created_at, pitch_text
+            FROM board_sessions
+            ORDER BY created_at DESC
+            LIMIT 20
+        """)
+        rows = []
+        for r in cur.fetchall():
+            pitch = r[4] or ""
+            rows.append({
+                "session_id": str(r[0]),
+                "market": r[1],
+                "status": r[2],
+                "created_at": r[3].isoformat() if r[3] else None,
+                "pitch_excerpt": pitch[:120] + ("…" if len(pitch) > 120 else ""),
+            })
+        cur.close()
+        return jsonify({"sessions": rows})
+    except Exception as e:
+        exc = True
+        logger.error("[board_sessions] %s", e)
+        return jsonify({"sessions": [], "error": "database query failed"})
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+
+
+# ── Engineering Brief ──────────────────────────────────────────────────────────
+
+
+@limiter.limit("30 per minute")
+@app.route("/api/engineering/brief", methods=["GET"])
+def engineering_brief():
+    """Return the most recent Engineering Head response from board_sessions."""
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT session_id, market, engineering_response, created_at
+            FROM board_sessions
+            WHERE engineering_response IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+        """)
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            logger.info("[engineering_brief] No board sessions with engineering_response found")
+            return jsonify({"brief": None})
+        created = row[3].isoformat() if row[3] else None
+        logger.info("[engineering_brief] session=%s market=%s created=%s",
+                     row[0][:8], row[1], created)
+        return jsonify({
+            "brief": {
+                "session_id": str(row[0]),
+                "market": row[1],
+                "response": row[2],
+                "created_at": created,
+            }
+        })
+    except Exception as e:
+        exc = True
+        logger.error("[engineering_brief] %s", e)
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+
+
+# ── Alerts ──────────────────────────────────────────────────────────────────────
+
+
+@limiter.limit("30 per minute")
+@app.route("/api/alerts", methods=["GET"])
+def list_alerts():
+    channel_filter = (request.args.get("channel") or "").strip() or None
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        where = "WHERE channel = %s" if channel_filter else ""
+        params = [channel_filter] if channel_filter else []
+        cur.execute(
+            f"SELECT id, channel, title, status, created_at FROM alerts "
+            f"{where} ORDER BY created_at DESC LIMIT 50",
+            params,
+        )
+        rows = [
+            {"id": str(r[0]), "channel": r[1], "title": r[2],
+             "status": r[3], "created_at": r[4].isoformat() if r[4] else None}
+            for r in cur.fetchall()
+        ]
+        cur.close()
+        logger.info("[list_alerts] channel=%s count=%d", channel_filter or "all", len(rows))
+        return jsonify({"alerts": rows})
+    except Exception as e:
+        exc = True
+        logger.error("[list_alerts] %s", e)
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+
+
+# ── Finance Brief ───────────────────────────────────────────────────────────────
+
+
+@limiter.limit("30 per minute")
+@app.route("/api/finance/brief", methods=["GET"])
+def finance_brief():
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT session_id, market, finance_response, created_at
+            FROM board_sessions
+            WHERE finance_response IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+        """)
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            logger.info("[finance_brief] No board sessions with finance_response found")
+            return jsonify({"brief": None})
+        created = row[3].isoformat() if row[3] else None
+        logger.info("[finance_brief] session=%s market=%s created=%s",
+                     row[0][:8], row[1], created)
+        return jsonify({"brief": {
+            "session_id": str(row[0]),
+            "market": row[1],
+            "response": row[2],
+            "created_at": created,
+        }})
+    except Exception as e:
+        exc = True
+        logger.error("[finance_brief] %s", e)
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+
+
+# ── Tasks ──────────────────────────────────────────────────────────────────────
+
+
+@limiter.limit("60 per minute")
+@app.route("/api/tasks", methods=["GET"])
+def list_tasks():
+    status_filter = request.args.get("status")
+    owner_filter  = request.args.get("owner")
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        where_clauses, params = [], []
+        if status_filter:
+            where_clauses.append("status = %s")
+            params.append(status_filter)
+        if owner_filter:
+            where_clauses.append("owner = %s")
+            params.append(owner_filter)
+        where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+        cur.execute(
+            f"SELECT id, title, owner, status, priority, source_type, source_id, created_at "
+            f"FROM tasks {where_sql} ORDER BY created_at DESC LIMIT 200",
+            params,
+        )
+        rows = [
+            {"id": str(r[0]), "title": r[1], "owner": r[2], "status": r[3],
+             "priority": r[4], "source_type": r[5],
+             "source_id": str(r[6]) if r[6] else None,
+             "created_at": r[7].isoformat() if r[7] else None}
+            for r in cur.fetchall()
+        ]
+        cur.close()
+        return jsonify({"tasks": rows})
+    except Exception as e:
+        exc = True
+        logger.error("[list_tasks] %s", e)
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+
+
+@limiter.limit("30 per minute")
+@app.route("/api/tasks", methods=["POST"])
+def create_task():
+    payload = request.get_json() or {}
+    title    = str(payload.get("title") or "").strip()
+    owner    = str(payload.get("owner") or "").strip()[:50]
+    priority = str(payload.get("priority") or "medium").strip()
+    source_type = str(payload.get("source_type") or "").strip()[:30]
+    source_id_raw = payload.get("source_id")
+
+    if not title:
+        return jsonify({"error": "title required"}), 400
+    if priority not in ("high", "medium", "low"):
+        priority = "medium"
+
+    source_id = None
+    if source_id_raw:
+        try:
+            source_id = str(uuid.UUID(str(source_id_raw)))
+        except (ValueError, AttributeError):
+            source_id = None
+
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO tasks (title, owner, priority, source_type, source_id)
+               VALUES (%s, %s, %s, %s, %s) RETURNING id""",
+            (title, owner or None, priority, source_type or None, str(source_id) if source_id else None),
+        )
+        task_id = str(cur.fetchone()[0])
+        conn.commit()
+        cur.close()
+        return jsonify({"task_id": task_id, "status": "queued"}), 201
+    except Exception as e:
+        exc = True
+        logger.error("[create_task] %s", e)
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+
+
+@limiter.limit("60 per minute")
+@app.route("/api/tasks/<task_id>", methods=["PATCH"])
+def update_task(task_id):
+    payload = request.get_json() or {}
+    new_status = str(payload.get("status") or "").strip()
+    if new_status not in ("queued", "active", "done", "failed", "rejected"):
+        return jsonify({"error": "invalid status"}), 400
+    try:
+        tid = str(uuid.UUID(task_id))
+    except ValueError:
+        return jsonify({"error": "invalid task_id"}), 400
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE tasks SET status = %s, updated_at = NOW() WHERE id = %s RETURNING id",
+            (new_status, tid),
+        )
+        if cur.fetchone() is None:
+            return jsonify({"error": "not found"}), 404
+        conn.commit()
+        cur.close()
+        return jsonify({"status": new_status})
+    except Exception as e:
+        exc = True
+        logger.error("[update_task] %s", e)
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+
+
 # ── Metrics ─────────────────────────────────────────────────────────────────────
 
 from prometheus_client import generate_latest
@@ -577,6 +856,52 @@ def db_state():
     except Exception as e:
         exc = True
         logger.error("[db_state] %s", e)
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+
+
+@limiter.limit("30 per minute")
+@app.route("/api/db/tables", methods=["GET"])
+def db_tables():
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+
+        # market_inventory
+        cur.execute("SELECT * FROM v_market_inventory")
+        columns = [desc[0] for desc in cur.description]
+        market_inventory = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+        # developer_scorecard — columns match v_developer_scorecard: developer, grade, total_projects, …
+        cur.execute("""
+            SELECT developer, grade, total_projects, total_units,
+                   avg_absorption_pct, completed, delayed, markets_active_in
+            FROM v_developer_scorecard LIMIT 50
+        """)
+        columns = [desc[0] for desc in cur.description]
+        developer_scorecard = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+        # active_projects — columns match v_active_projects: micro_market, project_status, …
+        cur.execute("""
+            SELECT project_name, developer_name, micro_market, project_status,
+                   total_units, unsold_units, absorption_pct
+            FROM v_active_projects LIMIT 100
+        """)
+        columns = [desc[0] for desc in cur.description]
+        active_projects = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+        return jsonify({
+            "market_inventory": market_inventory,
+            "developer_scorecard": developer_scorecard,
+            "active_projects": active_projects
+        })
+    except Exception as e:
+        exc = True
+        logger.error("[db_tables] %s", e)
         return jsonify({"error": "database query failed"}), 500
     finally:
         if conn:

@@ -77,12 +77,26 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DASHBOARD_API_KEY: ${DASHBOARD_API_KEY:-}
       DASHBOARD_ALLOWED_ORIGINS: ${DASHBOARD_ALLOWED_ORIGINS:-http://localhost:8050}
+      DISCORD_WEBHOOK_RERA_YELAHANKA: ${DISCORD_WEBHOOK_RERA_YELAHANKA:-}
+      DISCORD_WEBHOOK_RERA_DEVANAHALLI: ${DISCORD_WEBHOOK_RERA_DEVANAHALLI:-}
+      DISCORD_WEBHOOK_RERA_HEBBAL: ${DISCORD_WEBHOOK_RERA_HEBBAL:-}
+      DISCORD_WEBHOOK_COMPETITOR: ${DISCORD_WEBHOOK_COMPETITOR:-}
+      DISCORD_WEBHOOK_PRICE: ${DISCORD_WEBHOOK_PRICE:-}
+      DISCORD_WEBHOOK_INTEL: ${DISCORD_WEBHOOK_INTEL:-}
+      DISCORD_WEBHOOK_SYSTEM: ${DISCORD_WEBHOOK_SYSTEM:-}
+      # ── HuggingFace / Jina / SambaNova / Cloudflare (zero-cost providers) ──
+      SAMBANOVA_API_KEY: ${SAMBANOVA_API_KEY:-}
+      CLOUDFLARE_API_KEY: ${CLOUDFLARE_API_KEY:-}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      JINA_API_KEY: ${JINA_API_KEY:-}
+      HF_API_KEY: ${HF_API_KEY:-}
     ports:
       - "8050:8050"
     volumes:
       - ./:/app
       - re_os_outputs:/app/outputs
       - re_os_logs:/app/logs
+      - hf_cache:/root/.cache/huggingface
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,17 +113,10 @@ services:
       timeout: 30s
       retries: 3
       start_period: 30s
-    command: >
-      sh -c "alembic upgrade head &&
-             gunicorn dashboard.app:app
-             --bind 0.0.0.0:8050
-             --workers 1
-             --threads 8
-             --timeout 120
-             --max-requests 500
-             --max-requests-jitter 50
-             --access-logfile -
-             --error-logfile -"
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && exec gunicorn dashboard.app:app --bind 0.0.0.0:8050 --workers 1 --threads 8 --timeout 120 --max-requests 500 --max-requests-jitter 50 --access-logfile - --error-logfile -
 
   # ── SCHEDULER ─────────────────────────────────────────────────────────────
   # Runs scraping jobs on schedule — daily RERA refresh, hourly listing scan
@@ -133,10 +140,24 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DASHBOARD_API_KEY: ${DASHBOARD_API_KEY:-}
       DASHBOARD_API_KEY_PREV: ${DASHBOARD_API_KEY_PREV:-}
+      DISCORD_WEBHOOK_RERA_YELAHANKA: ${DISCORD_WEBHOOK_RERA_YELAHANKA:-}
+      DISCORD_WEBHOOK_RERA_DEVANAHALLI: ${DISCORD_WEBHOOK_RERA_DEVANAHALLI:-}
+      DISCORD_WEBHOOK_RERA_HEBBAL: ${DISCORD_WEBHOOK_RERA_HEBBAL:-}
+      DISCORD_WEBHOOK_COMPETITOR: ${DISCORD_WEBHOOK_COMPETITOR:-}
+      DISCORD_WEBHOOK_PRICE: ${DISCORD_WEBHOOK_PRICE:-}
+      DISCORD_WEBHOOK_INTEL: ${DISCORD_WEBHOOK_INTEL:-}
+      DISCORD_WEBHOOK_SYSTEM: ${DISCORD_WEBHOOK_SYSTEM:-}
+      # ── HuggingFace / Jina / SambaNova / Cloudflare (zero-cost providers) ──
+      SAMBANOVA_API_KEY: ${SAMBANOVA_API_KEY:-}
+      CLOUDFLARE_API_KEY: ${CLOUDFLARE_API_KEY:-}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      JINA_API_KEY: ${JINA_API_KEY:-}
+      HF_API_KEY: ${HF_API_KEY:-}
     volumes:
       - ./:/app
       - re_os_outputs:/app/outputs
       - re_os_logs:/app/logs
+      - hf_cache:/root/.cache/huggingface
     depends_on:
       postgres:
         condition: service_healthy

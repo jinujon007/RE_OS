@@ -43,8 +43,7 @@ from utils.agent_memory import read_memories, write_memory
 from utils.appreciation_model import get_pincodes_for_market, get_appreciation_forecast
 from config.settings import TARGET_MARKETS, GEMINI_CEO_MODEL, GEMINI_LIGHT_MODEL
 from config.run_logger import RunLogger
-from sqlalchemy import create_engine
-from config.settings import DATABASE_URL
+from utils.db import get_engine
 from config.checkpointer import Checkpointer
 from config.llm_router import _exclude, _clear_excluded, _is_excluded, get_router_status
 from config.metrics import (
@@ -122,25 +121,10 @@ def _extract_and_write_memories(agent_id: str, market: str, text: str) -> None:
         logger.warning(f"[Memory] {agent_id} write failed for {market}: {exc}")
 
 
-# Single engine shared across all stage event writes in this process.
-# Avoids creating a new connection pool for every one of the 8 stage events per run.
-_stage_event_engine = None
-
-
-def _get_stage_event_engine():
-    global _stage_event_engine
-    if _stage_event_engine is None:
-        # SQLAlchemy engines are thread-safe; a brief duplicate-create race is harmless.
-        _stage_event_engine = create_engine(
-            DATABASE_URL, pool_pre_ping=True, pool_size=5, max_overflow=2
-        )
-    return _stage_event_engine
-
-
 def _write_stage_event_to_db(run_id: str, market: str, event_name: str, status: str, stage: int = 0, **fields):
     """Fire-and-forget write to agent_runs. DB failure must NOT abort pipeline."""
     try:
-        with _get_stage_event_engine().begin() as conn:
+        with get_engine().begin() as conn:
             _write_stage_event(conn, run_id, market, event_name, status, stage, **fields)
     except Exception as exc:
         logger.warning(f"Failed to write stage event {event_name} for {market}: {exc}")
@@ -971,6 +955,24 @@ def run_market_intelligence(market_name: str) -> str:
             f.write(report_body)
             if ceo_section:
                 f.write(f"\n\n{ceo_section}\n")
+
+        # Intel alert via Discord — non-fatal
+        try:
+            from utils.discord_notifier import send_intel_alert
+            from utils.db import get_engine
+            from sqlalchemy import text
+            with get_engine().connect() as _conn:
+                row = _conn.execute(text("""
+                    SELECT ROUND(AVG(l.price_psf))
+                    FROM listings l
+                    JOIN micro_markets mm ON mm.id = l.micro_market_id
+                    WHERE mm.name ILIKE :market AND l.price_psf > 1000 AND l.price_psf < 50000
+                """), {"market": f"%{market_name}%"}).fetchone()
+            avg_psf = int(row[0]) if row and row[0] else None
+            synopsis = ceo_raw[:300] if ceo_raw else ""
+            send_intel_alert(market_name, run_id, synopsis, avg_psf)
+        except Exception as _e:
+            logger.warning(f"Intel alert failed: {_e}")
 
         # Sync to Obsidian vault after CEO synthesis — non-fatal (vault may not be mounted)
         try:

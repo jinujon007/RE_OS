@@ -401,7 +401,13 @@ class DBOrganizer:
     ) -> str:
         """Returns 'inserted' or 'updated'."""
 
-        data_source = str(project.get("data_source", "seed_estimated") or "seed_estimated").strip()
+        source = str(project.get("source", "") or "").strip()
+        if source == "rera_karnataka_live":
+            data_source = "portal_scraped"
+        elif source == "fallback_sample":
+            data_source = "seed_estimated"
+        else:
+            data_source = str(project.get("data_source", "seed_estimated") or "seed_estimated").strip()
         if data_source not in self._VALID_DATA_SOURCES:
             logger.warning(
                 "[Organizer] Invalid data_source '%s' — defaulting to 'seed_estimated'",

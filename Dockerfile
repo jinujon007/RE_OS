@@ -36,6 +36,7 @@ RUN groupadd --gid 1001 re_os \
 
 USER re_os
 
+ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 CMD ["python", "crews/market_intel_crew.py"]

@@ -73,6 +73,42 @@ OPENROUTER_MODEL = os.getenv(
     "OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free"
 )
 
+# ── TIER 4 — SambaNova (free, ongoing — 20M tok/day, 20 RPM) ─────────────────
+# Models: Llama 3.3 70B, DeepSeek-R1 671B, DeepSeek-V3, Qwen 2.5 72B
+# Sign up: cloud.sambanova.ai — no card required
+SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY", "")
+SAMBANOVA_BASE_URL = "https://api.sambanova.ai/v1"
+SAMBANOVA_HEAVY_MODEL = os.getenv(
+    "SAMBANOVA_HEAVY_MODEL", "Meta-Llama-3.3-70B-Instruct"
+)
+
+# ── TIER 5 — Cloudflare Workers AI (free, last-resort — 10K neurons/day) ─────
+# 10K neurons/day ≈ 20-100 requests. Fires only when all other providers excluded.
+# Sign up: cloudflare.com — free account → Workers & Pages → Account ID
+CLOUDFLARE_API_KEY = os.getenv("CLOUDFLARE_API_KEY", "")
+CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
+CLOUDFLARE_LIGHT_MODEL = os.getenv(
+    "CLOUDFLARE_LIGHT_MODEL", "@cf/meta/llama-3.1-8b-instruct"
+)
+CLOUDFLARE_HEAVY_MODEL = os.getenv(
+    "CLOUDFLARE_HEAVY_MODEL", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+)
+
+# ── JINA AI — Reader + Embeddings ─────────────────────────────────────────────
+# Reader: free without key (rate-limited) | with key: 100 RPM, JS-rendered pages
+# Embeddings: 1M token one-time free bucket (jina-embeddings-v3, multilingual, 8K ctx)
+# Sign up: jina.ai — no card required
+JINA_API_KEY = os.getenv("JINA_API_KEY", "")
+JINA_READER_BASE = "https://r.jina.ai"
+
+# ── HUGGING FACE — Inference API (FinBERT sentiment, free warm tier) ──────────
+# Classification models (BERT-class) are always warm on free tier — no cold start.
+# Used for: FinBERT real estate news sentiment scoring (nightly batch).
+# Sign up: huggingface.co → Settings → Access Tokens → New token (read scope)
+HF_API_KEY = os.getenv("HF_API_KEY", "")
+HF_INFERENCE_BASE = "https://api-inference.huggingface.co/models"
+FINBERT_MODEL_ID = "ProsusAI/finbert"
+
 # ── REDIS ────────────────────────────────────────────────────────────────────
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
@@ -105,7 +141,7 @@ MARKET_RERA_CONFIG = {
 MARKET_RERA_KEYWORDS = {
     "Yelahanka": ["Yelahanka", "Yelahanka New Town", "Yelahanka Satellite Town"],
     "Devanahalli": ["Devanahalli", "Kempegowda International Airport", "KIAL"],
-    "Hebbal": ["Hebbal", "Bellary Road", "Nagawara"],
+    "Hebbal": ["Hebbal", "Bellary Road", "Nagawara", "Bengaluru North"],
 }
 
 # ── SCRAPING ─────────────────────────────────────────────────────────────────
@@ -151,6 +187,25 @@ GRADE_A_MIN_UNITS = 500
 
 # Grade B: 100-499 units
 GRADE_B_MIN_UNITS = 100
+
+# ── Discord (Phase 7 — Alerts) ────────────────────────────────────────────────
+DISCORD_WEBHOOK_RERA_YELAHANKA   = os.environ.get("DISCORD_WEBHOOK_RERA_YELAHANKA", "")
+DISCORD_WEBHOOK_RERA_DEVANAHALLI = os.environ.get("DISCORD_WEBHOOK_RERA_DEVANAHALLI", "")
+DISCORD_WEBHOOK_RERA_HEBBAL      = os.environ.get("DISCORD_WEBHOOK_RERA_HEBBAL", "")
+DISCORD_WEBHOOK_COMPETITOR       = os.environ.get("DISCORD_WEBHOOK_COMPETITOR", "")
+DISCORD_WEBHOOK_PRICE            = os.environ.get("DISCORD_WEBHOOK_PRICE", "")
+DISCORD_WEBHOOK_INTEL            = os.environ.get("DISCORD_WEBHOOK_INTEL", "")
+DISCORD_WEBHOOK_SYSTEM           = os.environ.get("DISCORD_WEBHOOK_SYSTEM", "")
+
+DISCORD_CHANNELS = {
+    "rera_yelahanka":   DISCORD_WEBHOOK_RERA_YELAHANKA,
+    "rera_devanahalli": DISCORD_WEBHOOK_RERA_DEVANAHALLI,
+    "rera_hebbal":      DISCORD_WEBHOOK_RERA_HEBBAL,
+    "competitor":       DISCORD_WEBHOOK_COMPETITOR,
+    "price":            DISCORD_WEBHOOK_PRICE,
+    "intel":            DISCORD_WEBHOOK_INTEL,
+    "system":           DISCORD_WEBHOOK_SYSTEM,
+}
 
 # ── AGENT RUN STATUSES ────────────────────────────────────────────────────────
 AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]

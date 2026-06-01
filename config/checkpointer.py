@@ -110,9 +110,9 @@ class Checkpointer:
         Prevents unbounded checkpoint accumulation on long-running deployments.
         Called automatically by run_all_markets() after a successful sweep.
         """
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
-        cutoff = (datetime.utcnow() - timedelta(days=keep_days)).date()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=keep_days)).date()
         slug = self._market_slug(market)
         cp_dir = os.path.join(self.base_dir, slug, "checkpoints")
         removed = 0

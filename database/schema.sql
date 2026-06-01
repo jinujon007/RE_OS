@@ -526,6 +526,7 @@ CREATE TABLE IF NOT EXISTS board_sessions (
     finance_response TEXT,
     engineering_response TEXT,
     ops_response TEXT,
+    legal_response TEXT,
     ceo_synthesis TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     completed_at TIMESTAMPTZ
@@ -603,6 +604,42 @@ INSERT INTO micro_markets (name, slug, city, state, priority) VALUES
     ('Nandi Hills Corridor', 'nandi-hills-corridor', 'Bengaluru', 'Karnataka', 0),
     ('Nelamangala', 'nelamangala', 'Bengaluru', 'Karnataka', 0),
     ('Hoskote', 'hoskote', 'Bengaluru', 'Karnataka', 0);
+
+-- ============================================================
+-- TASKS — Board Room action items + Task Board (Phase 3)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS tasks (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title           TEXT NOT NULL,
+    owner           VARCHAR(50),           -- bd | finance | engineering | ops | legal | ceo
+    status          VARCHAR(20) NOT NULL DEFAULT 'queued'
+                    CHECK (status IN ('queued', 'active', 'done', 'failed', 'rejected')),
+    priority        VARCHAR(10) NOT NULL DEFAULT 'medium'
+                    CHECK (priority IN ('high', 'medium', 'low')),
+    source_type     VARCHAR(30),           -- board_session | manual | scheduler
+    source_id       UUID,                  -- board_sessions.session_id if source_type=board_session
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_status    ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_owner     ON tasks(owner);
+CREATE INDEX IF NOT EXISTS idx_tasks_source    ON tasks(source_type, source_id);
+
+-- ============================================================
+-- ALERTS — Discord notification log (Phase 7)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS alerts (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    channel     VARCHAR(50) NOT NULL,
+    title       TEXT NOT NULL,
+    message     TEXT,
+    color       INT DEFAULT 3447003,
+    status      VARCHAR(20) NOT NULL DEFAULT 'sent'
+                CHECK (status IN ('sent', 'failed', 'skipped')),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_channel    ON alerts(channel);
+CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at DESC);
 
 -- ============================================================
 -- VIEWS — Useful pre-built queries

@@ -1,11 +1,1798 @@
 # RE_OS — Task Briefs
-**Stage 3 · 2026-05-29**
+**Stage 3 · 2026-05-30 | Sprints 27 + 28**
 
 This file is the single execution reference for both brains. Each brief gives complete context to perform the task with minimum back-and-forth. Read only the section for your assigned task — the rest is noise.
 
 ---
 
-## How to Use This File
+# Sprint 27 + 28 Briefs
+
+---
+
+# T-366 — utils/green_coverage.py
+
+**Priority:** P1 | **Phase:** 5 | **Blocks:** T-367, T-370
+
+## Why
+
+The Architect Agent currently calculates FSI and unit mix but ignores green coverage — a non-negotiable design constraint for LLS ("nature as architecture"). Green coverage is required in BDA-approved layouts (typically ≥15% of site area). This tool closes that gap with a pure-Python calculation that feeds into the architect's typology brief.
+
+## Steps
+
+Create `utils/green_coverage.py`:
+
+```python
+from dataclasses import dataclass
+
+_SQFT_PER_TREE = 200  # 1 mature tree per 200 sqft of landscape area (BDA planting norm)
+_MIN_GREEN_PCT_BDA = 15.0  # BDA minimum green coverage requirement (%)
+
+@dataclass
+class GreenCoverageResult:
+    land_area_sqft: float
+    built_coverage_pct: float     # 0.0–1.0 (from FSI result)
+    landscape_area_sqft: float
+    green_pct: float              # landscape as % of total land
+    tree_count: int               # minimum 1
+    meets_bda_minimum: bool
+
+def calculate_green_coverage(
+    land_area_sqft: float,
+    built_coverage_pct: float = 0.55,
+) -> GreenCoverageResult:
+    land = max(land_area_sqft, 0)
+    coverage = max(0.0, min(built_coverage_pct, 1.0))
+    landscape = land * (1.0 - coverage)
+    green_pct = (landscape / max(land, 1)) * 100
+    tree_count = max(1, int(landscape / _SQFT_PER_TREE))
+    return GreenCoverageResult(
+        land_area_sqft=land,
+        built_coverage_pct=coverage,
+        landscape_area_sqft=round(landscape, 1),
+        green_pct=round(green_pct, 1),
+        tree_count=tree_count,
+        meets_bda_minimum=green_pct >= _MIN_GREEN_PCT_BDA,
+    )
+```
+
+2. `py_compile` + `ruff check .` must pass.
+
+## Done When
+- `utils/green_coverage.py` created with `GreenCoverageResult` dataclass + `calculate_green_coverage()`
+- Zero land area returns landscape=0, tree_count=1 (minimum)
+- built_coverage_pct clamped to [0, 1]
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-367 — Add GreenCoverageTool to agents/architect_agent.py
+
+**Priority:** P1 | **Phase:** 5 | **Depends on:** T-366
+
+## Why
+
+The architect agent needs green coverage in every site brief it produces. Without it, every recommendation ignores the BDA minimum and LLS's own nature-first mandate.
+
+## Steps
+
+1. In `agents/architect_agent.py`, add after the TypologyRecommenderTool class:
+
+```python
+from utils.green_coverage import calculate_green_coverage
+
+class GreenCoverageTool(BaseTool):
+    name: str = "green_coverage"
+    description: str = (
+        "Calculate landscape area, tree count, and BDA green coverage compliance. "
+        "Input: JSON with 'land_area_sqft' (float), 'built_coverage_pct' (0.0–1.0, "
+        "use plot_coverage from fsi_calculator result). "
+        "Returns landscape sqft, green %, tree count, BDA compliance flag."
+    )
+
+    def _run(self, input_str: str) -> str:
+        try:
+            params = json.loads(input_str)
+        except (json.JSONDecodeError, TypeError):
+            return json.dumps({"error": "invalid JSON input"})
+        try:
+            result = calculate_green_coverage(
+                land_area_sqft=float(params.get("land_area_sqft", 0)),
+                built_coverage_pct=float(params.get("built_coverage_pct", 0.55)),
+            )
+            return json.dumps({
+                "landscape_area_sqft": result.landscape_area_sqft,
+                "green_pct": result.green_pct,
+                "tree_count": result.tree_count,
+                "meets_bda_minimum": result.meets_bda_minimum,
+                "bda_minimum_pct": 15.0,
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+```
+
+2. Add `GreenCoverageTool()` to the `tools=[...]` list in `create_architect_agent()`.
+
+3. Update the agent's `goal` to include: `"…green coverage compliance (BDA minimum 15%)"`.
+
+4. `py_compile` + `ruff check .` must pass.
+
+## Done When
+- `GreenCoverageTool` class added
+- Tool in `create_architect_agent()` tools list
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-368 — agents/renderer_agent.py
+
+**Priority:** P1 | **Phase:** 5
+
+## Why
+
+Phase 5 DoD requires the Renderer Agent to produce an image prompt usable in Midjourney. This is LLS's creative engineering tool — it turns a typology brief (unit mix, location, zone) into a detailed visual prompt that the design team can feed directly into an image generator. No LLM call inside the tool — the prompt is constructed deterministically from structured inputs. The agent then enhances it with the ANALYSIS LLM.
+
+## Steps
+
+Create `agents/renderer_agent.py`:
+
+```python
+"""
+RE_OS — Renderer Agent (Phase 5 — Engineering / Creative Division)
+Given a typology brief, outputs a Midjourney/DALL-E image prompt.
+"""
+import json
+from crewai.tools import BaseTool
+from crewai import Agent
+from config.llm_router import get_analysis_llm
+
+_STYLE_PRESETS = {
+    "affordable": "warm earth tones, functional landscaping, community spaces, practical amenities",
+    "mid-range":  "contemporary architecture, landscaped podiums, rooftop gardens, natural light focus",
+    "premium":    "luxury finishes, infinity pool, sky terraces, dense tropical greenery, dramatic lighting",
+}
+
+_LOCATION_CONTEXT = {
+    "Yelahanka":    "North Bengaluru suburbs, Nandi Hills backdrop, open sky, green corridor",
+    "Devanahalli":  "airport corridor, wide roads, emerging skyline, farmland contrast",
+    "Hebbal":       "lakeside, Bengaluru urban fringe, elevated site with city views",
+}
+
+
+class ImageBriefGeneratorTool(BaseTool):
+    name: str = "image_brief_generator"
+    description: str = (
+        "Generate a Midjourney/DALL-E image prompt from a project typology brief. "
+        "Input: JSON with 'project_type' (residential/mixed), 'location' (market name), "
+        "'psf_band' (affordable/mid-range/premium), 'unit_mix' (dict with 1bhk/2bhk/3bhk pct), "
+        "'floors' (int), 'green_pct' (float), 'style_keywords' (optional list). "
+        "Returns a prompt string ready for Midjourney v6."
+    )
+
+    def _run(self, input_str: str) -> str:
+        try:
+            params = json.loads(input_str)
+        except (json.JSONDecodeError, TypeError):
+            return json.dumps({"error": "invalid JSON input"})
+        try:
+            project_type = params.get("project_type", "residential")
+            location = params.get("location", "Bengaluru")
+            psf_band = params.get("psf_band", "mid-range")
+            unit_mix = params.get("unit_mix", {})
+            floors = int(params.get("floors", 10))
+            green_pct = float(params.get("green_pct", 40.0))
+            extra_keywords = params.get("style_keywords", [])
+
+            dominant_unit = max(unit_mix, key=unit_mix.get) if unit_mix else "2bhk"
+            style = _STYLE_PRESETS.get(psf_band, _STYLE_PRESETS["mid-range"])
+            loc_ctx = _LOCATION_CONTEXT.get(location, "Bengaluru suburban setting")
+            extra = ", ".join(extra_keywords) if extra_keywords else ""
+
+            prompt = (
+                f"Architectural render of a {floors}-floor {project_type} tower in {location}, India. "
+                f"{loc_ctx}. Dominant unit type: {dominant_unit.upper()}. "
+                f"{round(green_pct)}% site coverage in mature tropical landscaping, podium garden. "
+                f"{style}. "
+                f"{''+extra+'.' if extra else ''}"
+                f"Professional architectural visualization, golden hour lighting, "
+                f"8k render, photorealistic, Bengaluru real estate marketing style. "
+                f"--ar 16:9 --v 6"
+            )
+            return json.dumps({"prompt": prompt, "style_preset": psf_band, "location": location}, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+def create_renderer_agent() -> Agent:
+    return Agent(
+        role="Creative Renderer — Engineering Division",
+        goal=(
+            "Given an architectural typology brief, generate a detailed image prompt "
+            "for Midjourney or DALL-E that captures the project's character, location, "
+            "and product positioning."
+        ),
+        backstory=(
+            "Visual storyteller with deep knowledge of Bengaluru residential architecture. "
+            "Translates FSI math and unit mix tables into imagery that sells the lifestyle, "
+            "not just the square footage. Understands how North Bengaluru's micro-climates, "
+            "topography, and neighbourhood character should shape a project's visual identity. "
+            "Every prompt is specific enough to produce a usable render on the first try."
+        ),
+        tools=[ImageBriefGeneratorTool()],
+        llm=get_analysis_llm(),
+        verbose=True,
+        allow_delegation=False,
+        max_iter=2,
+    )
+
+
+if __name__ == "__main__":
+    tool = ImageBriefGeneratorTool()
+    result = tool._run(json.dumps({
+        "project_type": "residential",
+        "location": "Yelahanka",
+        "psf_band": "mid-range",
+        "unit_mix": {"1bhk": 15, "2bhk": 55, "3bhk": 30},
+        "floors": 12,
+        "green_pct": 45.0,
+    }))
+    print(json.loads(result)["prompt"])
+```
+
+2. `py_compile` + `ruff check .` must pass.
+
+## Done When
+- `agents/renderer_agent.py` created with `ImageBriefGeneratorTool` + `create_renderer_agent()`
+- `__main__` block produces a valid prompt string when run
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-369 — Wire Architect tools into Analyst Agent
+
+**Priority:** P1 | **Phase:** 5 | **Depends on:** T-366, T-367
+
+## Why
+
+The Analyst Agent runs market analysis but has no site-level tool — it can tell you the average PSF and absorption but can't say "given this land area and zone, here's the buildable area and unit mix." Wiring FSICalculatorTool + TypologyRecommenderTool into the analyst turns it from a market reader into a site evaluator. The tools are already built; this is plumbing.
+
+## Steps
+
+1. In `agents/analyst_agent.py`, add imports at the top:
+```python
+from agents.architect_agent import FSICalculatorTool, TypologyRecommenderTool, GreenCoverageTool
+```
+
+2. In `create_analyst_agent()`, add three tools to the `tools=[...]` list:
+```python
+FSICalculatorTool(),
+TypologyRecommenderTool(),
+GreenCoverageTool(),
+```
+
+3. Update the agent `backstory` adjunct guidance section to include:
+```
+"ADJUNCT TOOLS — fsi_calculator / typology_recommender / green_coverage: Call only when evaluating a specific land parcel. Use avg_listing_psf from market_summary_query as input to typology_recommender. Not part of standard pipeline sequence."
+```
+
+4. `py_compile agents/analyst_agent.py` + `ruff check .` must pass.
+
+## Done When
+- Three architect tools added to analyst tool list
+- Backstory adjunct guidance updated
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-370 — tests/test_green_coverage.py
+
+**Priority:** P1 | **Phase:** 5 | **Depends on:** T-366
+
+## Why
+
+Green coverage math feeds into BDA compliance checks. If the calculation is wrong, the architect brief recommends a layout that violates regulations. Unit tests are the only guard against silent regressions.
+
+## Steps
+
+Create `tests/test_green_coverage.py`:
+
+```python
+import pytest
+pytestmark = pytest.mark.unit
+
+from utils.green_coverage import calculate_green_coverage, _MIN_GREEN_PCT_BDA, _SQFT_PER_TREE
+
+
+class TestCalculateGreenCoverage:
+    def test_standard_r2_coverage(self):
+        r = calculate_green_coverage(10000, 0.55)
+        assert r.landscape_area_sqft == pytest.approx(4500.0)
+        assert r.green_pct == pytest.approx(45.0)
+
+    def test_zero_land_area(self):
+        r = calculate_green_coverage(0, 0.55)
+        assert r.landscape_area_sqft == 0.0
+        assert r.tree_count == 1  # minimum 1
+
+    def test_full_built_coverage(self):
+        r = calculate_green_coverage(10000, 1.0)
+        assert r.landscape_area_sqft == 0.0
+        assert r.green_pct == 0.0
+        assert r.meets_bda_minimum is False
+
+    def test_zero_built_coverage(self):
+        r = calculate_green_coverage(10000, 0.0)
+        assert r.landscape_area_sqft == 10000.0
+        assert r.green_pct == 100.0
+        assert r.meets_bda_minimum is True
+
+    def test_bda_minimum_exactly_met(self):
+        r = calculate_green_coverage(10000, 0.85)  # 15% landscape exactly
+        assert r.meets_bda_minimum is True
+
+    def test_bda_minimum_just_missed(self):
+        r = calculate_green_coverage(10000, 0.86)  # 14% landscape
+        assert r.meets_bda_minimum is False
+
+    def test_tree_count_calculation(self):
+        r = calculate_green_coverage(10000, 0.55)
+        expected_trees = int(4500 / _SQFT_PER_TREE)
+        assert r.tree_count == expected_trees
+
+    def test_built_coverage_clamped_above_1(self):
+        r = calculate_green_coverage(10000, 2.0)
+        assert r.built_coverage_pct == 1.0
+        assert r.landscape_area_sqft == 0.0
+```
+
+## Done When
+- `tests/test_green_coverage.py` with ≥8 tests, all pass
+- `pytest tests/test_green_coverage.py -q` shows 0 failures
+- CHANGELOG prepended
+
+---
+
+# T-371 — Dashboard Engineering Panel
+
+**Priority:** P2 | **Phase:** 5 | **Depends on:** T-367, T-368
+
+## Why
+
+Phase 5 DoD includes a dashboard Engineering panel. Jinu should be able to see the last FSI/typology result and image prompt without running a script. The panel pulls from the Board Room sessions table (engineering_response column) or from a direct architect run.
+
+## Steps
+
+1. Add to `dashboard/app.py`:
+
+```python
+@limiter.limit("30 per minute")
+@app.route("/api/engineering/brief", methods=["GET"])
+def engineering_brief():
+    """Return the most recent Engineering Head response from board_sessions."""
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT session_id, market, engineering_response, created_at
+            FROM board_sessions
+            WHERE engineering_response IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+        """)
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            return jsonify({"brief": None})
+        return jsonify({
+            "brief": {
+                "session_id": str(row[0]),
+                "market": row[1],
+                "response": row[2],
+                "created_at": row[3].isoformat() if row[3] else None,
+            }
+        })
+    except Exception as e:
+        exc = True
+        logger.error("[engineering_brief] %s", e)
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+```
+
+2. Add `/api/engineering/brief` to `_READ_ONLY_PATHS`.
+
+3. Add to `dashboard/templates/index.html` — new infra-section in the right panel:
+
+```html
+<div class="infra-section">
+  <div class="infra-title">ENGINEERING
+    <button class="db-explorer-refresh" onclick="pollEngineeringBrief()" title="Refresh">⟳</button>
+  </div>
+  <div id="engineering-brief-market" style="color:#58a6ff;font-family:'Press Start 2P',cursive;font-size:7px;margin-bottom:6px;"></div>
+  <div id="engineering-brief-content" style="font-size:9px;color:#c9d1d9;line-height:1.5;max-height:200px;overflow-y:auto;white-space:pre-wrap;"></div>
+  <div id="engineering-brief-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
+</div>
+```
+
+4. Add JS:
+```javascript
+async function pollEngineeringBrief() {
+  try {
+    const data = await fetch('/api/engineering/brief').then(r => r.json());
+    const marketEl = document.getElementById('engineering-brief-market');
+    const contentEl = document.getElementById('engineering-brief-content');
+    const statusEl = document.getElementById('engineering-brief-status');
+    if (data.brief) {
+      marketEl.textContent = data.brief.market || '';
+      contentEl.textContent = (data.brief.response || '').slice(0, 800);
+      statusEl.textContent = 'Session ' + (data.brief.session_id || '').slice(0, 8);
+      markUpdated('engineering');
+    } else {
+      contentEl.textContent = 'No engineering brief yet — run a Board Room session.';
+    }
+  } catch (e) { /* silent */ }
+}
+pollEngineeringBrief();
+setInterval(pollEngineeringBrief, 60000);
+```
+
+## Done When
+- `/api/engineering/brief` endpoint live
+- Engineering panel visible in dashboard
+- `ruff check .` + `py_compile` passes
+- CHANGELOG prepended
+
+---
+
+# T-372 — GATE-12: Phase 5 DoD Validation
+
+**Priority:** P0 | **Phase:** 5 | **Depends on:** T-366–T-371
+
+## Why
+
+Phase 5 does not close until verified live. The DoD is: "Pass a land parcel to the Architect Agent, receive typology recommendation with unit mix and FSI math. Renderer Agent outputs a usable image prompt."
+
+## Steps
+
+1. Run Architect Agent standalone:
+```bash
+docker compose exec agents python agents/architect_agent.py
+```
+Verify output shows: buildable area, sellable area, max floors, unit mix, green coverage, BDA compliance flag.
+
+2. Run Renderer Agent standalone:
+```bash
+docker compose exec agents python agents/renderer_agent.py
+```
+Verify output shows: a Midjourney prompt string with `--ar 16:9 --v 6` suffix.
+
+3. Check Engineering panel at `http://localhost:8050` loads without error.
+
+4. Document in CHANGELOG: both outputs, any issues found.
+
+## Done When
+- Both agents run without error
+- Architect output contains FSI + typology + green coverage
+- Renderer output contains a usable Midjourney prompt
+- Engineering panel shows last Board Room engineering response
+- VISION.md Phase 5 status updated to ✅ COMPLETE
+- CHANGELOG prepended with evidence
+
+---
+
+# T-373 — utils/irr_model.py
+
+**Priority:** P1 | **Phase:** 6 | **Blocks:** T-374, T-375
+
+## Why
+
+The Board Room Finance Head currently gives IRR estimates from LLM knowledge — which means made-up numbers dressed as analysis. This module replaces that with the actual LLS standard model. Every feasibility from this point forward uses the same baseline assumptions, making results comparable across pitches.
+
+**LLS Standard Assumptions (confirmed 2026-05-30):**
+- Construction cost: ₹2,200/sqft (hard cost, mid-range residential)
+- Target IRR: 20% (GO threshold), 12% (MARGINAL), below 12% = NO-GO
+- Standard financing: 60% equity, 40% debt
+- Timeline: 18 months land acquisition → RERA registration, 36 months RERA → possession
+
+## Steps
+
+Create `utils/irr_model.py`:
+
+```python
+"""
+RE_OS — IRR Model (Phase 6 — Finance Department)
+LLS standard feasibility model. Assumptions confirmed 2026-05-30.
+
+Standards:
+  Construction cost:  ₹2,200/sqft (hard cost, mid-range residential)
+  Target IRR:        ≥20% = GO | 12–20% = MARGINAL | <12% = NO-GO
+  Financing:         60% equity / 40% debt
+  Timeline:          18mo land→RERA + 36mo RERA→possession = 54mo total
+"""
+from dataclasses import dataclass
+from typing import Optional
+
+# ── LLS Standard Assumptions ─────────────────────────────────────────────────
+CONSTRUCTION_COST_PSF: float = 2200.0     # ₹/sqft hard cost
+TARGET_IRR_GO:         float = 20.0       # % — project green-lights above this
+TARGET_IRR_MARGINAL:   float = 12.0       # % — conditional zone
+EQUITY_RATIO:          float = 0.60       # 60% equity
+DEBT_RATIO:            float = 0.40       # 40% debt
+LAND_TO_RERA_MONTHS:   int   = 18
+RERA_TO_POSSESSION_MONTHS: int = 36
+TOTAL_TIMELINE_MONTHS: int   = LAND_TO_RERA_MONTHS + RERA_TO_POSSESSION_MONTHS
+
+
+@dataclass
+class LandCostResult:
+    area_sqft: float
+    guidance_value_psf: float
+    negotiation_discount_pct: float
+    raw_land_cost: float
+    negotiated_land_cost: float
+
+@dataclass
+class GDVResult:
+    sellable_area_sqft: float
+    sell_psf: float
+    gross_development_value: float
+    monthly_revenue: float
+
+@dataclass
+class IRRResult:
+    land_cost: float
+    construction_cost: float
+    total_project_cost: float
+    gdv: float
+    net_profit: float
+    profit_margin_pct: float
+    simple_irr_pct: float
+    equity_required: float
+    debt_required: float
+    payback_months: int
+    verdict: str   # GO | MARGINAL | NO-GO
+
+@dataclass
+class ScenarioResult:
+    base: IRRResult
+    bull: IRRResult
+    bear: IRRResult
+    recommendation: str
+
+
+def calc_land_cost(
+    area_sqft: float,
+    guidance_value_psf: float,
+    negotiation_discount_pct: float = 10.0,
+) -> LandCostResult:
+    area = max(area_sqft, 0)
+    gv = max(guidance_value_psf, 0)
+    disc = max(0.0, min(negotiation_discount_pct, 50.0))
+    raw = area * gv
+    negotiated = raw * (1 - disc / 100)
+    return LandCostResult(
+        area_sqft=area,
+        guidance_value_psf=gv,
+        negotiation_discount_pct=disc,
+        raw_land_cost=round(raw),
+        negotiated_land_cost=round(negotiated),
+    )
+
+
+def calc_gdv(sellable_area_sqft: float, sell_psf: float) -> GDVResult:
+    area = max(sellable_area_sqft, 0)
+    psf  = max(sell_psf, 0)
+    gdv  = area * psf
+    monthly = gdv / max(RERA_TO_POSSESSION_MONTHS, 1)
+    return GDVResult(
+        sellable_area_sqft=area,
+        sell_psf=psf,
+        gross_development_value=round(gdv),
+        monthly_revenue=round(monthly),
+    )
+
+
+def calc_irr(
+    land_cost: float,
+    sellable_area_sqft: float,
+    sell_psf: float,
+    construction_cost_psf: float = CONSTRUCTION_COST_PSF,
+    timeline_months: int = TOTAL_TIMELINE_MONTHS,
+) -> IRRResult:
+    lc   = max(land_cost, 0)
+    area = max(sellable_area_sqft, 0)
+    gdv_r = calc_gdv(area, sell_psf)
+    const_cost = area * max(construction_cost_psf, 0)
+    total_cost = lc + const_cost
+    profit = gdv_r.gross_development_value - total_cost
+    margin = (profit / max(gdv_r.gross_development_value, 1)) * 100
+    years  = max(timeline_months, 1) / 12
+    irr    = (profit / max(total_cost, 1)) / years * 100
+
+    if irr >= TARGET_IRR_GO:
+        verdict = "GO"
+    elif irr >= TARGET_IRR_MARGINAL:
+        verdict = "MARGINAL"
+    else:
+        verdict = "NO-GO"
+
+    monthly_rev = gdv_r.gross_development_value / max(timeline_months, 1)
+    payback = int(total_cost / max(monthly_rev, 1)) if monthly_rev > 0 else 9999
+
+    return IRRResult(
+        land_cost=round(lc),
+        construction_cost=round(const_cost),
+        total_project_cost=round(total_cost),
+        gdv=gdv_r.gross_development_value,
+        net_profit=round(profit),
+        profit_margin_pct=round(margin, 1),
+        simple_irr_pct=round(irr, 1),
+        equity_required=round(total_cost * EQUITY_RATIO),
+        debt_required=round(total_cost * DEBT_RATIO),
+        payback_months=payback,
+        verdict=verdict,
+    )
+
+
+def compare_scenarios(
+    land_cost: float,
+    sellable_area_sqft: float,
+    base_psf: float,
+) -> ScenarioResult:
+    bull_psf  = base_psf * 1.10   # +10% optimistic
+    bear_psf  = base_psf * 0.90   # -10% downside
+
+    base = calc_irr(land_cost, sellable_area_sqft, base_psf)
+    bull = calc_irr(land_cost, sellable_area_sqft, bull_psf)
+    bear = calc_irr(land_cost, sellable_area_sqft, bear_psf)
+
+    if base.verdict == "GO" and bear.verdict != "NO-GO":
+        rec = "PROCEED — base and bear cases both viable."
+    elif base.verdict == "GO" and bear.verdict == "NO-GO":
+        rec = "CONDITIONAL — base GO but bear NO-GO. Negotiate land cost or add JD structure."
+    elif base.verdict == "MARGINAL":
+        rec = "HOLD — marginal base case. Improve land cost or increase sell PSF before committing."
+    else:
+        rec = "PASS — base case NO-GO. Economics do not work at current inputs."
+
+    return ScenarioResult(base=base, bull=bull, bear=bear, recommendation=rec)
+```
+
+2. `py_compile` + `ruff check .` must pass.
+
+## Done When
+- `utils/irr_model.py` with all 4 functions + 5 dataclasses
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-374 — tests/test_irr_model.py
+
+**Priority:** P1 | **Phase:** 6 | **Depends on:** T-373 | **Gates:** GATE-13 prereq
+
+## Steps
+
+Create `tests/test_irr_model.py`:
+
+```python
+import pytest
+pytestmark = pytest.mark.unit
+
+from utils.irr_model import (
+    calc_land_cost, calc_gdv, calc_irr, compare_scenarios,
+    TARGET_IRR_GO, TARGET_IRR_MARGINAL, CONSTRUCTION_COST_PSF,
+    EQUITY_RATIO, DEBT_RATIO, TOTAL_TIMELINE_MONTHS,
+)
+
+
+class TestCalcLandCost:
+    def test_basic(self):
+        r = calc_land_cost(43560, 4000, 10.0)
+        assert r.raw_land_cost == 43560 * 4000
+        assert r.negotiated_land_cost == round(43560 * 4000 * 0.90)
+
+    def test_zero_area(self):
+        r = calc_land_cost(0, 4000)
+        assert r.raw_land_cost == 0
+
+    def test_discount_clamped_to_50(self):
+        r = calc_land_cost(10000, 4000, 99.0)
+        assert r.negotiation_discount_pct == 50.0
+
+    def test_no_discount(self):
+        r = calc_land_cost(10000, 4000, 0)
+        assert r.negotiated_land_cost == r.raw_land_cost
+
+
+class TestCalcGDV:
+    def test_basic(self):
+        r = calc_gdv(10000, 7000)
+        assert r.gross_development_value == 70_000_000
+
+    def test_zero_psf(self):
+        r = calc_gdv(10000, 0)
+        assert r.gross_development_value == 0
+
+    def test_monthly_revenue_nonzero(self):
+        r = calc_gdv(10000, 7000)
+        assert r.monthly_revenue > 0
+
+
+class TestCalcIRR:
+    def test_go_verdict_high_psf(self):
+        r = calc_irr(10_000_000, 10000, 9000)
+        assert r.verdict == "GO"
+        assert r.simple_irr_pct >= TARGET_IRR_GO
+
+    def test_no_go_verdict_low_psf(self):
+        r = calc_irr(50_000_000, 10000, 3000)
+        assert r.verdict == "NO-GO"
+
+    def test_equity_debt_split(self):
+        r = calc_irr(20_000_000, 10000, 7000)
+        assert abs(r.equity_required / r.total_project_cost - EQUITY_RATIO) < 0.01
+        assert abs(r.debt_required / r.total_project_cost - DEBT_RATIO) < 0.01
+
+    def test_zero_land_cost(self):
+        r = calc_irr(0, 10000, 7000)
+        assert r.land_cost == 0
+        assert r.simple_irr_pct > 0
+
+    def test_profit_margin_positive_when_go(self):
+        r = calc_irr(5_000_000, 10000, 9000)
+        assert r.profit_margin_pct > 0
+
+
+class TestCompareScenarios:
+    def test_scenario_structure(self):
+        s = compare_scenarios(15_000_000, 10000, 7000)
+        assert s.base is not None
+        assert s.bull.gdv > s.base.gdv
+        assert s.bear.gdv < s.base.gdv
+
+    def test_bull_higher_irr_than_bear(self):
+        s = compare_scenarios(15_000_000, 10000, 7000)
+        assert s.bull.simple_irr_pct > s.bear.simple_irr_pct
+
+    def test_recommendation_string_present(self):
+        s = compare_scenarios(15_000_000, 10000, 7000)
+        assert isinstance(s.recommendation, str)
+        assert len(s.recommendation) > 0
+
+    def test_proceed_when_base_and_bear_viable(self):
+        s = compare_scenarios(5_000_000, 10000, 9000)
+        assert "PROCEED" in s.recommendation
+
+    def test_pass_when_base_no_go(self):
+        s = compare_scenarios(100_000_000, 5000, 3000)
+        assert "PASS" in s.recommendation
+```
+
+## Done When
+- `tests/test_irr_model.py` with ≥15 tests, all pass
+- CHANGELOG prepended
+
+---
+
+# T-375 — FeasibilityAnalystTool in agents/analyst_agent.py
+
+**Priority:** P1 | **Phase:** 6 | **Depends on:** T-373
+
+## Why
+
+The Analyst Agent today can tell you market PSF and competitor data but can't run a full feasibility. This tool wires the IRR model into the analyst pipeline — so when asked to evaluate a land parcel, the analyst returns a real financial verdict, not prose.
+
+## Steps
+
+1. In `agents/analyst_agent.py`, add import:
+```python
+from utils.irr_model import calc_land_cost, calc_gdv, calc_irr, compare_scenarios
+```
+
+2. Add `FeasibilityAnalystTool` class after `FeasibilityTool`:
+
+```python
+class FeasibilityAnalystTool(BaseTool):
+    name: str = "full_feasibility"
+    description: str = (
+        "Run a complete LLS feasibility model for a land parcel. "
+        "Input: JSON with 'land_area_sqft' (float), 'sell_psf' (float — use avg_listing_psf from "
+        "market_summary_query), 'guidance_value_psf' (float — from kaveri data, or use 4000 as default "
+        "for Yelahanka), 'negotiation_discount_pct' (float, default 10), 'efficiency_ratio' (default 0.65), "
+        "'zone' (default R2), 'market' (market name). "
+        "Returns: land cost, construction cost, GDV, base/bull/bear IRR, verdict, recommendation."
+    )
+
+    def _run(self, input_str: str) -> str:
+        try:
+            params = json.loads(input_str)
+        except (json.JSONDecodeError, TypeError):
+            return json.dumps({"error": "invalid JSON input"})
+        try:
+            from utils.fsi_calculator import calculate_fsi
+            land_area   = float(params.get("land_area_sqft", 0))
+            sell_psf    = float(params.get("sell_psf", 0))
+            gv_psf      = float(params.get("guidance_value_psf", 4000))
+            disc        = float(params.get("negotiation_discount_pct", 10.0))
+            efficiency  = float(params.get("efficiency_ratio", 0.65))
+            zone        = str(params.get("zone", "R2"))
+            market      = params.get("market")
+
+            fsi_r       = calculate_fsi(land_area, zone, efficiency, market)
+            lc_r        = calc_land_cost(land_area, gv_psf, disc)
+            scenarios   = compare_scenarios(lc_r.negotiated_land_cost, fsi_r.sellable_area_sqft, sell_psf)
+
+            return json.dumps({
+                "inputs": {
+                    "land_area_sqft": land_area,
+                    "zone": zone,
+                    "market": market,
+                    "sell_psf": sell_psf,
+                    "guidance_value_psf": gv_psf,
+                    "negotiation_discount_pct": disc,
+                },
+                "fsi": {
+                    "buildable_sqft": fsi_r.buildable_area_sqft,
+                    "sellable_sqft": fsi_r.sellable_area_sqft,
+                    "max_floors": fsi_r.max_floors,
+                },
+                "financials": {
+                    "land_cost": scenarios.base.land_cost,
+                    "construction_cost": scenarios.base.construction_cost,
+                    "total_project_cost": scenarios.base.total_project_cost,
+                    "equity_required": scenarios.base.equity_required,
+                    "gdv": scenarios.base.gdv,
+                },
+                "scenarios": {
+                    "base":  {"irr_pct": scenarios.base.simple_irr_pct,  "verdict": scenarios.base.verdict},
+                    "bull":  {"irr_pct": scenarios.bull.simple_irr_pct,  "verdict": scenarios.bull.verdict},
+                    "bear":  {"irr_pct": scenarios.bear.simple_irr_pct,  "verdict": scenarios.bear.verdict},
+                },
+                "recommendation": scenarios.recommendation,
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+```
+
+3. Add `FeasibilityAnalystTool()` to the `tools=[...]` list in `create_analyst_agent()`.
+
+4. Update analyst backstory adjunct guidance to include `full_feasibility`.
+
+5. `py_compile` + `ruff check .` must pass.
+
+## Done When
+- `FeasibilityAnalystTool` added to analyst agent
+- Tool returns base/bull/bear IRR scenarios in a single call
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-376 — agents/finance_head_agent.py
+
+**Priority:** P1 | **Phase:** 6 | **Depends on:** T-373, T-375
+
+## Why
+
+The Finance Head in the Board Room is an inline builder function. Phase 6 creates a standalone Finance Head Agent — importable, testable, callable outside the Board Room — which makes it usable as a first-class pipeline component (not just board room context).
+
+## Steps
+
+Create `agents/finance_head_agent.py`:
+
+```python
+"""
+RE_OS — Finance Head Agent (Phase 6 — Finance Department)
+Standalone feasibility analyst for LLS land acquisition decisions.
+Uses LLS standard model: ₹2,200/sqft construction, 20% IRR threshold, 60:40 equity:debt.
+"""
+import json
+from crewai import Agent
+from config.llm_router import get_analysis_llm
+from agents.analyst_agent import FeasibilityAnalystTool, FeasibilityTool
+
+
+def create_finance_head_agent() -> Agent:
+    return Agent(
+        role="VP — Finance & Capital Strategy",
+        goal=(
+            "Evaluate land acquisition feasibility using the LLS standard model. "
+            "Produce a one-page financial verdict: land cost, GDV, base/bull/bear IRR, "
+            "equity requirement, and a GO / MARGINAL / NO-GO recommendation."
+        ),
+        backstory=(
+            "Conservative capital allocator with 12 years in Bengaluru real estate finance. "
+            "Uses the LLS standard model: ₹2,200/sqft hard construction cost, 20% IRR threshold "
+            "for a GO, 60:40 equity:debt. Builds three scenarios for every deal — base, bull (+10% PSF), "
+            "bear (-10% PSF) — and makes the GO/NO-GO call on the bear case, not the base. "
+            "Never accepts a deal where the bear case IRR falls below 12%. "
+            "Always asks: what is the downside, and can LLS survive it?"
+        ),
+        tools=[FeasibilityAnalystTool(), FeasibilityTool()],
+        llm=get_analysis_llm(),
+        verbose=True,
+        allow_delegation=False,
+        max_iter=3,
+    )
+
+
+if __name__ == "__main__":
+    agent = create_finance_head_agent()
+    print(f"Finance Head Agent created: {agent.role}")
+    print(f"Tools: {[t.name for t in agent.tools]}")
+```
+
+2. `py_compile` + `ruff check .` must pass.
+
+## Done When
+- `agents/finance_head_agent.py` created
+- `py_compile` passes
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-377 — Wire Finance Head to Board Room — auto IRR math
+
+**Priority:** P1 | **Phase:** 6 | **Depends on:** T-373
+
+## Why
+
+The Board Room Finance Head currently responds from LLM knowledge. This task wires the IRR model into the Finance Head's context — so any pitch that mentions a PSF or acreage gets a pre-computed base/bull/bear IRR prepended to the Finance department question. Same pattern as T-363 for Engineering.
+
+## Steps
+
+1. In `crews/board_room.py`, the `run_single_agent` function already handles `key == "engineering"`. Add a parallel block for `key == "finance"`:
+
+```python
+if key == "finance":
+    from utils.irr_model import compare_scenarios, calc_land_cost
+    irr_context = ""
+    # Detect acreage
+    area_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:-\s*)?acres?", pitch, re.I)
+    sqft_match = re.search(r"(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:sq\s*\.?\s*ft|sqft|square\s*feet|sft)", pitch, re.I)
+    # Detect PSF
+    psf_match = re.search(r"(?:psf|per\s+sq\.?\s*ft|₹\s*)(\d{3,6})", pitch, re.I)
+    if (area_match or sqft_match) and psf_match:
+        try:
+            if area_match:
+                sqft = float(area_match.group(1)) * 43560
+            else:
+                sqft = float(sqft_match.group(1).replace(",", ""))
+            sell_psf = float(psf_match.group(1))
+            sellable = sqft * 0.65 * 2.5  # R2 FSI default
+            scenarios = compare_scenarios(sqft * 4000 * 0.9, sellable, sell_psf)
+            irr_context = (
+                f"\n\n[AUTO IRR CALC — {sqft:,.0f} sqft site, ₹{sell_psf:,.0f} PSF]\n"
+                f"Base IRR: {scenarios.base.simple_irr_pct:.1f}% ({scenarios.base.verdict}) | "
+                f"Bull: {scenarios.bull.simple_irr_pct:.1f}% | "
+                f"Bear: {scenarios.bear.simple_irr_pct:.1f}% ({scenarios.bear.verdict})\n"
+                f"Land cost est.: ₹{scenarios.base.land_cost/1e7:.1f}Cr | "
+                f"GDV est.: ₹{scenarios.base.gdv/1e7:.1f}Cr\n"
+                f"Recommendation: {scenarios.recommendation}\n"
+            )
+        except Exception:
+            pass
+    dept_question = irr_context + dept_question
+```
+
+2. `py_compile crews/board_room.py` + `ruff check .` must pass.
+
+## Done When
+- Finance dept question auto-prepended with IRR calc when pitch contains PSF + area
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-378 — Dashboard Finance Panel
+
+**Priority:** P2 | **Phase:** 6 | **Depends on:** T-376
+
+## Why
+
+Jinu needs to see the last feasibility calc without opening a terminal. The Finance panel in the dashboard shows the last Board Room Finance Head response alongside the key numbers.
+
+## Steps
+
+1. Add to `dashboard/app.py`:
+
+```python
+@limiter.limit("30 per minute")
+@app.route("/api/finance/brief", methods=["GET"])
+def finance_brief():
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT session_id, market, finance_response, created_at
+            FROM board_sessions
+            WHERE finance_response IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+        """)
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            return jsonify({"brief": None})
+        return jsonify({"brief": {
+            "session_id": str(row[0]),
+            "market": row[1],
+            "response": row[2],
+            "created_at": row[3].isoformat() if row[3] else None,
+        }})
+    except Exception as e:
+        exc = True
+        logger.error("[finance_brief] %s", e)
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+```
+
+2. Add `/api/finance/brief` to `_READ_ONLY_PATHS`.
+
+3. Add Finance panel to `index.html` (same structure as Engineering panel, purple accent colour `#9b7ec7`).
+
+4. Add JS: `pollFinanceBrief()` called on load + 60s interval.
+
+## Done When
+- `/api/finance/brief` endpoint live
+- Finance panel in dashboard showing last finance response
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-379 — GATE-13: Phase 6 DoD Validation
+
+**Priority:** P0 | **Phase:** 6 | **Depends on:** T-373–T-378
+
+## Why
+
+Phase 6 does not close until the Finance Head demonstrably uses calculated IRR, not LLM guesses.
+
+## Steps
+
+1. Submit Board Room pitch: `"Should LLS acquire a 5-acre site in Yelahanka at ₹6,500 PSF via JD model?"`
+2. Poll session until complete.
+3. Check Finance column in the result — it must contain a number ending in `%` that matches the IRR model output for those inputs (5 acres = 217,800 sqft, 65% efficiency, R2 zone, PSF ₹6,500).
+4. Expected base IRR: `calc_irr(217800 * 4000 * 0.9, 217800 * 0.65 * 2.5, 6500)` — verify output matches Finance Head response.
+5. Document session_id + Finance Head excerpt in CHANGELOG.
+
+## Done When
+- Finance Head response contains calculated IRR % (not vague prose like "approximately 18-22%")
+- IRR matches model output for given inputs
+- VISION.md Phase 6 status updated to ✅ COMPLETE
+- CHANGELOG prepended with evidence
+
+---
+
+# T-380 — DB: alerts table + Alembic 0009
+
+**Priority:** P1 | **Phase:** 7 | **Blocks:** T-381–T-389
+
+## Why
+
+Every Discord send attempt must be stored. Without an alerts table you can't audit what was sent, when, and whether it succeeded. The dashboard Alerts panel reads from this table.
+
+## Steps
+
+1. Add to `database/schema.sql`:
+
+```sql
+-- ============================================================
+-- ALERTS — Discord notification log (Phase 7)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS alerts (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    channel     VARCHAR(50) NOT NULL,
+    title       TEXT NOT NULL,
+    message     TEXT,
+    color       INT DEFAULT 3447003,     -- Discord blue
+    status      VARCHAR(20) NOT NULL DEFAULT 'sent'
+                CHECK (status IN ('sent', 'failed', 'skipped')),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_channel    ON alerts(channel);
+CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at DESC);
+```
+
+2. Create `alembic/versions/0009_add_alerts_table.py`:
+```python
+"""Add alerts table for Discord notification log (Phase 7).
+Revision ID: 0009_add_alerts_table
+Revises: 0008_add_tasks_table
+Create Date: 2026-05-30
+"""
+from typing import Sequence, Union
+import sqlalchemy as sa
+from alembic import op
+
+revision: str = "0009_add_alerts_table"
+down_revision: Union[str, None] = "0008_add_tasks_table"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+def upgrade() -> None:
+    op.create_table(
+        "alerts",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True,
+                  server_default=sa.text("gen_random_uuid()")),
+        sa.Column("channel", sa.String(50), nullable=False),
+        sa.Column("title", sa.Text(), nullable=False),
+        sa.Column("message", sa.Text()),
+        sa.Column("color", sa.Integer(), server_default="3447003"),
+        sa.Column("status", sa.String(20), nullable=False, server_default="sent"),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False,
+                  server_default=sa.text("NOW()")),
+        sa.CheckConstraint("status IN ('sent','failed','skipped')", name="chk_alerts_status"),
+    )
+    op.create_index("idx_alerts_channel",    "alerts", ["channel"])
+    op.create_index("idx_alerts_created_at", "alerts", ["created_at"])
+
+def downgrade() -> None:
+    op.drop_index("idx_alerts_created_at")
+    op.drop_index("idx_alerts_channel")
+    op.drop_table("alerts")
+```
+
+## Done When
+- `alerts` table in schema.sql with correct columns + indexes
+- Alembic 0009 with correct `down_revision = "0008_add_tasks_table"`
+- `py_compile` + `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-381 — utils/discord_notifier.py
+
+**Priority:** P1 | **Phase:** 7 | **Depends on:** T-380 | **Blocks:** T-384–T-388
+
+## Why
+
+All Phase 7 alert wiring depends on one reliable Discord send primitive. This module must handle: webhook not configured (silent skip), HTTP error (log + store as failed), and embed formatting for different alert types. It must never crash the pipeline.
+
+## Steps
+
+Create `utils/discord_notifier.py`:
+
+```python
+"""
+RE_OS — Discord Notifier (Phase 7 — Alerts)
+Sends structured embed messages to Discord via webhooks.
+All webhook URLs are optional — missing URL = skipped (not an error).
+
+Discord channel map (set webhook URLs in .env):
+  rera_yelahanka   → DISCORD_WEBHOOK_RERA_YELAHANKA
+  rera_devanahalli → DISCORD_WEBHOOK_RERA_DEVANAHALLI
+  rera_hebbal      → DISCORD_WEBHOOK_RERA_HEBBAL
+  competitor       → DISCORD_WEBHOOK_COMPETITOR
+  price            → DISCORD_WEBHOOK_PRICE
+  intel            → DISCORD_WEBHOOK_INTEL
+  system           → DISCORD_WEBHOOK_SYSTEM
+"""
+import json
+import os
+from datetime import datetime, timezone
+
+from loguru import logger
+
+# Discord embed colour codes
+COLOR_GREEN  = 3066993   # #2ecc71
+COLOR_RED    = 15158332  # #e74c3c
+COLOR_AMBER  = 16750848  # #ffaa00
+COLOR_BLUE   = 3447003   # #3498db
+COLOR_PURPLE = 10181046  # #9b59b6
+
+_CHANNEL_ENV_MAP = {
+    "rera_yelahanka":   "DISCORD_WEBHOOK_RERA_YELAHANKA",
+    "rera_devanahalli": "DISCORD_WEBHOOK_RERA_DEVANAHALLI",
+    "rera_hebbal":      "DISCORD_WEBHOOK_RERA_HEBBAL",
+    "competitor":       "DISCORD_WEBHOOK_COMPETITOR",
+    "price":            "DISCORD_WEBHOOK_PRICE",
+    "intel":            "DISCORD_WEBHOOK_INTEL",
+    "system":           "DISCORD_WEBHOOK_SYSTEM",
+}
+
+
+def _get_webhook_url(channel: str) -> str | None:
+    env_key = _CHANNEL_ENV_MAP.get(channel)
+    if not env_key:
+        return None
+    return os.environ.get(env_key) or None
+
+
+def _log_alert(channel: str, title: str, message: str, color: int, status: str) -> None:
+    """Persist alert attempt to DB (non-fatal if DB unavailable)."""
+    try:
+        from utils.db import get_engine
+        from sqlalchemy import text
+        with get_engine().begin() as conn:
+            conn.execute(
+                text("""
+                INSERT INTO alerts (channel, title, message, color, status)
+                VALUES (:channel, :title, :message, :color, :status)
+                """),
+                {"channel": channel, "title": title,
+                 "message": message[:2000] if message else None,
+                 "color": color, "status": status},
+            )
+    except Exception as exc:
+        logger.warning(f"[Discord] Failed to log alert to DB: {exc}")
+
+
+def send(channel: str, title: str, message: str = "", color: int = COLOR_BLUE) -> bool:
+    """Send a Discord embed message to the named channel webhook.
+    Returns True if sent, False if skipped or failed. Never raises."""
+    import urllib.request
+    import urllib.error
+
+    url = _get_webhook_url(channel)
+    if not url:
+        logger.debug(f"[Discord] Channel '{channel}' not configured — skipping alert: {title}")
+        _log_alert(channel, title, message, color, "skipped")
+        return False
+
+    payload = json.dumps({
+        "embeds": [{
+            "title": title[:256],
+            "description": message[:4096] if message else "",
+            "color": color,
+            "footer": {"text": "RE_OS · LLS Intelligence"},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }]
+    }).encode("utf-8")
+
+    try:
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if resp.status in (200, 204):
+                logger.info(f"[Discord] Sent to #{channel}: {title}")
+                _log_alert(channel, title, message, color, "sent")
+                return True
+            logger.warning(f"[Discord] Unexpected status {resp.status} for #{channel}")
+            _log_alert(channel, title, message, color, "failed")
+            return False
+    except Exception as exc:
+        logger.warning(f"[Discord] Failed to send to #{channel}: {exc}")
+        _log_alert(channel, title, message, color, "failed")
+        return False
+
+
+# ── Alert formatters ─────────────────────────────────────────────────────────
+
+def send_rera_alert(market: str, new_count: int, developers: list[str]) -> bool:
+    channel = f"rera_{market.lower()}"
+    title   = f"🏗 {new_count} new RERA project{'s' if new_count != 1 else ''} — {market}"
+    devs    = ", ".join(developers[:5]) + ("…" if len(developers) > 5 else "")
+    message = f"**{new_count}** new RERA registration{'s' if new_count != 1 else ''} detected in **{market}**.\nDevelopers: {devs}"
+    return send(channel, title, message, COLOR_GREEN)
+
+
+def send_intel_alert(market: str, run_id: str, synopsis: str, avg_psf: int | None) -> bool:
+    psf_str = f"₹{avg_psf:,}/sqft" if avg_psf else "PSF unavailable"
+    title   = f"📊 Intel report ready — {market}"
+    message = f"**Run:** `{run_id}`\n**Avg PSF:** {psf_str}\n\n{synopsis[:400]}"
+    return send("intel", title, message, COLOR_BLUE)
+
+
+def send_competitor_alert(developer: str, project: str, market: str) -> bool:
+    title   = f"👀 New competitor project — {market}"
+    message = f"**{developer}** has launched **{project}** in {market}."
+    return send("competitor", title, message, COLOR_PURPLE)
+
+
+def send_price_alert(market: str, old_psf: float, new_psf: float) -> bool:
+    delta = ((new_psf - old_psf) / max(old_psf, 1)) * 100
+    direction = "↑" if delta > 0 else "↓"
+    title   = f"💰 Price movement {direction} {abs(delta):.1f}% — {market}"
+    message = (
+        f"**{market}** avg listing PSF moved from ₹{old_psf:,.0f} to ₹{new_psf:,.0f} "
+        f"({direction}{abs(delta):.1f}%)."
+    )
+    color = COLOR_RED if delta < 0 else COLOR_GREEN
+    return send("price", title, message, color)
+
+
+def send_system_alert(job_name: str, error: str) -> bool:
+    title   = f"⚠ Scheduler error — {job_name}"
+    message = f"**Job:** `{job_name}`\n**Error:** {error[:500]}"
+    return send("system", title, message, COLOR_RED)
+```
+
+2. `py_compile` + `ruff check .` must pass.
+
+## Done When
+- `utils/discord_notifier.py` with `send()` + 5 formatter functions
+- `send()` returns False (never raises) when webhook not configured
+- Alert logged to DB on every send attempt
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-382 — settings.py + .env.example — Discord config
+
+**Priority:** P1 | **Phase:** 7 | **Depends on:** T-381
+
+## Steps
+
+1. In `config/settings.py`, add after the existing env vars section:
+
+```python
+# ── Discord (Phase 7 — Alerts) ────────────────────────────────────────────────
+DISCORD_WEBHOOK_RERA_YELAHANKA   = os.environ.get("DISCORD_WEBHOOK_RERA_YELAHANKA", "")
+DISCORD_WEBHOOK_RERA_DEVANAHALLI = os.environ.get("DISCORD_WEBHOOK_RERA_DEVANAHALLI", "")
+DISCORD_WEBHOOK_RERA_HEBBAL      = os.environ.get("DISCORD_WEBHOOK_RERA_HEBBAL", "")
+DISCORD_WEBHOOK_COMPETITOR       = os.environ.get("DISCORD_WEBHOOK_COMPETITOR", "")
+DISCORD_WEBHOOK_PRICE            = os.environ.get("DISCORD_WEBHOOK_PRICE", "")
+DISCORD_WEBHOOK_INTEL            = os.environ.get("DISCORD_WEBHOOK_INTEL", "")
+DISCORD_WEBHOOK_SYSTEM           = os.environ.get("DISCORD_WEBHOOK_SYSTEM", "")
+
+DISCORD_CHANNELS = {
+    "rera_yelahanka":   DISCORD_WEBHOOK_RERA_YELAHANKA,
+    "rera_devanahalli": DISCORD_WEBHOOK_RERA_DEVANAHALLI,
+    "rera_hebbal":      DISCORD_WEBHOOK_RERA_HEBBAL,
+    "competitor":       DISCORD_WEBHOOK_COMPETITOR,
+    "price":            DISCORD_WEBHOOK_PRICE,
+    "intel":            DISCORD_WEBHOOK_INTEL,
+    "system":           DISCORD_WEBHOOK_SYSTEM,
+}
+```
+
+2. In `.env.example`, add:
+
+```bash
+# ── Discord Alerts (Phase 7) ──
+# Create a Discord server, add channels, right-click each → Edit Channel → Integrations → Webhooks → New Webhook → Copy URL
+# Channel structure: #rera-yelahanka, #rera-devanahalli, #rera-hebbal, #competitor-launches, #price-signals, #intel-reports, #re-os-health
+DISCORD_WEBHOOK_RERA_YELAHANKA=
+DISCORD_WEBHOOK_RERA_DEVANAHALLI=
+DISCORD_WEBHOOK_RERA_HEBBAL=
+DISCORD_WEBHOOK_COMPETITOR=
+DISCORD_WEBHOOK_PRICE=
+DISCORD_WEBHOOK_INTEL=
+DISCORD_WEBHOOK_SYSTEM=
+```
+
+3. Add all 7 `DISCORD_WEBHOOK_*` keys to `docker-compose.yml` env blocks (both `agents` and `scheduler` services).
+
+## Done When
+- `settings.py` has 7 Discord env vars + DISCORD_CHANNELS dict
+- `.env.example` has Discord section with setup instructions
+- `docker-compose.yml` agents + scheduler env blocks include all 7 keys
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-383 — tests/test_discord_notifier.py
+
+**Priority:** P1 | **Phase:** 7 | **Depends on:** T-381
+
+## Steps
+
+Create `tests/test_discord_notifier.py`:
+
+```python
+import json
+import pytest
+from unittest.mock import patch, MagicMock
+pytestmark = pytest.mark.unit
+
+from utils.discord_notifier import (
+    send, send_rera_alert, send_intel_alert,
+    send_competitor_alert, send_price_alert, send_system_alert,
+    COLOR_GREEN, COLOR_RED, COLOR_BLUE,
+)
+
+
+class TestSend:
+    def test_skip_when_no_webhook(self):
+        with patch.dict("os.environ", {}, clear=True):
+            with patch("utils.discord_notifier._log_alert") as mock_log:
+                result = send("rera_yelahanka", "Test", "body")
+                assert result is False
+                mock_log.assert_called_once_with("rera_yelahanka", "Test", "body", COLOR_BLUE, "skipped")
+
+    def test_returns_true_on_204(self):
+        mock_resp = MagicMock()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.status = 204
+        with patch.dict("os.environ", {"DISCORD_WEBHOOK_RERA_YELAHANKA": "https://discord.com/fake"}):
+            with patch("urllib.request.urlopen", return_value=mock_resp):
+                with patch("utils.discord_notifier._log_alert"):
+                    result = send("rera_yelahanka", "Test", "body")
+                    assert result is True
+
+    def test_returns_false_on_exception(self):
+        with patch.dict("os.environ", {"DISCORD_WEBHOOK_RERA_YELAHANKA": "https://discord.com/fake"}):
+            with patch("urllib.request.urlopen", side_effect=Exception("timeout")):
+                with patch("utils.discord_notifier._log_alert"):
+                    result = send("rera_yelahanka", "Test", "body")
+                    assert result is False
+
+    def test_unknown_channel_skipped(self):
+        with patch("utils.discord_notifier._log_alert") as mock_log:
+            result = send("nonexistent_channel", "Title", "msg")
+            assert result is False
+            mock_log.assert_called_with("nonexistent_channel", "Title", "msg", COLOR_BLUE, "skipped")
+
+
+class TestFormatters:
+    def test_rera_alert_structure(self):
+        with patch("utils.discord_notifier.send", return_value=True) as mock_send:
+            send_rera_alert("Yelahanka", 5, ["Brigade", "Prestige"])
+            call = mock_send.call_args
+            assert "rera_yelahanka" == call[0][0]
+            assert "5" in call[0][1]
+
+    def test_intel_alert_contains_run_id(self):
+        with patch("utils.discord_notifier.send", return_value=True) as mock_send:
+            send_intel_alert("Yelahanka", "20260530_071726", "Market cooling", 10791)
+            call = mock_send.call_args
+            assert "20260530_071726" in call[0][2]
+
+    def test_price_alert_color_red_on_decline(self):
+        with patch("utils.discord_notifier.send", return_value=True) as mock_send:
+            send_price_alert("Yelahanka", 10000, 9000)
+            call = mock_send.call_args
+            assert call[0][3] == COLOR_RED
+
+    def test_price_alert_color_green_on_rise(self):
+        with patch("utils.discord_notifier.send", return_value=True) as mock_send:
+            send_price_alert("Yelahanka", 9000, 10000)
+            call = mock_send.call_args
+            assert call[0][3] == COLOR_GREEN
+
+    def test_system_alert_structure(self):
+        with patch("utils.discord_notifier.send", return_value=True) as mock_send:
+            send_system_alert("rera_yelahanka", "Connection refused")
+            call = mock_send.call_args
+            assert "system" == call[0][0]
+            assert "Connection refused" in call[0][2]
+```
+
+## Done When
+- `tests/test_discord_notifier.py` with ≥8 tests, all pass
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-384 — Wire RERA alerts to scheduler.py
+
+**Priority:** P1 | **Phase:** 7 | **Depends on:** T-381, T-382
+
+## Steps
+
+1. In `config/scheduler.py`, in `run_single_market_rera()`, after the subprocess is spawned AND completes (add `proc.wait()` with timeout), query the DB for new RERA projects since the job started:
+
+```python
+def run_single_market_rera(market: str):
+    from config.llm_router import _clear_excluded
+    from datetime import datetime, timezone
+    import subprocess
+    _clear_excluded()
+    job_start = datetime.now(timezone.utc)
+    logger.info(f"Scheduler: Starting RERA refresh for {market}")
+    slug = market.lower().replace(" ", "_")
+    log_path = os.path.join("logs", f"{slug}.log")
+    os.makedirs("logs", exist_ok=True)
+    cmd = [sys.executable, "scrapers/rera_karnataka.py", "--market", market]
+    log_fh = open(log_path, "a")
+    proc = subprocess.Popen(cmd, env=os.environ, stdout=log_fh, stderr=log_fh)
+    log_fh.close()
+    logger.info(f"  Spawned RERA process for {market} (PID {proc.pid}) → {log_path}")
+    try:
+        proc.wait(timeout=1800)   # 30 min max
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        logger.warning(f"  RERA process for {market} timed out — killed")
+        return
+    # Query new projects since job start
+    try:
+        from utils.db import get_engine
+        from utils.discord_notifier import send_rera_alert
+        from sqlalchemy import text
+        with get_engine().connect() as conn:
+            rows = conn.execute(text("""
+                SELECT rp.project_name, d.name AS developer_name
+                FROM rera_projects rp
+                LEFT JOIN developers d ON d.id = rp.developer_id
+                LEFT JOIN micro_markets mm ON mm.id = rp.micro_market_id
+                WHERE mm.name ILIKE :market
+                  AND rp.created_at >= :job_start
+                ORDER BY rp.created_at DESC
+                LIMIT 20
+            """), {"market": f"%{market}%", "job_start": job_start}).fetchall()
+        if rows:
+            developers = list({r[1] for r in rows if r[1]})
+            send_rera_alert(market, len(rows), developers)
+    except Exception as e:
+        logger.warning(f"  RERA alert failed for {market}: {e}")
+```
+
+2. `py_compile config/scheduler.py` + `ruff check .` must pass.
+
+## Done When
+- Scheduler waits for RERA subprocess to complete (30-min timeout)
+- Queries new RERA projects since job start
+- Calls `send_rera_alert` if count > 0
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-385 — Wire Intel report alerts to market_intel_crew.py
+
+**Priority:** P1 | **Phase:** 7 | **Depends on:** T-381
+
+## Steps
+
+1. In `crews/market_intel_crew.py`, after the CEO synthesis saves the report file (Stage 3 success path), add:
+
+```python
+try:
+    from utils.discord_notifier import send_intel_alert
+    from utils.db import get_engine
+    from sqlalchemy import text
+    # Pull avg_psf from DB for this market
+    with get_engine().connect() as _conn:
+        row = _conn.execute(text("""
+            SELECT ROUND(AVG(l.price_psf))
+            FROM listings l
+            JOIN micro_markets mm ON mm.id = l.micro_market_id
+            WHERE mm.name ILIKE :market AND l.price_psf > 1000 AND l.price_psf < 50000
+        """), {"market": f"%{market_name}%"}).fetchone()
+    avg_psf = int(row[0]) if row and row[0] else None
+    synopsis = ceo_result[:300] if ceo_result else ""
+    send_intel_alert(market_name, run_id, synopsis, avg_psf)
+except Exception as _e:
+    logger.warning(f"Intel alert failed: {_e}")
+```
+
+2. `py_compile crews/market_intel_crew.py` + `ruff check .` must pass.
+
+## Done When
+- Intel report completion triggers Discord send
+- Message contains run_id + synopsis + avg_psf
+- Graceful fail (no pipeline abort) if Discord unavailable
+- CHANGELOG prepended
+
+---
+
+# T-386 — Wire competitor launch alerts to developer_scout.py
+
+**Priority:** P2 | **Phase:** 7 | **Depends on:** T-381
+
+## Steps
+
+1. In `scrapers/developer_scout.py`, after projects are returned from `scout()`, check the scout memory for truly new CIDs:
+
+```python
+try:
+    from utils.discord_notifier import send_competitor_alert
+    for project in new_projects:   # new_projects = [p for p in projects if sm.is_new(cid)]
+        send_competitor_alert(
+            developer=project.get("developer_name", "Unknown"),
+            project=project.get("project_name", "Unknown"),
+            market=market,
+        )
+except Exception as _e:
+    pass  # Alert failure must not break scout
+```
+
+2. This requires access to which projects are truly new (not in scout_memory). Use the `is_new` flag already returned by `scout_memory.mark_all()`.
+
+## Done When
+- New developer projects trigger Discord alert
+- Uses existing scout_memory new-flag logic
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-387 — Wire price movement alerts to portal_scout.py
+
+**Priority:** P2 | **Phase:** 7 | **Depends on:** T-381
+
+## Steps
+
+1. In `scrapers/portal_scout.py`, after listings are saved, compute avg_psf and compare to last `market_snapshots` entry:
+
+```python
+try:
+    from utils.db import get_engine
+    from utils.discord_notifier import send_price_alert
+    from sqlalchemy import text
+    with get_engine().connect() as conn:
+        prev = conn.execute(text("""
+            SELECT avg_psf_sale FROM market_snapshots
+            WHERE micro_market_id = (SELECT id FROM micro_markets WHERE name ILIKE :m)
+            ORDER BY snapshot_date DESC LIMIT 1
+        """), {"m": f"%{market}%"}).fetchone()
+        curr = conn.execute(text("""
+            SELECT ROUND(AVG(price_psf)) FROM listings l
+            JOIN micro_markets mm ON mm.id = l.micro_market_id
+            WHERE mm.name ILIKE :m AND price_psf > 1000 AND price_psf < 50000
+        """), {"m": f"%{market}%"}).fetchone()
+    if prev and prev[0] and curr and curr[0]:
+        old_psf, new_psf = float(prev[0]), float(curr[0])
+        if abs((new_psf - old_psf) / max(old_psf, 1)) >= 0.05:
+            send_price_alert(market, old_psf, new_psf)
+except Exception:
+    pass
+```
+
+## Done When
+- Portal scout triggers price alert when PSF delta ≥ 5%
+- Graceful fail on any error
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-388 — Wire system health alerts to scheduler.py exception handler
+
+**Priority:** P1 | **Phase:** 7 | **Depends on:** T-381
+
+## Steps
+
+1. In `config/scheduler.py`, wrap the three market RERA jobs and the `run_market_snapshot` function with a shared error handler:
+
+```python
+def _safe_job(fn, job_name: str, *args, **kwargs):
+    """Run a scheduler job. Send Discord system alert on exception."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:
+        logger.error(f"[Scheduler] Job '{job_name}' failed: {exc}")
+        try:
+            from utils.discord_notifier import send_system_alert
+            send_system_alert(job_name, str(exc)[:300])
+        except Exception:
+            pass
+        raise
+```
+
+2. Wrap the `run_market_snapshot` call:
+```python
+scheduler.add_job(
+    lambda: _safe_job(run_market_snapshot, "market_snapshot"),
+    ...
+)
+```
+
+3. `py_compile config/scheduler.py` + `ruff check .` must pass.
+
+## Done When
+- Scheduler job exceptions trigger Discord system alert
+- `_safe_job` wrapper used for all cron jobs
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-389 — /api/alerts endpoint + Dashboard Alerts panel
+
+**Priority:** P2 | **Phase:** 7 | **Depends on:** T-380
+
+## Steps
+
+1. In `dashboard/app.py`:
+
+```python
+@limiter.limit("30 per minute")
+@app.route("/api/alerts", methods=["GET"])
+def list_alerts():
+    channel_filter = request.args.get("channel")
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        where = "WHERE channel = %s" if channel_filter else ""
+        params = [channel_filter] if channel_filter else []
+        cur.execute(
+            f"SELECT id, channel, title, status, created_at FROM alerts "
+            f"{where} ORDER BY created_at DESC LIMIT 50",
+            params,
+        )
+        rows = [
+            {"id": str(r[0]), "channel": r[1], "title": r[2],
+             "status": r[3], "created_at": r[4].isoformat() if r[4] else None}
+            for r in cur.fetchall()
+        ]
+        cur.close()
+        return jsonify({"alerts": rows})
+    except Exception as e:
+        exc = True
+        logger.error("[list_alerts] %s", e)
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+```
+
+2. Add `/api/alerts` to `_READ_ONLY_PATHS`.
+
+3. Add to `index.html`:
+
+```html
+<div class="infra-section">
+  <div class="infra-title">ALERTS
+    <button class="db-explorer-refresh" onclick="pollAlerts()" title="Refresh">⟳</button>
+  </div>
+  <div id="alerts-list" style="max-height:200px;overflow-y:auto;"></div>
+  <div id="alerts-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
+</div>
+```
+
+4. Add JS:
+```javascript
+const _ALERT_CHANNEL_COLORS = {
+  rera_yelahanka: '#3fb950', rera_devanahalli: '#58a6ff', rera_hebbal: '#9b7ec7',
+  competitor: '#f0a020', price: '#f85149', intel: '#58a6ff', system: '#f85149',
+};
+async function pollAlerts() {
+  try {
+    const data = await fetch('/api/alerts').then(r => r.json());
+    const list = document.getElementById('alerts-list');
+    const statusEl = document.getElementById('alerts-status');
+    if (!data.alerts || !data.alerts.length) {
+      list.innerHTML = '<div style="color:#484f58;font-size:8px;padding:4px;">No alerts yet — configure Discord webhooks in .env</div>';
+      return;
+    }
+    list.innerHTML = data.alerts.map(a => {
+      const color = _ALERT_CHANNEL_COLORS[a.channel] || '#8b949e';
+      const st = a.status === 'sent' ? '✓' : a.status === 'failed' ? '✗' : '–';
+      const ts = a.created_at ? new Date(a.created_at).toLocaleTimeString('en-IN', {hour12:false}) : '';
+      return `<div style="display:flex;gap:6px;padding:4px 0;border-bottom:1px solid #1a2235;font-size:8px;align-items:flex-start;">
+        <span style="color:${color};font-family:'Press Start 2P',cursive;font-size:6px;flex-shrink:0;padding-top:2px;">${escapeHtml(a.channel.replace('_',' '))}</span>
+        <span style="flex:1;color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(a.title)}</span>
+        <span style="color:${a.status==='sent'?'#3fb950':a.status==='failed'?'#f85149':'#6b7280'};flex-shrink:0;">${st}</span>
+        <span style="color:#484f58;flex-shrink:0;">${ts}</span>
+      </div>`;
+    }).join('');
+    statusEl.textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', {hour12:false});
+    markUpdated('alerts');
+  } catch (e) { /* silent */ }
+}
+pollAlerts();
+setInterval(pollAlerts, 60000);
+```
+
+## Done When
+- `/api/alerts` returns last 50 alerts
+- Alerts panel visible in dashboard with colour-coded channel labels
+- Empty state message mentions Discord webhook setup
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# Sprint 26 Briefs (archived)
+
+---
+
+# T-281 — RERA Scraper: Fix Yelahanka + Hebbal Locality Selectors
 
 > **If you are reading this without first marking your task `IN_PROGRESS` in `TASK_QUEUE.md` — stop. Go do that first. Then come back.**
 
@@ -42,6 +1829,990 @@ Both brains execute at the level of a **senior tech product engineering lead**. 
 **CHANGELOG format:** `TYPE | file/path | what changed | who | YYYY-MM-DD`
 
 ---
+
+---
+
+# Sprint 26 Briefs
+
+---
+
+# T-352 — DB: tasks table
+
+**Priority:** P1 | **Phase:** 3 Closure | **Blocks:** T-353, T-354, T-355
+
+## Why
+
+Board Room extracts action items from each session. Right now they exist only in the transcript JSON — there is nowhere to store them as first-class records. The Task Board (T-354) and the action approval UI (T-355) both need a `tasks` table before any frontend work can start. This is the data foundation for Phase 3 DoD.
+
+## Steps
+
+1. **Add to `database/schema.sql`** — new table at the bottom, before the VIEWS block:
+```sql
+CREATE TABLE IF NOT EXISTS tasks (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title           TEXT NOT NULL,
+    owner           VARCHAR(50),           -- bd | finance | engineering | ops | legal | ceo
+    status          VARCHAR(20) NOT NULL DEFAULT 'queued'
+                    CHECK (status IN ('queued', 'active', 'done', 'failed', 'rejected')),
+    priority        VARCHAR(10) NOT NULL DEFAULT 'medium'
+                    CHECK (priority IN ('high', 'medium', 'low')),
+    source_type     VARCHAR(30),           -- board_session | manual | scheduler
+    source_id       UUID,                  -- board_sessions.session_id if source_type=board_session
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_status    ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_owner     ON tasks(owner);
+CREATE INDEX IF NOT EXISTS idx_tasks_source    ON tasks(source_type, source_id);
+```
+
+2. **Create `alembic/versions/0008_add_tasks_table.py`**:
+```python
+"""Add tasks table for Task Board (Phase 3 closure).
+
+Revision ID: 0008_add_tasks_table
+Revises: 0007_add_legal_response
+Create Date: 2026-05-30
+"""
+from typing import Sequence, Union
+import sqlalchemy as sa
+from alembic import op
+
+revision: str = "0008_add_tasks_table"
+down_revision: Union[str, None] = "0007_add_legal_response"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+def upgrade() -> None:
+    op.create_table(
+        "tasks",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True,
+                  server_default=sa.text("gen_random_uuid()")),
+        sa.Column("title", sa.Text(), nullable=False),
+        sa.Column("owner", sa.String(50)),
+        sa.Column("status", sa.String(20), nullable=False, server_default="queued"),
+        sa.Column("priority", sa.String(10), nullable=False, server_default="medium"),
+        sa.Column("source_type", sa.String(30)),
+        sa.Column("source_id", sa.dialects.postgresql.UUID(as_uuid=True)),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False,
+                  server_default=sa.text("NOW()")),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), nullable=False,
+                  server_default=sa.text("NOW()")),
+        sa.CheckConstraint("status IN ('queued','active','done','failed','rejected')", name="chk_tasks_status"),
+        sa.CheckConstraint("priority IN ('high','medium','low')", name="chk_tasks_priority"),
+    )
+    op.create_index("idx_tasks_status", "tasks", ["status"])
+    op.create_index("idx_tasks_owner",  "tasks", ["owner"])
+    op.create_index("idx_tasks_source", "tasks", ["source_type", "source_id"])
+
+def downgrade() -> None:
+    op.drop_index("idx_tasks_source")
+    op.drop_index("idx_tasks_owner")
+    op.drop_index("idx_tasks_status")
+    op.drop_table("tasks")
+```
+
+3. **`py_compile`** both files. **`ruff check .`** must pass.
+
+## Done When
+- `tasks` table in `schema.sql` with correct columns, CHECK constraints, 3 indexes
+- Alembic `0008_add_tasks_table.py` with correct `down_revision = "0007_add_legal_response"`
+- `py_compile` passes on migration file
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-353 — API: POST /api/tasks + GET /api/tasks
+
+**Priority:** P1 | **Phase:** 3 Closure | **Depends on:** T-352 | **Blocks:** T-354, T-355
+
+## Why
+
+The Task Board and the Board Room approval UI both need two endpoints: one to create a task (approve button calls it), one to list tasks (Task Board reads it). Both are simple CRUD — no LLM, no external calls.
+
+## Steps
+
+1. **Add `/api/tasks/` to `_READ_ONLY_PATHS`** in `dashboard/app.py` (GET is read-only):
+```python
+_READ_ONLY_PATHS = frozenset({
+    ...,
+    '/api/tasks',
+})
+```
+
+2. **Add `GET /api/tasks`** to `dashboard/app.py`:
+```python
+@limiter.limit("60 per minute")
+@app.route("/api/tasks", methods=["GET"])
+def list_tasks():
+    status_filter = request.args.get("status")          # optional ?status=queued
+    owner_filter  = request.args.get("owner")           # optional ?owner=bd
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        where_clauses, params = [], []
+        if status_filter:
+            where_clauses.append("status = %s")
+            params.append(status_filter)
+        if owner_filter:
+            where_clauses.append("owner = %s")
+            params.append(owner_filter)
+        where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+        cur.execute(
+            f"SELECT id, title, owner, status, priority, source_type, source_id, created_at "
+            f"FROM tasks {where_sql} ORDER BY created_at DESC LIMIT 200",
+            params,
+        )
+        rows = [
+            {"id": str(r[0]), "title": r[1], "owner": r[2], "status": r[3],
+             "priority": r[4], "source_type": r[5],
+             "source_id": str(r[6]) if r[6] else None,
+             "created_at": r[7].isoformat() if r[7] else None}
+            for r in cur.fetchall()
+        ]
+        cur.close()
+        return jsonify({"tasks": rows})
+    except Exception as e:
+        exc = True
+        logger.error("[list_tasks] %s", e)
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+```
+
+3. **Add `POST /api/tasks`** (auth-gated — write endpoint):
+```python
+@limiter.limit("30 per minute")
+@app.route("/api/tasks", methods=["POST"])
+def create_task():
+    payload = request.get_json() or {}
+    title    = str(payload.get("title") or "").strip()
+    owner    = str(payload.get("owner") or "").strip()[:50]
+    priority = str(payload.get("priority") or "medium").strip()
+    source_type = str(payload.get("source_type") or "").strip()[:30]
+    source_id_raw = payload.get("source_id")
+
+    if not title:
+        return jsonify({"error": "title required"}), 400
+    if priority not in ("high", "medium", "low"):
+        priority = "medium"
+
+    import uuid as _uuid
+    try:
+        source_id = _uuid.UUID(str(source_id_raw)) if source_id_raw else None
+    except ValueError:
+        source_id = None
+
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO tasks (title, owner, priority, source_type, source_id)
+               VALUES (%s, %s, %s, %s, %s) RETURNING id""",
+            (title, owner or None, priority, source_type or None, source_id),
+        )
+        task_id = str(cur.fetchone()[0])
+        conn.commit()
+        cur.close()
+        return jsonify({"task_id": task_id, "status": "queued"}), 201
+    except Exception as e:
+        exc = True
+        logger.error("[create_task] %s", e)
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+```
+
+4. **Add `PATCH /api/tasks/<task_id>`** (status update — approve/reject/done):
+```python
+@limiter.limit("60 per minute")
+@app.route("/api/tasks/<task_id>", methods=["PATCH"])
+def update_task(task_id):
+    payload = request.get_json() or {}
+    new_status = str(payload.get("status") or "").strip()
+    if new_status not in ("queued", "active", "done", "failed", "rejected"):
+        return jsonify({"error": "invalid status"}), 400
+    import uuid as _uuid
+    try:
+        tid = _uuid.UUID(task_id)
+    except ValueError:
+        return jsonify({"error": "invalid task_id"}), 400
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE tasks SET status = %s, updated_at = NOW() WHERE id = %s RETURNING id",
+            (new_status, tid),
+        )
+        if cur.fetchone() is None:
+            return jsonify({"error": "not found"}), 404
+        conn.commit()
+        cur.close()
+        return jsonify({"status": new_status})
+    except Exception as e:
+        exc = True
+        logger.error("[update_task] %s", e)
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+```
+
+5. **`py_compile dashboard/app.py`** + **`ruff check .`** must pass.
+
+## Done When
+- `GET /api/tasks` returns `{"tasks": [...]}` with status/owner filter support
+- `POST /api/tasks` creates a row and returns `{"task_id": "...", "status": "queued"}`
+- `PATCH /api/tasks/<id>` updates status
+- `/api/tasks` in `_READ_ONLY_PATHS`
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-354 — Dashboard Task Board panel
+
+**Priority:** P1 | **Phase:** 3 Closure | **Depends on:** T-353
+
+## Why
+
+Phase 3 DoD requires approved actions to be "visible on Task Board." The Task Board is the final missing Phase 2/3 UI panel. It must render tasks from `/api/tasks` as a Kanban with four status columns.
+
+## Steps
+
+1. **Add a new `infra-section` div** in `dashboard/templates/index.html` in the right panel, after the Board Room section:
+```html
+<div class="infra-section">
+  <div class="infra-title">TASK BOARD
+    <button class="db-explorer-refresh" onclick="pollTasks()" title="Refresh">⟳</button>
+  </div>
+  <div style="display:flex;gap:6px;overflow-x:auto;" id="task-board-columns">
+    <!-- populated by JS -->
+  </div>
+  <div id="task-board-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
+</div>
+```
+
+2. **Add CSS** for task cards (in the `<style>` block):
+```css
+.task-col { flex: 1; min-width: 80px; }
+.task-col-header { font-family: 'Press Start 2P', cursive; font-size: 7px; color: #8b949e; padding: 4px 0; letter-spacing: 1px; border-bottom: 1px solid #2a3a55; margin-bottom: 4px; }
+.task-col-header.col-queued { color: #8b949e; }
+.task-col-header.col-active { color: #f0a020; }
+.task-col-header.col-done   { color: #3fb950; }
+.task-col-header.col-failed { color: #f85149; }
+.task-card { background: #131c2e; border: 1px solid #2a3a55; border-radius: 4px; padding: 5px 6px; margin-bottom: 4px; font-size: 8px; line-height: 1.4; }
+.task-card .tc-title { color: #c9d1d9; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-card .tc-meta  { color: #6b7280; font-size: 7px; }
+.task-priority-high   { border-left: 2px solid #f85149; }
+.task-priority-medium { border-left: 2px solid #f0a020; }
+.task-priority-low    { border-left: 2px solid #3fb950; }
+```
+
+3. **Add JS** (near the bottom of the script block, after DB Explorer):
+```javascript
+// ── Task Board ──
+const _TASK_STATUSES = ['queued', 'active', 'done', 'failed'];
+const _TASK_STATUS_LABELS = { queued: 'QUEUED', active: 'ACTIVE', done: 'DONE', failed: 'FAILED' };
+let _tasksCache = [];
+
+async function pollTasks() {
+  const statusEl = document.getElementById('task-board-status');
+  try {
+    const data = await fetch('/api/tasks').then(r => r.json());
+    if (data.error) { statusEl.textContent = 'Error: ' + data.error; return; }
+    _tasksCache = data.tasks || [];
+    _renderTaskBoard();
+    statusEl.textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { hour12: false });
+    markUpdated('task-board');
+  } catch (e) {
+    statusEl.textContent = 'Unavailable';
+  }
+}
+
+function _renderTaskBoard() {
+  const col = document.getElementById('task-board-columns');
+  const byStatus = {};
+  _TASK_STATUSES.forEach(s => { byStatus[s] = []; });
+  _tasksCache.forEach(t => { if (byStatus[t.status]) byStatus[t.status].push(t); });
+
+  col.innerHTML = _TASK_STATUSES.map(status => {
+    const tasks = byStatus[status];
+    const cards = tasks.length
+      ? tasks.map(t => {
+          const pri = t.priority || 'medium';
+          const owner = t.owner ? `<span style="color:#58a6ff;">${escapeHtml(t.owner.toUpperCase())}</span> · ` : '';
+          return `<div class="task-card task-priority-${escapeHtml(pri)}">
+            <div class="tc-title" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</div>
+            <div class="tc-meta">${owner}${escapeHtml(pri)}</div>
+          </div>`;
+        }).join('')
+      : '<div style="color:#484f58;font-size:7px;padding:4px 0;">empty</div>';
+    return `<div class="task-col">
+      <div class="task-col-header col-${escapeHtml(status)}">${_TASK_STATUS_LABELS[status]} <span style="color:#484f58;">(${tasks.length})</span></div>
+      ${cards}
+    </div>`;
+  }).join('');
+}
+
+pollTasks();
+setInterval(pollTasks, 30000);
+```
+
+4. **`py_compile`** + **`ruff check .`** must pass (no Python changes, but verify no lint breakage).
+
+## Done When
+- Task Board panel visible in dashboard with 4 status columns
+- Tasks from `/api/tasks` render as cards with title, owner, priority colour
+- 30s auto-refresh working
+- Empty columns show "empty" placeholder
+- CHANGELOG prepended
+
+---
+
+# T-355 — Board Room: action approval UI
+
+**Priority:** P1 | **Phase:** 3 Closure | **Depends on:** T-353
+
+## Why
+
+Phase 3 DoD: "two action items approved and visible on Task Board." Right now `_renderBoardResult` displays actions as a read-only list. Each action needs an Approve button that calls `POST /api/tasks` and creates a queued task. This is the final user-facing closure for Phase 3.
+
+## Steps
+
+1. **In `_renderBoardResult`** in `dashboard/templates/index.html`, find where actions are rendered and add Approve/Reject buttons. The actions section currently renders from `transcript.actions`. Change it to:
+
+```javascript
+// Inside _renderBoardResult, actions section:
+if (transcript.actions && transcript.actions.length) {
+  html += '<div style="margin-top:10px;border-top:1px solid #2a3a55;padding-top:8px;">';
+  html += '<div style="font-family:\'Press Start 2P\',cursive;font-size:7px;color:#f0a020;margin-bottom:6px;">ACTION ITEMS</div>';
+  transcript.actions.forEach((a, i) => {
+    const pri = a.priority || 'medium';
+    const owner = a.owner || 'ceo';
+    html += `<div id="action-row-${i}" style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;padding:5px 6px;background:#0f1520;border:1px solid #2a3a55;border-radius:4px;">
+      <div style="flex:1;font-size:9px;color:#c9d1d9;">${escapeHtml(a.action || '')}<br>
+        <span style="font-size:7px;color:#6b7280;">${escapeHtml(owner.toUpperCase())} · ${escapeHtml(pri)}</span>
+      </div>
+      <button onclick="approveAction(${i}, ${JSON.stringify(a)})" style="background:#1a3a1a;border:1px solid #3fb950;color:#3fb950;font-size:7px;padding:3px 6px;cursor:pointer;border-radius:3px;white-space:nowrap;">✓ APPROVE</button>
+      <button onclick="rejectAction(${i})" style="background:#1a1010;border:1px solid #484f58;color:#6b7280;font-size:7px;padding:3px 6px;cursor:pointer;border-radius:3px;white-space:nowrap;">✗</button>
+    </div>`;
+  });
+  html += '</div>';
+}
+```
+
+2. **Add `approveAction` + `rejectAction` functions** in the script block:
+```javascript
+async function approveAction(idx, action) {
+  const btn = document.querySelector(`#action-row-${idx} button`);
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const apiKey = _getApiKey();
+    const r = await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      body: JSON.stringify({
+        title: action.action,
+        owner: action.owner || 'ceo',
+        priority: action.priority || 'medium',
+        source_type: 'board_session',
+      }),
+    });
+    const data = await r.json();
+    if (data.task_id) {
+      const row = document.getElementById(`action-row-${idx}`);
+      if (row) row.style.opacity = '0.5';
+      if (btn) { btn.textContent = '✓ QUEUED'; btn.style.color = '#3fb950'; }
+      pollTasks();  // refresh task board
+    } else {
+      if (btn) { btn.disabled = false; btn.textContent = '✓ APPROVE'; }
+    }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '✓ APPROVE'; }
+  }
+}
+
+function rejectAction(idx) {
+  const row = document.getElementById(`action-row-${idx}`);
+  if (row) { row.style.opacity = '0.3'; row.style.pointerEvents = 'none'; }
+}
+```
+
+3. **`py_compile`** + **`ruff check .`** must pass.
+
+## Done When
+- Approve/Reject buttons visible on every action item after board session completes
+- Approve calls `POST /api/tasks` → task appears in Task Board QUEUED column
+- Reject dims the action row
+- CHANGELOG prepended
+
+---
+
+# T-356 — GATE-10: Phase 3 DoD validation
+
+**Priority:** P0 | **Phase:** 3 Closure | **Depends on:** T-352, T-353, T-354, T-355
+
+## Why
+
+This is the formal gate that closes Phase 3. Must be run live against the running stack. Document the result in CHANGELOG with evidence.
+
+## Steps
+
+1. Start the stack: `docker compose up -d`
+2. Verify alembic ran: `docker compose exec agents alembic current` — must show `0008_add_tasks_table`
+3. Open `http://localhost:8050` — verify Task Board panel is visible
+4. Submit a Board Room pitch: market=Yelahanka, pitch="Should LLS enter Yelahanka at ₹6500 PSF via JD model?"
+5. Poll session until `status: complete`
+6. Verify 5 dept responses visible (BD/Finance/Engineering/Ops/Legal)
+7. Approve 2 action items
+8. Verify both tasks appear in Task Board QUEUED column
+9. Document: session_id, dept count, action count, task_ids in CHANGELOG
+
+## Done When
+- All 9 steps above pass
+- CHANGELOG entry with session_id, evidence of 5 dept responses, 2 task_ids created
+- TASK_QUEUE.md GATE-10 marked PASSED
+- `VISION.md` Phase 3 status updated from 🟡 → ✅ (by T-364)
+
+---
+
+# T-357 — Dashboard Org Chart panel
+
+**Priority:** P2 | **Phase:** 2 Polish
+
+## Why
+
+Phase 2 DoD mentions "org chart with live agent states." The current dashboard has static cabin cards hardcoded in HTML. This task replaces the static layout with a registry-driven org chart that builds from `/api/agents` data — so any future agent additions show up automatically.
+
+## Steps
+
+1. Add a new panel section at the top of the office floor (or as a dedicated infra panel) that fetches `/api/agents` and renders agent cards as a tree:
+   - CEO at top
+   - Analyst / Scout / Processor / Sentinel below
+2. Each card: agent name, role, status badge (colour-coded: IDLE=grey, RUNNING=amber, DONE=green)
+3. `last_action` text truncated to 40 chars
+4. Clicking a card opens the existing command panel for that agent
+5. Remove or reduce the existing hardcoded cabin HTML redundancy — the Org Chart panel should be the single authoritative view; the old cabins can remain as the "mission control" aesthetic layer but Org Chart is the data layer
+
+## Done When
+- Org chart renders from live `/api/agents` data
+- Status badges colour-correct
+- Works when DB is unavailable (falls back to in-memory states)
+- CHANGELOG prepended
+
+---
+
+# T-358 — Board Room 5-column response layout
+
+**Priority:** P2 | **Phase:** 3 Polish
+
+## Why
+
+The Board Room renders 5 dept responses stacked vertically. At full session width it should be a 5-column side-by-side panel so Jinu can compare all dept heads at a glance — that is the original VISION.md spec ("one column per department"). Vertical stack was the v1 implementation; this closes the spec gap.
+
+## Steps
+
+1. In `_renderBoardResult`, change the outer container to `display:grid;grid-template-columns:repeat(5,1fr);gap:8px;`
+2. Each dept response in its own column with header (`BD` / `FINANCE` / `ENG` / `OPS` / `LEGAL`) in the department's accent colour
+3. Action items stay below the grid as a full-width row
+4. On narrow viewport (infra panel is 35% of screen) fall back to `grid-template-columns:1fr 1fr;` via a max-width media query
+
+## Done When
+- Board Room result renders as 5 columns side-by-side
+- Each column has coloured header
+- Actions row is full-width below the grid
+- CHANGELOG prepended
+
+---
+
+# T-359 — DB: regulatory_zones seed data
+
+**Priority:** P1 | **Phase:** 5 Bootstrap | **Blocks:** T-360
+
+## Why
+
+Phase 5 (Engineering Dept) builds an FSI calculator. The `regulatory_zones` table already exists in the schema but has no data. The Architect Agent needs zone rules (FAR, max height, setbacks) for the 3 primary markets before any FSI calculation can return real results.
+
+## Steps
+
+1. Check existing `regulatory_zones` schema: `\d regulatory_zones` via MCP postgres tool
+2. Seed rows for 3 markets × 3 zone types (Residential/Commercial/Mixed):
+
+| market | zone | far | max_height_m | plot_coverage | setback_front_m | setback_side_m |
+|--------|------|-----|-------------|---------------|-----------------|----------------|
+| Yelahanka | R1 Residential | 1.75 | 11 | 0.50 | 3.0 | 1.5 |
+| Yelahanka | R2 High-Density | 2.50 | 18 | 0.55 | 4.5 | 1.5 |
+| Yelahanka | C1 Commercial | 2.25 | 15 | 0.60 | 6.0 | 3.0 |
+| Devanahalli | R1 Residential | 2.00 | 14 | 0.50 | 3.0 | 1.5 |
+| Devanahalli | R2 High-Density | 3.00 | 24 | 0.60 | 4.5 | 1.5 |
+| Devanahalli | C1 Commercial | 2.50 | 18 | 0.65 | 6.0 | 3.0 |
+| Hebbal | R1 Residential | 1.75 | 14 | 0.50 | 3.0 | 1.5 |
+| Hebbal | R2 High-Density | 2.75 | 21 | 0.58 | 4.5 | 1.5 |
+| Hebbal | C1 Commercial | 2.50 | 18 | 0.60 | 6.0 | 3.0 |
+
+3. Create `database/seed_regulatory_zones.sql` with INSERT statements and a verification SELECT
+4. Apply via MCP postgres tool or `docker compose exec postgres psql -U re_os_user -d re_os -f /tmp/seed.sql`
+
+## Done When
+- 9 rows confirmed in `regulatory_zones` via SELECT
+- `seed_regulatory_zones.sql` committed to `database/`
+- CHANGELOG prepended
+
+---
+
+# T-360 — utils/fsi_calculator.py — FSICalculator + TypologyRecommender
+
+**Priority:** P1 | **Phase:** 5 Bootstrap | **Depends on:** T-359 | **Blocks:** T-361, T-362
+
+## Why
+
+The Architect Agent (T-361) needs pure-Python tools it can call without an LLM call. FSI calculation and unit mix recommendation are deterministic — they should not consume tokens. This module is the computational core of the Engineering Department.
+
+## Steps
+
+1. Create `utils/fsi_calculator.py`:
+
+```python
+from dataclasses import dataclass
+from typing import Optional
+
+# BDA zone parameters — updated from regulatory_zones seed (T-359)
+_ZONE_RULES: dict[str, dict] = {
+    "R1": {"far": 1.75, "max_height_m": 11,  "plot_coverage": 0.50, "setback_front": 3.0, "setback_side": 1.5},
+    "R2": {"far": 2.50, "max_height_m": 18,  "plot_coverage": 0.55, "setback_front": 4.5, "setback_side": 1.5},
+    "C1": {"far": 2.25, "max_height_m": 15,  "plot_coverage": 0.60, "setback_front": 6.0, "setback_side": 3.0},
+}
+
+# PSF band → unit mix recommendation (North Bengaluru market)
+_PSF_UNIT_MIX: list[tuple[tuple, dict]] = [
+    ((0,    4500), {"1bhk": 30, "2bhk": 55, "3bhk": 15}),  # affordable
+    ((4500, 7000), {"1bhk": 15, "2bhk": 55, "3bhk": 30}),  # mid-range
+    ((7000, 9999999), {"1bhk": 5, "2bhk": 45, "3bhk": 50}), # premium
+]
+
+@dataclass
+class FSIResult:
+    zone: str
+    land_area_sqft: float
+    far: float
+    buildable_area_sqft: float
+    sellable_area_sqft: float   # 65% efficiency default
+    max_floors: int
+    plot_coverage: float
+    setback_front_m: float
+    setback_side_m: float
+
+@dataclass
+class UnitMix:
+    psf_band: str
+    bhk_1_pct: int
+    bhk_2_pct: int
+    bhk_3_pct: int
+    recommended_avg_carpet_sqft: int
+
+def calculate_fsi(land_area_sqft: float, zone: str = "R2",
+                  efficiency: float = 0.65) -> FSIResult:
+    zone = zone.upper()
+    rules = _ZONE_RULES.get(zone, _ZONE_RULES["R2"])
+    buildable = max(land_area_sqft, 0) * rules["far"]
+    sellable  = buildable * max(0.01, min(efficiency, 1.0))
+    floor_plate = land_area_sqft * rules["plot_coverage"]
+    max_floors  = max(1, int(buildable / max(floor_plate, 1)))
+    return FSIResult(
+        zone=zone,
+        land_area_sqft=land_area_sqft,
+        far=rules["far"],
+        buildable_area_sqft=round(buildable, 1),
+        sellable_area_sqft=round(sellable, 1),
+        max_floors=max_floors,
+        plot_coverage=rules["plot_coverage"],
+        setback_front_m=rules["setback_front"],
+        setback_side_m=rules["setback_side"],
+    )
+
+def recommend_unit_mix(avg_listing_psf: float) -> UnitMix:
+    mix = _PSF_UNIT_MIX[-1][1]
+    band = "premium"
+    for (lo, hi), m in _PSF_UNIT_MIX:
+        if lo <= avg_listing_psf < hi:
+            mix = m
+            band = "affordable" if hi <= 4500 else ("mid-range" if hi <= 7000 else "premium")
+            break
+    avg_carpet = 650 if band == "affordable" else (850 if band == "mid-range" else 1100)
+    return UnitMix(
+        psf_band=band,
+        bhk_1_pct=mix["1bhk"],
+        bhk_2_pct=mix["2bhk"],
+        bhk_3_pct=mix["3bhk"],
+        recommended_avg_carpet_sqft=avg_carpet,
+    )
+```
+
+2. **`py_compile`** + **`ruff check .`** must pass.
+
+## Done When
+- `utils/fsi_calculator.py` created with `FSIResult`, `UnitMix`, `calculate_fsi()`, `recommend_unit_mix()`
+- Zone lookup defaults to R2 when zone not found
+- Negative land area returns buildable_area=0 (guard via `max(land_area_sqft, 0)`)
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-361 — agents/architect_agent.py
+
+**Priority:** P1 | **Phase:** 5 Bootstrap | **Depends on:** T-360 | **Blocks:** T-363
+
+## Why
+
+Phase 5 goal: given land data, Architect Agent returns a buildable typology. This is the first Engineering Dept agent. It wraps the two pure-Python tools (FSICalculatorTool + TypologyRecommenderTool) into a CrewAI Agent so it can be called standalone or wired into Board Room later (T-363).
+
+## Steps
+
+1. Create `agents/architect_agent.py`:
+
+```python
+"""
+RE_OS — Architect Agent (Phase 5 — Engineering Dept)
+Standalone or Board Room Engineering supplement.
+Given land_area_sqft + zone + avg_listing_psf → FSI calc + unit mix recommendation.
+"""
+import json
+from crewai.tools import BaseTool
+from crewai import Agent
+from config.llm_router import get_analysis_llm
+from utils.fsi_calculator import calculate_fsi, recommend_unit_mix
+
+
+class FSICalculatorTool(BaseTool):
+    name: str = "fsi_calculator"
+    description: str = (
+        "Calculate buildable area, sellable area, max floors, and plot coverage "
+        "for a land parcel. Input: JSON with 'land_area_sqft' (float), "
+        "'zone' (R1/R2/C1, default R2), 'efficiency' (0.5–0.75, default 0.65). "
+        "Returns FSI result as JSON."
+    )
+
+    def _run(self, input_str: str) -> str:
+        try:
+            params = json.loads(input_str)
+        except (json.JSONDecodeError, TypeError):
+            return json.dumps({"error": "invalid JSON input"})
+        try:
+            result = calculate_fsi(
+                land_area_sqft=float(params.get("land_area_sqft", 0)),
+                zone=str(params.get("zone", "R2")),
+                efficiency=float(params.get("efficiency", 0.65)),
+            )
+            return json.dumps({
+                "zone": result.zone,
+                "land_area_sqft": result.land_area_sqft,
+                "buildable_area_sqft": result.buildable_area_sqft,
+                "sellable_area_sqft": result.sellable_area_sqft,
+                "max_floors": result.max_floors,
+                "far": result.far,
+                "plot_coverage_pct": round(result.plot_coverage * 100),
+                "setback_front_m": result.setback_front_m,
+                "setback_side_m": result.setback_side_m,
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+class TypologyRecommenderTool(BaseTool):
+    name: str = "typology_recommender"
+    description: str = (
+        "Recommend unit mix (1BHK/2BHK/3BHK split) for a market PSF band. "
+        "Input: JSON with 'avg_listing_psf' (float). "
+        "Returns unit mix percentages and average carpet area recommendation."
+    )
+
+    def _run(self, input_str: str) -> str:
+        try:
+            params = json.loads(input_str)
+        except (json.JSONDecodeError, TypeError):
+            return json.dumps({"error": "invalid JSON input"})
+        try:
+            result = recommend_unit_mix(float(params.get("avg_listing_psf", 5000)))
+            return json.dumps({
+                "psf_band": result.psf_band,
+                "unit_mix": {
+                    "1bhk_pct": result.bhk_1_pct,
+                    "2bhk_pct": result.bhk_2_pct,
+                    "3bhk_pct": result.bhk_3_pct,
+                },
+                "recommended_avg_carpet_sqft": result.recommended_avg_carpet_sqft,
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+def create_architect_agent() -> Agent:
+    return Agent(
+        role="Principal Architect — Engineering Division",
+        goal=(
+            "Given land area, zone, and market PSF, produce a buildable typology: "
+            "FSI analysis, unit mix, floor count, and setback compliance summary."
+        ),
+        backstory=(
+            "Senior architect with 15 years designing residential projects across North Bengaluru. "
+            "Understands BDA master plan zones, FAR constraints, RERA unit-mix requirements, "
+            "and how to squeeze maximum sellable area from a site without violating setbacks. "
+            "Starts every analysis from first principles: land area → buildable area → sellable area → unit mix. "
+            "Output is always a structured brief Jinu can hand directly to a structural engineer."
+        ),
+        tools=[FSICalculatorTool(), TypologyRecommenderTool()],
+        llm=get_analysis_llm(),
+        verbose=True,
+        allow_delegation=False,
+        max_iter=3,
+    )
+```
+
+2. **`py_compile agents/architect_agent.py`** + **`ruff check .`** must pass.
+
+## Done When
+- `agents/architect_agent.py` created with both tool classes + `create_architect_agent()`
+- `py_compile` passes
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-362 — tests/test_fsi_calculator.py
+
+**Priority:** P1 | **Phase:** 5 Bootstrap | **Depends on:** T-360 | **Gates:** GATE-11
+
+## Why
+
+FSI calculation and unit mix are deterministic. If the math is wrong, the Architect Agent gives wrong typology advice to Jinu. These must have unit tests. GATE-11 requires ≥12 passing tests before Phase 5 is considered bootstrapped.
+
+## Steps
+
+Create `tests/test_fsi_calculator.py`:
+
+```python
+import pytest
+pytestmark = pytest.mark.unit
+
+from utils.fsi_calculator import calculate_fsi, recommend_unit_mix, _ZONE_RULES
+
+
+class TestCalculateFSI:
+    def test_r2_basic(self):
+        r = calculate_fsi(10000, "R2")
+        assert r.far == 2.50
+        assert r.buildable_area_sqft == pytest.approx(25000.0)
+        assert r.sellable_area_sqft  == pytest.approx(16250.0)
+
+    def test_r1_basic(self):
+        r = calculate_fsi(10000, "R1")
+        assert r.far == 1.75
+        assert r.buildable_area_sqft == pytest.approx(17500.0)
+
+    def test_c1_basic(self):
+        r = calculate_fsi(10000, "C1")
+        assert r.far == 2.25
+
+    def test_zero_land_area(self):
+        r = calculate_fsi(0, "R2")
+        assert r.buildable_area_sqft == 0.0
+        assert r.sellable_area_sqft  == 0.0
+
+    def test_negative_land_area_clamped(self):
+        r = calculate_fsi(-5000, "R2")
+        assert r.buildable_area_sqft == 0.0
+
+    def test_unknown_zone_defaults_to_r2(self):
+        r = calculate_fsi(10000, "UNKNOWN")
+        assert r.far == _ZONE_RULES["R2"]["far"]
+
+    def test_efficiency_respected(self):
+        r = calculate_fsi(10000, "R2", efficiency=0.70)
+        assert r.sellable_area_sqft == pytest.approx(10000 * 2.5 * 0.70)
+
+    def test_efficiency_clamped_max(self):
+        r = calculate_fsi(10000, "R2", efficiency=2.0)
+        assert r.sellable_area_sqft <= r.buildable_area_sqft
+
+    def test_max_floors_positive(self):
+        r = calculate_fsi(10000, "R2")
+        assert r.max_floors >= 1
+
+    def test_setbacks_returned(self):
+        r = calculate_fsi(10000, "R1")
+        assert r.setback_front_m == 3.0
+        assert r.setback_side_m  == 1.5
+
+
+class TestRecommendUnitMix:
+    def test_affordable_psf(self):
+        m = recommend_unit_mix(3500)
+        assert m.psf_band == "affordable"
+        assert m.bhk_2_pct > m.bhk_3_pct
+
+    def test_mid_range_psf(self):
+        m = recommend_unit_mix(6000)
+        assert m.psf_band == "mid-range"
+
+    def test_premium_psf(self):
+        m = recommend_unit_mix(8500)
+        assert m.psf_band == "premium"
+        assert m.bhk_3_pct >= m.bhk_1_pct
+
+    def test_unit_mix_sums_100(self):
+        for psf in [3000, 5500, 9000]:
+            m = recommend_unit_mix(psf)
+            assert m.bhk_1_pct + m.bhk_2_pct + m.bhk_3_pct == 100
+
+    def test_carpet_sqft_positive(self):
+        m = recommend_unit_mix(6000)
+        assert m.recommended_avg_carpet_sqft > 0
+```
+
+That is 15 tests — exceeds GATE-11 threshold of 12.
+
+## Done When
+- `tests/test_fsi_calculator.py` created with ≥12 tests
+- All tests pass: `pytest tests/test_fsi_calculator.py -q`
+- `ruff check .` passes
+- GATE-11 marked PASSED in TASK_QUEUE.md
+- CHANGELOG prepended
+
+---
+
+# T-363 — Wire Architect into Board Room Engineering Head
+
+**Priority:** P2 | **Phase:** 5 Bootstrap | **Depends on:** T-361
+
+## Why
+
+The Board Room Engineering Head currently responds from pure LLM knowledge. If the pitch mentions a land area and/or market, the Engineering Head should auto-call the FSI calculator and include the result in its response — making the Board Room output quantitatively grounded, not just narrative.
+
+## Steps
+
+1. In `_run_dept_heads` in `crews/board_room.py`, detect if `pitch` mentions a numeric land area (e.g., "5-acre", "3 acres", "10000 sqft"). If so, call `calculate_fsi()` and `recommend_unit_mix()` with sensible defaults (zone=R2, psf from known market data or 6000 default).
+
+2. Prepend the FSI result to the engineering `dept_question` before passing to the Engineering Head agent:
+```python
+# Inside run_single_agent for key == "engineering":
+fsi_context = ""
+import re
+area_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:-\s*)?acre", pitch, re.I)
+if area_match:
+    from utils.fsi_calculator import calculate_fsi, recommend_unit_mix
+    acres = float(area_match.group(1))
+    sqft  = acres * 43560
+    fsi_r = calculate_fsi(sqft, zone="R2")
+    mix_r = recommend_unit_mix(6500)  # default mid-range until market psf available
+    fsi_context = (
+        f"\n\n[AUTO FSI CALC — {acres} acres / {sqft:,.0f} sqft, Zone R2]\n"
+        f"Buildable: {fsi_r.buildable_area_sqft:,.0f} sqft | "
+        f"Sellable: {fsi_r.sellable_area_sqft:,.0f} sqft | "
+        f"Max floors: {fsi_r.max_floors} | "
+        f"Unit mix: {mix_r.bhk_1_pct}% 1BHK / {mix_r.bhk_2_pct}% 2BHK / {mix_r.bhk_3_pct}% 3BHK\n"
+    )
+dept_question = dept_question + fsi_context
+```
+
+3. **`py_compile crews/board_room.py`** + **`ruff check .`** must pass.
+
+## Done When
+- Pitch with "5-acre" triggers FSI calc in Engineering Head context
+- FSI numbers appear in Engineering Head task description (visible in verbose logs)
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-364 — VISION.md Phase 2 + Phase 3: mark COMPLETE
+
+**Priority:** P2 | **Depends on:** T-356 (GATE-10 passed)
+
+## Why
+
+Documentation is part of the definition of done. VISION.md is the master plan — if it says Phase 3 is still in progress after GATE-10 passes, every future session starts with a misleading picture.
+
+## Steps
+
+1. In `VISION.md`:
+   - Phase 2 status: `🟡 IN PROGRESS` → `✅ COMPLETE — 2026-05-30`
+   - Phase 2: tick all task checkboxes that are done
+   - Phase 3 status: `🟡 BOOTSTRAP IN PROGRESS` → `✅ COMPLETE — 2026-05-30`
+   - Phase 3 DoD note: update "4 department heads" to 5 (Legal added T-347)
+   - Phase 3: tick all task checkboxes
+   - "What Exists Today" table: update Board Room and Dashboard entries to ✅
+   - Phase 5 status: `Not started` → `🟡 IN PROGRESS — bootstrap started (T-359, T-360, T-361)`
+   - `CLAUDE.md` (root RE_OS): update Phase status lines at the top
+
+## Done When
+- Phase 2 and Phase 3 show ✅ COMPLETE in VISION.md
+- Phase 5 shows 🟡 IN PROGRESS
+- What Exists Today table updated
+- CLAUDE.md phase status lines updated
+- CHANGELOG prepended
+
+---
+
+# T-365 — DEVLOG.md Phase 2 + Phase 3 completion entries
+
+**Priority:** P2 | **Depends on:** T-364
+
+## Why
+
+DEVLOG.md is the build history. Each phase completion should have an entry recording what was built, what gates were passed, and when.
+
+## Steps
+
+Add two entries to `DEVLOG.md` (prepend at the top after the header):
+
+```markdown
+## Phase 3 — Board Room Mode ✅ COMPLETE — 2026-05-30
+
+**What was built:**
+- crews/board_room.py — full 5-dept parallel Board Room (BD/Finance/Engineering/Ops/Legal)
+- CEO pitch decomposition → 5 dept-specific sub-questions
+- ThreadPoolExecutor with 90s timeout guard
+- Action item extraction (Cerebras 8b) → structured action list
+- Action approval UI — approve creates queued task in tasks table
+- Board Room session history (GET /api/board/sessions)
+- Legal Head agent (T-347) — RERA/BDA/title compliance lens
+- Feasibility micro-tool (T-348) — LandFeasibility dataclass with GO/MARGINAL/NO-GO verdict
+- DB: board_sessions table + legal_response column (Alembic 0006+0007)
+- DB: tasks table (Alembic 0008)
+
+**Gates passed:** GATE-10 (Phase 3 DoD)
+
+---
+
+## Phase 2 — Mission Control Dashboard ✅ COMPLETE — 2026-05-30
+
+**What was built:**
+- Flask dashboard at :8050 — 10 panels: Org Chart, Intel Board, Scout Feed, Task Board,
+  Log Stream, Board Room, Sentinel, Pipeline Control, DB Explorer, Live Feed
+- /api/health, /api/agents, /api/db/state, /api/intel/cards, /api/sentinel/status — all live
+- /api/tasks CRUD (T-353)
+- SSE log stream with per-market selector
+- Pipeline Control panel — start/stop runs from UI
+- DB Explorer — 3 sortable views (Market Inventory, Developer Scorecard, Active Projects)
+- Board Room panel — pitch + 5-column response + action approval
+
+**Gates passed:** GATE-2 (all 5 endpoints), GATE-8 (security), GATE-9 (prod readiness)
+```
+
+## Done When
+- Two phase entries added to DEVLOG.md
+- CHANGELOG prepended
 
 ---
 
@@ -1484,6 +4255,410 @@ There is no way to know how fresh the data is for any market. A user looking at 
 - [ ] Alembic migrations updated (if any recreate the views)
 - [ ] Python-side divisions in `analyst_agent.py` use `max(total, 1)` guard
 - [ ] `ruff check .` passes
+- [ ] CHANGELOG.md entry written
+
+---
+
+# T-342 — Remove Stale /api/intel References
+
+**Assigned:** Kilo Code | **Priority:** P1
+
+## Why
+
+T-317 deleted the `GET /api/intel` endpoint. Two stale references remain:
+1. `dashboard/app.py` `_READ_ONLY_PATHS` frozenset (line ~55) still includes `'/api/intel'`
+2. `dashboard/templates/index.html` (line ~1446) still calls `fetch('/api/intel')` alongside `fetch('/api/intel/cards')`. It has a `.catch(() => ({}))` so it silently fails, but it wastes a request every 30s.
+
+## Steps
+
+1. **`dashboard/app.py`** — remove `'/api/intel'` from the `_READ_ONLY_PATHS` frozenset. Leave all other paths.
+2. **`dashboard/templates/index.html`** — find the `pollIntel` function. Remove the `fetch('/api/intel')` call and the `Promise.all([...])` wrapper if present — replace with just the `fetch('/api/intel/cards')` call.
+3. `ruff check .` — pass.
+4. Verify the template still polls `/api/intel/cards` and `/api/intel/download`.
+
+## Done when
+
+- [ ] `/api/intel` absent from `_READ_ONLY_PATHS` in app.py
+- [ ] `fetch('/api/intel')` removed from index.html (not `fetch('/api/intel/cards')` — that stays)
+- [ ] `ruff check .` passes
+- [ ] CHANGELOG.md entry written
+
+---
+
+# T-343 — Fix datetime.utcnow() Deprecation in checkpointer.py
+
+**Assigned:** Kilo Code | **Priority:** P2
+
+## Why
+
+Python 3.12 deprecated `datetime.utcnow()`. It appears in `config/checkpointer.py:~115` in the `cleanup_old()` method. The unit test suite prints 5 deprecation warnings per run — noise that masks real warnings.
+
+## Steps
+
+1. Open `config/checkpointer.py`.
+2. Find the `cleanup_old()` method. Change:
+   ```python
+   from datetime import datetime, timedelta
+   cutoff = (datetime.utcnow() - timedelta(days=keep_days)).date()
+   ```
+   to:
+   ```python
+   from datetime import datetime, timedelta, timezone
+   cutoff = (datetime.now(timezone.utc) - timedelta(days=keep_days)).date()
+   ```
+3. Run `pytest tests/test_checkpointer.py -q` — the 5 deprecation warnings must be gone.
+4. `ruff check .` — pass.
+
+## Done when
+
+- [ ] `datetime.utcnow()` replaced with `datetime.now(timezone.utc)` in checkpointer.py
+- [ ] `pytest tests/test_checkpointer.py -q` shows 0 warnings
+- [ ] `ruff check .` passes
+- [ ] CHANGELOG.md entry written
+
+---
+
+# T-344 — GATE-2 Formal Verification: Dashboard Smoke Test
+
+**Assigned:** Kilo Code | **Priority:** P1 | **Gate:** GATE-2
+
+## Why
+
+GATE-2 requires all 5 dashboard endpoints to return live (non-empty) data with the stack running. The dashboard backend is confirmed live, but the gate has never been formally checked off. Once passed, it unlocks Phase 2 DoD declaration.
+
+## Steps
+
+1. Start the stack: `docker compose up -d`
+2. Wait 10s for containers to settle: `docker compose ps` — all must show `Up`.
+3. Run each check:
+   ```bash
+   curl -s http://localhost:8050/api/health | python -m json.tool
+   curl -s http://localhost:8050/api/agents | python -m json.tool
+   curl -s http://localhost:8050/api/db/state | python -m json.tool
+   curl -s http://localhost:8050/api/intel/cards | python -m json.tool
+   curl -s http://localhost:8050/api/sentinel/status | python -m json.tool
+   ```
+4. For each endpoint: confirm the response is valid JSON and not an error/empty object.
+5. If all 5 pass: mark **GATE-2 PASSED** in `TASK_QUEUE.md`. Update CLAUDE.md Phase 2 status to `✅ COMPLETE`.
+6. If any endpoint fails: write a BLOCKED note with the exact error and the endpoint name.
+
+## Done when
+
+- [ ] All 5 endpoints return valid, non-empty JSON from live stack
+- [ ] GATE-2 status updated in TASK_QUEUE.md
+- [ ] CLAUDE.md Phase 2 status updated if passed
+- [ ] CHANGELOG.md entry written
+
+---
+
+# T-345 — GATE-4 Formal Verification: Live RERA Data
+
+**Assigned:** Kilo Code | **Priority:** P0 | **Gate:** GATE-4
+
+## Why
+
+GATE-4 requires ≥50 live RERA projects for Yelahanka or Hebbal (not the 8-project hardcoded fallback). T-281 added the double-space district fix and exhaustive alt-district retry. This task verifies whether it worked with a real scrape.
+
+## Steps
+
+1. Run the RERA scraper inside the agents container:
+   ```bash
+   docker compose exec agents python scrapers/rera_karnataka.py --market Yelahanka
+   ```
+2. Count the projects returned. The scraper logs the count. Look for `[RERA] X projects found` or check the checkpoint file.
+3. If count ≥ 50:
+   - Mark **GATE-4 PASSED** in TASK_QUEUE.md.
+   - Update CLAUDE.md: remove the `[ESTIMATED]` warning for Yelahanka.
+   - Update the open issue "RERA Portal Playwright Timeout" in CLAUDE.md — mark resolved.
+4. If count < 50 or still 8 fallback:
+   - Set T-345 status to BLOCKED in TASK_QUEUE.md.
+   - Record the exact subdistrict tried, the error message, and whether the fallback was triggered.
+   - Do NOT mark GATE-4 passed.
+
+## Done when
+
+- [ ] RERA scraper run completed for Yelahanka (and optionally Hebbal)
+- [ ] Project count recorded in TASK_QUEUE.md notes
+- [ ] GATE-4 status updated (PASSED or BLOCKED with reason)
+- [ ] CLAUDE.md updated to reflect new data quality state
+- [ ] CHANGELOG.md entry written
+
+---
+
+# T-346 — Board Room Sessions History: GET /api/board/sessions + Dashboard List
+
+**Assigned:** Kilo Code | **Priority:** P1
+
+## Why
+
+Every board session is stored in DB but there's no way to browse past sessions from the dashboard. Jinu needs session history for institutional memory — reviewing what questions were asked, what the board said, what actions were extracted.
+
+## Steps
+
+1. **`dashboard/app.py`** — add endpoint:
+   ```python
+   @app.route("/api/board/sessions", methods=["GET"])
+   @limiter.limit("60/minute")
+   def board_sessions():
+   ```
+   Query `board_sessions` table: `SELECT session_id, market, status, created_at, pitch_text FROM board_sessions ORDER BY created_at DESC LIMIT 20`. Return as JSON list. Each item: `{session_id, market, status, created_at, pitch_excerpt}` where `pitch_excerpt` is first 120 chars of `pitch_text`. Use psycopg2 pool (same as other read endpoints). Handle DB failure: return `{"sessions": [], "error": "database query failed"}`.
+
+2. Add `/api/board/sessions` to `_READ_ONLY_PATHS` frozenset in app.py.
+
+3. **`dashboard/templates/index.html`** — in the Board Room panel, below the result div, add a "Recent Sessions" collapsible list. On page load, `fetch('/api/board/sessions')` and render: session_id (first 8 chars), market, status badge, created_at, pitch excerpt. Clicking a session loads it via `fetch('/api/board/session/<session_id>')` and calls `_renderBoardResult`. Match existing dark-terminal CSS style.
+
+4. `ruff check .` — pass.
+5. `pytest tests/ -q -m unit` — 0 failures.
+
+## Done when
+
+- [ ] `GET /api/board/sessions` returns last 20 sessions from live DB
+- [ ] Endpoint in `_READ_ONLY_PATHS`
+- [ ] Dashboard shows Recent Sessions list below Board Room panel
+- [ ] Clicking a session loads its transcript into the result div
+- [ ] `ruff check .` passes
+- [ ] Unit tests pass (0 failures)
+- [ ] CHANGELOG.md entry written
+
+---
+
+# T-347 — Legal Head Agent: 5th Board Room Department
+
+**Assigned:** Kilo Code | **Priority:** P1
+
+## Why
+
+LLS land acquisition decisions are blocked or failed by legal risk: unclear title chains, BDA/BBMP conversion status, RERA registration gaps, encumbrance. The Board Room currently has BD, Finance, Engineering, Ops — but no legal lens. Every land pitch needs a legal read before BD or Finance can commit. This is the single highest-value gap in the board room.
+
+## Steps
+
+1. **Create `agents/board_room/legal_head.py`:**
+   ```python
+   from crewai import Agent
+   from config.llm_router import get_analysis_llm
+
+   def build_legal_head_agent():
+       return Agent(
+           role="Legal Head",
+           goal="Identify legal, regulatory, and title risks that could block or delay this project.",
+           backstory=(
+               "You are the Legal Head at LLS. Your lens: RERA Karnataka registration compliance, "
+               "BDA/BBMP layout approval status, encumbrance search, title chain clarity, "
+               "conversion from agricultural to residential use (Section 95 of KLR Act), "
+               "and proximity to regulatory overlays (airport zone, green belt, lake buffer). "
+               "You respond with: CLEAR / RISK / BLOCKED. You name every unresolved legal item "
+               "with its Karnataka-specific statute or regulatory body."
+           ),
+           llm=get_analysis_llm(),
+           verbose=False,
+           allow_delegation=False,
+       )
+   ```
+
+2. **`crews/board_room.py`** — add `legal` to `_DEPT_TASK_TEMPLATES`:
+   ```python
+   "legal": (
+       "Market: {market}\n"
+       "Legal question: {dept_question}\n\n"
+       "Respond as Legal Head. Lead with CLEAR / RISK / BLOCKED.\n"
+       "Cover: RERA registration status, BDA/BBMP layout approval, title chain, "
+       "encumbrance, agricultural conversion (if applicable), regulatory overlay risks "
+       "(airport zone, green belt, lake buffer).\n"
+       "Name every unresolved item with the applicable Karnataka statute or authority.\n"
+       "Maximum 180 words."
+   ),
+   ```
+
+3. **`crews/board_room.py`** — import `build_legal_head_agent` and add `"legal"` to `_run_dept_heads()` alongside the existing four. Use the same ThreadPoolExecutor pattern with 90s timeout.
+
+4. **`dashboard/templates/index.html`** — add `legal: 'LEGAL'` to the `depts` dict in `_renderBoardResult`. Add a legal column in the board result display.
+
+5. **`tests/test_board_room.py`** — update `test_dept_task_templates_all_four_keys` to `all_five_keys` checking `("bd", "finance", "engineering", "ops", "legal")`. Add `MOCK_DEPT_RESPONSES["legal"]` to the fixture.
+
+6. `ruff check .` + `pytest tests/ -q -m unit` — both pass.
+
+## Done when
+
+- [ ] `agents/board_room/legal_head.py` created with `build_legal_head_agent()`
+- [ ] `legal` template in `_DEPT_TASK_TEMPLATES`
+- [ ] Legal agent runs in parallel with BD/Finance/Engineering/Ops in `_run_dept_heads()`
+- [ ] Dashboard renders legal column in Board Room transcript
+- [ ] Tests updated: 5-dept check passes
+- [ ] `ruff check .` passes, unit tests 0 failures
+- [ ] CHANGELOG.md entry written
+
+---
+
+# T-348 — Feasibility Micro-Tool: utils/feasibility.py
+
+**Assigned:** Kilo Code | **Priority:** P1
+
+## Why
+
+LLS land acquisition decisions require quick IRR and break-even math. Currently there is no tool for this — Jinu has to do it manually. The Analyst agent should be able to run a quick feasibility check given land data from the DB and return: land cost, GDV estimate, estimated IRR, break-even PSF. This becomes the most-used tool for actual land decisions.
+
+## Steps
+
+1. **Create `utils/feasibility.py`:**
+   ```python
+   from dataclasses import dataclass
+
+   @dataclass
+   class LandFeasibility:
+       land_area_sqft: float       # total site area
+       land_cost_psf: float        # ₹/sqft of land
+       construction_cost_psf: float # ₹/sqft of built area (default 2200)
+       target_sell_psf: float      # ₹/sqft selling price
+       efficiency_ratio: float = 0.65  # sellable / total built area
+       fsi: float = 2.0            # floor space index for zone
+       timeline_months: int = 36   # project duration
+
+   def calc_land_cost(f: LandFeasibility) -> float:
+       return f.land_area_sqft * f.land_cost_psf
+
+   def calc_gdv(f: LandFeasibility) -> float:
+       built_area = f.land_area_sqft * f.fsi
+       sellable_area = built_area * f.efficiency_ratio
+       return sellable_area * f.target_sell_psf
+
+   def calc_construction_cost(f: LandFeasibility) -> float:
+       return f.land_area_sqft * f.fsi * f.construction_cost_psf
+
+   def calc_breakeven_psf(f: LandFeasibility) -> float:
+       total_cost = calc_land_cost(f) + calc_construction_cost(f)
+       sellable_area = f.land_area_sqft * f.fsi * f.efficiency_ratio
+       return total_cost / max(sellable_area, 1)
+
+   def calc_profit_margin(f: LandFeasibility) -> float:
+       gdv = calc_gdv(f)
+       total_cost = calc_land_cost(f) + calc_construction_cost(f)
+       return (gdv - total_cost) / max(gdv, 1) * 100
+
+   def calc_simple_irr(f: LandFeasibility) -> float:
+       """Simple annualised return proxy. Not DCF — use for quick go/no-go only."""
+       gdv = calc_gdv(f)
+       total_cost = calc_land_cost(f) + calc_construction_cost(f)
+       profit = gdv - total_cost
+       years = f.timeline_months / 12
+       return (profit / max(total_cost, 1)) / max(years, 0.5) * 100
+
+   def feasibility_summary(f: LandFeasibility) -> dict:
+       return {
+           "land_cost_total": round(calc_land_cost(f)),
+           "construction_cost_total": round(calc_construction_cost(f)),
+           "gdv": round(calc_gdv(f)),
+           "breakeven_psf": round(calc_breakeven_psf(f)),
+           "profit_margin_pct": round(calc_profit_margin(f), 1),
+           "simple_irr_pct": round(calc_simple_irr(f), 1),
+           "verdict": "GO" if calc_profit_margin(f) >= 20 else ("MARGINAL" if calc_profit_margin(f) >= 12 else "NO-GO"),
+       }
+   ```
+
+2. **Wire to analyst**: In `agents/analyst_agent.py`, add a `FeasibilityTool` that calls `feasibility_summary()`. The tool accepts `land_area_sqft`, `land_cost_psf`, `target_sell_psf` from the market brief data (use avg_listing_psf from v_market_brief as target_sell_psf). The analyst can invoke it when asked to assess a site.
+
+3. **Unit tests** — create `tests/test_feasibility.py` marked `@pytest.mark.unit`. Test: `calc_breakeven_psf`, `calc_profit_margin`, `calc_simple_irr`, `feasibility_summary` verdict thresholds (≥20% = GO, 12-19% = MARGINAL, <12% = NO-GO). At least 8 tests.
+
+4. `ruff check .` + `pytest tests/ -q -m unit` — both pass.
+
+## Done when
+
+- [ ] `utils/feasibility.py` created with all 7 functions
+- [ ] `FeasibilityTool` added to `agents/analyst_agent.py`
+- [ ] `tests/test_feasibility.py` with ≥8 unit tests, all pass
+- [ ] `ruff check .` passes
+- [ ] CHANGELOG.md entry written
+
+---
+
+# T-349 — Dashboard DB Explorer Panel
+
+**Assigned:** Kilo Code | **Priority:** P2
+
+## Why
+
+Jinu needs to see what data exists in the DB without running psql commands. Three key views tell the story: market inventory, developer scorecard, active projects. A simple sortable table panel in the dashboard gives direct visibility.
+
+## Steps
+
+1. **`dashboard/app.py`** — add endpoint:
+   ```python
+   @app.route("/api/db/tables", methods=["GET"])
+   @limiter.limit("30/minute")
+   def db_tables():
+   ```
+   Add `/api/db/tables` to `_READ_ONLY_PATHS`.
+   Query three views with the psycopg2 pool:
+   - `SELECT * FROM v_market_inventory` (market summary)
+   - `SELECT developer_name, grade, project_count, market_names FROM v_developer_scorecard LIMIT 50`
+   - `SELECT project_name, developer_name, market, status, total_units, avg_listing_psf FROM v_active_projects LIMIT 100`
+   Return: `{"market_inventory": [...], "developer_scorecard": [...], "active_projects": [...]}`. Handle DB failure generically.
+
+2. **`dashboard/templates/index.html`** — add a "DB Explorer" tab/section (after the Board Room panel). On click, `fetch('/api/db/tables')` and render three HTML tables with sortable headers. Use `<table>` with dark-terminal styling matching existing panels. Columns for each view match the SELECT above. Add a "Refresh" button.
+
+3. `ruff check .` — pass. Check dashboard renders without JS errors.
+
+## Done when
+
+- [ ] `GET /api/db/tables` returns all three view datasets
+- [ ] Dashboard shows DB Explorer panel with three sortable tables
+- [ ] Tables render with correct column headers
+- [ ] `ruff check .` passes
+- [ ] CHANGELOG.md entry written
+
+---
+
+# T-350 — config/scheduler.py: Use Shared get_engine()
+
+**Assigned:** Kilo Code | **Priority:** P2
+
+## Why
+
+`config/scheduler.py` has its own `_get_scheduler_engine()` singleton (same pattern that was cleaned up in crews/board_room.py and crews/market_intel_crew.py this sprint). Scheduler runs in a separate container, so it won't share the pool with the agents container — but consolidating to `utils/db.py` removes the duplicate code and ensures consistent pool settings.
+
+## Steps
+
+1. **`config/scheduler.py`** — remove `_scheduler_engine` global + `_get_scheduler_engine()` function.
+2. Add `from utils.db import get_engine` at the top.
+3. Replace all `_get_scheduler_engine()` call sites with `get_engine()`.
+4. Also remove `from sqlalchemy import create_engine` and `from config.settings import DATABASE_URL` if they're now unused (check before removing — `DATABASE_URL` may be used elsewhere in the file for other purposes).
+5. `ruff check .` — pass. `pytest tests/ -q -m unit` — 0 failures.
+
+## Done when
+
+- [ ] `_get_scheduler_engine()` and `_scheduler_engine` removed from scheduler.py
+- [ ] All call sites use `get_engine()` from utils.db
+- [ ] `ruff check .` passes, unit tests 0 failures
+- [ ] CHANGELOG.md entry written
+
+---
+
+# T-351 — Scheduler: Add Nightly Devanahalli + Hebbal RERA Cron Jobs
+
+**Assigned:** Kilo Code | **Priority:** P2
+
+## Why
+
+The scheduler currently runs RERA for all three markets in a single 2AM UTC job. If that job fails mid-way, we don't know which markets succeeded. Splitting into per-market jobs gives: independent failure isolation, per-market scheduling flexibility, and cleaner logs.
+
+## Steps
+
+1. Open `config/scheduler.py`. Find the existing RERA scrape cron job.
+2. If it's a single "all markets" job: split into three independent jobs:
+   - Yelahanka: `cron(hour=21, minute=0)` (2:30AM IST = 9:00PM UTC previous day)
+   - Devanahalli: `cron(hour=21, minute=30)` (3:00AM IST = 9:30PM UTC)
+   - Hebbal: `cron(hour=22, minute=0)` (3:30AM IST = 10:00PM UTC)
+3. Each job runs: `subprocess.Popen(["python", "scrapers/rera_karnataka.py", "--market", "<Market>"])` (same pattern used for dashboard-triggered runs).
+4. Each job logs start + completion to `agent_runs` via `_write_stage_event` or the existing logging pattern.
+5. `ruff check .` — pass. `pytest tests/ -q -m unit` — 0 failures.
+
+Note: If the scheduler already has per-market jobs (check before changing), just verify they're wired to all three markets and adjust the timing to the above schedule.
+
+## Done when
+
+- [ ] Three separate RERA cron jobs: Yelahanka, Devanahalli, Hebbal
+- [ ] IST timing: 2:30, 3:00, 3:30AM IST respectively
+- [ ] Each job runs independently (no shared state)
+- [ ] `ruff check .` passes, unit tests 0 failures
 - [ ] CHANGELOG.md entry written
 
 ---

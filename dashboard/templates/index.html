@@ -515,6 +515,7 @@ body {
   color: #c9d1d9;
 }
 .org-role, .org-last { color: #8b949e; font-size: 9px; }
+.org-last { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 .org-status {
   font-family: 'Press Start 2P', cursive;
   font-size: 6px;
@@ -718,6 +719,115 @@ body {
 .sentinel-footer-badge.error { background: #3a1a1a; color: #f85149; }
 .sentinel-footer-spacer { margin-left: auto; }
 .sentinel-footer-unavail { color: #f85149; font-size: 7px; }
+
+/* ── Board Room 5-Column Dept Grid ── */
+.board-dept-grid { display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:10px; }
+.board-dept-col { background:#0f1520;border:1px solid #2a3a55;border-radius:4px;padding:8px;display:flex;flex-direction:column;min-width:0;overflow:hidden; }
+.board-dept-header { font-family:'Press Start 2P',cursive;font-size:7px;padding-bottom:4px;margin-bottom:6px;letter-spacing:1px; }
+.board-dept-body { white-space:pre-wrap;font-size:9px;color:#c9d1d9;line-height:1.5;overflow-y:auto;flex:1;overflow-wrap:break-word; }
+.board-actions-row { border-top:1px solid #2a3a55;padding-top:8px;margin-top:4px; }
+.board-actions-title { font-family:'Press Start 2P',cursive;font-size:7px;color:#f0a020;margin-bottom:6px; }
+@media (max-width:1300px) { .board-dept-grid { grid-template-columns:1fr 1fr; } }
+@media (max-width:700px) { .board-dept-grid { grid-template-columns:1fr; } }
+
+/* ── Board Room Session Items ── */
+.board-session-item {
+  cursor: pointer;
+  padding: 5px 4px;
+  border-bottom: 1px solid #1a2235;
+  font-size: 9px;
+  transition: background 0.15s;
+}
+.board-session-item:hover {
+  background: #1a2235;
+}
+
+/* ── DB Explorer Tables ── */
+.db-explorer-tab {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.db-explorer-tab button {
+  background: #1a2235;
+  border: 1px solid #2a3a55;
+  color: #8b949e;
+  padding: 4px 10px;
+  font-family: 'Press Start 2P', cursive;
+  font-size: 7px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.db-explorer-tab button:hover { border-color: #3a5a85; color: #c9d1d9; }
+.db-explorer-tab button.active { background: #2a3a55; border-color: #58a6ff; color: #58a6ff; }
+.db-explorer-table-wrap {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid #1a2235;
+  border-radius: 4px;
+}
+.db-explorer-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9px;
+  font-family: 'Courier New', monospace;
+}
+.db-explorer-table th {
+  background: #1a2235;
+  color: #58a6ff;
+  padding: 5px 6px;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  white-space: nowrap;
+  border-bottom: 1px solid #2a3a55;
+}
+.db-explorer-table th:hover { background: #2a3a55; }
+.db-explorer-table th .sort-arrow { color: #6b7280; margin-left: 4px; font-size: 8px; }
+.db-explorer-table th .sort-arrow.active { color: #f0a020; }
+.db-explorer-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid #151d2e;
+  color: #c9d1d9;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.db-explorer-table tr:hover td { background: #1a2235; }
+.db-explorer-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.db-explorer-refresh {
+  background: transparent;
+  border: 1px solid #2a3a55;
+  color: #6b7280;
+  padding: 2px 8px;
+  font-size: 9px;
+  border-radius: 3px;
+  cursor: pointer;
+  margin-left: 6px;
+  font-family: 'Courier New', monospace;
+}
+.db-explorer-refresh:hover { border-color: #3a5a85; color: #c9d1d9; }
+.db-explorer-count { color: #6b7280; font-size: 8px; margin-left: auto; }
+
+/* ── Task Board ── */
+.task-col { flex: 1; min-width: 80px; }
+.task-col-header { font-family: 'Press Start 2P', cursive; font-size: 7px; color: #8b949e; padding: 4px 0; letter-spacing: 1px; border-bottom: 1px solid #2a3a55; margin-bottom: 4px; }
+.task-col-header.col-queued { color: #8b949e; }
+.task-col-header.col-active { color: #f0a020; }
+.task-col-header.col-done   { color: #3fb950; }
+.task-col-header.col-failed { color: #f85149; }
+.task-card { background: #131c2e; border: 1px solid #2a3a55; border-radius: 4px; padding: 5px 6px; margin-bottom: 4px; font-size: 8px; line-height: 1.4; }
+.task-card .tc-title { color: #c9d1d9; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-card .tc-meta  { color: #6b7280; font-size: 7px; }
+.task-priority-high   { border-left: 2px solid #f85149; }
+.task-priority-medium { border-left: 2px solid #f0a020; }
+.task-priority-low    { border-left: 2px solid #3fb950; }
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; }
@@ -938,7 +1048,7 @@ body {
 
     <div class="infra-section">
       <div class="infra-title">BOARD ROOM</div>
-      <div style="margin-bottom:6px;font-size:9px;color:#8b949e;">Submit a pitch — 4 dept heads respond in parallel.</div>
+      <div style="margin-bottom:6px;font-size:9px;color:#8b949e;">Submit a pitch — 5 dept heads respond in parallel.</div>
       <select id="board-market" style="width:100%;background:#0f1520;border:1px solid #2a3a55;color:#c9d1d9;padding:4px 6px;font-family:'Courier New',monospace;font-size:10px;border-radius:4px;margin-bottom:6px;">
         <option value="Yelahanka">Yelahanka</option>
         <option value="Devanahalli">Devanahalli</option>
@@ -948,6 +1058,38 @@ body {
       <button onclick="submitBoardSession()" style="width:100%;background:#2d1f4a;border:1px solid #7b5ea7;color:#9b7ec7;padding:6px;font-family:'Press Start 2P',cursive;font-size:8px;border-radius:4px;cursor:pointer;">CONVENE BOARD</button>
       <div id="board-status" style="margin-top:8px;font-size:9px;color:#8b949e;"></div>
       <div id="board-result" style="margin-top:8px;font-size:9px;color:#c9d1d9;line-height:1.5;max-height:200px;overflow-y:auto;display:none;"></div>
+      <div id="board-recent" style="margin-top:10px;">
+        <div onclick="toggleBoardSessions()" style="cursor:pointer;color:#7b5ea7;font-family:'Press Start 2P',cursive;font-size:7px;letter-spacing:1px;border-top:1px solid #2a3a55;padding-top:8px;margin-bottom:6px;">
+          <span id="board-recent-toggle">▶</span> RECENT SESSIONS
+        </div>
+        <div id="board-sessions-list" style="display:none;max-height:160px;overflow-y:auto;"></div>
+      </div>
+    </div>
+
+    <div class="infra-section">
+      <div class="infra-title">TASK BOARD
+        <button class="db-explorer-refresh" onclick="pollTasks()" title="Refresh">⟳</button>
+      </div>
+      <div style="display:flex;gap:6px;overflow-x:auto;" id="task-board-columns">
+      </div>
+      <div id="task-board-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
+    </div>
+
+    <div class="infra-section">
+      <div class="infra-title">DB EXPLORER <button class="db-explorer-refresh" onclick="pollDbTables()" title="Refresh">⟳</button></div>
+      <div class="db-explorer-tab" id="db-explorer-tabs">
+        <button class="active" data-view="market_inventory" onclick="switchDbView('market_inventory')">MARKETS</button>
+        <button data-view="developer_scorecard" onclick="switchDbView('developer_scorecard')">DEVELOPERS</button>
+        <button data-view="active_projects" onclick="switchDbView('active_projects')">PROJECTS</button>
+        <span class="db-explorer-count" id="db-explorer-count"></span>
+      </div>
+      <div class="db-explorer-table-wrap">
+        <table class="db-explorer-table" id="db-explorer-table">
+          <thead id="db-explorer-thead"></thead>
+          <tbody id="db-explorer-tbody"></tbody>
+        </table>
+      </div>
+      <div id="db-explorer-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
     </div>
 
     <div class="infra-section">
@@ -968,6 +1110,34 @@ body {
       <div class="intel-cards" id="intel-cards">
         <div class="empty-msg">Loading intel…</div>
       </div>
+    </div>
+
+    <div class="infra-section">
+      <div class="infra-title">ENGINEERING
+        <button class="db-explorer-refresh" onclick="pollEngineeringBrief()" title="Refresh">⟳</button>
+      </div>
+      <div id="engineering-brief-market" style="color:#58a6ff;font-family:'Press Start 2P',cursive;font-size:7px;margin-bottom:6px;"></div>
+      <div id="engineering-brief-content" style="font-size:9px;color:#c9d1d9;line-height:1.5;max-height:200px;overflow-y:auto;white-space:pre-wrap;"></div>
+      <div id="engineering-brief-meta" style="color:#484f58;font-size:7px;margin-top:2px;"></div>
+      <div id="engineering-brief-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
+    </div>
+
+    <div class="infra-section">
+      <div class="infra-title">FINANCE
+        <button class="db-explorer-refresh" onclick="pollFinanceBrief()" title="Refresh">⟳</button>
+      </div>
+      <div id="finance-brief-market" style="color:#9b7ec7;font-family:'Press Start 2P',cursive;font-size:7px;margin-bottom:6px;"></div>
+      <div id="finance-brief-content" style="font-size:9px;color:#c9d1d9;line-height:1.5;max-height:200px;overflow-y:auto;white-space:pre-wrap;"></div>
+      <div id="finance-brief-meta" style="color:#484f58;font-size:7px;margin-top:2px;"></div>
+      <div id="finance-brief-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
+    </div>
+
+    <div class="infra-section">
+      <div class="infra-title">ALERTS
+        <button class="db-explorer-refresh" onclick="pollAlerts()" title="Refresh">⟳</button>
+      </div>
+      <div id="alerts-list" style="max-height:200px;overflow-y:auto;"></div>
+      <div id="alerts-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
     </div>
 
   </div>
@@ -1221,17 +1391,19 @@ function renderOrgChart(agents, errorMsg) {
     wrap.innerHTML = '<div class="empty-msg">No agents found</div>';
     return;
   }
+  const _HAS_CMD = { ceo: 1, analyst: 1, scraper: 1 };
   wrap.innerHTML = rows.map(agent => {
     const status = String(agent.state || agent.status || 'offline').toLowerCase();
-    const lastRun = agent.last_run || agent.started || agent.updated_at || agent.last_seen;
+    const lastAction = String(agent.last_action || '').slice(0, 40);
+    const cmdAttr = _HAS_CMD[agent.id] ? `onclick="toggleCommand('${agent.id}')"` : '';
     return `
-      <div class="org-card ${escapeHtml(status)}">
+      <div class="org-card ${escapeHtml(status)}" ${cmdAttr} style="${_HAS_CMD[agent.id] ? 'cursor:pointer;' : ''}">
         <div class="org-head">
           <span class="org-name">${escapeHtml(agent.name || agent.id)}</span>
           <span class="org-status ${escapeHtml(status)}">${escapeHtml(status.toUpperCase())}</span>
         </div>
-        <div class="org-role">Role: ${escapeHtml(agent.role || '—')}</div>
-        <div class="org-last">Last run: ${escapeHtml(formatAgentTime(lastRun))}</div>
+        <div class="org-role">${escapeHtml(agent.role || '—')}</div>
+        <div class="org-last" title="${escapeHtml(agent.last_action || '')}">${escapeHtml(lastAction || '—')}</div>
       </div>`;
   }).join('');
 }
@@ -1441,10 +1613,7 @@ async function pollIntel() {
   const wrap = document.getElementById('intel-cards');
   if (!wrap) return;
   try {
-    const [cardsData, legacyIntel] = await Promise.all([
-      fetch('/api/intel/cards').then(r => r.json()),
-      fetch('/api/intel').then(r => r.json()).catch(() => ({}))
-    ]);
+    const cardsData = await fetch('/api/intel/cards').then(r => r.json());
     if (!cardsData.cards || !cardsData.cards.length) {
       wrap.innerHTML = '<div class="empty-msg">No intel yet</div>';
       return;
@@ -1453,7 +1622,7 @@ async function pollIntel() {
     const byMarket = new Map(cardsData.cards.map(c => [String(c.market || '').toLowerCase(), c]));
     wrap.innerHTML = targetMarkets.map(market => {
       const c = byMarket.get(market.toLowerCase()) || { market, projects: 0, avg_psf: null };
-      const estimated = Boolean(c.estimated || legacyIntel?.[market]?.estimated);
+      const estimated = Boolean(c.estimated);
       const psf = c.avg_psf != null ? `₹${c.avg_psf}/sqft` : '—';
       const projectCount = c.projects ?? c.active_projects ?? 0;
       const slug = encodeURIComponent(market.toLowerCase());
@@ -1481,6 +1650,124 @@ async function pollIntel() {
 }
 pollIntel();
 setInterval(pollIntel, 30000);
+
+// ── Engineering Brief ──
+let _engLoading = false;
+async function pollEngineeringBrief() {
+  if (_engLoading) return;
+  _engLoading = true;
+  const marketEl = document.getElementById('engineering-brief-market');
+  const contentEl = document.getElementById('engineering-brief-content');
+  const metaEl = document.getElementById('engineering-brief-meta');
+  const statusEl = document.getElementById('engineering-brief-status');
+  const firstLoad = !contentEl.textContent;
+  if (firstLoad) contentEl.textContent = 'Loading…';
+  try {
+    const data = await fetch('/api/engineering/brief').then(r => r.json());
+    if (data.brief) {
+      marketEl.textContent = data.brief.market || '';
+      const raw = data.brief.response || '';
+      const truncated = raw.length > 800;
+      contentEl.textContent = raw.slice(0, 800) + (truncated ? '\n\n[... response truncated at 800 chars]' : '');
+      const ts = data.brief.created_at
+        ? new Date(data.brief.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', hour12: false })
+        : '';
+      const sid = (data.brief.session_id || '').slice(0, 8);
+      metaEl.textContent = ts ? `${sid} · ${ts}` : sid;
+      statusEl.textContent = truncated ? 'Response exceeds 800 chars — full text in board session' : '';
+      markUpdated('engineering');
+    } else {
+      contentEl.textContent = 'No engineering brief yet — run a Board Room session.';
+      marketEl.textContent = '';
+      metaEl.textContent = '';
+      statusEl.textContent = '';
+    }
+  } catch (e) {
+    contentEl.textContent = 'Failed to load engineering brief.';
+    statusEl.textContent = 'Retrying in 60s…';
+  } finally {
+    _engLoading = false;
+  }
+}
+pollEngineeringBrief();
+setInterval(pollEngineeringBrief, 60000);
+
+// ── Finance Brief ──
+let _finLoading = false;
+async function pollFinanceBrief() {
+  if (_finLoading) return;
+  _finLoading = true;
+  const marketEl = document.getElementById('finance-brief-market');
+  const contentEl = document.getElementById('finance-brief-content');
+  const metaEl = document.getElementById('finance-brief-meta');
+  const statusEl = document.getElementById('finance-brief-status');
+  const firstLoad = !contentEl.textContent;
+  if (firstLoad) contentEl.textContent = 'Loading…';
+  try {
+    const data = await fetch('/api/finance/brief').then(r => r.json());
+    if (data.brief) {
+      marketEl.textContent = data.brief.market || '';
+      const raw = data.brief.response || '';
+      const truncated = raw.length > 800;
+      contentEl.textContent = raw.slice(0, 800) + (truncated ? '\n\n[... response truncated at 800 chars]' : '');
+      const ts = data.brief.created_at
+        ? new Date(data.brief.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', hour12: false })
+        : '';
+      const sid = (data.brief.session_id || '').slice(0, 8);
+      metaEl.textContent = ts ? `${sid} · ${ts}` : sid;
+      statusEl.textContent = truncated ? 'Response exceeds 800 chars — full text in board session' : '';
+      markUpdated('finance');
+    } else {
+      contentEl.textContent = 'No finance brief yet — run a Board Room session.';
+      marketEl.textContent = '';
+      metaEl.textContent = '';
+      statusEl.textContent = '';
+    }
+  } catch (e) {
+    contentEl.textContent = 'Failed to load finance brief.';
+    statusEl.textContent = 'Retrying in 60s…';
+  } finally {
+    _finLoading = false;
+  }
+}
+pollFinanceBrief();
+setInterval(pollFinanceBrief, 60000);
+
+// ── Alerts Panel ──
+const _ALERT_CHANNEL_COLORS = {
+  rera_yelahanka: '#3fb950', rera_devanahalli: '#58a6ff', rera_hebbal: '#9b7ec7',
+  competitor: '#f0a020', price: '#f85149', intel: '#58a6ff', system: '#f85149',
+};
+async function pollAlerts() {
+  try {
+    const data = await fetch('/api/alerts').then(r => r.json());
+    const list = document.getElementById('alerts-list');
+    const statusEl = document.getElementById('alerts-status');
+    if (data.error) {
+      list.innerHTML = '<div style="color:#f85149;font-size:8px;padding:4px;">API error: ' + escapeHtml(data.error) + '</div>';
+      return;
+    }
+    if (!data.alerts || !data.alerts.length) {
+      list.innerHTML = '<div style="color:#484f58;font-size:8px;padding:4px;">No alerts yet — configure Discord webhooks in .env</div>';
+      return;
+    }
+    list.innerHTML = data.alerts.map(a => {
+      const color = _ALERT_CHANNEL_COLORS[a.channel] || '#8b949e';
+      const st = a.status === 'sent' ? '\u2713' : a.status === 'failed' ? '\u2717' : '\u2013';
+      const ts = a.created_at ? new Date(a.created_at).toLocaleTimeString('en-IN', {hour12:false}) : '';
+      return `<div style="display:flex;gap:6px;padding:4px 0;border-bottom:1px solid #1a2235;font-size:8px;align-items:flex-start;">
+        <span style="color:${color};font-family:'Press Start 2P',cursive;font-size:6px;flex-shrink:0;padding-top:2px;">${escapeHtml(a.channel.replace(/_/g,' '))}</span>
+        <span style="flex:1;color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(a.title)}</span>
+        <span style="color:${a.status==='sent'?'#3fb950':a.status==='failed'?'#f85149':'#6b7280'};flex-shrink:0;">${st}</span>
+        <span style="color:#484f58;flex-shrink:0;">${ts}</span>
+      </div>`;
+    }).join('');
+    statusEl.textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', {hour12:false});
+    markUpdated('alerts');
+  } catch (e) { console.warn('[Alerts] poll failed:', e); }
+}
+pollAlerts();
+setInterval(pollAlerts, 60000);
 
 // ── Pipeline Control (T-282) ──
 const PIPELINE_SLUGS = ['yelahanka', 'devanahalli', 'hebbal'];
@@ -1695,6 +1982,8 @@ setInterval(pollSentinelFooter, 30000);
 
 // ── Board Room ──
 let _boardPollTimer = null;
+let _currentBoardSessionId = null;
+let _currentTranscript = null;
 
 async function submitBoardSession() {
   const pitch = document.getElementById('board-pitch').value.trim();
@@ -1737,6 +2026,8 @@ function _pollBoardSession(sessionId) {
         clearInterval(_boardPollTimer);
         statusEl.style.color = '#3fb950';
         statusEl.textContent = 'Board session complete.';
+        _currentBoardSessionId = sessionId;
+        _currentTranscript = data.transcript;
         _renderBoardResult(data.transcript, resultEl);
       } else if (data.status === 'failed') {
         clearInterval(_boardPollTimer);
@@ -1749,28 +2040,343 @@ function _pollBoardSession(sessionId) {
   }, 3000);
 }
 
-function _renderBoardResult(transcript, el) {
-  if (!transcript || !transcript.responses) { el.style.display = 'none'; return; }
-  const depts = { bd: 'BD', finance: 'FINANCE', engineering: 'ENGINEERING', ops: 'OPS' };
-  let html = '';
-  for (const [key, label] of Object.entries(depts)) {
-    const resp = transcript.responses[key] || '';
-    if (!resp) continue;
-    const shortResp = String(resp).slice(0, 600) + (String(resp).length > 600 ? '…' : '');
-    html += `<div style="margin-bottom:10px;"><div style="color:#9b7ec7;font-family:'Press Start 2P',cursive;font-size:7px;margin-bottom:4px;">${escapeHtml(label)}</div>`;
-    html += `<div style="white-space:pre-wrap;font-size:9px;color:#c9d1d9;">${escapeHtml(shortResp)}</div></div>`;
+let _boardSessionsCache = null;
+
+async function loadBoardSessions() {
+  try {
+    const data = await fetch('/api/board/sessions').then(r => r.json());
+    _boardSessionsCache = data.sessions || [];
+    _renderBoardSessionsVisible();
+  } catch {
+    /* keep stale cache on network error */
   }
-  if (transcript.actions && transcript.actions.length) {
-    html += `<div style="margin-top:8px;"><div style="color:#f0a020;font-family:'Press Start 2P',cursive;font-size:7px;margin-bottom:4px;">ACTIONS</div>`;
-    for (const a of transcript.actions) {
-      const timeline = a.timeline ? ` · ${a.timeline}` : '';
-      html += `<div style="margin-bottom:3px;"><span style="color:#58a6ff;">[${escapeHtml((a.priority||'').toUpperCase())}]</span> <span style="color:#c9d1d9;">${escapeHtml(a.action)}</span> <span style="color:#6b7280;">→ ${escapeHtml(a.owner)}${escapeHtml(timeline)}</span></div>`;
-    }
-    html += '</div>';
-  }
-  el.innerHTML = html;
-  el.style.display = 'block';
 }
+
+function _renderBoardSessionsVisible() {
+  const list = document.getElementById('board-sessions-list');
+  if (!list || list.style.display === 'none' || _boardSessionsCache === null) return;
+  if (!_boardSessionsCache.length) {
+    list.innerHTML = '<div class="empty-msg" style="padding:4px 0;">No past sessions</div>';
+    return;
+  }
+  list.innerHTML = _boardSessionsCache.map(s => {
+    const sid = s.session_id ? s.session_id.slice(0, 8) : '—';
+    const ts = s.created_at
+      ? new Date(s.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', hour12: false })
+      : '—';
+    const st = String(s.status || '').toLowerCase();
+    const stColor = st === 'complete' ? '#3fb950' : st === 'failed' ? '#f85149' : st === 'active' ? '#f0a020' : '#8b949e';
+    const excerpt = escapeHtml(s.pitch_excerpt || '');
+    return `<div class="board-session-item" onclick="loadBoardSession('${escapeHtml(s.session_id)}')">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="color:#9b7ec7;font-family:'Press Start 2P',cursive;font-size:6px;">${escapeHtml(sid)}</span>
+        <span style="color:#6b7280;font-size:8px;">${escapeHtml(s.market || '—')} · ${ts}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
+        <span style="color:#8b949e;font-size:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${excerpt}</span>
+        <span style="color:${stColor};font-family:'Press Start 2P',cursive;font-size:6px;margin-left:6px;">${escapeHtml(s.status || '').toUpperCase()}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleBoardSessions() {
+  const list = document.getElementById('board-sessions-list');
+  const toggle = document.getElementById('board-recent-toggle');
+  if (list.style.display === 'none') {
+    list.style.display = 'block';
+    toggle.textContent = '▼';
+    _renderBoardSessionsVisible();
+  } else {
+    list.style.display = 'none';
+    toggle.textContent = '▶';
+  }
+}
+
+async function loadBoardSession(sessionId) {
+  const statusEl = document.getElementById('board-status');
+  const resultEl = document.getElementById('board-result');
+  statusEl.style.color = '#f0a020';
+  statusEl.textContent = 'Loading session…';
+  resultEl.style.display = 'none';
+  try {
+    const r = await fetch(`/api/board/session/${sessionId}`);
+    const data = await r.json();
+    const statusEl = document.getElementById('board-status');
+    const resultEl = document.getElementById('board-result');
+    if (data.status === 'complete') {
+      clearInterval(_boardPollTimer);
+      statusEl.style.color = '#3fb950';
+      statusEl.textContent = 'Board session loaded.';
+      _currentBoardSessionId = sessionId;
+      _currentTranscript = data.transcript;
+      _renderBoardResult(data.transcript, resultEl);
+    } else if (data.status === 'failed') {
+      statusEl.style.color = '#f85149';
+      statusEl.textContent = 'Session failed: ' + (data.transcript?.error || '?');
+    } else {
+      statusEl.textContent = `Status: ${data.status}… — polling for completion`;
+      _pollBoardSession(sessionId);
+    }
+  } catch (e) {
+    statusEl.style.color = '#f85149';
+    statusEl.textContent = 'Error loading session';
+  }
+}
+
+// Pre-fetch on page load + periodic refresh (spec requirement)
+loadBoardSessions();
+setInterval(loadBoardSessions, 30000);
+
+// ── DB Explorer (T-349) ──
+let _dbTablesCache = null;
+let _dbCurrentView = 'market_inventory';
+let _dbSortCol = null;
+let _dbSortDir = 'asc';
+
+const _DB_VIEW_COLUMNS = {
+  market_inventory: { label: 'Market Inventory' },
+  developer_scorecard: { label: 'Developer Scorecard' },
+  active_projects: { label: 'Active Projects' },
+};
+
+// Human-readable column labels — snake_case keys → display strings
+const _COL_LABELS = {
+  micro_market: 'Market', developer: 'Developer', developer_name: 'Developer',
+  total_projects: 'Projects', project_count: 'Projects',
+  total_units: 'Units', total_sold: 'Sold', total_unsold: 'Unsold', unsold_units: 'Unsold',
+  avg_absorption_pct: 'Absorption %', absorption_pct: 'Absorption %',
+  avg_min_psf: 'Min PSF', avg_max_psf: 'Max PSF', avg_listing_psf: 'Listing PSF',
+  unique_developers: 'Developers', grade: 'Grade',
+  completed: 'Completed', delayed: 'Delayed', avg_delay_months: 'Avg Delay (mo)',
+  markets_active_in: 'Markets', project_name: 'Project', project_status: 'Status',
+};
+
+function _formatVal(v) {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'number') return v.toLocaleString('en-IN');
+  return String(v);
+}
+
+function _isNumericCol(val) {
+  const n = Number(val);
+  return !Number.isNaN(n) && Number.isFinite(n);
+}
+
+async function pollDbTables() {
+  const statusEl = document.getElementById('db-explorer-status');
+  try {
+    const data = await fetch('/api/db/tables').then(r => r.json());
+    if (data.error) { statusEl.textContent = 'Error: ' + data.error; return; }
+    _dbTablesCache = data;
+    statusEl.textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { hour12: false });
+    _renderDbView();
+    markUpdated('db-explorer');
+  } catch (e) {
+    statusEl.textContent = 'Failed to load: ' + e.message;
+  }
+}
+
+function switchDbView(view) {
+  _dbCurrentView = view;
+  _dbSortCol = null;
+  document.querySelectorAll('#db-explorer-tabs button').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === view);
+  });
+  _renderDbView();
+}
+
+function _renderDbView() {
+  if (!_dbTablesCache || !_dbTablesCache[_dbCurrentView]) {
+    document.getElementById('db-explorer-tbody').innerHTML = '<tr><td style="color:#6b7280;padding:12px;text-align:center;">No data</td></tr>';
+    document.getElementById('db-explorer-count').textContent = '';
+    return;
+  }
+  const rows = _dbTablesCache[_dbCurrentView];
+  document.getElementById('db-explorer-count').textContent = rows.length + ' rows';
+
+  if (rows.length === 0) {
+    document.getElementById('db-explorer-thead').innerHTML = '';
+    document.getElementById('db-explorer-tbody').innerHTML =
+      '<tr><td style="color:#6b7280;padding:14px;text-align:center;">No rows in this view yet</td></tr>';
+    return;
+  }
+
+  // Derive columns from first row
+  const columns = Object.keys(rows[0]);
+  const thead = document.getElementById('db-explorer-thead');
+  thead.innerHTML = columns.map(col => {
+    const active = _dbSortCol === col;
+    const arrow = active ? (_dbSortDir === 'asc' ? '▲' : '▼') : '⇅';
+    const label = _COL_LABELS[col] || col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    return `<th data-col="${escapeHtml(col)}">${escapeHtml(label)} <span class="sort-arrow${active ? ' active' : ''}">${arrow}</span></th>`;
+  }).join('');
+  thead.onclick = function(e) {
+    const th = e.target.closest('th');
+    if (!th || !th.dataset.col) return;
+    _dbSort(th.dataset.col);
+  };
+
+  // Sort
+  let sorted = [...rows];
+  if (_dbSortCol) {
+    sorted.sort((a, b) => {
+      const va = a[_dbSortCol], vb = b[_dbSortCol];
+      const na = _isNumericCol(va), nb = _isNumericCol(vb);
+      let cmp;
+      if (na && nb) cmp = (Number(va) || 0) - (Number(vb) || 0);
+      else cmp = String(va ?? '').localeCompare(String(vb ?? ''));
+      return _dbSortDir === 'asc' ? cmp : -cmp;
+    });
+  }
+
+  const tbody = document.getElementById('db-explorer-tbody');
+  tbody.innerHTML = sorted.map(row => {
+    const cells = columns.map(col => {
+      const val = _formatVal(row[col]);
+      const num = _isNumericCol(row[col]) ? ' num' : '';
+      return `<td class="db-cell${num}" title="${escapeHtml(String(row[col] ?? ''))}">${escapeHtml(val)}</td>`;
+    }).join('');
+    return '<tr>' + cells + '</tr>';
+  }).join('');
+}
+
+function _dbSort(col) {
+  if (_dbSortCol === col) {
+    _dbSortDir = _dbSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _dbSortCol = col;
+    _dbSortDir = 'asc';
+  }
+  _renderDbView();
+}
+
+pollDbTables();
+setInterval(pollDbTables, 60000);
+
+// ── Task Board ──
+const _TASK_STATUSES = ['queued', 'active', 'done', 'failed'];
+const _TASK_STATUS_LABELS = { queued: 'QUEUED', active: 'ACTIVE', done: 'DONE', failed: 'FAILED' };
+let _tasksCache = [];
+
+async function pollTasks() {
+  const statusEl = document.getElementById('task-board-status');
+  try {
+    const data = await fetch('/api/tasks').then(r => r.json());
+    if (data.error) { statusEl.textContent = 'Error: ' + data.error; return; }
+    _tasksCache = data.tasks || [];
+    _renderTaskBoard();
+    statusEl.textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { hour12: false });
+    markUpdated('task-board');
+  } catch (e) {
+    statusEl.textContent = 'Unavailable';
+  }
+}
+
+function _renderTaskBoard() {
+  const col = document.getElementById('task-board-columns');
+  if (!col) return;
+  const byStatus = {};
+  _TASK_STATUSES.forEach(s => { byStatus[s] = []; });
+  _tasksCache.forEach(t => { if (byStatus[t.status]) byStatus[t.status].push(t); });
+
+  col.innerHTML = _TASK_STATUSES.map(status => {
+    const tasks = byStatus[status];
+    const cards = tasks.length
+      ? tasks.map(t => {
+          const pri = t.priority || 'medium';
+          const owner = t.owner ? `<span style="color:#58a6ff;">${escapeHtml(t.owner.toUpperCase())}</span> · ` : '';
+          return `<div class="task-card task-priority-${escapeHtml(pri)}">
+            <div class="tc-title" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</div>
+            <div class="tc-meta">${owner}${escapeHtml(pri)}</div>
+          </div>`;
+        }).join('')
+      : '<div style="color:#484f58;font-size:7px;padding:4px 0;">empty</div>';
+    return `<div class="task-col">
+      <div class="task-col-header col-${escapeHtml(status)}">${_TASK_STATUS_LABELS[status]} <span style="color:#484f58;">(${tasks.length})</span></div>
+      ${cards}
+    </div>`;
+  }).join('');
+}
+
+pollTasks();
+setInterval(pollTasks, 30000);
+
+async function approveAction(idx) {
+  const action = _currentTranscript && _currentTranscript.actions && _currentTranscript.actions[idx];
+  if (!action) return;
+  const btn = document.querySelector(`#action-row-${idx} button`);
+  if (btn) { btn.disabled = true; btn.textContent = '\u2026'; }
+  try {
+    const apiKey = _getApiKey();
+    const r = await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      body: JSON.stringify({
+        title: action.action,
+        owner: action.owner || 'ceo',
+        priority: action.priority || 'medium',
+        source_type: 'board_session',
+        source_id: _currentBoardSessionId,
+      }),
+    });
+    const data = await r.json();
+    if (data.task_id) {
+      const row = document.getElementById(`action-row-${idx}`);
+      if (row) row.style.opacity = '0.5';
+      if (btn) { btn.textContent = '\u2713 QUEUED'; btn.style.color = '#3fb950'; }
+      pollTasks();
+    } else {
+      if (btn) { btn.disabled = false; btn.textContent = '\u2713 APPROVE'; }
+    }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '\u2713 APPROVE'; }
+  }
+}
+
+function rejectAction(idx) {
+  const row = document.getElementById(`action-row-${idx}`);
+  if (row) { row.style.opacity = '0.3'; row.style.pointerEvents = 'none'; }
+}
+
+function _renderBoardResult(transcript, el) {
+   const _DEPT_COLORS = { bd: '#f0a020', finance: '#3fb950', engineering: '#58a6ff', ops: '#f85149', legal: '#9b7ec7' };
+   const _DEPT_LABELS = { bd: 'BD', finance: 'FINANCE', engineering: 'ENG', ops: 'OPS', legal: 'LEGAL' };
+   if (!transcript || !transcript.responses) { el.style.display = 'none'; return; }
+   let html = '<div class="board-dept-grid">';
+   for (const [key, color] of Object.entries(_DEPT_COLORS)) {
+     const resp = transcript.responses[key] || '';
+     const label = _DEPT_LABELS[key];
+     html += '<div class="board-dept-col">';
+     html += `<div class="board-dept-header" style="border-bottom:2px solid ${color};color:${color};">${escapeHtml(label)}</div>`;
+     if (resp) {
+       const shortResp = String(resp).slice(0, 600) + (String(resp).length > 600 ? '…' : '');
+       html += `<div class="board-dept-body">${escapeHtml(shortResp)}</div>`;
+     } else {
+       html += '<div class="board-dept-body empty-msg">No response</div>';
+     }
+     html += '</div>';
+   }
+   html += '</div>';
+   if (transcript.actions && transcript.actions.length) {
+     html += '<div class="board-actions-row">';
+     html += '<div class="board-actions-title">ACTION ITEMS</div>';
+     transcript.actions.forEach((a, i) => {
+       const pri = a.priority || 'medium';
+       const owner = a.owner || 'ceo';
+       html += `<div id="action-row-${i}" style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;padding:5px 6px;background:#0f1520;border:1px solid #2a3a55;border-radius:4px;">
+         <div style="flex:1;font-size:9px;color:#c9d1d9;">${escapeHtml(a.action || '')}<br>
+           <span style="font-size:7px;color:#6b7280;">${escapeHtml(owner.toUpperCase())} · ${escapeHtml(pri)}</span>
+         </div>
+         <button onclick="approveAction(${i})" style="background:#1a3a1a;border:1px solid #3fb950;color:#3fb950;font-size:7px;padding:3px 6px;cursor:pointer;border-radius:3px;white-space:nowrap;">✓ APPROVE</button>
+         <button onclick="rejectAction(${i})" style="background:#1a1010;border:1px solid #484f58;color:#6b7280;font-size:7px;padding:3px 6px;cursor:pointer;border-radius:3px;white-space:nowrap;">✗</button>
+       </div>`;
+     });
+     html += '</div>';
+   }
+   el.innerHTML = html;
+   el.style.display = 'block';
+ }
 
 </script>
 </body>

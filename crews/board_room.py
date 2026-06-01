@@ -1,39 +1,82 @@
 """
 RE_OS — Board Room Crew
 ───────────────────────
-POST /api/board/session → creates session row, fires 4 dept-head agents in
-a background thread, returns session_id immediately.
+POST /api/board/session → creates session row, fires 5 dept-head agents
+(BD, Finance, Engineering, Ops, Legal) in a background thread, returns
+session_id immediately.
 GET  /api/board/session/<id> → polls DB for pending|active|complete|failed.
 
-Dept heads: BD, Finance, Engineering, Ops — each a single-agent CrewAI Crew
-running concurrently via ThreadPoolExecutor with a 90-second timeout guard.
+Dept heads run concurrently via ThreadPoolExecutor with a 90-second timeout
+guard. Each is a single-agent CrewAI Crew.
 
-Action extraction (T-259) is next. See TASK_QUEUE.md.
+T-347: Legal Head (5th dept) added — RERA/BDA/title compliance lens.
 """
 
 import json
+import re
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
 from loguru import logger
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
-from config.settings import DATABASE_URL
 from config.llm_router import get_analysis_llm, get_heavy_llm
+from agents.board_room.legal_head import build_legal_head_agent
+from utils.db import get_engine
+from utils.fsi_calculator import calculate_fsi, recommend_unit_mix
+from utils.green_coverage import calculate_green_coverage
+from utils.irr_model import compare_scenarios
 
-# ── Engine ────────────────────────────────────────────────────────────────────
+# Shared regex patterns for pitch parsing (used by engineering + finance auto-calc)
+_ACRE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:-\s*)?acres?", re.I)
+_SQFT_RE = re.compile(
+    r"(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:sq\s*\.?\s*ft|sqft|square\s*feet|sft)",
+    re.I,
+)
+_PSF_RE  = re.compile(
+    # Alternative 1: prefix (psf/per sq ft/Rs/₹) before number
+    r"(?:(?:psf|per\s+sq\.?\s*ft|Rs\.?\s*|[\u20B9])\s*(\d+(?:,\d{3})*(?:\.\d+)?)|"
+    # Alternative 2: number before "psf" suffix
+    r"(\d+(?:,\d{3})*(?:\.\d+)?)\s*psf)",
+    re.I,
+)
 
-_engine = None
+# Pitch auto-calc constants
+_ACRE_TO_SQFT: float = 43560.0
+_DEFAULT_GUIDANCE_PSF: float = 4000.0
+_DEFAULT_NEG_DISCOUNT_PCT: float = 10.0
+_DEFAULT_FSI_EFFICIENCY: float = 0.65
+_DEFAULT_FSI_VALUE: float = 2.5
+_DEFAULT_PSF_BY_MARKET: dict = {
+    "Yelahanka": 6500, "Devanahalli": 5500, "Hebbal": 7500,
+}
 
 
-def _get_engine():
-    global _engine
-    if _engine is None:
-        _engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=5, max_overflow=2)
-    return _engine
+def _parse_psf(match: re.Match) -> float:
+    """Extract PSF value from a bidirectional PSF regex match (selects whichever group matched)."""
+    raw = match.group(1) or match.group(2)
+    return float(raw.replace(",", ""))
+
+
+def _extract_pitch_params(pitch: str) -> dict:
+    """Single-pass extraction of area and PSF from a pitch string.
+    Returns dict with 'area_sqft' (float or None), 'acreage' (float or None), 'psf' (float or None)."""
+    area_match = _ACRE_RE.search(pitch)
+    sqft_match = _SQFT_RE.search(pitch)
+    psf_match = _PSF_RE.search(pitch)
+    area_sqft = None
+    acreage = None
+    if area_match:
+        acreage = float(area_match.group(1))
+        area_sqft = acreage * _ACRE_TO_SQFT
+    elif sqft_match:
+        area_sqft = float(sqft_match.group(1).replace(",", ""))
+    psf = _parse_psf(psf_match) if psf_match else None
+    return {"area_sqft": area_sqft, "acreage": acreage, "psf": psf}
 
 
 # ── Data contract ─────────────────────────────────────────────────────────────
@@ -49,23 +92,25 @@ class BoardSession:
     engineering_response: Optional[str] = None
     finance_response: Optional[str] = None
     operations_response: Optional[str] = None
+    legal_response: Optional[str] = None
     actions: list = field(default_factory=list)
     created_at: Optional[str] = None
 
 
 def _ceo_decompose(pitch: str, market: str, _session_excluded: set) -> Optional[dict]:
-    """Use the CEO agent to decompose the pitch into 4 dept-specific sub-questions.
-    Returns a dict with keys 'bd', 'finance', 'engineering', 'ops' or None on failure.
+    """Use the CEO agent to decompose the pitch into 5 dept-specific sub-questions.
+    Returns a dict with keys 'bd', 'finance', 'engineering', 'ops', 'legal'
+    or None on failure.
     _session_excluded: per-session provider exclusion set — never touches the global _EXCLUDED.
     """
     try:
         llm = get_heavy_llm(excluded=_session_excluded)
         prompt = (
             f"You are the CEO of a real estate investment firm. Given the following pitch for a market, "
-            f"decompose it into four specific sub-questions, one for each department head: "
-            f"Business Development (BD), Finance, Engineering, and Operations. "
+            f"decompose it into five specific sub-questions, one for each department head: "
+            f"Business Development (BD), Finance, Engineering, Operations, and Legal. "
             f"Each sub-question should be tailored to that department's expertise and concerns. "
-            f"Return ONLY a JSON object with exactly four keys: 'bd', 'finance', 'engineering', 'ops'. "
+            f"Return ONLY a JSON object with exactly five keys: 'bd', 'finance', 'engineering', 'ops', 'legal'. "
             f"Each value should be a string containing the sub-question for that department. "
             f"Do not include any extra text or explanation.\n\n"
             f"Market: {market}\n"
@@ -74,10 +119,10 @@ def _ceo_decompose(pitch: str, market: str, _session_excluded: set) -> Optional[
         response = llm.call(prompt)
         # Try to parse the JSON
         decomposed = json.loads(response)
-        # Validate that we have the four keys and they are strings
-        if isinstance(decomposed, dict) and all(k in decomposed for k in ("bd", "finance", "engineering", "ops")):
+        # Validate that we have the five keys and they are strings
+        if isinstance(decomposed, dict) and all(k in decomposed for k in ("bd", "finance", "engineering", "ops", "legal")):
             # Ensure each value is a string (or convert to string)
-            for key in ("bd", "finance", "engineering", "ops"):
+            for key in ("bd", "finance", "engineering", "ops", "legal"):
                 if not isinstance(decomposed[key], str):
                     decomposed[key] = str(decomposed[key])
             return decomposed
@@ -135,6 +180,17 @@ _DEPT_TASK_TEMPLATES = {
         "3. Three launch KPIs with target numbers\n"
         "4. Biggest operational risk in this market\n"
         "5. Suggested launch window (month + rationale)"
+    ),
+    "legal": (
+        "You are the Legal Head reviewing a real estate pitch.\n"
+        "Market: {market}\n"
+        "CEO Sub-question: {dept_question}\n\n"
+        "Respond as Legal Head. Lead with CLEAR / RISK / BLOCKED.\n"
+        "Cover: RERA registration status, BDA/BBMP layout approval, title chain, "
+        "encumbrance, agricultural conversion (if applicable), regulatory overlay risks "
+        "(airport zone, green belt, lake buffer).\n"
+        "Name every unresolved item with the applicable Karnataka statute or authority.\n"
+        "Maximum 180 words."
     ),
 }
 
@@ -204,8 +260,8 @@ def _build_ops_agent():
 
 def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = None,
                     _session_excluded: set = None) -> dict:
-    """Run the four department-head agents concurrently via single-agent Crews.
-    Returns a dict with keys 'bd', 'finance', 'engineering', 'ops'.
+    """Run five department-head agents (BD, Finance, Engineering, Ops, Legal) concurrently.
+    Returns a dict with keys 'bd', 'finance', 'engineering', 'ops', 'legal'.
     Enforces a 90-second timeout guard.
     _session_excluded: per-session exclusion set — never mutates global _EXCLUDED.
     """
@@ -221,6 +277,52 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
             if decomposition and isinstance(decomposition.get(key), str)
             else ""
         ) or pitch
+
+        if key == "engineering":
+            params = _extract_pitch_params(pitch)
+            if params["area_sqft"] is not None:
+                sqft = params["area_sqft"]
+                psf_val = params["psf"] if params["psf"] is not None else _DEFAULT_PSF_BY_MARKET.get(market, 6500)
+                fsi_r = calculate_fsi(sqft, zone="R2", market=market)
+                mix_r = recommend_unit_mix(psf_val)
+                gc_r = calculate_green_coverage(sqft, fsi_r.plot_coverage)
+                area_label = (
+                    f"{params['acreage']} acres / {sqft:,.0f} sqft"
+                    if params["acreage"]
+                    else f"{sqft:,.0f} sqft / {sqft/_ACRE_TO_SQFT:.2f} acres"
+                )
+                dept_question = (
+                    f"\n\n[AUTO FSI CALC — {area_label}, Zone R2, ₹{psf_val:,.0f} PSF]\n"
+                    f"Buildable: {fsi_r.buildable_area_sqft:,.0f} sqft | "
+                    f"Sellable: {fsi_r.sellable_area_sqft:,.0f} sqft | "
+                    f"Max floors: {fsi_r.max_floors} | "
+                    f"Unit mix: {mix_r.bhk_1_pct}% 1BHK / {mix_r.bhk_2_pct}% 2BHK / {mix_r.bhk_3_pct}% 3BHK | "
+                    f"Green coverage: {gc_r.green_pct}% ({gc_r.tree_count} trees, BDA min met: {gc_r.meets_bda_minimum})\n"
+                ) + dept_question
+
+        if key == "finance":
+            irr_context = ""
+            params = _extract_pitch_params(pitch)
+            if params["area_sqft"] is not None and params["psf"] is not None:
+                try:
+                    sqft = params["area_sqft"]
+                    sell_psf = params["psf"]
+                    sellable = sqft * _DEFAULT_FSI_EFFICIENCY * _DEFAULT_FSI_VALUE
+                    land_cost = sqft * _DEFAULT_GUIDANCE_PSF * (1 - _DEFAULT_NEG_DISCOUNT_PCT / 100)
+                    scenarios = compare_scenarios(land_cost, sellable, sell_psf)
+                    irr_context = (
+                        f"\n\n[AUTO IRR CALC — {sqft:,.0f} sqft site, ₹{sell_psf:,.0f} PSF]\n"
+                        f"Base IRR: {scenarios.base.simple_irr_pct:.1f}% ({scenarios.base.verdict}) | "
+                        f"Bull: {scenarios.bull.simple_irr_pct:.1f}% | "
+                        f"Bear: {scenarios.bear.simple_irr_pct:.1f}% ({scenarios.bear.verdict})\n"
+                        f"Land cost est.: ₹{scenarios.base.land_cost/1e7:.1f}Cr | "
+                        f"GDV est.: ₹{scenarios.base.gdv/1e7:.1f}Cr\n"
+                        f"Recommendation: {scenarios.recommendation}\n"
+                    )
+                except Exception as exc:
+                    logger.warning("[board_room] finance auto-IRR calc failed for market=%s pitch=%s: %s",
+                                   market, pitch[:80], exc)
+            dept_question = irr_context + dept_question
 
         template = _DEPT_TASK_TEMPLATES.get(key)
         task_description = template.format(market=market, dept_question=dept_question) if template else (
@@ -247,9 +349,10 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
         "finance": _build_finance_agent,
         "engineering": _build_engineering_agent,
         "ops": _build_ops_agent,
+        "legal": build_legal_head_agent,
     }
     responses: dict = {}
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         future_to_key = {executor.submit(run_single_agent, fn, key): key for key, fn in builders.items()}
         try:
             for future in as_completed(future_to_key, timeout=90):
@@ -277,7 +380,7 @@ def _create_session_row(session_id: str, pitch: str, market: Optional[str]) -> b
     Passes session_id as uuid.UUID object — psycopg2 handles the type mapping.
     """
     try:
-        with _get_engine().begin() as conn:
+        with get_engine().begin() as conn:
             conn.execute(
                 text("""
                 INSERT INTO board_sessions (
@@ -301,7 +404,7 @@ def _create_session_row(session_id: str, pitch: str, market: Optional[str]) -> b
 def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
     """Update session row with individual dept-head column values.
 
-    transcript dict keys: status, responses (bd/finance/engineering/ops),
+    transcript dict keys: status, responses (bd/finance/engineering/ops/legal),
     actions (list), ceo_decomposition (optional).
     Sets completed_at only on terminal states (complete/failed).
     """
@@ -314,7 +417,7 @@ def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
     }
     ceo_synthesis = json.dumps(ceo_extra, default=str) if any(ceo_extra.values()) else None
     try:
-        with _get_engine().begin() as conn:
+        with get_engine().begin() as conn:
             conn.execute(
                 text("""
                 UPDATE board_sessions
@@ -323,6 +426,7 @@ def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
                     finance_response     = :finance,
                     engineering_response = :engineering,
                     ops_response         = :ops,
+                    legal_response       = :legal,
                     ceo_synthesis        = :ceo_synthesis,
                     completed_at         = CASE WHEN :is_terminal THEN NOW() ELSE completed_at END
                 WHERE session_id = :session_id
@@ -334,6 +438,7 @@ def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
                     "finance": responses.get("finance") or None,
                     "engineering": responses.get("engineering") or None,
                     "ops": responses.get("ops") or None,
+                    "legal": responses.get("legal") or None,
                     "ceo_synthesis": ceo_synthesis,
                     "is_terminal": is_terminal,
                 },
@@ -349,20 +454,23 @@ def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
 def _extract_actions(dept_responses: dict, pitch: str, market: str) -> list:
     """Extract concrete actions from department responses using Cerebras 8b (LIGHT tier).
     Returns a list of action dicts or empty list on failure.
+    Falls back to rule-based extraction if LLM fails.
     """
-    try:
+
+    def _try_llm():
         from litellm import completion
         from config.settings import CEREBRAS_API_KEY, CEREBRAS_BASE_URL, CEREBRAS_MODEL
 
         prompt = (
             "Extract 3-5 concrete actions from these board department responses. "
-            "Return ONLY a JSON array, each item: {\"action\": \"...\", \"owner\": \"bd|finance|engineering|ops\", \"priority\": \"high|medium|low\", \"timeline\": \"...\"}. "
+            "Return ONLY a JSON array, each item: {\"action\": \"...\", \"owner\": \"bd|finance|engineering|ops|legal\", \"priority\": \"high|medium|low\", \"timeline\": \"...\"}. "
             "If insufficient information, return [].\n\n"
             f"Market: {market}\nPitch: {pitch}\n"
             f"BD: {dept_responses.get('bd', '')[:500]}\n"
             f"Finance: {dept_responses.get('finance', '')[:500]}\n"
             f"Engineering: {dept_responses.get('engineering', '')[:500]}\n"
             f"Ops: {dept_responses.get('ops', '')[:500]}\n"
+            f"Legal: {dept_responses.get('legal', '')[:500]}\n"
         )
         response = completion(
             model=f"openai/{CEREBRAS_MODEL}",
@@ -372,25 +480,73 @@ def _extract_actions(dept_responses: dict, pitch: str, market: str) -> list:
             temperature=0.2,
             max_tokens=600,
         )
-        raw = response.choices[0].message.content
-        actions = json.loads(raw)
-        if isinstance(actions, list):
-            cleaned = []
-            for item in actions:
-                if not isinstance(item, dict):
-                    continue
-                cleaned.append({
-                    "owner": str(item.get("owner") or ""),
-                    "action": str(item.get("action") or ""),
-                    "priority": str(item.get("priority") or "medium"),
-                    "timeline": str(item.get("timeline") or "TBD"),
-                })
-            return cleaned
-        logger.warning(f"board_room: action extraction returned non-list: {actions}")
-        return []
-    except Exception as exc:
-        logger.warning(f"board_room: action extraction failed: {exc}")
-        return []
+        raw = response.choices[0].message.content.strip()
+        return raw
+
+    raw = None
+    for attempt in range(2):
+        try:
+            raw = _try_llm()
+            break
+        except Exception as exc:
+            err_str = str(exc)
+            if "rate" in err_str.lower() or "traffic" in err_str.lower():
+                time.sleep(2 ** attempt * 2)
+                logger.warning(f"board_room: action extraction attempt {attempt+1} rate limited, retrying...")
+                continue
+            logger.warning(f"board_room: action extraction LLM failed: {exc}")
+            break
+
+    if raw:
+        bracket = raw.find("[")
+        if bracket >= 0:
+            raw = raw[bracket:]
+        close = raw.rfind("]")
+        if close > 0:
+            raw = raw[:close+1]
+        try:
+            actions = json.loads(raw)
+            if isinstance(actions, list):
+                cleaned = []
+                for item in actions:
+                    if not isinstance(item, dict):
+                        continue
+                    cleaned.append({
+                        "owner": str(item.get("owner") or ""),
+                        "action": str(item.get("action") or ""),
+                        "priority": str(item.get("priority") or "medium"),
+                        "timeline": str(item.get("timeline") or "TBD"),
+                    })
+                if cleaned:
+                    return cleaned
+        except Exception:
+            pass
+
+    return _fallback_actions(dept_responses)
+
+
+def _fallback_actions(dept_responses: dict) -> list:
+    """Rule-based action extraction from dept responses as LLM fallback."""
+    actions = []
+    dept_patterns = {
+        "bd": ["recommend", "price", "entry", "land", "go", "target", "focus"],
+        "finance": ["irr", "break-even", "margin", "debt", "equity", "funding", "cost"],
+        "engineering": ["far", "bda", "bbmp", "rera", "approval", "zoning", "construction", "design"],
+        "ops": ["launch", "channel", "sales", "partner", "digital", "kpi", "velocity"],
+        "legal": ["title", "encumbrance", "registration", "conversion", "clearance", "compliance"],
+    }
+    for dept, keywords in dept_patterns.items():
+        text = (dept_responses.get(dept) or "")[:3000].lower()
+        matched = [kw for kw in keywords if kw in text]
+        if matched:
+            priority = "high" if any(kw in text for kw in ["risk", "critical", "urgent", "blocker"]) else "medium"
+            actions.append({
+                "owner": dept,
+                "action": f"Review {dept.upper()} findings on {matched[0].replace('-', ' ')} — see response for {', '.join(matched[1:3])}",
+                "priority": priority,
+                "timeline": "TBD",
+            })
+    return actions[:5]
 
 def _run_board_session_bg(session_id: str, pitch: str, market: str) -> None:
     """Background worker: run dept heads, extract actions, update session row to complete or failed.
@@ -447,12 +603,12 @@ def get_board_session(session_id: str) -> Optional[dict]:
     API response matches the shape the dashboard JS expects.
     """
     try:
-        with _get_engine().connect() as conn:
+        with get_engine().connect() as conn:
             row = conn.execute(
                 text("""
                 SELECT session_id, pitch_text, market, status,
                        bd_response, finance_response, engineering_response,
-                       ops_response, ceo_synthesis,
+                       ops_response, legal_response, ceo_synthesis,
                        created_at, completed_at
                 FROM board_sessions
                 WHERE session_id = :session_id
@@ -468,6 +624,7 @@ def get_board_session(session_id: str) -> Optional[dict]:
                 "finance": row["finance_response"],
                 "engineering": row["engineering_response"],
                 "ops": row["ops_response"],
+                "legal": row["legal_response"],
             }
             ceo_extra = {}
             if row["ceo_synthesis"]:
