@@ -24,6 +24,9 @@ kilo_logs/
 postgres_data/
 ollama_data/
 
+# ChromaDB persistent data (generated at runtime — not source)
+chroma_data/
+
 # VS Code (keep .vscode committed so team shares settings)
 # .vscode/
 
@@ -58,6 +61,7 @@ htmlcov/
 
 # Temporary debug/test scripts (never source)
 tmp_*.py
+validate_renderer.py
 
 # Backup files
 *.bak

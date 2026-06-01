@@ -462,6 +462,9 @@ CREATE TABLE news_articles (
     key_insight TEXT,
     micro_market_id UUID REFERENCES micro_markets(id),
     raw_data JSONB,
+    -- Phase 8.5 — Intelligence Layer: FinBERT sentiment enrichment
+    sentiment_score FLOAT,                         -- -1.0 (bearish) to +1.0 (bullish), NULL = unscored
+    sentiment_label VARCHAR(20),                   -- positive | negative | neutral | unscored
     created_at TIMESTAMP DEFAULT NOW()
 );
 

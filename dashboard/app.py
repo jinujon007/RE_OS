@@ -48,13 +48,20 @@ def _add_security_headers(response):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["X-XSS-Protection"] = "0"
+    # Restrict resource loading to same origin — prevents XSS data exfiltration
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "connect-src 'self'"
+    )
     return response
 
 
 # Read-only endpoints — exempt from API key gate (T-235)
 _READ_ONLY_PATHS = frozenset({
     '/api/health', '/api/status', '/api/agents',
-    '/api/intel/cards', '/api/intel/download', '/api/db/state', '/api/sentinel/status',
+    '/api/intel/cards', '/api/intel/download', '/api/intel/search', '/api/db/state', '/api/sentinel/status',
     '/api/board/sessions', '/api/db/tables',
     '/api/tasks',
     '/api/engineering/brief',
@@ -80,6 +87,8 @@ def _require_api_key():
         return None
     if not _is_run_api_authorized(request):
         return jsonify({"error": "unauthorized"}), 401
+
+
 logger = logging.getLogger("re_os.dashboard")
 
 # market -> {'proc': Popen, 'started': iso-str}
@@ -92,6 +101,14 @@ _diag_running_last_signature = None
 # TTL cache for intel/cards estimated flag — avoids opening report files on every poll
 _estimated_cache: dict[str, tuple[bool, float]] = {}  # market → (is_estimated, expiry_ts)
 _ESTIMATED_CACHE_TTL = 120  # seconds
+
+# Singleton IntelEmbedder — ChromaDB init has file I/O overhead; reuse across requests
+_embedder_instance = None
+_embedder_lock = threading.Lock()
+
+# Search result cache: query → (results, expiry) — reduces ChromaDB queries for repeated searches
+_search_cache: dict[str, tuple[list[dict], float]] = {}
+_SEARCH_CACHE_TTL = 45  # seconds — short enough for freshness, long enough for repeated clicks
 
 LOG_PATH = "/app/logs/crew.log"
 VALID_MARKETS = {"Yelahanka", "Devanahalli", "Hebbal", "all"}
@@ -399,6 +416,7 @@ def index():
 # ── Health ─────────────────────────────────────────────────────────────────────
 
 
+@limiter.limit("5 per hour")
 @app.route("/api/alert/test")
 def test_alert():
     from utils.notifier import send_alert
@@ -1333,6 +1351,36 @@ def _market_go_no_go(active_projects: int, avg_psf: int | None, estimated: bool)
 
 
 # ── Intel API ──────────────────────────────────────────────────────────────────
+
+
+@limiter.limit("20 per minute")
+@app.route("/api/intel/search", methods=["GET"])
+def intel_search():
+    q = (request.args.get("q") or "").strip()[:200]
+    market = _normalize_market(request.args.get("market", ""))
+    if not q:
+        return jsonify({"results": [], "query": q})
+    market_param = market if market and market != "all" else None
+    cache_key = f"{q}:::{market_param or ''}"
+    now = time.time()
+    cached = _search_cache.get(cache_key)
+    if cached and cached[1] > now:
+        logger.debug(f"[intel_search] cache hit for q={q[:40]} market={market_param}")
+        return jsonify({"results": cached[0], "query": q, "market": market, "cached": True})
+    logger.debug(f"[intel_search] q={q[:60]} market={market_param}")
+    try:
+        global _embedder_instance, _embedder_lock
+        if _embedder_instance is None:
+            with _embedder_lock:
+                if _embedder_instance is None:
+                    from utils.embedder import IntelEmbedder
+                    _embedder_instance = IntelEmbedder()
+        results = _embedder_instance.search(q, market=market_param, n=5)
+        _search_cache[cache_key] = (results, now + _SEARCH_CACHE_TTL)
+        return jsonify({"results": results, "query": q, "market": market})
+    except Exception as e:
+        logger.warning(f"[intel_search] search failed: q={q[:40]} market={market_param}: {e}")
+        return jsonify({"results": [], "query": q, "error": "search unavailable — index not built yet"})
 
 
 @app.route("/api/intel/download")

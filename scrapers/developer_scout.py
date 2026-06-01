@@ -12,6 +12,11 @@ Covered developers (North Bengaluru focus):
   Brigade Enterprises, Prestige Group, Sobha Limited, Godrej Properties,
   Adarsh Developers, Salarpuria Sattva, Shriram Properties, Mantri Developers
 
+Fetch strategy (tiered per developer):
+  use_playwright=True  → Scrapling DynamicFetcher (stealth Playwright) → raw Playwright fallback
+  use_playwright=False → Scrapling Fetcher (TLS fingerprint spoofing) → requests fallback
+  All Scrapling calls degrade gracefully if the package is unavailable.
+
 Model: Gemini Flash — handles unstructured developer marketing pages better
        than structured extraction models. Large context = full-page comprehension.
 
@@ -31,7 +36,6 @@ import argparse
 import json
 import os
 import re
-import sys
 import time
 from datetime import datetime
 
@@ -39,7 +43,12 @@ import requests
 from bs4 import BeautifulSoup
 from loguru import logger
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from scrapling.fetchers import Fetcher, DynamicFetcher
+    _SCRAPLING_OK = True
+except Exception:
+    _SCRAPLING_OK = False
+
 from config.settings import (
     GEMINI_API_KEY,
     GEMINI_CEO_MODEL,
@@ -256,7 +265,8 @@ def _ai_extract_developer(
                 max_tokens=1500,
                 temperature=0.0,
             )
-            raw = resp.choices[0].message.content.strip()
+            content = resp.choices[0].message.content
+            raw = content.strip() if content else ""
         except Exception as exc:
             gemini_error = exc
             logger.warning(
@@ -275,7 +285,8 @@ def _ai_extract_developer(
                 max_tokens=800,
                 temperature=0.0,
             )
-            raw = resp.choices[0].message.content.strip()
+            content = resp.choices[0].message.content
+            raw = content.strip() if content else ""
             if gemini_error:
                 logger.warning(
                     "[DeveloperScout] Cerebras fallback succeeded after Gemini failure "
@@ -567,30 +578,25 @@ class DeveloperScout:
         url = dev_info["projects_url"]
         alt_url = dev_info.get("alt_url", "")
         developer_name = dev_info["name"]
+        use_playwright = dev_info.get("use_playwright", False)
 
         raw_html = ""
         fetch_url = ""
 
         if listing_url:
-            if dev_info.get("use_playwright"):
-                raw_html = self._playwright_fetch_raw(listing_url)
-            else:
-                raw_html = self._requests_fetch_raw(listing_url)
+            raw_html = self._fetch_raw(listing_url, use_playwright, dev_key)
             fetch_url = listing_url
             if len(raw_html) < 1000 and url:
-                logger.debug(f"[DeveloperScout][{dev_key}] Listing page too short ({len(raw_html)} chars), falling back to {url}")
-                if dev_info.get("use_playwright"):
-                    raw_html = self._playwright_fetch_raw(url)
-                else:
-                    raw_html = self._requests_fetch_raw(url)
+                logger.debug(
+                    f"[DeveloperScout][{dev_key}] Listing page too short "
+                    f"({len(raw_html)} chars), falling back to {url}"
+                )
+                raw_html = self._fetch_raw(url, use_playwright, dev_key)
                 fetch_url = url
 
         if len(raw_html) < 500 and alt_url:
             logger.debug(f"[DeveloperScout][{dev_key}] Still insufficient, trying alt: {alt_url}")
-            if dev_info.get("use_playwright"):
-                raw_html = self._playwright_fetch_raw(alt_url)
-            else:
-                raw_html = self._requests_fetch_raw(alt_url)
+            raw_html = self._fetch_raw(alt_url, use_playwright, dev_key)
             fetch_url = alt_url
 
         if len(raw_html) < 500:
@@ -607,6 +613,65 @@ class DeveloperScout:
             for r in raw_items
         ]
         return [r for r in results if r is not None]
+
+    # ── Unified fetch dispatcher ──────────────────────────────────────────────
+
+    def _fetch_raw(self, url: str, use_playwright: bool, dev_key: str = "") -> str:
+        """
+        Scrapling first, existing behavior as fallback.
+        use_playwright=True  → DynamicFetcher (stealth Playwright) → raw Playwright
+        use_playwright=False → Fetcher (TLS fingerprint spoof)     → requests
+        """
+        if _SCRAPLING_OK:
+            if use_playwright:
+                html = self._scrapling_dynamic_fetch_raw(url, dev_key)
+            else:
+                html = self._scrapling_http_fetch_raw(url, dev_key)
+            if html:
+                return html
+            logger.info(f"[DeveloperScout][{dev_key}] Scrapling empty → {'Playwright' if use_playwright else 'requests'} fallback")
+
+        if use_playwright:
+            return self._playwright_fetch_raw(url)
+        return self._requests_fetch_raw(url)
+
+    # ── Scrapling fetchers ────────────────────────────────────────────────────
+
+    def _scrapling_http_fetch_raw(self, url: str, dev_key: str = "") -> str:
+        """TLS fingerprint spoofing — no browser, bypasses bot header detection."""
+        try:
+            page = Fetcher.get(url, stealthy_headers=True, timeout=30)
+            if page is None:
+                return ""
+            html = getattr(page, "body", None) or ""
+            if len(html) < 500:
+                logger.debug(f"[DeveloperScout][Scrapling HTTP][{dev_key}] {len(html)} chars — too short, skipping")
+                return ""
+            logger.debug(f"[DeveloperScout][Scrapling HTTP][{dev_key}] {len(html)} chars")
+            return html
+        except Exception as exc:
+            logger.debug(f"[DeveloperScout][Scrapling HTTP][{dev_key}] {exc}")
+        return ""
+
+    def _scrapling_dynamic_fetch_raw(self, url: str, dev_key: str = "") -> str:
+        """Stealth Playwright — patches webdriver flag, reuses existing Chromium."""
+        try:
+            page = DynamicFetcher.fetch(
+                url, headless=True, network_idle=True, disable_resources=True, timeout=30000
+            )
+            if page is None:
+                return ""
+            html = getattr(page, "body", None) or ""
+            if len(html) < 500:
+                logger.debug(f"[DeveloperScout][Scrapling Dynamic][{dev_key}] {len(html)} chars — too short, skipping")
+                return ""
+            logger.debug(f"[DeveloperScout][Scrapling Dynamic][{dev_key}] {len(html)} chars")
+            return html
+        except Exception as exc:
+            logger.debug(f"[DeveloperScout][Scrapling Dynamic][{dev_key}] {exc}")
+        return ""
+
+    # ── Legacy fetchers (fallback) ────────────────────────────────────────────
 
     def _requests_fetch_raw(self, url: str) -> str:
         try:

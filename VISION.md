@@ -312,7 +312,7 @@ One web app. Two modes. One source of truth for everything happening in the offi
 ### Phase 7 — Discord Alerts
 **Goal:** Every meaningful market event → Discord channel. Per-market channels. System health channel.
 **Effort:** 1–2 sessions
-**Status:** 🟡 IN PROGRESS — Sprint 28 (T-380–T-389)
+**Status:** 🟡 MOSTLY COMPLETE — Sprint 28 (T-380–T-389 DONE); GATE-14 pending live verification
 
 **Decision resolved (2026-05-30):** Discord with per-market channels and category structure.
 
@@ -333,16 +333,16 @@ LLS Intel Server/
 ```
 
 **Tasks:**
-- [ ] P7.1 — `database/schema.sql` + Alembic 0009: alerts table — T-380
-- [ ] P7.2 — `utils/discord_notifier.py` — DiscordNotifier with 5 formatters — T-381
-- [ ] P7.3 — `settings.py` + `.env.example` Discord config keys — T-382
-- [ ] P7.4 — Wire RERA alerts to scheduler — T-384
-- [ ] P7.5 — Wire intel report alerts to market_intel_crew — T-385
-- [ ] P7.6 — Wire competitor alerts to developer_scout — T-386
-- [ ] P7.7 — Wire price movement alerts to portal_scout — T-387
-- [ ] P7.8 — Wire system health alerts to scheduler exception handler — T-388
-- [ ] P7.9 — Dashboard: Alerts panel — T-389
-- [ ] P7.10 — GATE-14: RERA scrape → Discord message verified — T-384 completion
+- [x] P7.1 — `database/schema.sql` + Alembic 0009: alerts table — T-380
+- [x] P7.2 — `utils/discord_notifier.py` — DiscordNotifier with 5 formatters — T-381
+- [x] P7.3 — `settings.py` + `.env.example` Discord config keys — T-382
+- [x] P7.4 — Wire RERA alerts to scheduler — T-384
+- [x] P7.5 — Wire intel report alerts to market_intel_crew — T-385
+- [x] P7.6 — Wire competitor alerts to developer_scout — T-386
+- [x] P7.7 — Wire price movement alerts to portal_scout — T-387
+- [x] P7.8 — Wire system health alerts to scheduler exception handler — T-388
+- [x] P7.9 — Dashboard: Alerts panel — T-389
+- [ ] P7.10 — GATE-14: RERA scrape → Discord message verified — pending live stack test
 
 **Definition of done:** New RERA project scraped → Discord message appears in #rera-{market} channel within 30 seconds. GATE-14 passed.
 
