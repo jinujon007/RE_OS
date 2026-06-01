@@ -1,11 +1,1710 @@
 # RE_OS — Task Briefs
-**Stage 3 · 2026-05-30 | Sprints 27 + 28**
+**Stage 3 · 2026-05-30 | Sprints 27–31**
 
 This file is the single execution reference for both brains. Each brief gives complete context to perform the task with minimum back-and-forth. Read only the section for your assigned task — the rest is noise.
 
 ---
 
-# Sprint 27 + 28 Briefs
+# Sprint 29 Briefs — Intelligence Layer
+
+---
+
+# T-390 — Alembic 0010: sentiment columns on news_articles
+
+**Priority:** P1 | **Phase:** 8.5 | **Blocks:** T-392, T-394
+
+## Why
+
+The scheduler's `run_news_sentiment_scoring()` already exists and runs nightly — it writes `sentiment_score` to `news_articles`. Without the column the job silently crashes every night. This is a one-migration fix.
+
+## Steps
+
+1. Add to `database/schema.sql` (after news_articles table definition, before the next table):
+```sql
+-- Sentiment enrichment columns (added Phase 8.5 — Alembic 0010)
+-- ALTER TABLE news_articles ADD COLUMN IF NOT EXISTS sentiment_score FLOAT;
+-- ALTER TABLE news_articles ADD COLUMN IF NOT EXISTS sentiment_label VARCHAR(20);
+```
+Note: comment form only — Alembic manages live adds.
+
+2. Create `alembic/versions/0010_add_sentiment_columns.py`:
+```python
+"""Add sentiment_score + sentiment_label to news_articles (Phase 8.5).
+Revision ID: 0010_add_sentiment_columns
+Revises: 0009_add_alerts_table
+Create Date: 2026-05-30
+"""
+from typing import Sequence, Union
+import sqlalchemy as sa
+from alembic import op
+
+revision: str = "0010_add_sentiment_columns"
+down_revision: Union[str, None] = "0009_add_alerts_table"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+def upgrade() -> None:
+    op.add_column("news_articles", sa.Column("sentiment_score", sa.Float(), nullable=True))
+    op.add_column("news_articles", sa.Column("sentiment_label", sa.String(20), nullable=True))
+
+def downgrade() -> None:
+    op.drop_column("news_articles", "sentiment_label")
+    op.drop_column("news_articles", "sentiment_score")
+```
+
+## Done When
+- Alembic 0010 with correct down_revision
+- `py_compile` + `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-391 — settings.py + .env.example: HF_API_KEY + CHROMA_DB_PATH
+
+**Priority:** P1 | **Phase:** 8.5 | **Blocks:** T-392, T-393
+
+## Steps
+
+1. In `config/settings.py`, add:
+```python
+# ── Intelligence Layer (Phase 8.5) ───────────────────────────────────────────
+HF_API_KEY    = os.environ.get("HF_API_KEY", "")
+CHROMA_DB_PATH = os.environ.get("CHROMA_DB_PATH", "/app/data/chroma")
+```
+
+2. In `.env.example`, add:
+```bash
+# ── Intelligence Layer ──
+# HF API key for FinBERT sentiment scoring (free at huggingface.co/settings/tokens)
+HF_API_KEY=
+# ChromaDB persistent storage path (inside Docker — maps to a volume)
+CHROMA_DB_PATH=/app/data/chroma
+```
+
+3. In `docker-compose.yml` agents + scheduler env blocks, add:
+```yaml
+HF_API_KEY: ${HF_API_KEY:-}
+CHROMA_DB_PATH: /app/data/chroma
+```
+
+4. In `docker-compose.yml` agents + scheduler volumes, add:
+```yaml
+- chroma_data:/app/data/chroma
+```
+And at the bottom volumes section:
+```yaml
+chroma_data:
+```
+
+## Done When
+- `settings.py` has HF_API_KEY + CHROMA_DB_PATH
+- `.env.example` updated
+- `docker-compose.yml` has both env vars + shared `chroma_data` volume on agents + scheduler
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-392 — utils/sentiment.py
+
+**Priority:** P1 | **Phase:** 8.5 | **Depends on:** T-391
+
+## Why
+
+FinBERT is the standard financial sentiment model. We call HF's hosted Inference API — no local model, no GPU, no transformers dependency. If the key isn't set or the API fails, we return None and the scheduler logs a warning. Never crashes the pipeline.
+
+## Steps
+
+Create `utils/sentiment.py`:
+
+```python
+"""
+RE_OS — Sentiment Scorer (Phase 8.5 — Intelligence Layer)
+Uses HF Inference API (ProsusAI/finbert) to score news headlines as positive/negative/neutral.
+Returns a float in [-1, +1]: +1 = strongly bullish, -1 = strongly bearish, 0 = neutral.
+Gracefully returns None if HF_API_KEY is unset or the API fails.
+"""
+import json
+import os
+import urllib.request
+import urllib.error
+from loguru import logger
+
+_FINBERT_URL = "https://api-inference.huggingface.co/models/ProsusAI/finbert"
+
+_LABEL_MAP = {
+    "positive": 1.0,
+    "negative": -1.0,
+    "neutral":   0.0,
+}
+
+
+def score_headline(text: str) -> float | None:
+    """Score a news headline using FinBERT via HF Inference API.
+    Returns float in [-1, +1] or None on failure/skip."""
+    api_key = (os.environ.get("HF_API_KEY") or "").strip()
+    if not api_key:
+        logger.debug("[Sentiment] HF_API_KEY not set — skipping sentiment scoring")
+        return None
+
+    text = (text or "").strip()
+    if not text:
+        return None
+
+    payload = json.dumps({"inputs": text[:512]}).encode("utf-8")
+    req = urllib.request.Request(
+        _FINBERT_URL,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+    except Exception as exc:
+        logger.warning(f"[Sentiment] HF API error: {exc}")
+        return None
+
+    # HF returns [[{label, score}, ...]] — pick highest-confidence label
+    try:
+        candidates = result[0] if isinstance(result, list) else result
+        if isinstance(candidates, list) and candidates:
+            best = max(candidates, key=lambda x: x.get("score", 0))
+            label = best.get("label", "neutral").lower()
+            score = float(best.get("score", 0.0))
+            sentiment_float = _LABEL_MAP.get(label, 0.0) * score
+            return round(sentiment_float, 4)
+    except Exception as exc:
+        logger.warning(f"[Sentiment] Result parse error: {exc} | raw={result}")
+
+    return None
+
+
+def label_from_score(score: float | None) -> str:
+    """Convert float score to human label."""
+    if score is None:
+        return "unscored"
+    if score > 0.2:
+        return "positive"
+    if score < -0.2:
+        return "negative"
+    return "neutral"
+```
+
+## Done When
+- `utils/sentiment.py` with `score_headline()` + `label_from_score()`
+- Returns None when HF_API_KEY unset (no crash)
+- `py_compile` + `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-393 — utils/embedder.py — IntelEmbedder
+
+**Priority:** P1 | **Phase:** 8.5 | **Depends on:** T-391
+
+## Why
+
+The scheduler's `run_intel_embedding_index()` calls `IntelEmbedder().index_intel_reports(outputs_dir="/app/outputs")`. Without this class it crashes silently every night. Beyond fixing the crash, this is the foundation for semantic search over all accumulated intel — the biggest knowledge-leverage capability in Phase 8.5.
+
+## Steps
+
+Create `utils/embedder.py`:
+
+```python
+"""
+RE_OS — Intel Embedder (Phase 8.5 — Intelligence Layer)
+Indexes intel report .txt files into ChromaDB using nomic-embed-text via Ollama.
+Enables semantic search: "Yelahanka PSF trend Q1 2026" → relevant excerpts.
+Gracefully no-ops if Ollama unavailable or ChromaDB path unwriteable.
+"""
+import hashlib
+import json
+import os
+import urllib.request
+from pathlib import Path
+from loguru import logger
+
+_OLLAMA_EMBED_URL = "http://ollama:11434/api/embeddings"
+_EMBED_MODEL = "nomic-embed-text"
+_CHUNK_SIZE = 800      # chars per chunk — fits comfortably in 8192 token context
+_CHUNK_OVERLAP = 100
+
+
+def _get_chroma_client():
+    import chromadb
+    path = os.environ.get("CHROMA_DB_PATH", "/app/data/chroma")
+    os.makedirs(path, exist_ok=True)
+    return chromadb.PersistentClient(path=path)
+
+
+def _embed_text(text: str) -> list[float] | None:
+    """Call Ollama nomic-embed-text. Returns None on failure."""
+    payload = json.dumps({"model": _EMBED_MODEL, "prompt": text}).encode("utf-8")
+    req = urllib.request.Request(
+        _OLLAMA_EMBED_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+            return result.get("embedding")
+    except Exception as exc:
+        logger.debug(f"[Embedder] Ollama embed failed: {exc}")
+        return None
+
+
+def _chunk_text(text: str) -> list[str]:
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + _CHUNK_SIZE
+        chunks.append(text[start:end])
+        start = end - _CHUNK_OVERLAP
+    return [c for c in chunks if c.strip()]
+
+
+class IntelEmbedder:
+    def __init__(self):
+        self._client = None
+        self._collection = None
+
+    def _get_collection(self):
+        if self._collection is None:
+            self._client = _get_chroma_client()
+            self._collection = self._client.get_or_create_collection(
+                name="intel_reports",
+                metadata={"hnsw:space": "cosine"},
+            )
+        return self._collection
+
+    def index_intel_reports(self, outputs_dir: str = "/app/outputs") -> dict:
+        """Index all *.txt intel reports in outputs_dir.
+        Returns stats: indexed, skipped, failed."""
+        stats = {"indexed": 0, "skipped": 0, "failed": 0}
+        try:
+            collection = self._get_collection()
+        except Exception as exc:
+            logger.warning(f"[Embedder] ChromaDB init failed: {exc}")
+            return stats
+
+        outputs = Path(outputs_dir)
+        if not outputs.exists():
+            logger.debug(f"[Embedder] outputs_dir not found: {outputs_dir}")
+            return stats
+
+        for market_dir in outputs.iterdir():
+            if not market_dir.is_dir():
+                continue
+            market = market_dir.name
+            for report in sorted(market_dir.glob("intel_report_*.txt")):
+                text = report.read_text(encoding="utf-8", errors="ignore")
+                chunks = _chunk_text(text)
+                for i, chunk in enumerate(chunks):
+                    doc_id = hashlib.sha256(f"{report.name}:{i}".encode()).hexdigest()[:16]
+                    # Skip if already indexed
+                    existing = collection.get(ids=[doc_id])
+                    if existing["ids"]:
+                        stats["skipped"] += 1
+                        continue
+                    embedding = _embed_text(chunk)
+                    if embedding is None:
+                        stats["failed"] += 1
+                        continue
+                    collection.add(
+                        ids=[doc_id],
+                        embeddings=[embedding],
+                        documents=[chunk],
+                        metadatas=[{"market": market, "source": report.name, "chunk": i}],
+                    )
+                    stats["indexed"] += 1
+
+        logger.info(f"[Embedder] index_intel_reports: {stats}")
+        return stats
+
+    def query(self, question: str, market: str | None = None, n: int = 5) -> list[dict]:
+        """Semantic search over indexed intel reports.
+        Returns list of {text, market, source, score} sorted by relevance."""
+        try:
+            collection = self._get_collection()
+        except Exception as exc:
+            logger.warning(f"[Embedder] ChromaDB unavailable: {exc}")
+            return []
+
+        embedding = _embed_text(question)
+        if embedding is None:
+            return []
+
+        where = {"market": market} if market else None
+        try:
+            results = collection.query(
+                query_embeddings=[embedding],
+                n_results=min(n, 10),
+                where=where,
+                include=["documents", "metadatas", "distances"],
+            )
+        except Exception as exc:
+            logger.warning(f"[Embedder] query failed: {exc}")
+            return []
+
+        output = []
+        docs = results.get("documents", [[]])[0]
+        metas = results.get("metadatas", [[]])[0]
+        dists = results.get("distances", [[]])[0]
+        for doc, meta, dist in zip(docs, metas, dists):
+            output.append({
+                "text": doc,
+                "market": meta.get("market", ""),
+                "source": meta.get("source", ""),
+                "score": round(1 - dist, 4),   # cosine distance → similarity
+            })
+        return output
+```
+
+## Done When
+- `utils/embedder.py` with `IntelEmbedder` class: `index_intel_reports()` + `query()`
+- Graceful failure when Ollama unavailable (returns empty stats/list)
+- `py_compile` + `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-394 — tests/test_sentiment.py
+
+**Priority:** P1 | **Phase:** 8.5 | **Depends on:** T-392
+
+## Steps
+
+Create `tests/test_sentiment.py`:
+
+```python
+import pytest
+from unittest.mock import patch, MagicMock
+import json
+pytestmark = pytest.mark.unit
+
+from utils.sentiment import score_headline, label_from_score
+
+
+class TestScoreHeadline:
+    def test_returns_none_when_no_api_key(self):
+        with patch.dict("os.environ", {}, clear=True):
+            result = score_headline("Real estate prices surge in Bengaluru")
+            assert result is None
+
+    def test_positive_sentiment(self):
+        mock_resp = MagicMock()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.read.return_value = json.dumps([
+            [{"label": "positive", "score": 0.95},
+             {"label": "negative", "score": 0.03},
+             {"label": "neutral", "score": 0.02}]
+        ]).encode()
+        with patch.dict("os.environ", {"HF_API_KEY": "test_key"}):
+            with patch("urllib.request.urlopen", return_value=mock_resp):
+                result = score_headline("Property values soar in North Bengaluru")
+                assert result is not None
+                assert result > 0
+
+    def test_negative_sentiment(self):
+        mock_resp = MagicMock()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.read.return_value = json.dumps([
+            [{"label": "negative", "score": 0.88},
+             {"label": "neutral", "score": 0.10},
+             {"label": "positive", "score": 0.02}]
+        ]).encode()
+        with patch.dict("os.environ", {"HF_API_KEY": "test_key"}):
+            with patch("urllib.request.urlopen", return_value=mock_resp):
+                result = score_headline("Real estate market crashes")
+                assert result is not None
+                assert result < 0
+
+    def test_api_error_returns_none(self):
+        with patch.dict("os.environ", {"HF_API_KEY": "test_key"}):
+            with patch("urllib.request.urlopen", side_effect=Exception("timeout")):
+                result = score_headline("Market report")
+                assert result is None
+
+    def test_empty_text_returns_none(self):
+        with patch.dict("os.environ", {"HF_API_KEY": "test_key"}):
+            result = score_headline("")
+            assert result is None
+
+
+class TestLabelFromScore:
+    def test_positive_label(self):
+        assert label_from_score(0.5) == "positive"
+
+    def test_negative_label(self):
+        assert label_from_score(-0.5) == "negative"
+
+    def test_neutral_label(self):
+        assert label_from_score(0.1) == "neutral"
+
+    def test_none_returns_unscored(self):
+        assert label_from_score(None) == "unscored"
+```
+
+## Done When
+- ≥6 tests, all pass
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-395 — tests/test_embedder.py
+
+**Priority:** P1 | **Phase:** 8.5 | **Depends on:** T-393
+
+## Steps
+
+Create `tests/test_embedder.py`:
+
+```python
+import pytest
+from unittest.mock import patch, MagicMock, call
+pytestmark = pytest.mark.unit
+
+
+class TestIntelEmbedder:
+    def _make_embedder(self):
+        from utils.embedder import IntelEmbedder
+        return IntelEmbedder()
+
+    def test_index_empty_dir(self, tmp_path):
+        with patch("utils.embedder._get_chroma_client") as mock_cc, \
+             patch("utils.embedder._embed_text", return_value=[0.1] * 768):
+            mock_coll = MagicMock()
+            mock_coll.get.return_value = {"ids": []}
+            mock_cc.return_value.get_or_create_collection.return_value = mock_coll
+            from utils.embedder import IntelEmbedder
+            e = IntelEmbedder()
+            stats = e.index_intel_reports(str(tmp_path))
+            assert stats["indexed"] == 0
+            assert stats["failed"] == 0
+
+    def test_index_nonexistent_dir(self):
+        with patch("utils.embedder._get_chroma_client") as mock_cc:
+            mock_cc.return_value.get_or_create_collection.return_value = MagicMock()
+            from utils.embedder import IntelEmbedder
+            e = IntelEmbedder()
+            stats = e.index_intel_reports("/nonexistent/path")
+            assert stats["indexed"] == 0
+
+    def test_query_returns_empty_when_ollama_unavailable(self):
+        with patch("utils.embedder._embed_text", return_value=None), \
+             patch("utils.embedder._get_chroma_client") as mock_cc:
+            mock_cc.return_value.get_or_create_collection.return_value = MagicMock()
+            from utils.embedder import IntelEmbedder
+            e = IntelEmbedder()
+            result = e.query("test question")
+            assert result == []
+
+    def test_query_returns_empty_on_chroma_error(self):
+        with patch("utils.embedder._embed_text", return_value=[0.1] * 768), \
+             patch("utils.embedder._get_chroma_client", side_effect=Exception("chroma down")):
+            from utils.embedder import IntelEmbedder
+            e = IntelEmbedder()
+            result = e.query("test question")
+            assert result == []
+
+    def test_chromadb_init_failure_returns_empty_stats(self):
+        with patch("utils.embedder._get_chroma_client", side_effect=Exception("no chromadb")):
+            from utils.embedder import IntelEmbedder
+            e = IntelEmbedder()
+            stats = e.index_intel_reports("/tmp")
+            assert stats["indexed"] == 0
+            assert stats["failed"] == 0
+
+    def test_embed_text_returns_none_on_error(self):
+        with patch("urllib.request.urlopen", side_effect=Exception("ollama down")):
+            from utils.embedder import _embed_text
+            result = _embed_text("test")
+            assert result is None
+```
+
+## Done When
+- ≥6 tests, all pass
+- CHANGELOG prepended
+
+---
+
+# T-396 — /api/intel/search endpoint
+
+**Priority:** P1 | **Phase:** 8.5 | **Depends on:** T-393
+
+## Why
+
+The semantic search panel needs a backend endpoint. This wraps `embedder.query()` and sanitises the query parameter before passing it to ChromaDB.
+
+## Steps
+
+In `dashboard/app.py`:
+
+```python
+@limiter.limit("20 per minute")
+@app.route("/api/intel/search", methods=["GET"])
+def intel_search():
+    q = (request.args.get("q") or "").strip()[:200]
+    market = _normalize_market(request.args.get("market", ""))
+    if not q:
+        return jsonify({"results": [], "query": q})
+    try:
+        from utils.embedder import IntelEmbedder
+        embedder = IntelEmbedder()
+        results = embedder.query(q, market=market if market and market != "all" else None, n=5)
+        return jsonify({"results": results, "query": q, "market": market})
+    except Exception as e:
+        logger.warning(f"[intel_search] {e}")
+        return jsonify({"results": [], "query": q, "error": "search unavailable — index not built yet"})
+```
+
+Add `/api/intel/search` to `_READ_ONLY_PATHS`.
+
+## Done When
+- `/api/intel/search?q=...` returns `{"results": [...], "query": "..."}` or graceful empty
+- Rate-limited to 20/min
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-397 — Dashboard Intel Search panel
+
+**Priority:** P1 | **Phase:** 8.5 | **Depends on:** T-396
+
+## Steps
+
+Add to `dashboard/templates/index.html` infra-section:
+
+```html
+<div class="infra-section">
+  <div class="infra-title">INTEL SEARCH</div>
+  <div style="display:flex;gap:4px;margin-bottom:6px;">
+    <input id="intel-search-q" type="text" placeholder="e.g. Yelahanka PSF trend 2026"
+      style="flex:1;background:#0f1520;border:1px solid #2a3a55;color:#c9d1d9;padding:5px 8px;font-family:'Courier New',monospace;font-size:10px;border-radius:4px;"
+      onkeydown="if(event.key==='Enter')runIntelSearch()">
+    <select id="intel-search-market" style="background:#0f1520;border:1px solid #2a3a55;color:#8b949e;padding:4px;font-family:'Courier New',monospace;font-size:9px;border-radius:4px;">
+      <option value="">All</option>
+      <option value="yelahanka">Yelahanka</option>
+      <option value="devanahalli">Devanahalli</option>
+      <option value="hebbal">Hebbal</option>
+    </select>
+    <button onclick="runIntelSearch()" style="background:#1a2235;border:1px solid #2a3a55;color:#58a6ff;padding:5px 10px;font-size:9px;cursor:pointer;border-radius:4px;">SEARCH</button>
+  </div>
+  <div id="intel-search-results" style="max-height:220px;overflow-y:auto;"></div>
+  <div id="intel-search-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
+</div>
+```
+
+JS:
+```javascript
+async function runIntelSearch() {
+  const q = (document.getElementById('intel-search-q').value || '').trim();
+  const market = document.getElementById('intel-search-market').value;
+  const resultEl = document.getElementById('intel-search-results');
+  const statusEl = document.getElementById('intel-search-status');
+  if (!q) return;
+  statusEl.textContent = 'Searching…';
+  resultEl.innerHTML = '';
+  try {
+    const url = `/api/intel/search?q=${encodeURIComponent(q)}${market ? '&market='+encodeURIComponent(market) : ''}`;
+    const data = await fetch(url).then(r => r.json());
+    if (data.error) {
+      statusEl.textContent = data.error;
+      return;
+    }
+    if (!data.results || !data.results.length) {
+      resultEl.innerHTML = '<div style="color:#484f58;font-size:8px;padding:4px;">No results — run a pipeline first to build the index.</div>';
+      statusEl.textContent = '';
+      return;
+    }
+    resultEl.innerHTML = data.results.map(r => `
+      <div style="border:1px solid #1a2235;border-radius:4px;padding:6px 8px;margin-bottom:5px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+          <span style="color:#58a6ff;font-family:'Press Start 2P',cursive;font-size:6px;">${escapeHtml(r.market || '—')}</span>
+          <span style="color:#484f58;font-size:7px;">${escapeHtml(r.source || '')} · ${(r.score*100).toFixed(0)}%</span>
+        </div>
+        <div style="font-size:8px;color:#c9d1d9;line-height:1.4;">${escapeHtml((r.text||'').slice(0,280))}${(r.text||'').length>280?'…':''}</div>
+      </div>`).join('');
+    statusEl.textContent = `${data.results.length} results for "${escapeHtml(q)}"`;
+    markUpdated('intel-search');
+  } catch (e) {
+    statusEl.textContent = 'Search failed: ' + e.message;
+  }
+}
+```
+
+## Done When
+- Intel Search panel visible in dashboard infra panel
+- Enter key + button both trigger search
+- Results show excerpt + market + source + relevance %
+- Empty state guides user to run pipeline first
+- CHANGELOG prepended
+
+---
+
+# T-398 — IntelSearchTool in analyst_agent.py
+
+**Priority:** P2 | **Phase:** 8.5 | **Depends on:** T-393
+
+## Steps
+
+1. In `agents/analyst_agent.py`, add:
+
+```python
+class IntelSearchTool(BaseTool):
+    name: str = "intel_search"
+    description: str = (
+        "Search past intel reports for relevant context. "
+        "Input: JSON with 'query' (str — e.g. 'Yelahanka absorption trend Q1 2026'), "
+        "'market' (optional — Yelahanka/Devanahalli/Hebbal). "
+        "Returns top-5 excerpts from past reports with source and relevance score. "
+        "Call before forming your market assessment to leverage accumulated intelligence."
+    )
+
+    def _run(self, input_str: str) -> str:
+        try:
+            params = json.loads(input_str)
+        except (json.JSONDecodeError, TypeError):
+            return json.dumps({"error": "invalid JSON input"})
+        try:
+            from utils.embedder import IntelEmbedder
+            q = str(params.get("query", "")).strip()
+            market = params.get("market")
+            if not q:
+                return json.dumps({"results": [], "note": "empty query"})
+            results = IntelEmbedder().query(q, market=market, n=5)
+            return json.dumps({"results": results, "count": len(results)}, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e), "results": []})
+```
+
+2. Add `IntelSearchTool()` to analyst agent tools list.
+3. Update analyst backstory adjunct guidance to mention `intel_search`.
+
+## Done When
+- `IntelSearchTool` in analyst agent tools list
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-399 — Scheduler: register embedding + sentiment cron jobs
+
+**Priority:** P1 | **Phase:** 8.5 | **Depends on:** T-390, T-391
+
+## Why
+
+`run_intel_embedding_index()` and `run_news_sentiment_scoring()` are already defined in scheduler.py but not registered with APScheduler. They silently never run. This task adds the `scheduler.add_job()` calls.
+
+## Steps
+
+In `config/scheduler.py` `__main__` block, add after the memory decay job:
+
+```python
+# Intel report embedding — 4:30 AM IST (after RERA runs + before snapshot)
+scheduler.add_job(
+    lambda: _safe_job(run_intel_embedding_index, "intel_embedding"),
+    CronTrigger(hour=4, minute=30),
+    id="intel_embedding",
+    name="Nightly Intel Embedding Index",
+    misfire_grace_time=3600,
+)
+
+# News sentiment scoring — 5:00 AM IST
+scheduler.add_job(
+    lambda: _safe_job(run_news_sentiment_scoring, "news_sentiment"),
+    CronTrigger(hour=5, minute=0),
+    id="news_sentiment",
+    name="Nightly News Sentiment Scoring",
+    misfire_grace_time=3600,
+)
+```
+
+Update the startup log lines and `Active jobs` log accordingly.
+
+## Done When
+- Both jobs registered in APScheduler
+- `py_compile config/scheduler.py` + `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-400 — GATE-15: Phase 8.5 DoD Validation
+
+**Priority:** P0 | **Phase:** 8.5 | **Depends on:** T-390–T-399
+
+## Steps
+
+1. Verify Alembic migration: `docker compose exec agents alembic current` → shows `0010_add_sentiment_columns`.
+2. Test embedder standalone:
+```bash
+docker compose exec agents python -c "
+from utils.embedder import IntelEmbedder
+e = IntelEmbedder()
+stats = e.index_intel_reports('/app/outputs')
+print('Indexed:', stats)
+results = e.query('Yelahanka PSF trend', n=3)
+print('Results:', len(results))
+for r in results: print(' -', r['market'], r['source'][:40], r['score'])
+"
+```
+3. Test search API: `curl "http://localhost:8050/api/intel/search?q=absorption+rate&market=yelahanka"`
+4. Test sentiment (requires HF_API_KEY — if not set, verify graceful skip):
+```bash
+docker compose exec agents python -c "from utils.sentiment import score_headline; print(score_headline('Bengaluru real estate market grows'))"
+```
+5. Verify scheduler jobs registered: `docker compose logs scheduler | grep -E 'embedding|sentiment'`
+6. Document results in CHANGELOG.
+
+## Done When
+- Embedder indexes ≥1 report and query returns ≥1 result
+- Sentiment returns None gracefully when key unset (or valid float when key set)
+- Intel Search panel in dashboard shows results
+- VISION.md Phase 8.5 marked ✅ COMPLETE
+- CHANGELOG prepended
+
+---
+
+# Sprint 30 Briefs — Phase 12: Legal Department
+
+---
+
+# T-401 — utils/rera_compliance_checker.py
+
+**Priority:** P1 | **Phase:** 12
+
+## Why
+
+The Board Room Legal Head currently cites RERA from LLM knowledge. This module queries the live RERA data in our DB — real project counts, actual delay rates, developer track record. It makes the legal assessment factual, not narrative.
+
+## Steps
+
+Create `utils/rera_compliance_checker.py`:
+
+```python
+"""
+RE_OS — RERA Compliance Checker (Phase 12 — Legal Department)
+Queries the DB for a developer's RERA project history and compliance signals.
+"""
+from dataclasses import dataclass
+from loguru import logger
+
+
+@dataclass
+class RERAComplianceResult:
+    developer_name: str
+    total_projects: int
+    active_projects: int
+    completed_projects: int
+    delayed_projects: int
+    avg_delay_months: float
+    compliance_signal: str   # CLEAN | WATCH | RISK
+    notes: list[str]
+
+
+def check_developer_compliance(developer_name: str) -> RERAComplianceResult:
+    """Query rera_projects + developers for this developer's track record."""
+    from utils.db import get_engine
+    from sqlalchemy import text
+
+    notes = []
+    try:
+        with get_engine().connect() as conn:
+            row = conn.execute(text("""
+                SELECT
+                    COUNT(r.id) AS total,
+                    COUNT(CASE WHEN r.is_active THEN 1 END) AS active,
+                    COUNT(CASE WHEN r.project_status = 'Completed' THEN 1 END) AS completed,
+                    COUNT(CASE WHEN r.delay_months > 0 THEN 1 END) AS delayed,
+                    COALESCE(ROUND(AVG(r.delay_months)::numeric, 1), 0) AS avg_delay
+                FROM rera_projects r
+                JOIN developers d ON d.id = r.developer_id
+                WHERE d.name ILIKE :name
+            """), {"name": f"%{developer_name}%"}).fetchone()
+    except Exception as exc:
+        logger.warning(f"[RERACompliance] DB query failed: {exc}")
+        return RERAComplianceResult(
+            developer_name=developer_name,
+            total_projects=0, active_projects=0, completed_projects=0,
+            delayed_projects=0, avg_delay_months=0.0,
+            compliance_signal="UNKNOWN",
+            notes=["DB query failed — manual check required"],
+        )
+
+    if not row or row[0] == 0:
+        return RERAComplianceResult(
+            developer_name=developer_name,
+            total_projects=0, active_projects=0, completed_projects=0,
+            delayed_projects=0, avg_delay_months=0.0,
+            compliance_signal="UNKNOWN",
+            notes=["Developer not found in RERA Karnataka DB — verify name or check RERA portal directly"],
+        )
+
+    total, active, completed, delayed, avg_delay = row
+
+    if delayed == 0:
+        signal = "CLEAN"
+        notes.append(f"No delayed projects in {total} RERA-registered projects.")
+    elif delayed / max(total, 1) < 0.3 and avg_delay < 6:
+        signal = "WATCH"
+        notes.append(f"{delayed}/{total} projects delayed, avg {avg_delay}mo — within tolerable range.")
+    else:
+        signal = "RISK"
+        notes.append(f"{delayed}/{total} projects delayed, avg {avg_delay}mo — material delay risk.")
+
+    if total < 3:
+        notes.append("Fewer than 3 RERA projects — limited track record. Increase diligence.")
+
+    return RERAComplianceResult(
+        developer_name=developer_name,
+        total_projects=int(total),
+        active_projects=int(active),
+        completed_projects=int(completed),
+        delayed_projects=int(delayed),
+        avg_delay_months=float(avg_delay),
+        compliance_signal=signal,
+        notes=notes,
+    )
+```
+
+## Done When
+- `utils/rera_compliance_checker.py` created
+- Returns `UNKNOWN` gracefully when developer not found
+- `py_compile` + `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-402 — utils/zone_risk_checker.py
+
+**Priority:** P1 | **Phase:** 12
+
+## Steps
+
+Create `utils/zone_risk_checker.py`:
+
+```python
+"""
+RE_OS — Zone Risk Checker (Phase 12 — Legal Department)
+Queries regulatory_zones + overlay_constraints for a market/zone combination.
+Returns FAR, setbacks, height limit, and any overlay risk flags.
+"""
+from dataclasses import dataclass, field
+
+
+@dataclass
+class ZoneRiskResult:
+    market: str
+    zone: str
+    far: float | None
+    max_height_m: float | None
+    plot_coverage: float | None
+    setback_front_m: float | None
+    setback_side_m: float | None
+    overlay_risks: list[str] = field(default_factory=list)
+    risk_level: str = "UNKNOWN"   # LOW | MEDIUM | HIGH | UNKNOWN
+
+
+def check_zone_risk(market: str, zone: str = "R2") -> ZoneRiskResult:
+    from utils.db import get_engine
+    from sqlalchemy import text
+
+    result = ZoneRiskResult(market=market, zone=zone,
+                             far=None, max_height_m=None, plot_coverage=None,
+                             setback_front_m=None, setback_side_m=None)
+    try:
+        with get_engine().connect() as conn:
+            row = conn.execute(text("""
+                SELECT rz.far, rz.max_height_m, rz.plot_coverage,
+                       rz.setback_front_m, rz.setback_side_m
+                FROM regulatory_zones rz
+                JOIN micro_markets mm ON mm.id = rz.micro_market_id
+                WHERE mm.name ILIKE :market AND rz.zone_code = :zone
+                LIMIT 1
+            """), {"market": f"%{market}%", "zone": zone.upper()}).fetchone()
+
+            overlays = conn.execute(text("""
+                SELECT constraint_type, description
+                FROM overlay_constraints oc
+                JOIN micro_markets mm ON mm.id = oc.micro_market_id
+                WHERE mm.name ILIKE :market
+            """), {"market": f"%{market}%"}).fetchall()
+    except Exception as exc:
+        result.overlay_risks = [f"DB query failed: {exc}"]
+        return result
+
+    if row:
+        result.far, result.max_height_m, result.plot_coverage = row[0], row[1], row[2]
+        result.setback_front_m, result.setback_side_m = row[3], row[4]
+
+    risk_flags = []
+    for ov_type, ov_desc in (overlays or []):
+        if ov_type in ("airport_zone", "green_belt", "lake_buffer", "heritage_zone"):
+            risk_flags.append(f"{ov_type}: {ov_desc}")
+
+    result.overlay_risks = risk_flags
+
+    if len(risk_flags) >= 2:
+        result.risk_level = "HIGH"
+    elif len(risk_flags) == 1:
+        result.risk_level = "MEDIUM"
+    elif row:
+        result.risk_level = "LOW"
+
+    return result
+```
+
+## Done When
+- `utils/zone_risk_checker.py` created
+- Returns UNKNOWN gracefully when market not found in DB
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-403 — Add tools to Legal Head + update backstory
+
+**Priority:** P1 | **Phase:** 12 | **Depends on:** T-401, T-402
+
+## Steps
+
+1. In `agents/board_room/legal_head.py`, add tool imports + wrapper classes:
+
+```python
+from crewai.tools import BaseTool
+import json
+from utils.rera_compliance_checker import check_developer_compliance
+from utils.zone_risk_checker import check_zone_risk
+
+
+class RERAComplianceTool(BaseTool):
+    name: str = "rera_compliance_check"
+    description: str = (
+        "Check a developer's RERA Karnataka compliance record from the DB. "
+        "Input: JSON with 'developer_name' (str). "
+        "Returns: total projects, delayed count, avg delay months, CLEAN/WATCH/RISK signal."
+    )
+    def _run(self, input_str: str) -> str:
+        try:
+            params = json.loads(input_str)
+        except (json.JSONDecodeError, TypeError):
+            return json.dumps({"error": "invalid JSON"})
+        try:
+            r = check_developer_compliance(str(params.get("developer_name", "")))
+            return json.dumps({
+                "developer": r.developer_name,
+                "total_projects": r.total_projects,
+                "delayed": r.delayed_projects,
+                "avg_delay_months": r.avg_delay_months,
+                "signal": r.compliance_signal,
+                "notes": r.notes,
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+class ZoneRiskTool(BaseTool):
+    name: str = "zone_risk_check"
+    description: str = (
+        "Check regulatory zone rules and overlay constraints for a market. "
+        "Input: JSON with 'market' (Yelahanka/Devanahalli/Hebbal), 'zone' (R1/R2/C1, default R2). "
+        "Returns: FAR, height limit, setbacks, overlay risks (airport zone, green belt, lake buffer), risk level."
+    )
+    def _run(self, input_str: str) -> str:
+        try:
+            params = json.loads(input_str)
+        except (json.JSONDecodeError, TypeError):
+            return json.dumps({"error": "invalid JSON"})
+        try:
+            r = check_zone_risk(str(params.get("market", "")), str(params.get("zone", "R2")))
+            return json.dumps({
+                "market": r.market, "zone": r.zone,
+                "far": r.far, "max_height_m": r.max_height_m,
+                "plot_coverage_pct": round(r.plot_coverage * 100) if r.plot_coverage else None,
+                "setback_front_m": r.setback_front_m,
+                "overlay_risks": r.overlay_risks,
+                "risk_level": r.risk_level,
+            }, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+```
+
+2. Update `build_legal_head_agent()` to include tools and update backstory:
+```python
+tools=[RERAComplianceTool(), ZoneRiskTool()],
+```
+Update backstory to mention: "You call rera_compliance_check for any named developer and zone_risk_check for any named market before forming your verdict. Your response is grounded in DB data, not general knowledge."
+
+## Done When
+- Both tools added to legal_head agent
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-404 — agents/compliance_researcher_agent.py
+
+**Priority:** P1 | **Phase:** 12 | **Depends on:** T-401, T-402
+
+## Steps
+
+Create `agents/compliance_researcher_agent.py`:
+
+```python
+"""
+RE_OS — Compliance Researcher Agent (Phase 12 — Legal Department)
+Standalone researcher for RERA compliance, zone risk, and encumbrance checks.
+Reports to Legal Head Agent.
+"""
+from crewai import Agent
+from config.llm_router import get_analysis_llm
+from agents.board_room.legal_head import RERAComplianceTool, ZoneRiskTool
+
+
+def create_compliance_researcher_agent() -> Agent:
+    return Agent(
+        role="Compliance Researcher — Legal Division",
+        goal=(
+            "Run data-grounded compliance checks: RERA developer track record, "
+            "zone regulatory risk, and encumbrance status from Kaveri data. "
+            "Return structured findings the Legal Head can act on."
+        ),
+        backstory=(
+            "Detail-oriented legal researcher specialising in Karnataka real estate regulations. "
+            "Pulls directly from RERA Karnataka DB and Kaveri data — never guesses. "
+            "Flags every unresolved legal item with the specific Karnataka statute or regulatory body. "
+            "Output is a structured checklist: item, status, authority, recommended action."
+        ),
+        tools=[RERAComplianceTool(), ZoneRiskTool()],
+        llm=get_analysis_llm(),
+        verbose=True,
+        allow_delegation=False,
+        max_iter=3,
+    )
+
+
+if __name__ == "__main__":
+    agent = create_compliance_researcher_agent()
+    print(f"Compliance Researcher created: {agent.role}")
+    print(f"Tools: {[t.name for t in agent.tools]}")
+```
+
+## Done When
+- `agents/compliance_researcher_agent.py` created
+- `py_compile` + `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-405 — Wire Legal Head auto-context to Board Room
+
+**Priority:** P1 | **Phase:** 12 | **Depends on:** T-401, T-402
+
+## Why
+
+Engineering Head gets FSI, Finance Head gets IRR — Legal Head should get RERA compliance + zone risk automatically. Same pattern. Any pitch mentioning a developer or market gets pre-computed legal context prepended.
+
+## Steps
+
+In `crews/board_room.py`, add `key == "legal"` block in `run_single_agent()`:
+
+```python
+if key == "legal":
+    legal_context = ""
+    try:
+        from utils.rera_compliance_checker import check_developer_compliance
+        from utils.zone_risk_checker import check_zone_risk
+        # Pull RERA compliance for any developer mentioned in pitch
+        dev_match = re.search(
+            r"(Brigade|Prestige|Sobha|Godrej|Adarsh|Salarpuria|Shriram|Mantri|Puravankara)",
+            pitch, re.I
+        )
+        zone_r = check_zone_risk(market, zone="R2")
+        zone_txt = (
+            f"Zone R2 risk: {zone_r.risk_level}"
+            f"{' — overlays: ' + ', '.join(zone_r.overlay_risks) if zone_r.overlay_risks else ' — no overlay restrictions'}"
+        )
+        dev_txt = ""
+        if dev_match:
+            dev_name = dev_match.group(1)
+            rera_r = check_developer_compliance(dev_name)
+            dev_txt = (
+                f"\n[RERA RECORD — {dev_name}] "
+                f"Projects: {rera_r.total_projects} | Delayed: {rera_r.delayed_projects} "
+                f"| Avg delay: {rera_r.avg_delay_months}mo | Signal: {rera_r.compliance_signal}"
+            )
+        legal_context = f"\n\n[AUTO LEGAL CONTEXT — {market}]\n{zone_txt}{dev_txt}\n"
+    except Exception as exc:
+        logger.warning("[board_room] legal auto-context failed: %s", exc)
+    dept_question = legal_context + dept_question
+```
+
+## Done When
+- Legal dept_question auto-prepended with zone risk + developer RERA record
+- `ruff check .` + `py_compile` passes
+- CHANGELOG prepended
+
+---
+
+# T-406 — Dashboard Legal panel + /api/legal/brief
+
+**Priority:** P2 | **Phase:** 12 | **Depends on:** T-403
+
+## Steps
+
+Same pattern as Engineering and Finance panels:
+1. `GET /api/legal/brief` — returns last `legal_response` from board_sessions.
+2. Add to `_READ_ONLY_PATHS`.
+3. Dashboard infra-section with purple accent, shows market + CLEAR/RISK/BLOCKED badge + response excerpt.
+
+## Done When
+- `/api/legal/brief` endpoint live
+- Legal panel in dashboard
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-407 — GATE-16: Phase 12 DoD
+
+**Priority:** P0 | **Phase:** 12 | **Depends on:** T-401–T-406
+
+## Steps
+
+1. Pitch: `"5-acre Devanahalli site, R2 zone, Brigade developer — should LLS proceed?"`
+2. Poll until complete.
+3. Verify Legal column cites:
+   - Brigade's actual RERA project count from DB
+   - Devanahalli R2 zone risk level (should be LOW from regulatory_zones seed)
+4. Document session_id + Legal excerpt in CHANGELOG.
+
+## Done When
+- Legal Head response contains DB-sourced data (not generic prose)
+- VISION.md Phase 12 status updated to ✅ COMPLETE
+- CHANGELOG prepended with evidence
+
+---
+
+# Sprint 31 Briefs — Phase 8: Agent Hiring
+
+---
+
+# T-408 — agents/registry/ + _schema.yaml
+
+**Priority:** P1 | **Phase:** 8 | **Blocks:** T-409, T-411
+
+## Steps
+
+1. Create `agents/registry/` directory.
+2. Create `agents/registry/_schema.yaml` (schema documentation, not loaded by code):
+
+```yaml
+# RE_OS Agent Registry — spec schema
+# Every file in this directory (except _schema.yaml) is an agent spec.
+# Field rules:
+#   id:              unique, kebab-case, used as DB primary key
+#   name:            display name (string)
+#   role:            CrewAI Agent role string
+#   department:      bd | engineering | finance | legal | ops | process | scout | board
+#   reports_to:      id of manager agent (or "ceo")
+#   persona:         backstory paragraph — determines agent's voice and priorities
+#   llm_tier:        heavy | analysis | light — maps to llm_router.py tiers
+#   tools:           list of tool class names available in tool_registry
+#                    Known tools: MarketSummaryTool, CompetitorAnalysisTool,
+#                    DistressedDeveloperListTool, ReportGeneratorTool, FeasibilityTool,
+#                    FSICalculatorTool, TypologyRecommenderTool, GreenCoverageTool,
+#                    FeasibilityAnalystTool, IntelSearchTool, RERAComplianceTool, ZoneRiskTool
+#   markets:         list — [Yelahanka, Devanahalli, Hebbal] or []
+#   memory_context:  market slug injected into system prompt — "yelahanka" | "devanahalli" | ""
+#   active:          true | false
+#   hired_on:        YYYY-MM-DD
+#   max_iter:        int (default 3)
+```
+
+## Done When
+- `agents/registry/` directory exists
+- `agents/registry/_schema.yaml` committed with field documentation
+- CHANGELOG prepended
+
+---
+
+# T-409 — Alembic 0011 + schema.sql: agent_registry table
+
+**Priority:** P1 | **Phase:** 8 | **Depends on:** T-408
+
+## Steps
+
+1. Add to `database/schema.sql`:
+```sql
+CREATE TABLE IF NOT EXISTS agent_registry (
+    id          VARCHAR(100) PRIMARY KEY,
+    name        TEXT NOT NULL,
+    role        TEXT NOT NULL,
+    department  VARCHAR(50),
+    spec        JSONB NOT NULL,
+    llm_tier    VARCHAR(20) NOT NULL DEFAULT 'analysis'
+                CHECK (llm_tier IN ('heavy', 'analysis', 'light')),
+    active      BOOLEAN NOT NULL DEFAULT TRUE,
+    hired_on    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+2. Create `alembic/versions/0011_add_agent_registry.py`:
+```python
+"""Add agent_registry table (Phase 8 — Agent Hiring).
+Revision ID: 0011_add_agent_registry
+Revises: 0010_add_sentiment_columns
+"""
+from typing import Sequence, Union
+import sqlalchemy as sa
+from alembic import op
+
+revision: str = "0011_add_agent_registry"
+down_revision: Union[str, None] = "0010_add_sentiment_columns"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+def upgrade() -> None:
+    op.create_table(
+        "agent_registry",
+        sa.Column("id", sa.String(100), primary_key=True),
+        sa.Column("name", sa.Text(), nullable=False),
+        sa.Column("role", sa.Text(), nullable=False),
+        sa.Column("department", sa.String(50)),
+        sa.Column("spec", sa.dialects.postgresql.JSONB(), nullable=False),
+        sa.Column("llm_tier", sa.String(20), nullable=False, server_default="analysis"),
+        sa.Column("active", sa.Boolean(), nullable=False, server_default="true"),
+        sa.Column("hired_on", sa.TIMESTAMP(timezone=True), nullable=False,
+                  server_default=sa.text("NOW()")),
+        sa.CheckConstraint("llm_tier IN ('heavy','analysis','light')", name="chk_registry_llm_tier"),
+    )
+
+def downgrade() -> None:
+    op.drop_table("agent_registry")
+```
+
+## Done When
+- `agent_registry` table in schema.sql + Alembic 0011
+- Correct `down_revision = "0010_add_sentiment_columns"`
+- CHANGELOG prepended
+
+---
+
+# T-410 — agents/agent_factory.py
+
+**Priority:** P1 | **Phase:** 8 | **Depends on:** T-408
+
+## Why
+
+This is the central registry loader — it reads YAML spec files, resolves tool names to classes, and returns a CrewAI Agent. It also syncs the registry to DB on startup. The Hiring Panel (T-413) writes YAML files; this function is what turns those files into live agents.
+
+## Steps
+
+Create `agents/agent_factory.py`:
+
+```python
+"""
+RE_OS — Agent Factory (Phase 8 — Agent Hiring & Onboarding)
+Loads agent spec YAML files from agents/registry/ and instantiates CrewAI Agents.
+Syncs the registry to the agent_registry DB table on startup.
+"""
+import os
+from pathlib import Path
+from loguru import logger
+
+_REGISTRY_DIR = Path(__file__).parent / "registry"
+
+_TOOL_REGISTRY: dict = {}
+
+
+def _get_tool_registry() -> dict:
+    """Lazily build tool name → class map. Imported once."""
+    global _TOOL_REGISTRY
+    if _TOOL_REGISTRY:
+        return _TOOL_REGISTRY
+    try:
+        from agents.analyst_agent import (
+            MarketSummaryTool, CompetitorAnalysisTool,
+            DistressedDeveloperListTool, ReportGeneratorTool,
+            FeasibilityTool, FeasibilityAnalystTool, IntelSearchTool,
+        )
+        from agents.architect_agent import FSICalculatorTool, TypologyRecommenderTool, GreenCoverageTool
+        from agents.board_room.legal_head import RERAComplianceTool, ZoneRiskTool
+        _TOOL_REGISTRY = {
+            "MarketSummaryTool": MarketSummaryTool,
+            "CompetitorAnalysisTool": CompetitorAnalysisTool,
+            "DistressedDeveloperListTool": DistressedDeveloperListTool,
+            "ReportGeneratorTool": ReportGeneratorTool,
+            "FeasibilityTool": FeasibilityTool,
+            "FeasibilityAnalystTool": FeasibilityAnalystTool,
+            "IntelSearchTool": IntelSearchTool,
+            "FSICalculatorTool": FSICalculatorTool,
+            "TypologyRecommenderTool": TypologyRecommenderTool,
+            "GreenCoverageTool": GreenCoverageTool,
+            "RERAComplianceTool": RERAComplianceTool,
+            "ZoneRiskTool": ZoneRiskTool,
+        }
+    except Exception as exc:
+        logger.warning(f"[AgentFactory] Tool registry partially loaded: {exc}")
+    return _TOOL_REGISTRY
+
+
+def load_spec(yaml_path: Path) -> dict:
+    """Load and validate a YAML agent spec. Returns dict or raises ValueError."""
+    import yaml
+    with open(yaml_path, encoding="utf-8") as f:
+        spec = yaml.safe_load(f)
+    required = ("id", "name", "role", "persona", "llm_tier")
+    for field in required:
+        if not spec.get(field):
+            raise ValueError(f"Agent spec {yaml_path.name} missing required field: '{field}'")
+    if spec["llm_tier"] not in ("heavy", "analysis", "light"):
+        raise ValueError(f"Invalid llm_tier '{spec['llm_tier']}' in {yaml_path.name}")
+    return spec
+
+
+def build_agent_from_spec(spec: dict):
+    """Instantiate a CrewAI Agent from a spec dict."""
+    from crewai import Agent
+    from config.llm_router import get_heavy_llm, get_analysis_llm, get_light_llm
+
+    tier = spec.get("llm_tier", "analysis")
+    llm_fn = {"heavy": get_heavy_llm, "analysis": get_analysis_llm, "light": get_light_llm}.get(tier, get_analysis_llm)
+    llm = llm_fn()
+
+    tool_registry = _get_tool_registry()
+    tools = []
+    for tool_name in (spec.get("tools") or []):
+        tool_cls = tool_registry.get(tool_name)
+        if tool_cls:
+            tools.append(tool_cls())
+        else:
+            logger.warning(f"[AgentFactory] Unknown tool '{tool_name}' — skipped")
+
+    return Agent(
+        role=spec["role"],
+        goal=spec.get("goal", spec["role"]),
+        backstory=spec["persona"],
+        tools=tools,
+        llm=llm,
+        verbose=False,
+        allow_delegation=False,
+        max_iter=int(spec.get("max_iter", 3)),
+    )
+
+
+def scan_registry(registry_dir: Path = _REGISTRY_DIR) -> list[dict]:
+    """Return list of loaded specs from registry dir (excludes _schema.yaml)."""
+    specs = []
+    if not registry_dir.exists():
+        return specs
+    for yaml_file in sorted(registry_dir.glob("*.yaml")):
+        if yaml_file.name.startswith("_"):
+            continue
+        try:
+            specs.append(load_spec(yaml_file))
+        except Exception as exc:
+            logger.warning(f"[AgentFactory] Skipping {yaml_file.name}: {exc}")
+    return specs
+
+
+def sync_registry_to_db(registry_dir: Path = _REGISTRY_DIR) -> int:
+    """Upsert all registry YAML specs into agent_registry DB table. Returns count."""
+    from utils.db import get_engine
+    from sqlalchemy import text
+    import json
+
+    specs = scan_registry(registry_dir)
+    if not specs:
+        return 0
+
+    synced = 0
+    try:
+        with get_engine().begin() as conn:
+            for spec in specs:
+                conn.execute(text("""
+                    INSERT INTO agent_registry (id, name, role, department, spec, llm_tier, active, hired_on)
+                    VALUES (:id, :name, :role, :dept, :spec::jsonb, :tier, :active, NOW())
+                    ON CONFLICT (id) DO UPDATE SET
+                        name=EXCLUDED.name, role=EXCLUDED.role,
+                        department=EXCLUDED.department, spec=EXCLUDED.spec,
+                        llm_tier=EXCLUDED.llm_tier, active=EXCLUDED.active
+                """), {
+                    "id": spec["id"],
+                    "name": spec["name"],
+                    "role": spec["role"],
+                    "dept": spec.get("department"),
+                    "spec": json.dumps(spec),
+                    "tier": spec["llm_tier"],
+                    "active": spec.get("active", True),
+                })
+                synced += 1
+    except Exception as exc:
+        logger.warning(f"[AgentFactory] DB sync failed: {exc}")
+
+    logger.info(f"[AgentFactory] Synced {synced} agents to registry")
+    return synced
+```
+
+## Done When
+- `agents/agent_factory.py` with `load_spec`, `build_agent_from_spec`, `scan_registry`, `sync_registry_to_db`
+- Missing tool name logs warning (not crash)
+- `py_compile` + `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-411 — Built-in registry YAML files (3 market specialists)
+
+**Priority:** P1 | **Phase:** 8 | **Depends on:** T-408
+
+## Steps
+
+Create `agents/registry/market_analyst_yelahanka.yaml`:
+```yaml
+id: market_analyst_yelahanka
+name: Rajan Rao
+role: Market Intelligence Analyst — Yelahanka
+department: engineering
+reports_to: ceo
+persona: |
+  Senior analyst specialising in the Yelahanka micro-market. Deep knowledge of
+  North Bengaluru residential dynamics, IT-sector hiring cycles, RERA absorption
+  rates in the ₹50L–₹1.5Cr band, and developer activity from Brigade, Prestige,
+  and Sobha. Tracks every new launch, price movement, and RERA registration in
+  this corridor. Output is always a decision-ready brief with a go/no-go signal.
+llm_tier: analysis
+tools:
+  - MarketSummaryTool
+  - CompetitorAnalysisTool
+  - IntelSearchTool
+markets: [Yelahanka]
+memory_context: yelahanka
+active: true
+hired_on: "2026-05-30"
+max_iter: 3
+```
+
+Create `agents/registry/market_analyst_devanahalli.yaml` (same structure, Devanahalli context, airport corridor expertise).
+
+Create `agents/registry/market_analyst_hebbal.yaml` (same structure, Hebbal context, lakeside/urban fringe expertise).
+
+## Done When
+- 3 YAML files in `agents/registry/`
+- Each has all required fields (id, name, role, persona, llm_tier)
+- `scan_registry()` returns 3 specs without error
+- CHANGELOG prepended
+
+---
+
+# T-412 — /api/registry endpoint + sync on startup
+
+**Priority:** P1 | **Phase:** 8 | **Depends on:** T-409, T-410
+
+## Steps
+
+1. In `dashboard/app.py`, add:
+
+```python
+@limiter.limit("30 per minute")
+@app.route("/api/registry", methods=["GET"])
+def list_registry():
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, name, role, department, llm_tier, active, hired_on
+            FROM agent_registry ORDER BY department, name
+        """)
+        rows = [
+            {"id": r[0], "name": r[1], "role": r[2], "department": r[3],
+             "llm_tier": r[4], "active": r[5],
+             "hired_on": r[6].isoformat() if r[6] else None}
+            for r in cur.fetchall()
+        ]
+        cur.close()
+        return jsonify({"agents": rows})
+    except Exception as e:
+        exc = True
+        logger.error("[list_registry] %s", e)
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+```
+
+2. Add `/api/registry` to `_READ_ONLY_PATHS`.
+
+3. Add `POST /api/registry` (auth-gated) to hire a new agent by posting YAML content.
+
+4. In `docker-compose.yml` agents command, add registry sync before gunicorn:
+```yaml
+command:
+  - sh
+  - -c
+  - alembic upgrade head && python -c "from agents.agent_factory import sync_registry_to_db; sync_registry_to_db()" && exec gunicorn ...
+```
+
+## Done When
+- `GET /api/registry` returns all registry agents
+- Startup syncs YAML files to DB
+- `ruff check .` passes
+- CHANGELOG prepended
+
+---
+
+# T-413 — Dashboard Agent Hiring panel
+
+**Priority:** P2 | **Phase:** 8 | **Depends on:** T-412
+
+## Steps
+
+Add to `dashboard/templates/index.html`:
+
+```html
+<div class="infra-section">
+  <div class="infra-title">AGENT REGISTRY</div>
+  <div id="registry-list" style="max-height:200px;overflow-y:auto;"></div>
+  <div id="registry-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
+</div>
+```
+
+JS: `pollRegistry()` fetches `/api/registry`, renders agent cards with name, dept, llm_tier, active badge. Refresh every 60s.
+
+Active agents show green dot. Inactive agents greyed out. Department shown as colour-coded tag.
+
+## Done When
+- Registry panel shows all registered agents
+- Active/inactive badges correct
+- CHANGELOG prepended
+
+---
+
+# T-414 — tests/test_agent_factory.py
+
+**Priority:** P1 | **Phase:** 8 | **Depends on:** T-410
+
+## Steps
+
+Create `tests/test_agent_factory.py`:
+
+```python
+import pytest
+from pathlib import Path
+pytestmark = pytest.mark.unit
+
+
+def _write_spec(tmp_path: Path, content: str, name: str = "test_agent.yaml") -> Path:
+    p = tmp_path / name
+    p.write_text(content)
+    return p
+
+
+class TestLoadSpec:
+    def test_valid_spec(self, tmp_path):
+        from agents.agent_factory import load_spec
+        p = _write_spec(tmp_path, """
+id: test_agent
+name: Test Agent
+role: Test Role
+persona: A test persona for unit tests.
+llm_tier: analysis
+""")
+        spec = load_spec(p)
+        assert spec["id"] == "test_agent"
+        assert spec["llm_tier"] == "analysis"
+
+    def test_missing_required_field_raises(self, tmp_path):
+        from agents.agent_factory import load_spec
+        p = _write_spec(tmp_path, "id: test\nname: Test\n")  # missing role, persona, llm_tier
+        with pytest.raises(ValueError, match="missing required field"):
+            load_spec(p)
+
+    def test_invalid_llm_tier_raises(self, tmp_path):
+        from agents.agent_factory import load_spec
+        p = _write_spec(tmp_path, """
+id: t\nname: T\nrole: R\npersona: P\nllm_tier: superfast
+""")
+        with pytest.raises(ValueError, match="llm_tier"):
+            load_spec(p)
+
+
+class TestScanRegistry:
+    def test_empty_dir(self, tmp_path):
+        from agents.agent_factory import scan_registry
+        result = scan_registry(tmp_path)
+        assert result == []
+
+    def test_skips_schema_file(self, tmp_path):
+        from agents.agent_factory import scan_registry
+        _write_spec(tmp_path, "skip: true", "_schema.yaml")
+        result = scan_registry(tmp_path)
+        assert result == []
+
+    def test_loads_valid_spec(self, tmp_path):
+        from agents.agent_factory import scan_registry
+        _write_spec(tmp_path, """
+id: x\nname: X\nrole: R\npersona: P\nllm_tier: light
+""")
+        result = scan_registry(tmp_path)
+        assert len(result) == 1
+        assert result[0]["id"] == "x"
+
+    def test_skips_invalid_spec_logs_warning(self, tmp_path):
+        from agents.agent_factory import scan_registry
+        _write_spec(tmp_path, "id: bad\n")  # missing fields
+        result = scan_registry(tmp_path)
+        assert result == []  # bad spec skipped, no crash
+
+    def test_nonexistent_dir_returns_empty(self):
+        from agents.agent_factory import scan_registry
+        result = scan_registry(Path("/nonexistent/registry"))
+        assert result == []
+```
+
+## Done When
+- ≥8 tests, all pass
+- CHANGELOG prepended
+
+---
+
+# T-415 — GATE-17: Phase 8 DoD
+
+**Priority:** P0 | **Phase:** 8 | **Depends on:** T-408–T-414
+
+## Steps
+
+1. Verify sync on startup: `docker compose restart agents && docker compose logs agents | grep AgentFactory`
+   — should show "Synced 3 agents to registry".
+2. `GET /api/registry` → returns 3 market analysts.
+3. Dashboard Agent Registry panel shows 3 agents.
+4. Manually hire a 4th agent (Hebbal Senior Specialist):
+   - POST to `/api/registry` with a new spec (or manually create YAML + restart)
+   - Verify new agent appears in `/api/registry` response
+5. Document in CHANGELOG.
+
+## Done When
+- 3 built-in agents visible in `/api/registry`
+- Hiring a new agent (via restart after YAML add) reflects immediately
+- VISION.md Phase 8 updated to ✅ COMPLETE
+- CHANGELOG prepended
+
+---
+
+# Sprint 27 + 28 Briefs (archived)
 
 ---
 

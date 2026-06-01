@@ -438,9 +438,29 @@ Two AI brains co-develop (Claude Code + Cline). Rules:
 
 ---
 
+### Phase 8.5 — Intelligence Layer (Semantic Search + Sentiment)
+**Goal:** Accumulated intel reports become queryable. News articles scored by FinBERT sentiment. Analyst uses past intelligence as context before forming market assessments.
+**Effort:** 1–2 sessions
+**Status:** 🟡 IN PROGRESS — scheduler already has run_intel_embedding_index() + run_news_sentiment_scoring(); backing utilities being built (Sprint 29)
+
+**Tasks:**
+- [ ] P8.5.1 — Alembic 0010: sentiment_score + sentiment_label on news_articles — T-390
+- [ ] P8.5.2 — utils/sentiment.py — HF FinBERT API, graceful skip if key unset — T-392
+- [ ] P8.5.3 — utils/embedder.py — IntelEmbedder (ChromaDB + nomic-embed-text Ollama) — T-393
+- [ ] P8.5.4 — /api/intel/search endpoint — T-396
+- [ ] P8.5.5 — Dashboard Intel Search panel — T-397
+- [ ] P8.5.6 — IntelSearchTool in Analyst Agent — T-398
+- [ ] P8.5.7 — Scheduler: register embedding + sentiment cron jobs — T-399
+- [ ] P8.5.8 — GATE-15 DoD — T-400
+
+**Definition of done:** Semantic query "Yelahanka PSF trend" returns excerpts from past reports. Sentiment job scores new articles nightly.
+
+---
+
 ### Phase 8 — Agent Hiring & Onboarding System
 **Goal:** The office is never frozen at a fixed headcount. New agents (employees) can be defined, hired, and onboarded without touching core code. Jinu writes a job description; the system creates the agent.
 **Effort:** 2–3 sessions
+**Status:** 🟡 IN PROGRESS — Sprint 31 (T-408–T-415)
 **Status:** Not started. Foundational for long-term scalability.
 
 **The concept:**
@@ -568,9 +588,27 @@ One agent whose only job is watching the other agents. It reads run logs, measur
 
 ---
 
-### Phase 12 — Legal Department
-**Goal:** Real estate legal intelligence. Title chains, encumbrance, RERA compliance, regulatory risk.
-**Effort:** 2–3 sessions
+### Phase 12 — Legal Department (Real Tools)
+**Goal:** Real estate legal intelligence. Title chains, encumbrance, RERA compliance, regulatory risk — all DB-grounded, not LLM guesses.
+**Effort:** 1–2 sessions
+**Status:** 🟡 IN PROGRESS — Sprint 30 (T-401–T-407)
+
+**Decision 7 resolved (2026-05-30):** Data sources = Kaveri Online (already scraped) + RERA Karnataka DB + regulatory_zones table. Indiankanoon deferred.
+
+**Tasks:**
+- [ ] P12.1 — utils/rera_compliance_checker.py — T-401
+- [ ] P12.2 — utils/zone_risk_checker.py — T-402
+- [ ] P12.3 — RERAComplianceTool + ZoneRiskTool → Legal Head agent — T-403
+- [ ] P12.4 — agents/compliance_researcher_agent.py — T-404
+- [ ] P12.5 — Wire Legal Head auto-context to Board Room — T-405
+- [ ] P12.6 — Dashboard Legal panel — T-406
+- [ ] P12.7 — GATE-16 DoD — T-407
+
+**Definition of done:** Board Room pitch with developer name + market → Legal Head cites actual RERA project count + zone risk level from DB. GATE-16 passed.
+
+---
+
+### Phase 12 — Legal Department (original spec reference)
 **Status:** Not started. High value for land acquisition decisions — should be wired to Finance feasibility.
 
 **Tasks:**

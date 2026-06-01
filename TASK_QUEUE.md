@@ -1,6 +1,108 @@
 # RE_OS — Task Queue
 **Stage 3 · 2026-05-30 | Single-brain: Kilo Code**
-**Next task ID: T-389**
+**Next task ID: T-420**
+
+---
+
+## Sprint 29 — Intelligence Layer (Semantic Search + Sentiment)
+**Goal:** Accumulated intel reports become queryable. News articles scored by sentiment. Analyst uses past intelligence as context.
+**Exit criterion:** GATE-15 passed — semantic query returns relevant past report excerpts. Scheduler embedding + sentiment jobs run without error.
+
+### Foundations (P1)
+
+| ID | Description | Priority | Status | Notes |
+|----|-------------|----------|--------|-------|
+| T-390 | Alembic 0010 + schema.sql — add sentiment_score FLOAT + sentiment_label VARCHAR(20) to news_articles | P1 | PENDING | Required by scheduler run_news_sentiment_scoring(); both nullable |
+| T-391 | settings.py + .env.example — HF_API_KEY + CHROMA_DB_PATH | P1 | PENDING | HF_API_KEY → HF Inference API for FinBERT; CHROMA_DB_PATH=/app/data/chroma default |
+| T-392 | utils/sentiment.py — score_headline(text) → float \| None via HF FinBERT API | P1 | PENDING | POST to https://api-inference.huggingface.co/models/ProsusAI/finbert; map positive/negative/neutral to +1/0/-1; graceful None if key unset or API error |
+| T-393 | utils/embedder.py — IntelEmbedder class: index_intel_reports() + query() | P1 | PENDING | ChromaDB persistent client at CHROMA_DB_PATH; embed via nomic-embed-text Ollama endpoint; index each *.txt in outputs/; query returns top-N excerpts with source file |
+| T-394 | tests/test_sentiment.py — ≥6 unit tests | P1 | PENDING | Mock HF API: positive/negative/neutral response → correct float, API error → None, key unset → None |
+| T-395 | tests/test_embedder.py — ≥6 unit tests | P1 | PENDING | Mock ChromaDB + Ollama: index empty dir, query with no docs, index 1 report then query |
+
+### Dashboard + Agent Wiring (P1/P2)
+
+| ID | Description | Priority | Status | Notes |
+|----|-------------|----------|--------|-------|
+| T-396 | dashboard/app.py — GET /api/intel/search?q=&market= endpoint | P1 | PENDING | Wraps embedder.query(); returns top-5 excerpts with source_file + market; graceful empty when ChromaDB not indexed; rate-limit 20/min; add to _READ_ONLY_PATHS |
+| T-397 | Dashboard Intel Search panel — text input + market selector + results list | P1 | PENDING | New infra-section; fetch on submit; results show excerpt (first 300 chars) + source filename + market badge |
+| T-398 | IntelSearchTool in agents/analyst_agent.py — wraps embedder.query() | P2 | PENDING | Tool: query past intel reports for context before answering market questions; ADJUNCT — not in standard pipeline sequence |
+| T-399 | Scheduler: wire embedding + sentiment jobs at 4:30 AM + 5:00 AM IST | P1 | PENDING | scheduler.py already has run_intel_embedding_index() and run_news_sentiment_scoring() — add APScheduler jobs for both; CHROMA_DB_PATH must be same docker volume as agents |
+| T-400 | GATE-15 — Phase 8.5 DoD: query "Yelahanka PSF trend" → returns past report excerpts; sentiment job runs without crash | P0 | PENDING | docker compose exec agents python -c "from utils.embedder import IntelEmbedder; e=IntelEmbedder(); print(e.query('Yelahanka PSF trend', n=3))"; check CHANGELOG |
+
+### Sprint 29 Gate
+
+| Gate | Unlocked By | Status |
+|------|-------------|--------|
+| GATE-15 | T-400 — semantic query returns excerpts; sentiment column exists; scheduler jobs registered | PENDING |
+
+---
+
+## Sprint 30 — Phase 12: Legal Department (Real Tools)
+**Goal:** Legal Head backed by real Kaveri + RERA data. Encumbrance check, RERA compliance, zone risk — all from DB and scrapers, not LLM knowledge.
+**Exit criterion:** GATE-16 passed — Board Room Legal Head returns data-grounded compliance verdict, not prose guesses.
+
+**Decision 7 resolved (2026-05-30):** Data sources = Kaveri Online (already integrated via kaveri_karnataka.py) + RERA Karnataka DB + regulatory_zones table. Indiankanoon deferred.
+
+### Legal Tools (P1)
+
+| ID | Description | Priority | Status | Notes |
+|----|-------------|----------|--------|-------|
+| T-401 | utils/rera_compliance_checker.py — RERAComplianceChecker: check developer RERA record from DB | P1 | PENDING | Input: developer_name; query rera_projects + developers tables; returns: total projects, active/completed split, delayed count, avg delay months, any is_active=False anomalies |
+| T-402 | utils/zone_risk_checker.py — ZoneRiskChecker: market + zone → regulatory risk summary | P1 | PENDING | Input: market, zone; query regulatory_zones table; returns: FAR, setbacks, max height, airport/greenbelt flags from overlay_constraints table; flag if zone is restricted |
+| T-403 | RERAComplianceTool + ZoneRiskTool — add to agents/board_room/legal_head.py | P1 | PENDING | BaseTool wrappers; update legal_head agent backstory to mention real data sources; max_iter stays 2 |
+| T-404 | agents/compliance_researcher_agent.py — standalone Legal/Compliance Researcher | P1 | PENDING | Uses RERAComplianceTool + ZoneRiskTool + EncumbranceCheckTool (Kaveri wrapper); ANALYSIS LLM tier; reports to Legal Head |
+| T-405 | utils/kaveri_encumbrance.py — EncumbranceChecker: wraps existing kaveri scraper, queries guidance_values + kaveri_registrations from DB | P1 | PENDING | Input: market, survey_no (optional); returns: avg guidance value PSF, registration count in 180-day window, avg transaction PSF, guidance gap %; uses DB-first, Kaveri portal fallback |
+| T-406 | Wire Legal Head auto-context to Board Room — guidance value + zone risk pre-computed | P1 | PENDING | In board_room.py, key=="legal": query guidance_values + regulatory_zones for pitch market; prepend to legal dept_question (same pattern as engineering FSI + finance IRR) |
+
+### Dashboard + Docs (P2)
+
+| ID | Description | Priority | Status | Notes |
+|----|-------------|----------|--------|-------|
+| T-407 | Dashboard Legal panel — /api/legal/brief endpoint + UI section | P2 | PENDING | GET: last legal_response from board_sessions; panel shows market, CLEAR/RISK/BLOCKED badge + response excerpt |
+| T-408 | GATE-16 — Phase 12 DoD: Board Room pitch with market → Legal Head returns RERA data + zone risk, not generic prose | P0 | PENDING | Pitch: "5-acre Devanahalli site, R2 zone, Brigade developer"; verify Legal column cites actual RERA project count, guidance PSF from DB; CHANGELOG evidence |
+
+### Sprint 30 Gate
+
+| Gate | Unlocked By | Status |
+|------|-------------|--------|
+| GATE-16 | T-408 — Legal Head response contains DB-sourced RERA + zone data | PENDING |
+
+---
+
+## Sprint 31 — Phase 8: Agent Hiring & Onboarding
+**Goal:** New agents can be defined in a YAML file and hired from the dashboard — no Python changes, no Dockerfile rebuild.
+**Exit criterion:** GATE-17 passed — hire a "Hebbal Specialist" from the dashboard; it appears in the org chart and responds to direct commands.
+
+### Agent Registry Infrastructure (P1)
+
+| ID | Description | Priority | Status | Notes |
+|----|-------------|----------|--------|-------|
+| T-409 | agents/registry/ folder + _schema.yaml — agent spec schema definition | P1 | PENDING | Fields: id, name, role, department, reports_to, persona, llm_tier, tools (list), memory_context (market), markets (list), active, hired_on |
+| T-410 | Alembic 0011 + schema.sql — agent_registry table | P1 | PENDING | id VARCHAR(100) PK, name TEXT, role TEXT, department VARCHAR(50), spec JSONB, llm_tier VARCHAR(20), active BOOL DEFAULT true, hired_on TIMESTAMPTZ |
+| T-411 | agents/agent_factory.py — reads YAML spec → instantiates CrewAI Agent | P1 | PENDING | scan_registry(registry_dir) → list[Agent]; load_agent(spec_id) → Agent; validate: required fields, llm_tier in (heavy/analysis/light), tools must be known names |
+| T-412 | On agents container startup: scan agents/registry/ → upsert agent_registry DB | P1 | PENDING | In dashboard/app.py startup (or docker-compose command): call agent_factory.sync_registry_to_db(); idempotent upsert on id |
+| T-413 | agents/registry/market_analyst_yelahanka.yaml — first built-in registry agent | P1 | PENDING | Yelahanka specialist; tools: [MarketSummaryTool, CompetitorAnalysisTool]; llm_tier: analysis; markets: [Yelahanka] |
+| T-414 | agents/registry/market_analyst_devanahalli.yaml + market_analyst_hebbal.yaml | P1 | PENDING | Same pattern; different market context; hired_on: 2026-05-30 |
+
+### Dashboard Hiring Panel (P2)
+
+| ID | Description | Priority | Status | Notes |
+|----|-------------|----------|--------|-------|
+| T-415 | /api/registry endpoint — GET (list all agents) + POST (hire new agent from YAML template) | P1 | PENDING | GET: returns agent_registry rows; POST: accepts JSON spec, writes YAML to agents/registry/, syncs DB; add GET to _READ_ONLY_PATHS |
+| T-416 | Dashboard Agent Hiring panel — registry list + hire-from-template form | P2 | PENDING | New infra-section; list all registered agents with status badge; "New Agent" button → form with role/dept/persona/market fields; POST to /api/registry |
+| T-417 | Org Chart enhanced — pulls from agent_registry table (not just _agent_states dict) | P2 | PENDING | /api/agents falls back to agent_registry when DB agent_runs is sparse; org chart shows ALL registered agents, not just 5 hardcoded ones |
+| T-418 | tests/test_agent_factory.py — ≥8 unit tests | P1 | PENDING | Load valid YAML → Agent, missing required field → ValueError, unknown tool → warning (not crash), scan empty dir → [], sync to DB mock |
+| T-419 | GATE-17 — Phase 8 DoD: hire Hebbal Specialist from dashboard; appears in org chart; responds to /api/agents | P0 | PENDING | POST /api/registry with Hebbal Specialist spec; GET /api/agents shows new agent; CHANGELOG evidence |
+
+### Sprint 31 Gate
+
+| Gate | Unlocked By | Status |
+|------|-------------|--------|
+| GATE-17 | T-419 — Hebbal Specialist hired from dashboard, visible in org chart | PENDING |
+
+---
+
+## Sprint 26 — Phase Closure Sprint (all DONE)
 
 ---
 
