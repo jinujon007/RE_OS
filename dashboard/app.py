@@ -66,6 +66,7 @@ _READ_ONLY_PATHS = frozenset({
     '/api/tasks',
     '/api/engineering/brief',
     '/api/finance/brief',
+    '/api/legal/brief',
     '/api/alerts',
 })
 _READ_ONLY_PREFIXES = ('/api/reports/', '/api/logs/')
@@ -681,6 +682,47 @@ def finance_brief():
     except Exception as e:
         exc = True
         logger.error("[finance_brief] %s", e)
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+
+
+# ── Legal Brief ────────────────────────────────────────────────────────────────
+
+
+@limiter.limit("30 per minute")
+@app.route("/api/legal/brief", methods=["GET"])
+def legal_brief():
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT session_id, market, legal_response, created_at
+            FROM board_sessions
+            WHERE legal_response IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 1
+        """)
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            logger.info("[legal_brief] No board sessions with legal_response found")
+            return jsonify({"brief": None})
+        created = row[3].isoformat() if row[3] else None
+        logger.info("[legal_brief] session=%s market=%s created=%s",
+                     row[0][:8], row[1], created)
+        return jsonify({"brief": {
+            "session_id": str(row[0]),
+            "market": row[1],
+            "response": row[2],
+            "created_at": created,
+        }})
+    except Exception as e:
+        exc = True
+        logger.error("[legal_brief] %s", e)
         return jsonify({"error": "database query failed"}), 500
     finally:
         if conn:

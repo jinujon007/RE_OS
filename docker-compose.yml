@@ -118,7 +118,7 @@ services:
     command:
       - sh
       - -c
-      - alembic upgrade head && exec gunicorn dashboard.app:app --bind 0.0.0.0:8050 --workers 1 --threads 8 --timeout 120 --max-requests 500 --max-requests-jitter 50 --access-logfile - --error-logfile -
+      - alembic upgrade head && python -c "from agents.agent_factory import sync_registry_to_db; sync_registry_to_db()" && exec gunicorn dashboard.app:app --bind 0.0.0.0:8050 --workers 1 --threads 8 --timeout 120 --max-requests 500 --max-requests-jitter 50 --access-logfile - --error-logfile -
 
   # ── SCHEDULER ─────────────────────────────────────────────────────────────
   # Runs scraping jobs on schedule — daily RERA refresh, hourly listing scan

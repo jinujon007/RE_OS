@@ -76,13 +76,17 @@ def check_zone_risk(market: str, zone: str = "R2") -> ZoneRiskResult:
             # constraints globally as a fallback.
             overlays = []
             try:
+                conn.execute(text("SAVEPOINT spatial_query"))
                 overlays = conn.execute(text("""
                     SELECT oc.constraint_type, oc.description
                     FROM overlay_constraints oc
                     JOIN micro_markets mm ON ST_Intersects(oc.geom, mm.geom)
                     WHERE mm.name ILIKE :market
                 """), {"market": f"%{market}%"}).fetchall()
+                conn.execute(text("RELEASE SAVEPOINT spatial_query"))
             except Exception:
+                conn.execute(text("ROLLBACK TO SAVEPOINT spatial_query"))
+                conn.execute(text("RELEASE SAVEPOINT spatial_query"))
                 overlays = conn.execute(text("""
                     SELECT oc.constraint_type, oc.description
                     FROM overlay_constraints oc

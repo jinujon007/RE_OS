@@ -1133,6 +1133,19 @@ body {
     </div>
 
     <div class="infra-section">
+      <div class="infra-title">LEGAL
+        <button class="db-explorer-refresh" onclick="pollLegalBrief()" title="Refresh">⟳</button>
+      </div>
+      <div id="legal-brief-market" style="color:#9b7ec7;font-family:'Press Start 2P',cursive;font-size:7px;margin-bottom:6px;"></div>
+      <div style="display:flex;gap:6px;margin-bottom:4px;">
+        <span id="legal-brief-badge" style="display:none;padding:2px 6px;border-radius:3px;font-size:7px;font-weight:bold;"></span>
+      </div>
+      <div id="legal-brief-content" style="font-size:9px;color:#c9d1d9;line-height:1.5;max-height:200px;overflow-y:auto;white-space:pre-wrap;"></div>
+      <div id="legal-brief-meta" style="color:#484f58;font-size:7px;margin-top:2px;"></div>
+      <div id="legal-brief-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
+    </div>
+
+    <div class="infra-section">
       <div class="infra-title">INTEL SEARCH</div>
       <div style="display:flex;gap:4px;margin-bottom:6px;">
         <input id="intel-search-q" type="text" placeholder="e.g. Yelahanka PSF trend 2026"
@@ -1805,6 +1818,61 @@ async function pollFinanceBrief() {
 }
 pollFinanceBrief();
 setInterval(pollFinanceBrief, 60000);
+
+// ── Legal Brief ──
+let _legalLoading = false;
+async function pollLegalBrief() {
+  if (_legalLoading) return;
+  _legalLoading = true;
+  const marketEl = document.getElementById('legal-brief-market');
+  const contentEl = document.getElementById('legal-brief-content');
+  const metaEl = document.getElementById('legal-brief-meta');
+  const statusEl = document.getElementById('legal-brief-status');
+  const badgeEl = document.getElementById('legal-brief-badge');
+  const firstLoad = !contentEl.textContent;
+  if (firstLoad) contentEl.textContent = 'Loading…';
+  try {
+    const data = await fetch('/api/legal/brief').then(r => r.json());
+    if (data.brief) {
+      marketEl.textContent = data.brief.market || '';
+      const raw = data.brief.response || '';
+      // Determine compliance badge from response text
+      let badgeText = 'UNKNOWN';
+      let badgeColor = '#6b7280';
+      const upper = raw.toUpperCase();
+      if (/\bCLEAN\b|\bCLEAR\b/.test(upper)) { badgeText = 'CLEAR'; badgeColor = '#3fb950'; }
+      else if (/\bWATCH\b/.test(upper)) { badgeText = 'WATCH'; badgeColor = '#f0a020'; }
+      else if (/\bRISK\b/.test(upper)) { badgeText = 'RISK'; badgeColor = '#f85149'; }
+      else if (/\bBLOCKED\b/.test(upper)) { badgeText = 'BLOCKED'; badgeColor = '#f85149'; }
+      badgeEl.textContent = badgeText;
+      badgeEl.style.background = badgeColor + '33';
+      badgeEl.style.color = badgeColor;
+      badgeEl.style.display = 'inline';
+      const truncated = raw.length > 800;
+      contentEl.textContent = raw.slice(0, 800) + (truncated ? '\n\n[... response truncated at 800 chars]' : '');
+      const ts = data.brief.created_at
+        ? new Date(data.brief.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', hour12: false })
+        : '';
+      const sid = (data.brief.session_id || '').slice(0, 8);
+      metaEl.textContent = ts ? `${sid} · ${ts}` : sid;
+      statusEl.textContent = truncated ? 'Response exceeds 800 chars — full text in board session' : '';
+      markUpdated('legal');
+    } else {
+      contentEl.textContent = 'No legal brief yet — run a Board Room session.';
+      marketEl.textContent = '';
+      badgeEl.style.display = 'none';
+      metaEl.textContent = '';
+      statusEl.textContent = '';
+    }
+  } catch (e) {
+    contentEl.textContent = 'Failed to load legal brief.';
+    statusEl.textContent = 'Retrying in 60s…';
+  } finally {
+    _legalLoading = false;
+  }
+}
+pollLegalBrief();
+setInterval(pollLegalBrief, 60000);
 
 // ── Alerts Panel ──
 const _ALERT_CHANNEL_COLORS = {

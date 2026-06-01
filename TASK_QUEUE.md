@@ -68,8 +68,8 @@
 
 | ID | Description | Priority | Status | Notes |
 |----|-------------|----------|--------|-------|
-| T-407 | Dashboard Legal panel — /api/legal/brief endpoint + UI section | P2 | PENDING | GET: last legal_response from board_sessions; panel shows market, CLEAR/RISK/BLOCKED badge + response excerpt |
-| T-408 | GATE-16 — Phase 12 DoD: Board Room pitch with market → Legal Head returns RERA data + zone risk, not generic prose | P0 | PENDING | Pitch: "5-acre Devanahalli site, R2 zone, Brigade developer"; verify Legal column cites actual RERA project count, guidance PSF from DB; CHANGELOG evidence |
+| T-407 | Dashboard Legal panel — /api/legal/brief endpoint + UI section | P2 | ✅ DONE | GET: last legal_response from board_sessions; panel shows market, CLEAR/RISK/BLOCKED badge + response excerpt |
+| T-408 | GATE-16 — Phase 12 DoD: Board Room pitch with market → Legal Head returns RERA data + zone risk, not generic prose | P0 | IN_PROGRESS | Pitch: "5-acre Devanahalli site, R2 zone, Brigade developer"; verify Legal column cites actual RERA project count, guidance PSF from DB; CHANGELOG evidence |
 
 ### Sprint 30 Gate
 
@@ -87,12 +87,12 @@
 
 | ID | Description | Priority | Status | Notes |
 |----|-------------|----------|--------|-------|
-| T-409 | agents/registry/ folder + _schema.yaml — agent spec schema definition | P1 | PENDING | Fields: id, name, role, department, reports_to, persona, llm_tier, tools (list), memory_context (market), markets (list), active, hired_on |
-| T-410 | Alembic 0011 + schema.sql — agent_registry table | P1 | PENDING | id VARCHAR(100) PK, name TEXT, role TEXT, department VARCHAR(50), spec JSONB, llm_tier VARCHAR(20), active BOOL DEFAULT true, hired_on TIMESTAMPTZ |
-| T-411 | agents/agent_factory.py — reads YAML spec → instantiates CrewAI Agent | P1 | PENDING | scan_registry(registry_dir) → list[Agent]; load_agent(spec_id) → Agent; validate: required fields, llm_tier in (heavy/analysis/light), tools must be known names |
-| T-412 | On agents container startup: scan agents/registry/ → upsert agent_registry DB | P1 | PENDING | In dashboard/app.py startup (or docker-compose command): call agent_factory.sync_registry_to_db(); idempotent upsert on id |
-| T-413 | agents/registry/market_analyst_yelahanka.yaml — first built-in registry agent | P1 | PENDING | Yelahanka specialist; tools: [MarketSummaryTool, CompetitorAnalysisTool]; llm_tier: analysis; markets: [Yelahanka] |
-| T-414 | agents/registry/market_analyst_devanahalli.yaml + market_analyst_hebbal.yaml | P1 | PENDING | Same pattern; different market context; hired_on: 2026-05-30 |
+| T-409 | agents/registry/ folder + _schema.yaml — agent spec schema definition | P1 | ✅ DONE | Fields: id, name, role, department, reports_to, persona, llm_tier, tools (list), memory_context (market), markets (list), active, hired_on |
+| T-410 | Alembic 0011 + schema.sql — agent_registry table | P1 | ✅ DONE | id VARCHAR(100) PK, name TEXT, role TEXT, department VARCHAR(50), spec JSONB, llm_tier VARCHAR(20), active BOOL DEFAULT true, hired_on TIMESTAMPTZ |
+| T-411 | agents/agent_factory.py — reads YAML spec → instantiates CrewAI Agent | P1 | ✅ DONE | scan_registry(registry_dir) → list[Agent]; load_agent(spec_id) → Agent; validate: required fields, llm_tier in (heavy/analysis/light), tools must be known names |
+| T-412 | On agents container startup: scan agents/registry/ → upsert agent_registry DB | P1 | ✅ DONE | In dashboard/app.py startup (or docker-compose command): call agent_factory.sync_registry_to_db(); idempotent upsert on id |
+| T-413 | agents/registry/market_analyst_yelahanka.yaml — first built-in registry agent | P1 | ✅ DONE | Yelahanka specialist; tools: [MarketSummaryTool, CompetitorAnalysisTool]; llm_tier: analysis; markets: [Yelahanka] |
+| T-414 | agents/registry/market_analyst_devanahalli.yaml + market_analyst_hebbal.yaml | P1 | ✅ DONE | Same pattern; different market context; hired_on: 2026-05-30 |
 
 ### Dashboard Hiring Panel (P2)
 

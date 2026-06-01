@@ -1,0 +1,23 @@
+# RE_OS Agent Registry — spec schema
+# Every file in this directory (except _schema.yaml) is an agent spec.
+# Field rules:
+#   id:              unique, kebab-case, used as DB primary key
+#   name:            display name (string)
+#   role:            CrewAI Agent role string
+#   goal:            Agent goal string (optional — defaults to role if omitted)
+#   department:      bd | engineering | finance | legal | ops | process | scout | board
+#   reports_to:      id of manager agent (or "ceo") — stored in spec for org chart (T-417)
+#   persona:         backstory paragraph — determines agent's voice and priorities
+#   llm_tier:        heavy | analysis | light — maps to llm_router.py tiers
+#   tools:           list of tool class names available in tool_registry
+#                    Known tools: MarketSummaryTool, CompetitorAnalysisTool,
+#                    DistressedDeveloperListTool, ReportGeneratorTool, FeasibilityTool,
+#                    FSICalculatorTool, TypologyRecommenderTool, GreenCoverageTool,
+#                    FeasibilityAnalystTool, IntelSearchTool, RERAComplianceTool,
+#                    ZoneRiskTool, EncumbranceCheckTool
+#   markets:         list — [Yelahanka, Devanahalli, Hebbal] or []
+#   memory_context:  market slug injected into Agent backstory — "yelahanka" | "devanahalli" | ""
+#                    Auto-derived from markets field if not specified
+#   active:          true | false
+#   hired_on:        YYYY-MM-DD
+#   max_iter:        int (default 3)
