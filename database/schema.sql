@@ -646,6 +646,23 @@ CREATE INDEX IF NOT EXISTS idx_alerts_channel    ON alerts(channel);
 CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at DESC);
 
 -- ============================================================
+-- AGENT REGISTRY — Phase 8: Agent Hiring & Onboarding
+-- ============================================================
+CREATE TABLE IF NOT EXISTS agent_registry (
+    id          VARCHAR(100) PRIMARY KEY,
+    name        TEXT NOT NULL,
+    role        TEXT NOT NULL,
+    department  VARCHAR(50),
+    spec        JSONB NOT NULL,
+    llm_tier    VARCHAR(20) NOT NULL DEFAULT 'analysis'
+                CHECK (llm_tier IN ('heavy', 'analysis', 'light')),
+    active      BOOLEAN NOT NULL DEFAULT TRUE,
+    hired_on    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_registry_dept   ON agent_registry(department);
+CREATE INDEX IF NOT EXISTS idx_agent_registry_active ON agent_registry(active);
+
+-- ============================================================
 -- VIEWS — Useful pre-built queries
 -- ============================================================
 
@@ -750,3 +767,32 @@ LEFT JOIN rera_projects r ON r.developer_id = d.id
 LEFT JOIN micro_markets mm ON r.micro_market_id = mm.id
 GROUP BY d.id, d.name, d.grade
 ORDER BY total_units DESC NULLS LAST;
+
+-- ============================================================
+-- ALEMBIC VERSION STAMP
+-- ============================================================
+-- This block makes schema.sql + alembic upgrade head work together on
+-- fresh Docker deployments without collision.
+--
+-- How it works:
+--   1. Postgres docker-entrypoint-initdb.d runs this file on an empty volume.
+--   2. All tables + this alembic_version row are created.
+--   3. agents container runs: alembic upgrade head
+--   4. Alembic finds version_num = current HEAD → no pending migrations → no-op.
+--   5. gunicorn starts cleanly.
+--
+-- MAINTENANCE CONTRACT: every time a new Alembic migration is added
+-- (e.g. 0012_foo), update this stamp to the new revision ID so that
+-- fresh deployments see the DB as current.
+--
+-- Current HEAD: 0011_add_agent_registry
+-- ============================================================
+CREATE TABLE IF NOT EXISTS alembic_version (
+    version_num VARCHAR(32) NOT NULL,
+    CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
+);
+
+-- Stamp to current HEAD — safe to re-run (ON CONFLICT DO NOTHING)
+INSERT INTO alembic_version (version_num)
+VALUES ('0011_add_agent_registry')
+ON CONFLICT (version_num) DO NOTHING;
