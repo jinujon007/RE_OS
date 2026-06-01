@@ -46,6 +46,9 @@ from config.settings import (
     CEREBRAS_API_KEY,
     CEREBRAS_BASE_URL,
     CEREBRAS_MODEL,
+    JINA_API_KEY,
+    JINA_READER_BASE,
+    HF_API_KEY,
 )
 from scrapers.scout_memory import ScoutMemory
 
@@ -181,13 +184,56 @@ def _fetch_google_news_rss(query: str, days_back: int = 60) -> list[dict]:
     return articles
 
 
+# ── Jina Reader — clean markdown from any URL ─────────────────────────────────
+
+
+def _fetch_via_jina_reader(url: str, max_chars: int = 4000) -> str:
+    """
+    Fetch clean markdown content from a URL via Jina Reader (r.jina.ai).
+    Free with or without API key. With key: 100 RPM.
+    Returns cleaned content string or empty string on failure.
+    """
+    headers = {
+        "Accept": "text/markdown",
+        "X-Timeout": "15",
+        "X-Return-Format": "markdown",
+    }
+    if JINA_API_KEY:
+        headers["Authorization"] = f"Bearer {JINA_API_KEY}"
+    try:
+        resp = requests.get(
+            f"{JINA_READER_BASE.rstrip('/')}/{url}",
+            headers=headers,
+            timeout=20,
+        )
+        if resp.status_code == 200:
+            return resp.text[:max_chars]
+        logger.debug(f"[NewsScout] Jina Reader HTTP {resp.status_code} for {url}")
+    except Exception as exc:
+        logger.debug(f"[NewsScout] Jina Reader failed for {url}: {exc}")
+    return ""
+
+
 # ── ET Realty search fetch ────────────────────────────────────────────────────
 
 
 def _fetch_et_realty(query: str, session: requests.Session) -> list[dict]:
-    """Scrape ET Realty search results page."""
+    """
+    Fetch ET Realty search results.
+    Primary: Jina Reader (clean markdown, no BeautifulSoup parsing needed).
+    Fallback: direct requests + BeautifulSoup.
+    """
     encoded = quote(query)
     url = f"https://realty.economictimes.indiatimes.com/search?query={encoded}"
+
+    # Try Jina Reader first — avoids BS4 parsing of dynamic ET pages
+    jina_content = _fetch_via_jina_reader(url)
+    if jina_content:
+        articles = _parse_et_realty_markdown(jina_content)
+        if articles:
+            return articles
+
+    # Fallback: direct request + BeautifulSoup
     articles = []
     try:
         resp = session.get(url, timeout=15)
@@ -223,6 +269,24 @@ def _fetch_et_realty(query: str, session: requests.Session) -> list[dict]:
             )
     except Exception as exc:
         logger.debug(f"[NewsScout] ET Realty fetch error: {exc}")
+    return articles
+
+
+def _parse_et_realty_markdown(content: str) -> list[dict]:
+    """Extract article headlines and links from Jina Reader markdown output."""
+    import re
+    articles = []
+    # Match markdown links: [Title](URL) pattern
+    for match in re.finditer(r"\[([^\]]{20,200})\]\((https?://[^\)]+)\)", content):
+        title = match.group(1).strip()
+        url = match.group(2).strip()
+        if any(skip in url for skip in ["#", "javascript:", "mailto:"]):
+            continue
+        if len(title) < 15:
+            continue
+        articles.append({"title": title, "url": url, "published": "", "snippet": "", "source": "et_realty"})
+        if len(articles) >= 10:
+            break
     return articles
 
 
@@ -340,6 +404,19 @@ def _normalize_article(raw: dict, market: str) -> dict | None:
     cid = ScoutMemory.cid_news(url or headline)
     signal = raw.get("signal_type") or "other"
 
+    # FinBERT sentiment — scored on headline + key_insight for richer signal
+    sentiment_score = None
+    if HF_API_KEY and headline:
+        try:
+            from utils.sentiment import score_headline
+            text_for_sentiment = headline
+            key_insight = (raw.get("key_insight") or "").strip()
+            if key_insight:
+                text_for_sentiment = f"{headline}. {key_insight}"
+            sentiment_score = score_headline(text_for_sentiment)
+        except Exception:
+            pass  # sentiment is non-critical — never block article storage
+
     return {
         "cid": cid,
         "source": "news",
@@ -352,6 +429,7 @@ def _normalize_article(raw: dict, market: str) -> dict | None:
         "price_signal": raw.get("price_signal") or "",
         "key_insight": raw.get("key_insight") or "",
         "source_url": url,
+        "sentiment_score": sentiment_score,
         "scraped_at": datetime.now().isoformat(),
     }
 

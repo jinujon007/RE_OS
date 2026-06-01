@@ -33,7 +33,82 @@ from config.settings import (
     GRADE_A_MIN_UNITS,
     GRADE_B_MIN_UNITS,
     MARKET_RERA_KEYWORDS,
+    OLLAMA_BASE_URL,
 )
+
+# ── Semantic developer dedup (Ollama nomic-embed-text, CPU) ───────────────────
+# Cache: (run-level) maps name_normalized → embedding vector.
+# Avoids re-embedding the same name twice in the same DBOrganizer.run() call.
+_DEV_EMBED_CACHE: dict[str, list[float]] = {}
+_DEDUP_SIMILARITY_THRESHOLD = 0.88  # cosine similarity above which names are merged
+
+
+def _get_dev_embedding(name: str) -> list[float]:
+    """Get nomic-embed-text embedding for a developer name via Ollama API."""
+    key = name.lower().strip()
+    if key in _DEV_EMBED_CACHE:
+        return _DEV_EMBED_CACHE[key]
+    try:
+        import requests as _req
+        resp = _req.post(
+            f"{OLLAMA_BASE_URL.rstrip('/')}/api/embeddings",
+            json={"model": "nomic-embed-text", "prompt": key},
+            timeout=8,
+        )
+        if resp.status_code == 200:
+            vec = resp.json().get("embedding", [])
+            _DEV_EMBED_CACHE[key] = vec
+            return vec
+    except Exception:
+        pass
+    return []
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    """Pure-Python cosine similarity — no numpy."""
+    import math
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(x * x for x in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _find_semantic_match(
+    conn,
+    incoming_name: str,
+    candidates: list[tuple[str, str]],  # [(id, name_normalized), ...]
+) -> str | None:
+    """
+    Check whether incoming_name is semantically equivalent to any existing developer.
+    Returns the existing developer ID if similarity > threshold, else None.
+    Gracefully returns None if Ollama is unavailable.
+    """
+    if not candidates:
+        return None
+    vec_in = _get_dev_embedding(incoming_name)
+    if not vec_in:
+        return None  # Ollama unavailable — fall through to string match
+
+    best_id = None
+    best_score = 0.0
+    for dev_id, dev_norm in candidates:
+        vec_cand = _get_dev_embedding(dev_norm)
+        if not vec_cand:
+            continue
+        score = _cosine(vec_in, vec_cand)
+        if score > best_score:
+            best_score = score
+            best_id = dev_id
+
+    if best_score >= _DEDUP_SIMILARITY_THRESHOLD:
+        logger.debug(
+            f"[DBOrganizer] Semantic dedup: '{incoming_name}' → "
+            f"existing id={best_id} (cos={best_score:.3f})"
+        )
+        return best_id
+    return None
 
 # Module-level shared engine — avoids creating a new connection pool on every
 # DBOrganizer() instantiation. SQLAlchemy engines are thread-safe.
@@ -325,6 +400,7 @@ class DBOrganizer:
         dev_name = str(project.get("developer_name", "Unknown Developer")).strip()
         dev_norm = dev_name.lower()
 
+        # 1. Exact normalised string match (primary, deterministic)
         row = conn.execute(
             text("""
             INSERT INTO developers (name, name_normalized)
@@ -338,11 +414,24 @@ class DBOrganizer:
         if row:
             return str(row[0])
 
+        # 2. Already exists with exact normalised name
         row = conn.execute(
             text("SELECT id FROM developers WHERE name_normalized = :n"),
             {"n": dev_norm},
         ).fetchone()
-        return str(row[0]) if row else None
+        if row:
+            return str(row[0])
+
+        # 3. Semantic dedup — catch near-matches that string normalisation misses
+        # e.g. "Prestige Group" ≈ "Prestige Estates" ≈ "Prestige Constructions"
+        candidates = conn.execute(
+            text("SELECT id::text, name_normalized FROM developers LIMIT 200")
+        ).fetchall()
+        semantic_id = _find_semantic_match(conn, dev_norm, [(r[0], r[1]) for r in candidates])
+        if semantic_id:
+            return semantic_id
+
+        return None
 
     @staticmethod
     def _compute_grade(dev_name: str, total_units: int) -> str:

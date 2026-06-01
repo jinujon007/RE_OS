@@ -122,6 +122,80 @@ def run_memory_decay():
     logger.info(f"[Scheduler] Memory decay: {n} rows deleted")
 
 
+def run_intel_embedding_index():
+    """
+    Nightly: index any new intel reports into ChromaDB via nomic-embed-text (Ollama).
+    Fires at 4:30 AM IST — after RERA runs (2:30-3:30 AM) and snapshots (6 AM).
+    Gracefully no-ops if Ollama is unavailable.
+    """
+    try:
+        from utils.embedder import IntelEmbedder
+        embedder = IntelEmbedder()
+        stats = embedder.index_intel_reports(outputs_dir="/app/outputs")
+        logger.info(
+            f"[Scheduler] Intel embedding: indexed={stats['indexed']} "
+            f"skipped={stats['skipped']} failed={stats['failed']}"
+        )
+    except Exception as exc:
+        logger.warning(f"[Scheduler] Intel embedding index failed (non-fatal): {exc}")
+
+
+def run_news_sentiment_scoring():
+    """
+    Nightly: score any unscored news_articles via FinBERT (HF Inference API).
+    Fires at 5:00 AM IST. Non-fatal — sentiment is enrichment, not pipeline-critical.
+    Scores articles where sentiment_score IS NULL (new articles from overnight scrapes).
+    """
+    from config.settings import HF_API_KEY
+    if not HF_API_KEY:
+        logger.debug("[Scheduler] HF_API_KEY not set — skipping sentiment scoring")
+        return
+    try:
+        from utils.sentiment import score_headline
+        from utils.db import get_engine
+        from sqlalchemy import text
+
+        engine = get_engine()
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT id, headline, key_insight
+                FROM news_articles
+                WHERE sentiment_score IS NULL
+                  AND headline IS NOT NULL
+                  AND headline != ''
+                ORDER BY scraped_at DESC
+                LIMIT 100
+            """)).fetchall()
+
+        if not rows:
+            logger.debug("[Scheduler] Sentiment: no unscored articles")
+            return
+
+        scored = failed = 0
+        with engine.begin() as conn:
+            for row in rows:
+                article_id, headline, key_insight = row
+                text_to_score = headline
+                if key_insight:
+                    text_to_score = f"{headline}. {key_insight}"
+                score = score_headline(text_to_score)
+                if score is not None:
+                    conn.execute(
+                        text("UPDATE news_articles SET sentiment_score = :s WHERE id = :id"),
+                        {"s": score, "id": article_id},
+                    )
+                    scored += 1
+                else:
+                    failed += 1
+
+        logger.info(
+            f"[Scheduler] Sentiment scoring: {scored} scored, {failed} failed "
+            f"out of {len(rows)} articles"
+        )
+    except Exception as exc:
+        logger.warning(f"[Scheduler] Sentiment scoring failed (non-fatal): {exc}")
+
+
 def run_yelahanka_refresh():
     """
     REMOVED — Yelahanka runs as its own independent job (rera_yelahanka at 2:30 AM IST).
@@ -275,11 +349,31 @@ if __name__ == "__main__":
         replace_existing=True,
     )
 
+    # Nightly intel embedding index — 4:30 AM IST (after RERA runs, before snapshots)
+    scheduler.add_job(
+        lambda: _safe_job(run_intel_embedding_index, "intel_embedding"),
+        CronTrigger(hour=4, minute=30),
+        id="intel_embedding",
+        name="Nightly Intel Embedding Index (ChromaDB)",
+        misfire_grace_time=3600,
+    )
+
+    # Nightly news sentiment scoring — 5:00 AM IST (FinBERT via HF Inference API)
+    scheduler.add_job(
+        lambda: _safe_job(run_news_sentiment_scoring, "news_sentiment"),
+        CronTrigger(hour=5, minute=0),
+        id="news_sentiment",
+        name="Nightly News Sentiment Scoring (FinBERT)",
+        misfire_grace_time=3600,
+    )
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
     logger.info("  2:30 AM IST — RERA Yelahanka")
     logger.info("  3:00 AM IST — RERA Devanahalli")
     logger.info("  3:30 AM IST — RERA Hebbal")
+    logger.info("  4:30 AM IST — Intel embedding index (ChromaDB)")
+    logger.info("  5:00 AM IST — News sentiment scoring (FinBERT)")
     logger.info("  6:00 AM IST — Market snapshots")
     logger.info("  Every 6 hrs — Listings scan")
     logger.info("  Every 1 hr  — Board session recovery (T-315)")

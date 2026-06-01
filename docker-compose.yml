@@ -182,3 +182,4 @@ volumes:
   redis_data:
   re_os_outputs:
   re_os_logs:
+  hf_cache:

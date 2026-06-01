@@ -1,39 +1,37 @@
 """
 RE_OS — LLM Router (CrewAI 0.80 / LiteLLM)
 ────────────────────────────────────────────
-THREE TIERS — deliberately separated to eliminate TPM conflicts:
+SEVEN-PROVIDER FALLBACK CHAIN — all free tiers, zero cost.
 
   HEAVY (CEO):
-    PRIMARY:   Groq  meta-llama/llama-4-scout-17b-16e-instruct  — 30,000 TPM (was 12k)
-    BACKUP 1:  Google AI Studio  gemini-2.5-flash                — 250,000 TPM, 20 req/day
-    BACKUP 2:  NVIDIA NIM  llama-3.1-405b                       — 40 req/min, no TPM cap
-    BACKUP 3:  OpenRouter  llama-3.3-70b:free                   — 50-1000 req/day
-    BACKUP 4:  Ollama local
+    1. Groq       llama-4-scout-17b        — 30,000 TPM, primary
+    2. Gemini     gemini-2.5-flash         — 250,000 TPM, 20 req/day
+    3. NVIDIA     llama-3.1-405b           — 40 req/min
+    4. SambaNova  llama-3.3-70b            — 20M tok/day, 20 RPM  ← NEW
+    5. OpenRouter llama-3.3-70b:free       — 50-1000 req/day
+    6. Cloudflare llama-3.3-70b-fp8-fast   — 10K neurons/day last-resort  ← NEW
+    7. Ollama     qwen2.5:7b               — local CPU, always available
 
   ANALYSIS (Analyst):
-    PRIMARY:   Cerebras  gpt-oss-120b                            — 60-100k TPM, 1M tok/day
-    BACKUP 1:  Groq  meta-llama/llama-4-scout-17b-16e-instruct  — 30,000 TPM (shared with CEO)
-    BACKUP 2:  Ollama local
+    1. Cerebras   gpt-oss-120b             — 1M tok/day, 60-100k TPM, primary
+    2. Groq       llama-4-scout-17b        — shares CEO bucket
+    3. Gemini     gemini-2.5-flash         — 250k TPM fallback
+    4. NVIDIA     llama-3.1-nemotron-70b   — 40 req/min
+    5. SambaNova  llama-3.3-70b            — 20M tok/day  ← NEW
+    6. Cloudflare llama-3.1-8b             — last-resort  ← NEW
+    7. Ollama     qwen2.5:7b               — local CPU
 
-  LIGHT (Scraper + Parser + Organizer):
-    PRIMARY:   Cerebras  gpt-oss-120b                            — 60-100k TPM, 1M tok/day
-    BACKUP 1:  Google AI Studio  gemma-3-27b-it                 — 15,000 TPM, 14,400 req/day
-    BACKUP 2:  NVIDIA NIM  llama-3.3-70b                       — 40 req/min
-    BACKUP 3:  Ollama local
+  LIGHT (Scraper):
+    1. Cerebras   gpt-oss-120b             — 1M tok/day, fastest, primary
+    2. Gemini     gemma-3-27b-it           — 15k TPM, 14.4k req/day
+    3. NVIDIA     llama-3.3-70b            — 40 req/min
+    4. SambaNova  llama-3.3-70b            — 20M tok/day  ← NEW
+    5. Cloudflare llama-3.1-8b             — last-resort  ← NEW
+    6. Ollama     qwen2.5:7b               — local CPU
 
-Why this works:
-  - Cerebras handles Light + Analysis: 1M tokens/day, completely separate from Groq budget
-  - CEO on Groq Scout: 30k TPM vs old 12k — 2.5x headroom, correct model name
-  - Google Gemini backup for CEO: 250k TPM when Groq Scout runs dry
-  - No TPM sharing between CEO tier and Light/Analysis tier
-
-Cerebras caveat: 8,192 token context cap. Fine for Light (structured extraction) and Analysis
-(DB query results). NOT used for CEO (synthesis prompt can exceed 8k).
-
-Runtime fallback:
-  _EXCLUDED is a module-level set populated by market_intel_crew.py when a provider fails
-  at runtime. Each get_*_llm() skips any provider in _EXCLUDED, enabling real cross-provider
-  fallback without reconstructing agents.
+SambaNova: OpenAI-compatible, 20 RPM hard ceiling — acceptable for pipeline cadence.
+Cloudflare: 10K neurons/day ≈ 20-100 real requests. True last-resort only.
+Cerebras caveat: 8,192 token context cap. Fine for Light + Analysis, NOT CEO.
 """
 
 import threading
@@ -60,6 +58,13 @@ from config.settings import (
     NVIDIA_LIGHT_MODEL,
     OPENROUTER_API_KEY,
     OPENROUTER_MODEL,
+    SAMBANOVA_API_KEY,
+    SAMBANOVA_BASE_URL,
+    SAMBANOVA_HEAVY_MODEL,
+    CLOUDFLARE_API_KEY,
+    CLOUDFLARE_ACCOUNT_ID,
+    CLOUDFLARE_LIGHT_MODEL,
+    CLOUDFLARE_HEAVY_MODEL,
 )
 
 # Register litellm callback for token tracking
@@ -82,6 +87,10 @@ def _litellm_usage_callback(kwargs, completion_response, start_time, end_time):
                 provider = "gemini_gemma"
         elif base_url and "openrouter" in base_url:
             provider = "openrouter"
+        elif base_url and "sambanova" in base_url:
+            provider = "sambanova"
+        elif base_url and "cloudflare" in base_url:
+            provider = "cloudflare"
         else:
             provider_part = model.split("/")[0].lower()
             provider_map = {
@@ -89,8 +98,10 @@ def _litellm_usage_callback(kwargs, completion_response, start_time, end_time):
                 "groq": "groq",
                 "google": "gemini_flash",
                 "nvidia": "nvidia",
+                "sambanova": "sambanova",
                 "openrouter": "openrouter",
-                "ollama": "ollama"
+                "cloudflare": "cloudflare",
+                "ollama": "ollama",
             }
             provider = provider_map.get(provider_part, provider_part)
         tokens = completion_response.usage.total_tokens if completion_response.usage else 0
@@ -116,7 +127,9 @@ DAILY_LIMITS = {
     "gemini_flash": 1_000_000,
     "gemini_gemma": 500_000,
     "nvidia": 2_000_000,
-    "openrouter": 500_000
+    "sambanova": 20_000_000,   # 20M tok/day free tier
+    "openrouter": 500_000,
+    "cloudflare": 5_000,       # conservative — 10K neurons, not raw tokens
 }
 
 # In-process daily token counters — reset automatically at UTC midnight
@@ -205,6 +218,16 @@ def get_heavy_llm(temperature: float = 0.1, excluded: set = None) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
+    if SAMBANOVA_API_KEY and not _excl("sambanova") and not is_near_quota("sambanova"):
+        logger.info(f"[Router] HEAVY fallback → SambaNova {SAMBANOVA_HEAVY_MODEL} (20M tok/day)")
+        return LLM(
+            model=f"openai/{SAMBANOVA_HEAVY_MODEL}",
+            api_key=SAMBANOVA_API_KEY,
+            base_url=SAMBANOVA_BASE_URL,
+            temperature=temperature,
+            max_tokens=4096,
+            num_retries=2,
+        )
     if OPENROUTER_API_KEY and not _excl("openrouter") and not is_near_quota("openrouter"):
         logger.info("[Router] HEAVY fallback → OpenRouter")
         return LLM(
@@ -213,6 +236,17 @@ def get_heavy_llm(temperature: float = 0.1, excluded: set = None) -> LLM:
             temperature=temperature,
             max_tokens=4096,
             num_retries=3,
+        )
+    if CLOUDFLARE_API_KEY and CLOUDFLARE_ACCOUNT_ID and not _excl("cloudflare") and not is_near_quota("cloudflare"):
+        logger.warning("[Router] HEAVY last-resort → Cloudflare Workers AI (10K neurons/day)")
+        cf_base = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1"
+        return LLM(
+            model=f"openai/{CLOUDFLARE_HEAVY_MODEL}",
+            api_key=CLOUDFLARE_API_KEY,
+            base_url=cf_base,
+            temperature=temperature,
+            max_tokens=2048,
+            num_retries=1,
         )
     logger.warning("[Router] HEAVY fallback → Ollama (slow, no cloud keys set)")
     return LLM(
@@ -273,6 +307,27 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
+    if SAMBANOVA_API_KEY and not _is_excluded("sambanova") and not is_near_quota("sambanova"):
+        logger.info(f"[Router] ANALYSIS fallback → SambaNova {SAMBANOVA_HEAVY_MODEL}")
+        return LLM(
+            model=f"openai/{SAMBANOVA_HEAVY_MODEL}",
+            api_key=SAMBANOVA_API_KEY,
+            base_url=SAMBANOVA_BASE_URL,
+            temperature=temperature,
+            max_tokens=4096,
+            num_retries=2,
+        )
+    if CLOUDFLARE_API_KEY and CLOUDFLARE_ACCOUNT_ID and not _is_excluded("cloudflare") and not is_near_quota("cloudflare"):
+        logger.warning("[Router] ANALYSIS last-resort → Cloudflare Workers AI")
+        cf_base = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1"
+        return LLM(
+            model=f"openai/{CLOUDFLARE_LIGHT_MODEL}",
+            api_key=CLOUDFLARE_API_KEY,
+            base_url=cf_base,
+            temperature=temperature,
+            max_tokens=2048,
+            num_retries=1,
+        )
     logger.warning("[Router] ANALYSIS fallback → Ollama (slow)")
     return LLM(
         model=f"ollama/{OLLAMA_MODEL}",
@@ -323,6 +378,27 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
             max_tokens=512,
             num_retries=3,
         )
+    if SAMBANOVA_API_KEY and not _is_excluded("sambanova") and not is_near_quota("sambanova"):
+        logger.info(f"[Router] LIGHT fallback → SambaNova {SAMBANOVA_HEAVY_MODEL}")
+        return LLM(
+            model=f"openai/{SAMBANOVA_HEAVY_MODEL}",
+            api_key=SAMBANOVA_API_KEY,
+            base_url=SAMBANOVA_BASE_URL,
+            temperature=temperature,
+            max_tokens=512,
+            num_retries=2,
+        )
+    if CLOUDFLARE_API_KEY and CLOUDFLARE_ACCOUNT_ID and not _is_excluded("cloudflare") and not is_near_quota("cloudflare"):
+        logger.warning("[Router] LIGHT last-resort → Cloudflare Workers AI")
+        cf_base = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1"
+        return LLM(
+            model=f"openai/{CLOUDFLARE_LIGHT_MODEL}",
+            api_key=CLOUDFLARE_API_KEY,
+            base_url=cf_base,
+            temperature=temperature,
+            max_tokens=512,
+            num_retries=1,
+        )
     logger.warning("[Router] LIGHT fallback → Ollama (CPU-only, slow)")
     return LLM(
         model=f"ollama/{OLLAMA_MODEL}",
@@ -337,7 +413,9 @@ def get_router_status() -> dict:
     c = bool(CEREBRAS_API_KEY)
     gem = bool(GEMINI_API_KEY)
     n = bool(NVIDIA_API_KEY)
+    sn = bool(SAMBANOVA_API_KEY)
     o = bool(OPENROUTER_API_KEY)
+    cf = bool(CLOUDFLARE_API_KEY and CLOUDFLARE_ACCOUNT_ID)
     with _EXCLUDED_LOCK:
         excl = set(_EXCLUDED) or "none"
     return {
@@ -347,21 +425,22 @@ def get_router_status() -> dict:
             "gemini_flash": gem,
             "gemini_gemma": gem,
             "nvidia": n,
+            "sambanova": sn,
             "openrouter": o,
+            "cloudflare": cf,
             "ollama": True,
         },
         "excluded": excl,
-        "heavy_chain": f"Groq({GROQ_CEO_MODEL}, 30k TPM)"
-        if g
-        else ("Gemini Flash(250k TPM)" if gem else "NVIDIA→OpenRouter→Ollama"),
-        "analysis_chain": f"Cerebras({CEREBRAS_MODEL}, 8k ctx, 1M tok/day)"
-        if c
-        else (f"Groq({GROQ_ANALYST_MODEL})" if g else "Ollama"),
-        "light_chain": f"Cerebras({CEREBRAS_MODEL}, 8k ctx, 1M tok/day)"
-        if c
-        else (
-            f"Gemma({GEMINI_LIGHT_MODEL})"
-            if gem
-            else ("NVIDIA" if n else "Ollama(slow)")
+        "heavy_chain": (
+            f"Groq→Gemini→NVIDIA→SambaNova→OpenRouter→Cloudflare→Ollama"
+            f" ({sum([g, gem, n, sn, o, cf])}/6 cloud providers active)"
+        ),
+        "analysis_chain": (
+            f"Cerebras→Groq→Gemini→NVIDIA→SambaNova→Cloudflare→Ollama"
+            f" ({sum([c, g, gem, n, sn, cf])}/6 cloud providers active)"
+        ),
+        "light_chain": (
+            f"Cerebras→Gemini→NVIDIA→SambaNova→Cloudflare→Ollama"
+            f" ({sum([c, gem, n, sn, cf])}/5 cloud providers active)"
         ),
     }
