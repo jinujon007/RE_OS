@@ -185,12 +185,17 @@ _DEPT_TASK_TEMPLATES = {
         "You are the Legal Head reviewing a real estate pitch.\n"
         "Market: {market}\n"
         "CEO Sub-question: {dept_question}\n\n"
+        "The following auto-computed legal context has been prepended to your question "
+        "— it contains DB-sourced zone risk, developer RERA record, and guidance value data. "
+        "Cite specific numbers from this data in your response.\n\n"
         "Respond as Legal Head. Lead with CLEAR / RISK / BLOCKED.\n"
-        "Cover: RERA registration status, BDA/BBMP layout approval, title chain, "
-        "encumbrance, agricultural conversion (if applicable), regulatory overlay risks "
-        "(airport zone, green belt, lake buffer).\n"
+        "Cover: RERA registration status (cite the developer's project count, delay rate, "
+        "and compliance signal from the auto-context), BDA/BBMP layout approval, "
+        "title chain, encumbrance (cite guidance gap % if available), "
+        "agricultural conversion (if applicable), regulatory overlay risks "
+        "(airport zone, green belt, lake buffer, high-tension line, rajakaluve).\n"
         "Name every unresolved item with the applicable Karnataka statute or authority.\n"
-        "Maximum 180 words."
+        "Maximum 250 words."
     ),
 }
 
@@ -323,6 +328,71 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                     logger.warning("[board_room] finance auto-IRR calc failed for market=%s pitch=%s: %s",
                                    market, pitch[:80], exc)
             dept_question = irr_context + dept_question
+
+        if key == "legal":
+            legal_context = ""
+            try:
+                from utils.rera_compliance_checker import check_developer_compliance
+                from utils.zone_risk_checker import check_zone_risk
+                from utils.kaveri_encumbrance import check_encumbrance
+                params = _extract_pitch_params(pitch)
+
+                # Detect developer — word boundary anchored to avoid substring matches
+                dev_match = re.search(
+                    r"\b(Brigade|Prestige|Sobha|Godrej|Adarsh|Salarpuria"
+                    r"|Shriram|Mantri|Puravankara|Total Environment"
+                    r"|Embassy|Concorde|Assetz)\b",
+                    pitch, re.I
+                )
+
+                # Detect zone from pitch text — look for "R1", "R2", "C1" near "zone" keyword
+                zone_match = re.search(
+                    r"(?:zone|zoning)\s*(?::|is|=)?\s*(R[12]|C1)", pitch, re.I
+                )
+                detected_zone = (zone_match.group(1) if zone_match else "R2").upper()
+
+                zone_r = check_zone_risk(market, zone=detected_zone)
+                zone_txt = (
+                    f"Zone {detected_zone} risk: {zone_r.risk_level}"
+                    f"{' — overlays: ' + ', '.join(zone_r.overlay_risks) if zone_r.overlay_risks else ' — no overlay restrictions'}"
+                )
+
+                dev_txt = ""
+                if dev_match:
+                    dev_name = dev_match.group(1)
+                    rera_r = check_developer_compliance(dev_name, market=market)
+                    dev_txt = (
+                        f"\n[RERA RECORD — {dev_name}] "
+                        f"Projects: {rera_r.total_projects} | Delayed: {rera_r.delayed_projects} "
+                        f"| Avg delay: {rera_r.avg_delay_months}mo | Signal: {rera_r.compliance_signal}"
+                    )
+                    if rera_r.inactive_anomalies:
+                        dev_txt += f"\n⚠ {len(rera_r.inactive_anomalies)} project(s) inactive/cancelled"
+
+                # Encumbrance (guidance values) auto-context
+                enc_txt = ""
+                try:
+                    enc_r = check_encumbrance(market)
+                    if enc_r.avg_guidance_value_psf:
+                        enc_txt = (
+                            f"\n[GUIDANCE VALUES — {market}] "
+                            f"Avg GV: ₹{enc_r.avg_guidance_value_psf:,.0f}/sqft"
+                        )
+                    if enc_r.avg_transaction_psf:
+                        enc_txt += (
+                            f" | Avg Txn PSF: ₹{enc_r.avg_transaction_psf:,.0f}"
+                        )
+                    if enc_r.guidance_gap_pct is not None:
+                        enc_txt += f" | Gap: {enc_r.guidance_gap_pct:+.1f}%"
+                    if enc_r.risk_flags:
+                        enc_txt += f"\n⚠ Encumbrance flags: {'; '.join(enc_r.risk_flags)}"
+                except Exception as exc:
+                    logger.warning("[board_room] encumbrance auto-context failed: %s", exc)
+
+                legal_context = f"\n\n[AUTO LEGAL CONTEXT — {market} | Zone {detected_zone}]\n{zone_txt}{dev_txt}{enc_txt}\n"
+            except Exception as exc:
+                logger.warning("[board_room] legal auto-context failed: %s", exc)
+            dept_question = legal_context + dept_question
 
         template = _DEPT_TASK_TEMPLATES.get(key)
         task_description = template.format(market=market, dept_question=dept_question) if template else (

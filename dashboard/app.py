@@ -107,8 +107,22 @@ _embedder_instance = None
 _embedder_lock = threading.Lock()
 
 # Search result cache: query → (results, expiry) — reduces ChromaDB queries for repeated searches
-_search_cache: dict[str, tuple[list[dict], float]] = {}
+# OrderedDict preserves insertion order for LRU eviction at `_SEARCH_CACHE_MAX`
+from collections import OrderedDict
+_search_cache: OrderedDict[str, tuple[list[dict], float]] = OrderedDict()
 _SEARCH_CACHE_TTL = 45  # seconds — short enough for freshness, long enough for repeated clicks
+_SEARCH_CACHE_MAX = 200  # max entries — prevents unbounded memory growth
+
+def _cache_get(key: str) -> tuple[list[dict], float] | None:
+    val = _search_cache.get(key)
+    if val is not None:
+        _search_cache.move_to_end(key)
+    return val
+
+def _cache_put(key: str, val: tuple[list[dict], float]) -> None:
+    _search_cache[key] = val
+    if len(_search_cache) > _SEARCH_CACHE_MAX:
+        _search_cache.popitem(last=False)
 
 LOG_PATH = "/app/logs/crew.log"
 VALID_MARKETS = {"Yelahanka", "Devanahalli", "Hebbal", "all"}
@@ -1358,12 +1372,15 @@ def _market_go_no_go(active_projects: int, avg_psf: int | None, estimated: bool)
 def intel_search():
     q = (request.args.get("q") or "").strip()[:200]
     market = _normalize_market(request.args.get("market", ""))
+    # Reject queries with non-printable control characters (injection vector for ChromaDB)
+    if any(ord(c) < 32 and c not in "\t\n\r" for c in q):
+        return jsonify({"results": [], "query": q[:50], "error": "invalid characters in query"}), 400
     if not q:
         return jsonify({"results": [], "query": q})
     market_param = market if market and market != "all" else None
     cache_key = f"{q}:::{market_param or ''}"
     now = time.time()
-    cached = _search_cache.get(cache_key)
+    cached = _cache_get(cache_key)
     if cached and cached[1] > now:
         logger.debug(f"[intel_search] cache hit for q={q[:40]} market={market_param}")
         return jsonify({"results": cached[0], "query": q, "market": market, "cached": True})
@@ -1376,7 +1393,7 @@ def intel_search():
                     from utils.embedder import IntelEmbedder
                     _embedder_instance = IntelEmbedder()
         results = _embedder_instance.search(q, market=market_param, n=5)
-        _search_cache[cache_key] = (results, now + _SEARCH_CACHE_TTL)
+        _cache_put(cache_key, (results, now + _SEARCH_CACHE_TTL))
         return jsonify({"results": results, "query": q, "market": market})
     except Exception as e:
         logger.warning(f"[intel_search] search failed: q={q[:40]} market={market_param}: {e}")

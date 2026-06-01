@@ -104,10 +104,8 @@ JINA_READER_BASE = "https://r.jina.ai"
 # ── HUGGING FACE — Inference API (FinBERT sentiment, free warm tier) ──────────
 # Classification models (BERT-class) are always warm on free tier — no cold start.
 # Used for: FinBERT real estate news sentiment scoring (nightly batch).
-# Sign up: huggingface.co → Settings → Access Tokens → New token (read scope)
+# sign up: huggingface.co → Settings → Access Tokens → New token (read scope)
 HF_API_KEY = os.getenv("HF_API_KEY", "")
-# HF migrated to router.huggingface.co (Inference Providers) in 2025
-HF_INFERENCE_BASE = "https://router.huggingface.co/hf-inference/models"
 FINBERT_MODEL_ID = "ProsusAI/finbert"
 
 # ── INTELLIGENCE LAYER (Phase 8.5) ────────────────────────────────────────────

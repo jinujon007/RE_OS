@@ -21,6 +21,7 @@ from config.settings import TARGET_MARKETS
 from sqlalchemy import text
 from utils.db import get_engine
 from utils.scheduler_helpers import safe_job as _safe_job
+from utils.sentiment import score_headline, label_from_score
 
 
 def _send_rera_alert(market: str, job_start) -> None:
@@ -140,21 +141,35 @@ def run_intel_embedding_index():
         logger.warning(f"[Scheduler] Intel embedding index failed (non-fatal): {exc}")
 
 
+def _score_one_article(row) -> tuple[str, float | None, str | None]:
+    """Score a single article via FinBERT. Returns (article_id, score, label)."""
+    article_id, title, key_insight = row
+    text_to_score = title or ""
+    if key_insight:
+        text_to_score = f"{title}. {key_insight}" if title else key_insight
+    text_to_score = text_to_score.strip()
+    if not text_to_score:
+        return (article_id, None, None)
+    score = score_headline(text_to_score)
+    label = label_from_score(score) if score is not None else None
+    return (article_id, score, label)
+
+
 def run_news_sentiment_scoring():
     """
     Nightly: score any unscored news_articles via FinBERT (HF Inference API).
     Fires at 5:00 AM IST. Non-fatal — sentiment is enrichment, not pipeline-critical.
     Scores articles where sentiment_score IS NULL (new articles from overnight scrapes).
+    Uses ThreadPoolExecutor for parallel HF API calls to stay within misfire_grace_time.
     """
     from config.settings import HF_API_KEY
     if not HF_API_KEY:
-        # Debug-only — HF key is optional; noisy Discord alert every night is unhelpful
         logger.debug("[Scheduler] HF_API_KEY not set — skipping sentiment scoring")
         return
     try:
-        from utils.sentiment import score_headline, label_from_score
         from utils.db import get_engine
         from sqlalchemy import text
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         engine = get_engine()
         with engine.connect() as conn:
@@ -172,30 +187,33 @@ def run_news_sentiment_scoring():
             logger.debug("[Scheduler] Sentiment: no unscored articles")
             return
 
-        scored = failed = 0
-        with engine.begin() as conn:
-            for row in rows:
-                article_id, title, key_insight = row
-                text_to_score = title or ""
-                if key_insight:
-                    text_to_score = f"{title}. {key_insight}" if title else key_insight
-                text_to_score = text_to_score.strip()
-                if not text_to_score:
-                    failed += 1
-                    continue
-                score = score_headline(text_to_score)
+        # Parallel scoring — HF API calls are IO-bound
+        scored_results: list[tuple[str, float, str]] = []
+        failed = 0
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {pool.submit(_score_one_article, row): row for row in rows}
+            for future in as_completed(futures):
+                article_id, score, label = future.result()
                 if score is not None:
-                    label = label_from_score(score)
+                    scored_results.append((article_id, score, label))
+                else:
+                    failed += 1
+
+        # Batch DB writes — short transactions every 25 rows to avoid long-held locks
+        BATCH_SIZE = 25
+        written = 0
+        for i in range(0, len(scored_results), BATCH_SIZE):
+            batch = scored_results[i:i + BATCH_SIZE]
+            with engine.begin() as conn:
+                for article_id, score, label in batch:
                     conn.execute(
                         text("UPDATE news_articles SET sentiment_score = :s, sentiment_label = :l WHERE id = :id"),
                         {"s": score, "l": label, "id": article_id},
                     )
-                    scored += 1
-                else:
-                    failed += 1
+                    written += 1
 
         logger.info(
-            f"[Scheduler] Sentiment scoring: {scored} scored, {failed} failed "
+            f"[Scheduler] Sentiment scoring: {written} scored, {failed} failed "
             f"out of {len(rows)} articles"
         )
     except Exception as exc:

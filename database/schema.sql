@@ -463,7 +463,7 @@ CREATE TABLE news_articles (
     micro_market_id UUID REFERENCES micro_markets(id),
     raw_data JSONB,
     -- Phase 8.5 — Intelligence Layer: FinBERT sentiment enrichment
-    sentiment_score FLOAT,                         -- -1.0 (bearish) to +1.0 (bullish), NULL = unscored
+    sentiment_score DOUBLE PRECISION,               -- -1.0 (bearish) to +1.0 (bullish), NULL = unscored; DOUBLE PRECISION aligns with Alembic 0010 sa.Float()
     sentiment_label VARCHAR(20),                   -- positive | negative | neutral | unscored
     created_at TIMESTAMP DEFAULT NOW()
 );
