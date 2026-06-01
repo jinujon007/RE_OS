@@ -26,6 +26,8 @@ ollama_data/
 
 # ChromaDB persistent data (generated at runtime — not source)
 chroma_data/
+# Local chroma data dir created when running outside Docker
+data/chroma/
 
 # VS Code (keep .vscode committed so team shares settings)
 # .vscode/

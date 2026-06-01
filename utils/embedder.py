@@ -13,6 +13,19 @@ Collections:
   re_os_intel    — market intel reports (outputs/*.txt / *.md files)
   re_os_memories — agent_memories table snapshots (for semantic recall)
 
+Graceful Degradation Matrix:
+  Dependency        | Down behavior                                  | User-visible impact
+  ──────────────────┼────────────────────────────────────────────────┼─────────────────────────
+  Ollama            | Falls back to keyword grep on outputs/         | Results are lexical not semantic
+  ChromaDB          | Falls back to keyword grep on outputs/         | Same Ollama-down behavior
+  Both Ollama+Chroma| Keyword grep (no embedding, no vector store)   | Reduced recall quality
+  Outputs dir empty | Returns [], logged at DEBUG                    | Empty search results
+  HF API (sentiment)| Returns None, logged at DEBUG                  | sentiment_score stays NULL
+  
+  The keyword fallback is a flat grep over intel_report_*.txt files.
+  It does not support semantic similarity — results are scored by
+  number of query terms that appear in the document (0..1).
+
 Usage:
   from utils.embedder import IntelEmbedder
   embedder = IntelEmbedder()
@@ -42,7 +55,25 @@ _EMBED_MODEL = "nomic-embed-text"
 _INTEL_COLLECTION = "re_os_intel"
 _MEMORY_COLLECTION = "re_os_memories"
 _EMBED_TIMEOUT = 30  # seconds — generous for CPU inference
-_OLLAMA_AVAILABILITY_CACHE_SEC = 60
+_OLLAMA_HEALTH_TTL = 10  # cache Ollama health-check result for N seconds
+_ollama_last_check: float = 0.0
+_ollama_last_status: bool = False
+
+# Module-level metrics counters — zero-initialized, incremented by each operation
+_metrics: dict[str, int] = {
+    "search_calls": 0,
+    "search_chroma_hits": 0,
+    "search_fallback_hits": 0,
+    "search_empty": 0,
+    "index_calls": 0,
+    "index_chunks_indexed": 0,
+    "index_chunks_skipped": 0,
+    "index_chunks_failed": 0,
+    "ollama_unavailable_count": 0,
+    "chroma_unavailable_count": 0,
+    "embed_text_calls": 0,
+    "embed_text_failures": 0,
+}
 
 
 class OllamaEmbeddingFunction(EmbeddingFunction):
@@ -69,6 +100,7 @@ def embed_text(
     Get a single embedding vector from Ollama.
     Returns empty list on failure — callers must guard against this.
     """
+    _metrics["embed_text_calls"] += 1
     try:
         resp = requests.post(
             f"{base_url.rstrip('/')}/api/embeddings",
@@ -78,6 +110,7 @@ def embed_text(
         resp.raise_for_status()
         return resp.json().get("embedding", [])
     except Exception as exc:
+        _metrics["embed_text_failures"] += 1
         logger.warning(f"[Embedder] embed_text failed: {exc}")
         return []
 
@@ -112,12 +145,18 @@ def _infer_market(path_str: str) -> str:
 
 
 def _ollama_tags_ok(base_url: str = OLLAMA_BASE_URL, timeout: int = 5) -> bool:
-    """Quick health-check of Ollama via /api/tags. No cache."""
+    """Quick health-check of Ollama via /api/tags. Results cached for _OLLAMA_HEALTH_TTL seconds."""
+    global _ollama_last_check, _ollama_last_status
+    now = time_module.time()
+    if now - _ollama_last_check < _OLLAMA_HEALTH_TTL:
+        return _ollama_last_status
     try:
         r = requests.get(f"{base_url.rstrip('/')}/api/tags", timeout=timeout)
-        return r.status_code == 200
+        _ollama_last_status = r.status_code == 200
     except Exception:
-        return False
+        _ollama_last_status = False
+    _ollama_last_check = now
+    return _ollama_last_status
 
 
 class _BaseChromaStore:
@@ -149,14 +188,16 @@ class _BaseChromaStore:
 
     def _format_hits(self, results: dict) -> list[dict]:
         """Normalise ChromaDB query results into {text, ..., score} list.
-        Converts cosine distance to similarity score: score = 1 - distance.
-        Missing metadata keys are replaced with empty string defaults."""
+        Converts cosine distance to similarity score: score = max(0, 1 - distance).
+        ChromaDB cosine distances are in [0, 2]; clamping prevents negative scores
+        for highly dissimilar results. Missing metadata keys default to empty string.
+        """
         hits = []
         docs = results.get("documents", [[]])[0]
         metas = results.get("metadatas", [[]])[0]
         dists = results.get("distances", [[]])[0]
         for doc, meta, dist in zip(docs, metas, dists):
-            hit = {"text": doc or "", "score": round(1.0 - dist, 4)}
+            hit = {"text": doc or "", "score": round(max(0.0, 1.0 - dist), 4)}
             if isinstance(meta, dict):
                 hit.update(meta)
             else:
@@ -184,13 +225,24 @@ class IntelEmbedder(_BaseChromaStore):
     def _ollama_available(self) -> bool:
         return _ollama_tags_ok()
 
+    def get_metrics(self) -> dict:
+        """Return module-level metrics counters. Useful for dashboard health endpoint."""
+        return dict(_metrics)
+
+    @staticmethod
+    def log_metrics_summary():
+        """Log a one-line summary of all metrics counters at INFO level."""
+        logger.info(f"[Embedder Metrics] {_metrics}")
+
     def index_intel_reports(self, outputs_dir: str = "/app/outputs") -> dict:
         """
         Scan outputs/ for market intel .md files, embed any not yet indexed.
         Returns: {"indexed": N, "skipped": N, "failed": N, "duration_s": float}
         """
         _start = time_module.time()
+        _metrics["index_calls"] += 1
         if not self._ollama_available():
+            _metrics["ollama_unavailable_count"] += 1
             logger.warning("[Embedder] Ollama unreachable — skipping intel indexing")
             return {"indexed": 0, "skipped": 0, "failed": 0, "duration_s": 0}
 
@@ -198,6 +250,7 @@ class IntelEmbedder(_BaseChromaStore):
         try:
             self._ensure_initialized()
         except Exception as exc:
+            _metrics["chroma_unavailable_count"] += 1
             logger.warning(f"[Embedder] ChromaDB init failed: {exc}")
             return {"indexed": 0, "skipped": 0, "failed": 0, "duration_s": 0}
 
@@ -219,17 +272,45 @@ class IntelEmbedder(_BaseChromaStore):
                 if len(text.strip()) < 100:
                     skipped += 1
                     continue
-                # Chunk at 2K chars with 150-char overlap — prevents sentence
-                # boundary cuts and improves recall for queries that span cuts
-                _step = 2000 - 150
+                # Sentence-aware chunking: 2000-char windows with 300-char overlap,
+                # aligned to sentence boundaries to prevent mid-sentence cuts.
+                # Higher overlap improves recall for entity-spanning queries like
+                # "Yelahanka PSF trend" where name and metric are 500+ chars apart.
+                import re as _re
+                _CHUNK_SIZE = 2000
+                _CHUNK_OVERLAP = 300
+                _MAX_CHARS = 8000
+                _MAX_CHUNKS = 10
                 _limit = len(text)
-                if _limit > 8000:
-                    logger.debug(f"[Embedder] Truncating {path.name} from {_limit} to 8000 chars")
-                    _limit = 8000
-                chunks = [text[i : i + 2000] for i in range(0, _limit, _step)]
-                if len(chunks) > 10:
-                    logger.debug(f"[Embedder] Report {path.name} generated {len(chunks)} chunks — capping at 10")
-                    chunks = chunks[:10]
+                if _limit > _MAX_CHARS:
+                    logger.debug(f"[Embedder] Truncating {path.name} from {_limit} to {_MAX_CHARS} chars")
+                    _limit = _MAX_CHARS
+                text = text[:_limit]
+                # Split on sentence boundaries (newline or period + space)
+                sentences = _re.split(r'(?<=[.\n])\s+', text)
+                chunks = []
+                current = []
+                current_len = 0
+                for sent in sentences:
+                    if current_len + len(sent) > _CHUNK_SIZE and current:
+                        chunks.append(" ".join(current))
+                        # Keep overlap sentences from the tail of current window
+                        overlap = []
+                        overlap_len = 0
+                        for s in reversed(current):
+                            if overlap_len + len(s) > _CHUNK_OVERLAP:
+                                break
+                            overlap.insert(0, s)
+                            overlap_len += len(s)
+                        current = overlap
+                        current_len = overlap_len
+                    current.append(sent)
+                    current_len += len(sent)
+                if current:
+                    chunks.append(" ".join(current))
+                if len(chunks) > _MAX_CHUNKS:
+                    logger.debug(f"[Embedder] Report {path.name} generated {len(chunks)} chunks — capping at {_MAX_CHUNKS}")
+                    chunks = chunks[:_MAX_CHUNKS]
                 market = _infer_market(str(path))
                 for j, chunk in enumerate(chunks):
                     chunk_id = f"intel:{path.stem}:chunk{j}"
@@ -253,37 +334,104 @@ class IntelEmbedder(_BaseChromaStore):
                 logger.error(f"[Embedder] Failed to index {path}: {exc}")
                 failed += 1
 
+        _metrics["index_chunks_indexed"] += indexed
+        _metrics["index_chunks_skipped"] += skipped
+        _metrics["index_chunks_failed"] += failed
         _dur = time_module.time() - _start
-        logger.info(f"[Embedder] Intel index done — indexed={indexed} skipped={skipped} failed={failed} in {_dur:.1f}s")
+        # Log ChromaDB collection size if available
+        try:
+            coll_size = self._collection.count()
+            logger.info(f"[Embedder] Intel index done — indexed={indexed} skipped={skipped} failed={failed} "
+                        f"in {_dur:.1f}s | ChromaDB collection size: {coll_size}")
+        except Exception:
+            logger.info(f"[Embedder] Intel index done — indexed={indexed} skipped={skipped} failed={failed} in {_dur:.1f}s")
         return {"indexed": indexed, "skipped": skipped, "failed": failed, "duration_s": round(_dur, 1)}
+
+    def _keyword_search_fallback(self, query: str, n: int = 5, market: str | None = None) -> list[dict]:
+        """Grep-based fallback when Ollama is unavailable. Scans report files for query terms."""
+        outputs_dir = "/app/outputs"
+        output_path = Path(outputs_dir)
+        if not output_path.exists():
+            return []
+        terms = query.lower().split()[:5]
+        if not terms:
+            return []
+        results = []
+        for market_dir in output_path.iterdir():
+            if not market_dir.is_dir():
+                continue
+            dir_market = _infer_market(str(market_dir))
+            if market and market.lower() != dir_market.lower():
+                continue
+            for report in market_dir.glob("intel_report_*.txt"):
+                try:
+                    text = report.read_text(encoding="utf-8", errors="ignore")
+                    text_lower = text.lower()
+                    match_count = sum(1 for t in terms if t in text_lower)
+                    if match_count > 0:
+                        score = round(min(match_count / max(len(terms), 1), 1.0), 4)
+                        results.append({
+                            "text": text[:2000],
+                            "source": report.name,
+                            "market": dir_market,
+                            "score": score,
+                        })
+                except Exception:
+                    continue
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:n]
 
     def search(self, query: str, n: int = 5, market: str | None = None) -> list[dict]:
         """
         Semantic search over indexed intel reports.
+        Falls back to keyword grep when Ollama unavailable.
         Returns list of {text, source, market, score} sorted by relevance.
         Score is in [0, 1] — higher is more relevant.
+
+        Latency budget:
+          - Ollama available: ~2-5s (embed + query round-trip to ChromaDB)
+          - Keyword fallback: ~0.1-0.5s (file grep on outputs/)
+          - Ollama health check: cached 10s TTL — first call hits API, subsequent calls return cached
         """
+        _metrics["search_calls"] += 1
         if not self._ollama_available():
-            return []
+            _metrics["search_fallback_hits"] += 1
+            _metrics["ollama_unavailable_count"] += 1
+            logger.debug("[Embedder] Ollama down — using keyword fallback search")
+            return self._keyword_search_fallback(query, n=n, market=market)
         try:
             self._ensure_initialized()
         except Exception as exc:
+            _metrics["chroma_unavailable_count"] += 1
             logger.warning(f"[Embedder] ChromaDB unavailable: {exc}")
-            return []
+            return self._keyword_search_fallback(query, n=n, market=market)
 
         where = {"market": market} if market else None
         try:
             count = self._collection.count()
             if count == 0:
+                keyword_results = self._keyword_search_fallback(query, n=n, market=market)
+                if keyword_results:
+                    _metrics["search_fallback_hits"] += 1
+                    logger.debug("[Embedder] ChromaDB empty — falling back to keyword search")
+                    return keyword_results
+                _metrics["search_empty"] += 1
                 return []
             results = self._collection.query(
                 query_texts=[query],
                 n_results=min(n, count),
                 where=where,
             )
+            _metrics["search_chroma_hits"] += 1
             return self._format_hits(results)
         except Exception as exc:
             logger.warning(f"[Embedder] search failed: {exc}")
+            keyword_results = self._keyword_search_fallback(query, n=n, market=market)
+            if keyword_results:
+                _metrics["search_fallback_hits"] += 1
+                logger.debug("[Embedder] ChromaDB query failed — falling back to keyword search")
+                return keyword_results
+            _metrics["search_empty"] += 1
             return []
 
     def query(self, question: str, market: str | None = None, n: int = 5) -> list[dict]:

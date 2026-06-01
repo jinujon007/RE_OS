@@ -1,5 +1,5 @@
 # RE_OS — Claude Handout
-**Last updated: 2026-05-30**
+**Last updated: 2026-06-01**
 **Owner: Jinu — Employee, Land & Life Space (LLS)**
 **Working directory: `D:\Brain\JINU JOSHI\03 LLS\02 Projects\RE_market\RE_OS`**
 
@@ -13,12 +13,17 @@ Multi-agent real estate intelligence OS for LLS. Six AI scouts scrape RERA Karna
 **Questions it answers:** Enter a micro-market at what PSF? Who are Grade A competitors? Which developers are distressed (JD/JV targets)? Absorption trends? Go/no-go on a market right now?
 
 **Phase 1 (Scout Integration): ✅ COMPLETE**
-**Phase 2 (Dashboard): ✅ COMPLETE — 2026-05-30 — Org Chart, Intel Board, Task Board, Log Stream, Board Room, Sentinel, Pipeline Control, DB Explorer all live**
-**Phase 3 (Board Room): ✅ COMPLETE — 2026-05-30 — 5 dept heads, action approval, GATE-10 PASSED**
-**Phase 4 (Agent Memory): ✅ COMPLETE — read/write/decay implemented + injected into pipeline**
-**Phase 5 (Engineering): 🟡 IN PROGRESS — FSI calculator, Architect Agent, Board Room wire done (T-359/360/361/362/363)**
+**Phase 2 (Dashboard): ✅ COMPLETE — 2026-05-30**
+**Phase 3 (Board Room): ✅ COMPLETE — 2026-05-30 — 5 dept heads (BD/Finance/Eng/Ops/Legal), GATE-10 PASSED**
+**Phase 4 (Agent Memory): ✅ COMPLETE — read/write/decay/confidence, weekly decay cron, pipeline injection**
+**Phase 5 (Engineering): ✅ COMPLETE — 2026-06-01 — FSI calc, Architect, Renderer, Green Coverage, GATE-12 PASSED**
+**Phase 6 (Finance Dept): ✅ COMPLETE — IRR model, FeasibilityAnalystTool, Finance Head, Board Room auto-IRR, GATE-13 PASSED**
+**Phase 7 (Discord Alerts): 🟡 MOSTLY COMPLETE — alerts coded (T-380–T-389 DONE); GATE-14 pending live Discord verification**
+**Phase 8.5 (Intelligence Layer): ✅ COMPLETE — 2026-06-01 — ChromaDB semantic search + FinBERT sentiment + scheduler jobs, GATE-15 PASSED**
+**Phase 8 (Agent Hiring): 🟡 IN PROGRESS — Sprint 31 (T-409–T-419 PENDING)**
+**Phase 12 (Legal Dept — Real Tools): 🟡 IN PROGRESS — Sprint 30 (T-401–T-408 PENDING)**
 
-**Current sprint (Sprint 26 — Phase Closure):** Phase 2 (Dashboard) and Phase 3 (Board Room) formally closed. GATE-10 (Phase 3 DoD) and GATE-11 (FSI calc 12+ tests) both PASSED. Phase 5 (Engineering Dept) bootstrapped — FSI calculator, Architect Agent, Board Room wire complete. 226 unit tests passing. Next: T-366+ — Phase 5 continuation and hardening.
+**Current sprint (Sprint 30 — Legal Dept Real Tools):** Phase 8.5 (Intelligence Layer) complete — GATE-15 PASSED (semantic search returns relevant intel report excerpts; FinBERT sentiment job runs nightly). 339 unit tests passing. Next: T-401–T-408 (RERA compliance checker, zone risk checker, Legal Head tools, compliance researcher agent, Board Room legal auto-context, Dashboard Legal panel).
 
 **Dev workflow:** Claude Code (architect) + Kilo Code (sole implementer). Cline retired 2026-05-29. See `AGENTS.md` + `KILO_BRIEF.md`.
 
@@ -29,10 +34,15 @@ Multi-agent real estate intelligence OS for LLS. Six AI scouts scrape RERA Karna
 ```
 CEO Agent (Orchestrator)
     ├── Scraper Agent  → 6 scouts: RERA + RERA Detail + Portal + Developer + News + Kaveri
-    ├── Analyst Agent  → queries DB, calculates 6 market signals, produces brief
+    ├── Analyst Agent  → queries DB, 6 market signals + FSI/IRR tools + IntelSearchTool
     ├── Sentinel Agent → system health monitor (docker-compose healthcheck)
-    ├── Parser Agent   → standalone only (not in main crew)
-    └── Organizer Agent → DEPRECATED (replaced by db_organizer.py)
+    └── Parser Agent   → standalone only (not in main crew)
+
+Board Room (separate crew):
+    ├── BD Head, Finance Head, Engineering Head, Ops Head, Legal Head — concurrent
+    ├── Architect Agent → FSI + Typology + Green Coverage (Engineering dept)
+    ├── Finance Head Agent → FeasibilityAnalystTool + IRR (Finance dept)
+    └── Renderer Agent → Midjourney/DALL-E prompt generation (Engineering / Creative)
 ```
 
 Main runtime: **3-stage pipeline** — Data Crew (6 scouts) → Python Organizer (db_organizer.py) → Intel Crew (Analyst + CEO).
@@ -58,9 +68,9 @@ Only port 8050 is externally exposed — all others are internal (security harde
 ## LLM Routing
 
 ```
-HEAVY  (CEO):      Groq Scout 17b → Gemini 2.5 Flash → NVIDIA 405b → OpenRouter 70b → Ollama
-ANALYSIS (Analyst): Cerebras 8b (1M tok/day) → Groq Scout → Ollama
-LIGHT  (Scraper):  Cerebras 8b (1M tok/day) → Gemini Gemma 27b → NVIDIA 70b → Ollama
+HEAVY  (CEO):      Groq Scout 17b → Gemini 2.5 Flash → NVIDIA 405b → SambaNova 70b → OpenRouter 70b → Cloudflare → Ollama
+ANALYSIS (Analyst): Cerebras 8b → Groq Scout → SambaNova → Ollama
+LIGHT  (Scraper):  Cerebras 8b → Gemini Gemma 27b → NVIDIA 70b → SambaNova → Cloudflare → Ollama
 ```
 
 **Critical:** Cerebras 8,192 token context cap — fine for structured extraction + DB queries. NOT for CEO.
@@ -76,7 +86,7 @@ LIGHT  (Scraper):  Cerebras 8b (1M tok/day) → Gemini Gemma 27b → NVIDIA 70b 
 RE_OS/
 ├── CLAUDE.md                     ← YOU ARE HERE
 ├── TASK_QUEUE.md                 ← ALL pending work + sprint priorities
-├── VISION.md                     ← 14-phase roadmap (Phase 1 complete, Phase 2 in progress)
+├── VISION.md                     ← 14-phase roadmap (Phases 1–6 + 8.5 complete; 7 mostly done)
 ├── AGENTS.md                     ← Multi-brain coordination protocol
 ├── CHANGELOG.md                  ← File-level change log (audit trail)
 ├── DEVLOG.md                     ← Phase-by-phase build history
@@ -88,12 +98,14 @@ RE_OS/
 │   ├── analyst_agent.py         ← 6-signal market analysis, ANALYSIS LLM tier
 │   ├── scraper_agent.py         ← 8 tools: 6 scouts + 2 kaveri tools, LIGHT LLM tier
 │   ├── sentinel_agent.py        ← System health monitor (docker healthcheck)
-│   ├── parser_agent.py          ← standalone only
-│   └── organizer_agent.py       ← DEPRECATED
+│   ├── architect_agent.py       ← FSI calc + Typology + GreenCoverage tools (Phase 5)
+│   ├── renderer_agent.py        ← Midjourney/DALL-E prompt generator (Phase 5)
+│   ├── finance_head_agent.py    ← FeasibilityAnalystTool + IRR (Phase 6)
+│   └── parser_agent.py          ← standalone only
 │
 ├── crews/
 │   ├── market_intel_crew.py     ← 3-stage pipeline (6-task Stage 1 + Stage 2 + Stage 3)
-│   └── board_room.py            ← Phase 3 skeleton (not implemented)
+│   └── board_room.py            ← 5-dept Board Room: BD/Finance/Eng/Ops/Legal concurrent
 │
 ├── scrapers/
 │   ├── rera_karnataka.py        ← Playwright AJAX intercept + POST + hardcoded fallback
@@ -108,9 +120,18 @@ RE_OS/
 ├── utils/
 │   ├── validator.py             ← RERA record validation + [ESTIMATED] prefix
 │   ├── db_organizer.py          ← Batch DB upsert, SAVEPOINT pattern, no LLM
+│   ├── db.py                    ← Shared SQLAlchemy engine singleton
+│   ├── agent_memory.py          ← Phase 4: per-agent memory read/write/decay/confidence
+│   ├── fsi_calculator.py        ← Phase 5: FSI + typology pure-Python calculator
+│   ├── green_coverage.py        ← Phase 5: landscape area + tree count estimator
+│   ├── irr_model.py             ← Phase 6: LandCost + GDV + IRR + ScenarioComparator
+│   ├── feasibility.py           ← Phase 6: simple LandFeasibility dataclass (analyst tool)
+│   ├── embedder.py              ← Phase 8.5: ChromaDB semantic search (IntelEmbedder)
+│   ├── sentiment.py             ← Phase 8.5: FinBERT via HF Inference API
+│   ├── discord_notifier.py      ← Phase 7: Discord webhook alerts (5 formatters)
+│   ├── scheduler_helpers.py     ← safe_job wrapper for APScheduler error isolation
 │   ├── status.py                ← Health dashboard
-│   ├── diagnose.py              ← Diagnostic utility
-│   └── agent_memory.py          ← Phase 4 skeleton (T-220, not yet implemented)
+│   └── diagnose.py              ← Diagnostic utility
 │
 ├── config/
 │   ├── llm_router.py            ← 3-tier routing, thread-safe exclusion tracking
@@ -179,7 +200,10 @@ docker compose exec agents python scrapers/news_scout.py --market Yelahanka
 # Dashboard
 curl http://localhost:8050/api/health
 curl http://localhost:8050/api/agents
-curl http://localhost:8050/api/intel
+curl http://localhost:8050/api/intel/cards
+curl "http://localhost:8050/api/intel/search?q=Yelahanka+PSF+trend&market=yelahanka"
+curl http://localhost:8050/api/alerts
+curl http://localhost:8050/api/board/sessions
 
 # DB (or use MCP postgres tool — no docker exec needed)
 docker compose exec postgres psql -U re_os_user -d re_os
@@ -200,15 +224,23 @@ Get-Content logs/crew.log -Wait -Tail 50
 
 ---
 
-## Governance Gates (as of 2026-05-20 — Round 9 Architecture Review)
+## Governance Gates (as of 2026-06-01)
 
-| Gate | Name | Prerequisite | Unlocks |
-|------|------|-------------|---------|
-| GATE-1 | Pipeline Observability | T-245 DONE + stage events verified in agent_runs | T-249 (delete log monitor) + T-246 (market parallelism) |
-| GATE-2 | Dashboard Smoke Test | T-165 DONE + all 5 endpoints return live data | Phase O dashboard UI build |
-| GATE-3 | Auth Hardening | T-235 + T-250 DONE | DASHBOARD_API_KEY can be set in prod |
-| GATE-4 | Intel Quality Baseline | T-179 + T-205 + T-206 + Kilo audit T-184 pass | Board Room bootstrap |
-| GATE-5 | Log Monitor Eliminated | T-249 DONE | Phase S (scout parallelism) |
+| Gate | Name | Status |
+|------|------|--------|
+| GATE-2 | Dashboard Smoke Test — all 5 endpoints return live data | ✅ PASSED |
+| GATE-4 | Intel Quality Baseline — ≥50 live RERA projects for Yelahanka/Hebbal | ✅ PASSED |
+| GATE-7 | Test coverage ≥55% | ✅ PASSED |
+| GATE-8 | API security + dashboard routes | ✅ PASSED |
+| GATE-9 | CORS + Alembic startup | ✅ PASSED |
+| GATE-10 | Phase 3 DoD — Board Room session → 2 tasks approved → Task Board | ✅ PASSED |
+| GATE-11 | FSI calculator ≥12 tests | ✅ PASSED |
+| GATE-12 | Phase 5 DoD — Architect + Renderer standalone verified | ✅ PASSED |
+| GATE-13 | Phase 6 DoD — Finance Head returns real IRR from live data | ✅ PASSED |
+| GATE-14 | Phase 7 DoD — RERA scrape → Discord alert within 30s | 🔴 PENDING |
+| GATE-15 | Phase 8.5 DoD — semantic query returns past report excerpts | ✅ PASSED |
+| GATE-16 | Phase 12 DoD — Legal Head cites RERA data + zone risk from DB | 🔴 PENDING |
+| GATE-17 | Phase 8 DoD — hire agent from dashboard, appears in org chart | 🔴 PENDING |
 
 **API key rotation procedure (dual-key window, implemented by T-250):**
 1. Set `DASHBOARD_API_KEY_PREV=$OLD_KEY` + `DASHBOARD_API_KEY=$NEW_KEY` → `docker compose restart agents`
@@ -251,15 +283,15 @@ Devanahalli: 317 live projects ✅. Root cause: RERA portal selector `No localit
 
 ## Database Schema
 
-**14 tables** (12 core + board_sessions + agent_memories — all in Alembic baseline migration 0001_initial.py):
+**16 tables** (Alembic migrations 0001–0010 applied):
 `micro_markets`, `developers`, `rera_projects`, `project_snapshots`, `listings`,
 `kaveri_registrations`, `guidance_values`, `regulatory_zones`, `overlay_constraints`,
-`infrastructure_pipeline`, `market_snapshots`, `agent_runs`, `news_articles`,
-`board_sessions`, `agent_memories`
+`infrastructure_pipeline`, `market_snapshots`, `agent_runs`, `news_articles` (+ sentiment columns),
+`board_sessions`, `agent_memories`, `tasks`, `alerts`
 
 **Views:** `v_active_projects`, `v_market_inventory`, `v_developer_scorecard`, `v_market_brief`
 
-**Current data (2026-05-19):** Devanahalli 317 live RERA + Yelahanka/Hebbal 8 fallback each. 31+ intel reports for Yelahanka.
+**Current data (2026-06-01):** Devanahalli 317 live RERA + Yelahanka 165 + Hebbal 736 (post GATE-4). 35+ intel reports. 339 unit tests passing.
 
 Developer grades: Grade A = known major brand OR ≥500 units. B = 100–499. C = <100.
 
@@ -269,12 +301,16 @@ Developer grades: Grade A = known major brand OR ≥500 units. B = 100–499. C 
 
 | Key | Status | Quota |
 |-----|--------|-------|
-| `CEREBRAS_API_KEY` | ✅ Set | 1M tok/day, 60-100k TPM |
-| `GEMINI_API_KEY` | ✅ Set | 250k TPM (Flash) / 14.4k req/day (Gemma) |
+| `CEREBRAS_API_KEY` | ✅ Set | 1M tok/day, 8192 ctx cap |
+| `GEMINI_API_KEY` | ✅ Set | 250k TPM Flash / 14.4k req/day Gemma |
 | `GROQ_API_KEY` | ✅ Set | 30k TPM Scout, 1k req/day |
 | `NVIDIA_API_KEY` | ✅ Set | 40 req/min |
 | `OPENROUTER_API_KEY` | ✅ Set | 50-1000 req/day |
-| Ollama | ✅ Local | Unlimited (slow) |
+| `SAMBANOVA_API_KEY` | ✅ Set | 20M tok/day, 20 RPM (Tier 4) |
+| `CLOUDFLARE_API_KEY` | ✅ Set | 10K neurons/day — last-resort (Tier 5) |
+| `HF_API_KEY` | ✅ Set | FinBERT sentiment — always-warm free tier |
+| `JINA_API_KEY` | Optional | 1M tok free bucket for embeddings |
+| Ollama | ✅ Local | Unlimited (CPU-slow) — nomic-embed-text for ChromaDB |
 
 **Rotate Groq:** `console.groq.com` → delete old → create new → update `.env` → `docker compose restart agents scheduler`
 

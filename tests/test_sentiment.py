@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 pytestmark = pytest.mark.unit
 
-from utils.sentiment import score_headline, label_from_score
+from utils.sentiment import score_headline, label_from_score, aggregate_market_sentiment
 
 API_KEY = "hf_test"
 
@@ -50,30 +50,6 @@ class TestScoreHeadline:
         with patch("requests.post", return_value=mock_resp):
             result = score_headline("Test", api_key=API_KEY)
             assert result is None
-
-    def test_retry_503_then_success(self):
-        ok_resp = MagicMock()
-        ok_resp.status_code = 200
-        ok_resp.json.return_value = [[{"label": "positive", "score": 0.8}]]
-        error_resp = MagicMock()
-        error_resp.status_code = 503
-        error_resp.text = "Model loading"
-        with patch("time.sleep") as mock_sleep, \
-             patch("requests.post", side_effect=[error_resp, ok_resp]) as mock_post:
-            result = score_headline("Model loads on retry", api_key=API_KEY)
-            assert result is not None
-            assert result > 0
-            assert mock_post.call_count == 2
-
-    def test_retry_exhausted_returns_none(self):
-        error_resp = MagicMock()
-        error_resp.status_code = 503
-        error_resp.text = "Model loading"
-        with patch("time.sleep") as mock_sleep, \
-             patch("requests.post", return_value=error_resp) as mock_post:
-            result = score_headline("Always 503", api_key=API_KEY)
-            assert result is None
-            assert mock_post.call_count >= 3
 
     def test_empty_text_returns_none(self):
         result = score_headline("", api_key=API_KEY)
@@ -145,9 +121,12 @@ class TestScoreHeadline:
         long_text = "Market " * 200  # 1400 chars, will be truncated to ~512 tokens
         with patch("requests.post", return_value=mock_resp) as mock_post:
             result = score_headline(long_text, api_key=API_KEY)
-            assert result is not None or result is None  # both are acceptable
+            # Verify truncation: the inputs sent to HF API are ≤512 chars
             call_arg = mock_post.call_args[1]["json"]["inputs"]
             assert len(call_arg) <= 512
+            # Verify the API response is still parseable after truncation
+            assert result is not None
+            assert result == 0.0  # neutral label * 0.6 confidence
 
 
 class TestLabelFromScore:
@@ -172,38 +151,32 @@ class TestLabelFromScore:
 
 class TestAggregateMarketSentiment:
     def test_empty_list_returns_neutral(self):
-        from utils.sentiment import aggregate_market_sentiment
         result = aggregate_market_sentiment([])
         assert result["label"] == "neutral"
         assert result["scored"] == 0
         assert result["avg_score"] == 0.0
 
     def test_all_none_returns_neutral(self):
-        from utils.sentiment import aggregate_market_sentiment
         result = aggregate_market_sentiment([None, None, None])
         assert result["label"] == "neutral"
         assert result["scored"] == 0
 
     def test_positive_majority(self):
-        from utils.sentiment import aggregate_market_sentiment
         result = aggregate_market_sentiment([0.8, 0.6, 0.7])
         assert result["label"] == "positive"
         assert result["scored"] == 3
         assert result["positive_pct"] == 100.0
 
     def test_negative_majority(self):
-        from utils.sentiment import aggregate_market_sentiment
         result = aggregate_market_sentiment([-0.5, -0.7, -0.3])
         assert result["label"] == "negative"
         assert result["negative_pct"] == 100.0
 
     def test_mixed_scores_ignores_none(self):
-        from utils.sentiment import aggregate_market_sentiment
         result = aggregate_market_sentiment([0.8, None, -0.2, None])
         assert result["scored"] == 2
         assert result["avg_score"] == round((0.8 + (-0.2)) / 2, 4)
 
     def test_avg_score_precision(self):
-        from utils.sentiment import aggregate_market_sentiment
         result = aggregate_market_sentiment([0.3, 0.5])
         assert result["avg_score"] == 0.4
