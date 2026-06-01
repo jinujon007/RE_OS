@@ -329,18 +329,21 @@ A `Makefile` wraps the most common commands. Requires `make` installed.
 
 ## Roadmap
 
-- [x] **Phase 0** — Core pipeline: RERA scraper, PostGIS, CEO + Analyst agents
-- [x] **Phase 1** — Scout Division: RERA, RERA Detail, Portal, Developer, News, Kaveri scouts (6 scouts, ScoutMemory dedup, all active in Stage 1)
-- [x] **Phase 2** — Dashboard: Flask server on port 8050, live /api/health, /api/agents, /api/intel, /api/db/state, SSE log stream, pipeline trigger endpoints
-- [ ] **Phase 3** — Board Room: CEO decomposes pitch, department heads (BD, Finance, Engineering, Ops) respond concurrently
-- [ ] **Phase 4** — Agent Memory: cross-run knowledge persistence with confidence decay
-- [ ] **Phase 5** — Finance Department: feasibility analyst + GDV modelling
-- [ ] **Phase 6** — Mission Control UI: org chart, direct comms, Board Room
-- [ ] **Phase 7** — PR & Brand Department: content + social media agents
-- [ ] **Phase 8** — Legal Department: RERA compliance, title risk agents
-- [ ] **Phase 9+** — Full Virtual RE Office: all departments, hiring system, Board of Shareholders
+- [x] **Phase 1** — Scout Division: 6 scouts (RERA, Portal, Developer, News, Kaveri + Scrapling resilience)
+- [x] **Phase 2** — Dashboard: Org chart, Intel board, Task board, Log stream, DB explorer (port 8050)
+- [x] **Phase 3** — Board Room: 5 dept heads concurrent (BD/Finance/Eng/Ops/Legal), action approval, session history
+- [x] **Phase 4** — Agent Memory: confidence decay, weekly cron, pipeline injection
+- [x] **Phase 5** — Engineering Dept: FSI calculator, Typology recommender, Green coverage, Renderer
+- [x] **Phase 6** — Finance Dept: IRR model, JD/JV feasibility, Board Room auto-IRR
+- [x] **Phase 7** — Discord Alerts: 5 formatters wired (GATE-14 live verification pending)
+- [x] **Phase 8** — Agent Hiring: YAML registry, agent factory, dashboard hire-from-template
+- [x] **Phase 8.5** — Intelligence Layer: ChromaDB semantic search, FinBERT sentiment, BGE-M3, cross-encoder reranker
+- [x] **Phase 12** — Legal Dept: RERA compliance checker, zone risk, encumbrance from DB
+- [x] **Sprints 32–33** — HF Foundation: GPU Ollama, BGE-M3, Qwen2.5-1.5B, semantic dedup, BERTScore eval
+- [ ] **Sprint 39** — Data Foundation: IGR transactions, distressed developer alerting, Kaveri fix, months-of-supply ← **ACTIVE**
+- [ ] **v2 Architecture (Sprints 60–66)** — Schema-first redesign, Unified Ingest Engine, 5 Intel Modules, Opportunity Engine, Telegram field interface
 
-Full vision and phase specs: [VISION.md](VISION.md)
+Full vision and phase specs: [VISION.md](VISION.md) · v2 architecture rationale: [REPLAN.md](REPLAN.md)
 
 ---
 

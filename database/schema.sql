@@ -279,6 +279,36 @@ CREATE TABLE kaveri_registrations (
 );
 
 -- ============================================================
+-- IGR TRANSACTIONS (Sprint 39 — Data Foundation)
+-- Actual sale deed registrations from IGR Karnataka portal
+-- Transaction_psf is a GENERATED column computed from consideration / area
+-- ============================================================
+CREATE TABLE IF NOT EXISTS igr_transactions (
+    id VARCHAR(32) PRIMARY KEY,              -- SHA-256 hash of survey_no+registration_date
+    market VARCHAR(100) NOT NULL,
+    micro_market_id UUID REFERENCES micro_markets(id),
+    survey_no VARCHAR(100),
+    seller_name TEXT,
+    buyer_name TEXT,
+    consideration_amount BIGINT,             -- Total consideration in INR (paise)
+    area_sqft NUMERIC(12,2),
+    transaction_psf NUMERIC(12,2)
+        GENERATED ALWAYS AS (
+            ROUND(consideration_amount / NULLIF(area_sqft, 0), 0)
+        ) STORED,
+    registration_date DATE,
+    sro_office VARCHAR(200),
+    source VARCHAR(50) NOT NULL DEFAULT 'fallback'
+        CHECK (source IN ('portal_playwright', 'portal_post', 'fallback')),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_igr_market_date
+    ON igr_transactions(market, registration_date DESC);
+CREATE INDEX IF NOT EXISTS idx_igr_survey_no
+    ON igr_transactions(survey_no);
+
+-- ============================================================
 -- GUIDANCE VALUES
 -- Government circle rates by zone — updated annually
 -- ============================================================
@@ -659,8 +689,9 @@ CREATE TABLE IF NOT EXISTS agent_registry (
     active      BOOLEAN NOT NULL DEFAULT TRUE,
     hired_on    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_agent_registry_dept   ON agent_registry(department);
-CREATE INDEX IF NOT EXISTS idx_agent_registry_active ON agent_registry(active);
+CREATE INDEX IF NOT EXISTS idx_agent_registry_dept     ON agent_registry(department);
+CREATE INDEX IF NOT EXISTS idx_agent_registry_active   ON agent_registry(active);
+CREATE INDEX IF NOT EXISTS idx_agent_registry_hired_on ON agent_registry(hired_on DESC);
 
 -- ============================================================
 -- VIEWS — Useful pre-built queries
@@ -769,6 +800,36 @@ GROUP BY d.id, d.name, d.grade
 ORDER BY total_units DESC NULLS LAST;
 
 -- ============================================================
+-- IGR TRANSACTIONS — Sprint 39: Data Foundation (T-476)
+-- Karnataka Inspector General of Registration: registered sale deeds.
+-- These are actual transaction prices, not listing prices.
+-- transaction_psf is 15-25% below listing PSF — critical for accurate IRR.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS igr_transactions (
+    id              VARCHAR(32) PRIMARY KEY,          -- SHA-256[:32] of survey_no+registration_date
+    market          VARCHAR(100) NOT NULL,
+    survey_no       VARCHAR(200),
+    seller_name     TEXT,
+    buyer_name      TEXT,
+    consideration_amount  BIGINT,                     -- total sale consideration in INR
+    area_sqft       NUMERIC(12, 1),
+    transaction_psf NUMERIC(10, 0)
+        GENERATED ALWAYS AS (
+            ROUND(consideration_amount::NUMERIC / NULLIF(area_sqft, 0))
+        ) STORED,
+    registration_date  DATE,
+    sro_office      VARCHAR(200),
+    source          VARCHAR(50) NOT NULL DEFAULT 'fallback'
+                    CHECK (source IN ('portal_playwright', 'portal_post', 'fallback')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_igr_transactions_market_date
+    ON igr_transactions(market, registration_date DESC);
+CREATE INDEX IF NOT EXISTS idx_igr_transactions_survey_no
+    ON igr_transactions(survey_no);
+
+-- ============================================================
 -- ALEMBIC VERSION STAMP
 -- ============================================================
 -- This block makes schema.sql + alembic upgrade head work together on
@@ -782,10 +843,10 @@ ORDER BY total_units DESC NULLS LAST;
 --   5. gunicorn starts cleanly.
 --
 -- MAINTENANCE CONTRACT: every time a new Alembic migration is added
--- (e.g. 0012_foo), update this stamp to the new revision ID so that
+-- (e.g. 0013_foo), update this stamp to the new revision ID so that
 -- fresh deployments see the DB as current.
 --
--- Current HEAD: 0011_add_agent_registry
+-- Current HEAD: 0013_add_igr_transactions
 -- ============================================================
 CREATE TABLE IF NOT EXISTS alembic_version (
     version_num VARCHAR(32) NOT NULL,
@@ -794,5 +855,5 @@ CREATE TABLE IF NOT EXISTS alembic_version (
 
 -- Stamp to current HEAD — safe to re-run (ON CONFLICT DO NOTHING)
 INSERT INTO alembic_version (version_num)
-VALUES ('0011_add_agent_registry')
+VALUES ('0013_add_igr_transactions')
 ON CONFLICT (version_num) DO NOTHING;

@@ -29,10 +29,11 @@ from flask_cors import CORS
 _ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("DASHBOARD_ALLOWED_ORIGINS", "http://localhost:8050").split(",") if o.strip()]
 CORS(app, origins=_ALLOWED_ORIGINS)
 
+_REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 limiter = Limiter(
     get_remote_address,
     app=app,
-    storage_uri="memory://",
+    storage_uri=_REDIS_URL,
     strategy="fixed-window",
 )
 
@@ -49,11 +50,15 @@ def _add_security_headers(response):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["X-XSS-Protection"] = "0"
     # Restrict resource loading to same origin — prevents XSS data exfiltration
+    # CSP: self + CDN sources for v2 Leaflet.js, Chart.js, OpenStreetMap tiles.
+    # unsafe-inline kept for inline scripts/styles in the single-file dashboard template.
+    # Tighten to nonces when the dashboard migrates to a proper template engine.
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "connect-src 'self'"
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; "
+        "img-src 'self' data: https://*.tile.openstreetmap.org https://*.basemaps.cartocdn.com; "
+        "connect-src 'self' https://nominatim.openstreetmap.org"
     )
     return response
 
@@ -68,6 +73,7 @@ _READ_ONLY_PATHS = frozenset({
     '/api/finance/brief',
     '/api/legal/brief',
     '/api/alerts',
+    '/api/registry',
 })
 _READ_ONLY_PREFIXES = ('/api/reports/', '/api/logs/')
 
@@ -474,6 +480,16 @@ def health():
     except Exception:
         services["ollama"] = "warn"  # non-critical — local LLM fallback only
 
+    # ChromaDB health
+    try:
+        from chromadb import PersistentClient
+        _chroma_path = os.environ.get("CHROMA_DB_PATH", "/app/data/chroma")
+        _test_client = PersistentClient(path=_chroma_path)
+        _test_client.heartbeat()
+        services["chroma"] = "ok"
+    except Exception:
+        services["chroma"] = "error"
+
     # Last pipeline run info from agent_runs table
     try:
         conn = _get_db()
@@ -694,18 +710,24 @@ def finance_brief():
 @limiter.limit("30 per minute")
 @app.route("/api/legal/brief", methods=["GET"])
 def legal_brief():
+    market = _normalize_market(request.args.get("market", ""))
     conn = None
     exc = False
     try:
         conn = _get_db()
         cur = conn.cursor()
-        cur.execute("""
+        where = "WHERE legal_response IS NOT NULL"
+        params = []
+        if market and market != "all":
+            where += " AND market = %s"
+            params.append(market)
+        cur.execute(f"""
             SELECT session_id, market, legal_response, created_at
             FROM board_sessions
-            WHERE legal_response IS NOT NULL
+            {where}
             ORDER BY created_at DESC
             LIMIT 1
-        """)
+        """, params)
         row = cur.fetchone()
         cur.close()
         if not row:
@@ -850,6 +872,135 @@ def update_task(task_id):
     finally:
         if conn:
             _release_db(conn, reset=exc)
+
+
+# ── Registry API ────────────────────────────────────────────────────────────────
+
+
+@limiter.limit("30 per minute")
+@app.route("/api/registry", methods=["GET", "POST"])
+def handle_registry():
+    if request.method == "GET":
+        return _list_registry()
+    return _hire_agent()
+
+
+_registry_cache: dict[str, tuple[list[dict], float]] = {}  # "all" → (agents, expiry)
+_REGISTRY_CACHE_TTL = 15  # seconds — long enough to absorb dashboard poll bursts, short enough for freshness
+
+
+def _list_registry():
+    now = time.time()
+    cached = _registry_cache.get("all")
+    if cached and cached[1] > now:
+        logger.debug("[list_registry] cache hit (%d agents)", len(cached[0]))
+        return jsonify({"agents": cached[0], "cached": True})
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, name, role, department, llm_tier, active, hired_on
+            FROM agent_registry ORDER BY department, name
+        """)
+        rows = [
+            {"id": r[0], "name": r[1], "role": r[2], "department": r[3],
+             "llm_tier": r[4], "active": r[5],
+             "hired_on": r[6].isoformat() if r[6] else None}
+            for r in cur.fetchall()
+        ]
+        cur.close()
+        _registry_cache["all"] = (rows, now + _REGISTRY_CACHE_TTL)
+        return jsonify({"agents": rows})
+    except Exception as e:
+        exc = True
+        logger.warning("[list_registry] DB query failed: %s", e)
+        # Return stale cache if available
+        if cached:
+            return jsonify({"agents": cached[0], "cached": True, "stale": True})
+        return jsonify({"error": "database query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+
+
+def _validate_registry_payload(payload: dict) -> tuple[dict | None, str | None]:
+    """Validate incoming agent spec payload. Returns (validated_payload, error_message)."""
+    required = ("id", "name", "role", "persona", "llm_tier")
+    for field in required:
+        val = payload.get(field)
+        if not val:
+            return None, f"missing required field: '{field}'"
+        if not isinstance(val, str):
+            return None, f"field '{field}' must be a string, got {type(val).__name__}"
+
+    spec_id = str(payload["id"]).strip()
+    if not re.match(r"^[a-z][a-z0-9_-]*$", spec_id):
+        return None, ("invalid id — must start with lowercase letter, "
+                       "contain only [a-z0-9_-]")
+    if len(spec_id) > 100:
+        return None, f"id too long ({len(spec_id)} chars) — max 100"
+
+    tier = payload["llm_tier"]
+    if tier not in ("heavy", "analysis", "light"):
+        return None, f"invalid llm_tier '{tier}' — must be heavy, analysis, or light"
+
+    goal = payload.get("goal")
+    if goal is not None and not isinstance(goal, str):
+        return None, f"field 'goal' must be a string, got {type(goal).__name__}"
+
+    tools_val = payload.get("tools")
+    if tools_val is not None and not isinstance(tools_val, list):
+        return None, f"field 'tools' must be a list, got {type(tools_val).__name__}"
+
+    markets_val = payload.get("markets")
+    if markets_val is not None and not isinstance(markets_val, list):
+        return None, f"field 'markets' must be a list, got {type(markets_val).__name__}"
+
+    max_iter = payload.get("max_iter")
+    if max_iter is not None and not isinstance(max_iter, int):
+        return None, f"field 'max_iter' must be an integer, got {type(max_iter).__name__}"
+
+    active = payload.get("active")
+    if active is not None and not isinstance(active, bool):
+        return None, f"field 'active' must be a boolean, got {type(active).__name__}"
+
+    return payload, None
+
+
+def _hire_agent():
+    """Accept JSON spec, write YAML to agents/registry/, sync to DB."""
+    payload = request.get_json(silent=True) or {}
+    validated, err = _validate_registry_payload(payload)
+    if err:
+        return jsonify({"error": err}), 400
+
+    import yaml
+    spec_id = str(validated["id"]).strip()
+    from agents.agent_factory import _REGISTRY_DIR
+    spec_path = str(_REGISTRY_DIR / f"{spec_id}.yaml")
+    if os.path.exists(spec_path):
+        return jsonify({"error": f"agent '{spec_id}' already exists"}), 409
+
+    try:
+        os.makedirs(os.path.dirname(spec_path), exist_ok=True)
+        with open(spec_path, "w", encoding="utf-8") as f:
+            yaml.dump(validated, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    except Exception as e:
+        logger.error("[hire_agent] write failed: %s", e)
+        return jsonify({"error": "failed to write spec file"}), 500
+
+    try:
+        from agents.agent_factory import sync_registry_to_db
+        synced = sync_registry_to_db()
+        logger.info("[hire_agent] synced %d agents (including new '%s')", synced, spec_id)
+    except Exception as e:
+        logger.error("[hire_agent] db sync failed: %s", e)
+        return jsonify({"warning": "spec written but DB sync failed", "spec_id": spec_id}), 201
+
+    _registry_cache.pop("all", None)
+    return jsonify({"status": "hired", "spec_id": spec_id}), 201
 
 
 # ── Metrics ─────────────────────────────────────────────────────────────────────
@@ -1015,7 +1166,6 @@ def run_status():
 @app.route("/api/agents", methods=["GET"])
 def agents_state():
     global _diag_agents_contract_logged
-    # Try to get live data from database first
     conn = None
     _conn_exc = False
     try:
@@ -1023,7 +1173,7 @@ def agents_state():
         cur = conn.cursor()
 
         cur.execute("""
-            SELECT agent_name, status, MAX(created_at) as last_run, COUNT(*) as total_runs
+            SELECT agent_name, status, MAX(started_at) as last_run, COUNT(*) as total_runs
             FROM agent_runs
             GROUP BY agent_name, status
             ORDER BY last_run DESC
@@ -1043,39 +1193,63 @@ def agents_state():
                     "started": last_run.isoformat() if hasattr(last_run, "isoformat") else str(last_run) if last_run else None,
                 }
 
+        # Merge registry agents on the same connection — always, for full org chart
+        try:
+            cur.execute("""
+                SELECT id, name, role, department, llm_tier, active, hired_on
+                FROM agent_registry ORDER BY department, name
+            """)
+            for row in cur.fetchall():
+                aid = row[0]
+                if aid not in db_agents:
+                    db_agents[aid] = {
+                        "id": aid,
+                        "name": row[1],
+                        "role": row[2],
+                        "department": row[3],
+                        "label": "REGISTERED",
+                        "state": "idle",
+                        "last_action": f"Registered: {row[2]} in {row[3] or '—'}",
+                        "started": row[6].isoformat() if row[6] else None,
+                        "llm_tier": row[4],
+                    }
+        except Exception as reg_e:
+            logger.warning("[DIAG agents] registry merge failed: %s", reg_e)
+
         cur.close()
 
-        if db_agents:
-            with _lock:
-                states_copy = copy.deepcopy(db_agents)
-                running_copy = {
-                    market: {
-                        "started": entry.get("started"),
-                        "state": "running" if entry["proc"].poll() is None else ("done" if entry["proc"].poll() == 0 else "failed"),
-                        "returncode": entry["proc"].poll(),
-                        "pid": entry["proc"].pid,
-                    }
-                    for market, entry in _running.items()
+        with _lock:
+            states_copy = copy.deepcopy(db_agents or _agent_states)
+            running_copy = {}
+            for market, entry in _running.items():
+                rc = entry["proc"].poll()
+                running_copy[market] = {
+                    "started": entry.get("started"),
+                    "state": "running" if rc is None else ("done" if rc == 0 else "failed"),
+                    "returncode": rc,
+                    "pid": entry["proc"].pid,
                 }
 
-            response = {"agents": states_copy, "running_markets": running_copy}
-            response.update(states_copy)
+        response = {"agents": states_copy, "running_markets": running_copy}
+        response.update(states_copy)
 
-            if not _diag_agents_contract_logged:
-                logger.info("[DIAG agents] /api/agents keys=%s nested_agents=%s (from DB)", sorted(response.keys()), sorted(states_copy.keys()))
-                _diag_agents_contract_logged = True
+        if not _diag_agents_contract_logged:
+            source_label = "DB + registry" if db_agents else "in-memory + registry"
+            logger.info("[DIAG agents] /api/agents keys=%s nested_agents=%s (from %s)",
+                         sorted(response.keys()), sorted(states_copy.keys()), source_label)
+            _diag_agents_contract_logged = True
 
-            _release_db(conn)
-            return jsonify(response)
+        _release_db(conn)
+        return jsonify(response)
 
     except Exception as e:
         _conn_exc = True
         logger.warning(f"[DIAG agents] DB query failed, falling back to in-memory: {e}")
     finally:
         if conn and _conn_exc:
-            _release_db(conn, reset=True)  # always release on exception path
+            _release_db(conn, reset=True)
 
-    # Fallback to original in-memory implementation if DB fails or returns no data
+    # Fallback — only reached if DB connection itself failed
     with _lock:
         states_copy = copy.deepcopy(_agent_states)
         running_copy = {}

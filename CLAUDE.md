@@ -1,5 +1,5 @@
 # RE_OS — Claude Handout
-**Last updated: 2026-06-01**
+**Last updated: 2026-06-02**
 **Owner: Jinu — Employee, Land & Life Space (LLS)**
 **Working directory: `D:\Brain\JINU JOSHI\03 LLS\02 Projects\RE_market\RE_OS`**
 
@@ -20,10 +20,25 @@ Multi-agent real estate intelligence OS for LLS. Six AI scouts scrape RERA Karna
 **Phase 6 (Finance Dept): ✅ COMPLETE — IRR model, FeasibilityAnalystTool, Finance Head, Board Room auto-IRR, GATE-13 PASSED**
 **Phase 7 (Discord Alerts): 🟡 MOSTLY COMPLETE — alerts coded (T-380–T-389 DONE); GATE-14 pending live Discord verification**
 **Phase 8.5 (Intelligence Layer): ✅ COMPLETE — 2026-06-01 — ChromaDB semantic search + FinBERT sentiment + scheduler jobs, GATE-15 PASSED**
-**Phase 8 (Agent Hiring): 🟡 IN PROGRESS — Sprint 31 (T-409–T-419 PENDING)**
-**Phase 12 (Legal Dept — Real Tools): 🟡 IN PROGRESS — Sprint 30 (T-401–T-408 PENDING)**
+**Phase 8 (Agent Hiring): ✅ COMPLETE — Sprint 31 (GATE-17 PASSED 2026-06-01)**
+**Phase 12 (Legal Dept — Real Tools): ✅ COMPLETE — 2026-06-01 — RERAComplianceChecker, ZoneRiskChecker, EncumbranceChecker, Legal Head auto-context, GATE-16 PASSED**
 
-**Current sprint (Sprint 30 — Legal Dept Real Tools):** Phase 8.5 (Intelligence Layer) complete — GATE-15 PASSED (semantic search returns relevant intel report excerpts; FinBERT sentiment job runs nightly). 339 unit tests passing. Next: T-401–T-408 (RERA compliance checker, zone risk checker, Legal Head tools, compliance researcher agent, Board Room legal auto-context, Dashboard Legal panel).
+**HF Intelligence Upgrade Roadmap (Sprints 32–38 — 2026-06-01+):**
+- Sprint 32: BGE-M3 embeddings + GPU Ollama validation + Qwen2.5-1.5B LLM tier + ST fallback ✅ COMPLETE (GATE-18 PASSED)
+- Sprint 33: Semantic dedup (e5-small-v2) + cross-encoder reranker + BERTScore eval infrastructure ✅ COMPLETE (GATE-19 PASSED)
+- Sprint 34: Legal PDF QA (roberta-base-squad2) + LegalDocQATool — DEFERRED (after v2 Phase 5)
+- Sprint 35: finbert-tone directional sentiment + CI BERTScore gate — DEFERRED (after v2 Phase 5)
+- Sprint 36: QLoRA Qwen2.5-3B RERA extractor fine-tune + Ollama deploy — DEFERRED (after v2 Phase 5)
+- Sprint 37: Florence-2-base vision evaluation — DEFERRED (after v2 Phase 5)
+- Sprint 38: DEFERRED — data publishing decision not made yet; dataset stays private
+
+**Hardware: RTX 3050 4GB VRAM, CUDA 12.5 — Ollama GPU mode ACTIVE (2026-06-01)**
+- Ollama runs on CUDA0: 1.0 GiB model weights, 24 MiB KV cache, 64 MiB compute graph, 1.1 GiB total GPU RAM
+- `nvidia-smi` confirms GPU utilization >0% during inference, first token <2s for llama3.1:8b
+- GPU allocated to ollama container via `deploy.resources.reservations.devices[0].capabilities[gpu]` in docker-compose.yml
+- sentence-transformers uses same GPU when Ollama embedding unavailable (Sprint 32)
+
+**Current state (2026-06-02):** Sprint 39 active (T-475–T-487, GATE-25) — data foundation: IGR transactions, distressed developer alerting, Kaveri fix, months_of_supply. After GATE-25: v2 architecture (Sprints 60–66). v1 Sprints 40–57 PAUSED. HF Sprints 34–38 DEFERRED.
 
 **Dev workflow:** Claude Code (architect) + Kilo Code (sole implementer). Cline retired 2026-05-29. See `AGENTS.md` + `KILO_BRIEF.md`.
 
@@ -224,7 +239,7 @@ Get-Content logs/crew.log -Wait -Tail 50
 
 ---
 
-## Governance Gates (as of 2026-06-01)
+## Governance Gates (as of 2026-06-02)
 
 | Gate | Name | Status |
 |------|------|--------|
@@ -237,10 +252,20 @@ Get-Content logs/crew.log -Wait -Tail 50
 | GATE-11 | FSI calculator ≥12 tests | ✅ PASSED |
 | GATE-12 | Phase 5 DoD — Architect + Renderer standalone verified | ✅ PASSED |
 | GATE-13 | Phase 6 DoD — Finance Head returns real IRR from live data | ✅ PASSED |
-| GATE-14 | Phase 7 DoD — RERA scrape → Discord alert within 30s | 🔴 PENDING |
+| GATE-14 | Phase 7 DoD — RERA scrape → Discord alert within 30s | 🔴 PENDING (code done; live Discord verification outstanding) |
 | GATE-15 | Phase 8.5 DoD — semantic query returns past report excerpts | ✅ PASSED |
-| GATE-16 | Phase 12 DoD — Legal Head cites RERA data + zone risk from DB | 🔴 PENDING |
-| GATE-17 | Phase 8 DoD — hire agent from dashboard, appears in org chart | 🔴 PENDING |
+| GATE-16 | Phase 12 DoD — Legal Head cites RERA data + zone risk from DB | ✅ PASSED (2026-06-01) |
+| GATE-17 | Phase 8 DoD — hire agent from dashboard, appears in org chart | ✅ PASSED (2026-06-01) |
+| GATE-18 | HF Foundation — BGE-M3 + Qwen2.5-1.5B + ST fallback | ✅ PASSED (2026-06-01) |
+| GATE-19 | HF Search Quality — semantic dedup + reranker + BERTScore | ✅ PASSED (2026-06-01) |
+| GATE-25 | Sprint 39 — IGR live + distressed dev alert + months_of_supply | 🔴 PENDING |
+| GATE-44 | v2 Phase 0 — complete 20-table schema live | 🔴 PENDING |
+| GATE-45 | v2 Phase 1 — Unified Ingest Engine all plugins run | 🔴 PENDING |
+| GATE-46 | v2 Phase 2a — all 5 intel modules return IntelPackage | 🔴 PENDING |
+| GATE-47 | v2 Phase 2b — Opportunity Engine scores ≥5 opportunities | 🔴 PENDING |
+| GATE-48 | v2 Phase 3 — /api/evaluate returns Board Room + Deal Memo + Investor Brief | 🔴 PENDING |
+| GATE-49 | v2 Phase 4 — Telegram → /api/evaluate → compact verdict | 🔴 PENDING |
+| GATE-50 | v2 Phase 5 — full end-to-end pipeline with feedback loop | 🔴 PENDING |
 
 **API key rotation procedure (dual-key window, implemented by T-250):**
 1. Set `DASHBOARD_API_KEY_PREV=$OLD_KEY` + `DASHBOARD_API_KEY=$NEW_KEY` → `docker compose restart agents`

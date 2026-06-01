@@ -33,14 +33,17 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     # Port not published — agents communicate via internal Docker network (http://ollama:11434)
-    # Uncomment below if you have an NVIDIA GPU (dramatically faster)
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"
+        reservations:
+          memory: 2G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   # ── TASK QUEUE ────────────────────────────────────────────────────────────
   # Agents communicate via Redis — CEO pushes tasks, workers consume
@@ -49,7 +52,7 @@ services:
     container_name: re_os_redis
     restart: unless-stopped
     # Port not published — agents communicate via internal Docker network (redis://redis:6379)
-    # Redis is wired in docker-compose but RQ task queue not yet active — Phase 3 planned feature
+    # Used by: Flask-Limiter rate limiting (agents), APScheduler job store (scheduler)
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -68,7 +71,7 @@ services:
       REDIS_URL: redis://redis:6379
       # API Keys from .env — Docker Compose picks these up automatically
       CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
-      CEREBRAS_MODEL: ${CEREBRAS_MODEL:-llama3.1-8b}
+      CEREBRAS_MODEL: ${CEREBRAS_MODEL:-gpt-oss-120b}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
@@ -76,6 +79,7 @@ services:
       TARGET_MARKETS: ${TARGET_MARKETS:-Yelahanka,Devanahalli,Hebbal}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DASHBOARD_API_KEY: ${DASHBOARD_API_KEY:-}
+      DASHBOARD_API_KEY_PREV: ${DASHBOARD_API_KEY_PREV:-}
       DASHBOARD_ALLOWED_ORIGINS: ${DASHBOARD_ALLOWED_ORIGINS:-http://localhost:8050}
       DISCORD_WEBHOOK_RERA_YELAHANKA: ${DISCORD_WEBHOOK_RERA_YELAHANKA:-}
       DISCORD_WEBHOOK_RERA_DEVANAHALLI: ${DISCORD_WEBHOOK_RERA_DEVANAHALLI:-}
@@ -133,7 +137,7 @@ services:
       OLLAMA_BASE_URL: http://ollama:11434
       REDIS_URL: redis://redis:6379
       CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
-      CEREBRAS_MODEL: ${CEREBRAS_MODEL:-llama3.1-8b}
+      CEREBRAS_MODEL: ${CEREBRAS_MODEL:-gpt-oss-120b}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
@@ -168,10 +172,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 1536M
           cpus: "1.0"
         reservations:
-          memory: 256M
+          memory: 512M
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f 'python config/scheduler.py' > /dev/null || exit 1"]
       interval: 60s
