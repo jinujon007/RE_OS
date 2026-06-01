@@ -471,6 +471,7 @@ CREATE TABLE news_articles (
 CREATE INDEX idx_news_articles_market ON news_articles(micro_market_id);
 CREATE INDEX idx_news_articles_signal ON news_articles(signal_type);
 CREATE INDEX idx_news_articles_date ON news_articles(published_at);
+CREATE INDEX IF NOT EXISTS idx_news_articles_sentiment_score ON news_articles(sentiment_score);
 
 -- ============================================================
 -- AGENT RUN LOGS

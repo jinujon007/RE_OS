@@ -16,9 +16,13 @@ geoalchemy2==0.15.2
 # Web scraping
 requests==2.32.3
 beautifulsoup4==4.12.3
-lxml==5.3.0
-playwright==1.48.0
+lxml>=6.0.2                 # Bumped from 5.3.0 — scrapling requires lxml>=6.0.2
+playwright>=1.48.0,<2.0.0           # Bumped from ==1.48.0 — scrapling[fetchers] requires playwright>=1.56.0
 httpx[http2]==0.27.2
+# Scrapling: TLS fingerprint spoofing (Fetcher) + stealth Playwright (DynamicFetcher)
+# Replaces plain requests for bot-protected portals. No scrapling install needed —
+# DynamicFetcher reuses the Playwright Chromium already at PLAYWRIGHT_BROWSERS_PATH.
+scrapling[fetchers]>=0.4.0
 
 # Task queue
 redis==5.1.1

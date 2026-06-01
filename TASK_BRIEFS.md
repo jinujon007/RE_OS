@@ -1,7 +1,130 @@
 # RE_OS — Task Briefs
-**Stage 3 · 2026-05-30 | Sprints 27–31**
+**Stage 3 · 2026-06-01 | Sprints 27–31**
 
 This file is the single execution reference for both brains. Each brief gives complete context to perform the task with minimum back-and-forth. Read only the section for your assigned task — the rest is noise.
+
+---
+
+# T-422 — Container rebuild + Scrapling live verification
+
+**Priority:** P0 | **Phase:** Scout Resilience | **Blocks:** Sprint 29 start
+
+## Why
+
+Claude Code added `scrapling[fetchers]>=0.4.0` to `requirements.txt` and wired it into `portal_scout.py` and `developer_scout.py` (T-420/T-421). The running `re_os_agents` container does not yet have Scrapling installed. This task makes it live and verifies the fetch layer is working correctly inside Docker.
+
+Do this task before starting any Sprint 29 work.
+
+## Context
+
+- Scrapling uses `Fetcher` (HTTP, TLS fingerprint spoof) for bot-protected portals: `99acres_sale`, `99acres_rent`, `magicbricks`, `proptiger`, `squareyards`
+- Scrapling uses `DynamicFetcher` (stealth Playwright) for JS SPAs: `housing_sale`, `nobroker`
+- Both fetchers have a `_SCRAPLING_OK` guard — if import fails, existing requests/Playwright path runs unchanged
+- `DynamicFetcher` reuses the Playwright Chromium already at `/ms-playwright` — no extra browser download
+- The HTML attribute on a Scrapling page object is accessed via `getattr(page, "html", None) or str(page)` — **Step 3 below confirms the right attribute name and fixes it if wrong**
+
+## Steps
+
+**Step 1 — Rebuild and restart agents container**
+```bash
+docker compose build agents
+docker compose up -d agents
+docker compose ps
+```
+Confirm `re_os_agents` shows `Up` and healthy.
+
+**Step 2 — Confirm Scrapling is installed**
+```bash
+docker compose exec agents python -c "
+from scrapling.fetchers import Fetcher, DynamicFetcher
+print('Scrapling import OK')
+print('Fetcher:', Fetcher)
+print('DynamicFetcher:', DynamicFetcher)
+"
+```
+Expected: two lines naming the classes. If ImportError → requirements install failed; check build logs.
+
+**Step 3 — Confirm page HTML attribute name**
+
+Run this inside the container to discover what attribute holds the raw HTML:
+```bash
+docker compose exec agents python -c "
+from scrapling.fetchers import Fetcher
+page = Fetcher.get('https://httpbin.org/html', stealthy_headers=True)
+print('type:', type(page))
+print('has html attr:', hasattr(page, 'html'))
+print('has body attr:', hasattr(page, 'body'))
+print('has text attr:', hasattr(page, 'text'))
+html_val = getattr(page, 'html', None)
+print('html len:', len(html_val) if html_val else 'NONE')
+"
+```
+
+- If `html` attribute exists and `html_val` length > 100 → no code change needed
+- If `html` is `None` or missing, check `body` or `text` attribute — whichever has content > 100 chars is the right one
+- Fix in **both** `scrapers/portal_scout.py` and `scrapers/developer_scout.py`:
+  - Find: `getattr(page, "html", None) or str(page)`
+  - Replace with: `getattr(page, "<correct_attr>", None) or str(page)`
+  - There are 2 occurrences in portal_scout (one per method) and 2 in developer_scout — fix all 4
+
+**Step 4 — Smoke test portal_scout with one Scrapling HTTP source**
+```bash
+docker compose exec agents python scrapers/portal_scout.py --market Yelahanka --source 99acres_sale
+```
+
+Read the log output. Look for one of these patterns:
+
+✅ **Scrapling working:** Line contains `[Scrapling HTTP][99acres_sale]` with a char count
+```
+[PortalScout][Scrapling HTTP][99acres_sale] 28543 chars
+```
+A char count > 5000 means real HTML — Scrapling bypassed bot detection.
+
+⚠️ **Scrapling silently falling back:** No `[Scrapling HTTP]` line, but scout completes without error. Scrapling fetched a bot-wall page (< 500 chars), fell back to requests. That's fine — fallback is working correctly. Log the char count from Step 3 to diagnose later.
+
+❌ **Error:** Any unhandled exception in `_scrapling_http_fetch`. Capture the traceback and fix.
+
+**Step 5 — Smoke test DynamicFetcher source**
+```bash
+docker compose exec agents python scrapers/portal_scout.py --market Yelahanka --source housing_sale
+```
+Look for `[Scrapling Dynamic][housing_sale]` in output. Same pass/fallback criteria as Step 4.
+
+**Step 6 — Run full tests**
+```bash
+docker compose exec agents pytest tests/ -q -m unit
+```
+All existing tests must pass. No new tests required for this task — it is infrastructure verification only.
+
+## Done When
+
+- `docker compose ps` shows `re_os_agents` Up
+- Step 2 import succeeds without error
+- Step 3 HTML attribute confirmed (and code fixed if needed)
+- Step 4 + Step 5 complete without unhandled exception
+- Existing unit tests pass
+- CHANGELOG prepended
+- T-422 marked DONE in TASK_QUEUE.md
+
+## If Scrapling DynamicFetcher Fails with Browser Error
+
+If Step 5 raises a Playwright browser-not-found error:
+```bash
+docker compose exec agents python -c "
+import os
+print('PLAYWRIGHT_BROWSERS_PATH:', os.environ.get('PLAYWRIGHT_BROWSERS_PATH'))
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    b = p.chromium.launch(headless=True, args=['--no-sandbox'])
+    print('Chromium OK:', b.version)
+    b.close()
+"
+```
+If Playwright's own Chromium works but DynamicFetcher doesn't, run inside the container:
+```bash
+scrapling install
+```
+Then re-test Step 5.
 
 ---
 

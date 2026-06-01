@@ -149,22 +149,27 @@ def run_news_sentiment_scoring():
     from config.settings import HF_API_KEY
     if not HF_API_KEY:
         logger.debug("[Scheduler] HF_API_KEY not set — skipping sentiment scoring")
+        from utils.discord_notifier import send_system_alert
+        try:
+            send_system_alert("HF_API_KEY unset — nightly sentiment scoring disabled")
+        except Exception:
+            pass
         return
     try:
-        from utils.sentiment import score_headline
+        from utils.sentiment import score_headline, label_from_score
         from utils.db import get_engine
         from sqlalchemy import text
 
         engine = get_engine()
         with engine.connect() as conn:
             rows = conn.execute(text("""
-                SELECT id, headline, key_insight
+                SELECT id, title, key_insight
                 FROM news_articles
                 WHERE sentiment_score IS NULL
-                  AND headline IS NOT NULL
-                  AND headline != ''
-                ORDER BY scraped_at DESC
-                LIMIT 100
+                  AND title IS NOT NULL
+                  AND title != ''
+                ORDER BY created_at DESC
+                LIMIT 200
             """)).fetchall()
 
         if not rows:
@@ -174,15 +179,20 @@ def run_news_sentiment_scoring():
         scored = failed = 0
         with engine.begin() as conn:
             for row in rows:
-                article_id, headline, key_insight = row
-                text_to_score = headline
+                article_id, title, key_insight = row
+                text_to_score = title or ""
                 if key_insight:
-                    text_to_score = f"{headline}. {key_insight}"
+                    text_to_score = f"{title}. {key_insight}" if title else key_insight
+                text_to_score = text_to_score.strip()
+                if not text_to_score:
+                    failed += 1
+                    continue
                 score = score_headline(text_to_score)
                 if score is not None:
+                    label = label_from_score(score)
                     conn.execute(
-                        text("UPDATE news_articles SET sentiment_score = :s WHERE id = :id"),
-                        {"s": score, "id": article_id},
+                        text("UPDATE news_articles SET sentiment_score = :s, sentiment_label = :l WHERE id = :id"),
+                        {"s": score, "l": label, "id": article_id},
                     )
                     scored += 1
                 else:

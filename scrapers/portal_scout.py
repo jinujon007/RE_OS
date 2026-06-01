@@ -5,12 +5,16 @@ Scouts 7 property portals for active project listings and unit-level data.
 Sources: 99acres (sale+rent), Housing.com, MagicBricks, PropTiger,
          NoBroker, SquareYards
 
-Strategy:
-  1. requests + BeautifulSoup (fast, works when sites render server-side)
-  2. Playwright fallback for JS-heavy SPAs
-  3. Cerebras 8b AI extraction: raw HTML text → structured JSON
-     (8192 token cap → truncate to 2500 chars before AI call)
-  4. ScoutMemory dedup: only new projects/listings are flagged is_new=True
+Fetch strategy (tiered — each level falls back to the next on failure):
+  1a. Scrapling Fetcher (TLS fingerprint spoofing) — bot-protected portals
+      that block plain requests: 99acres, MagicBricks, PropTiger, SquareYards
+  1b. Scrapling DynamicFetcher (stealth Playwright) — JS SPAs:
+      Housing.com, NoBroker
+  2.  Raw Playwright — fallback if Scrapling unavailable or fails
+  3.  requests + BeautifulSoup — last resort
+  4.  Cerebras 8b AI extraction: cleaned text → structured JSON
+      (8192 token cap → truncate to 2500 chars before AI call)
+  5.  ScoutMemory dedup: only new projects/listings are flagged is_new=True
 
 Model: Cerebras llama3.1-8b — fastest structured extraction, handles short prompts.
        Falls back to Gemini if Cerebras unavailable.
@@ -30,6 +34,12 @@ from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
 from loguru import logger
+
+try:
+    from scrapling.fetchers import Fetcher, DynamicFetcher
+    _SCRAPLING_OK = True
+except Exception:
+    _SCRAPLING_OK = False
 
 from config.settings import (
     CEREBRAS_API_KEY,
@@ -87,6 +97,27 @@ SCRAPE_HEADERS = {
 # Sources that require Playwright (heavy JS SPAs with bot detection workarounds)
 PLAYWRIGHT_SOURCES = {"housing_sale", "nobroker"}
 
+# Scrapling routing — checked before Playwright/requests fallback.
+# HTTP: TLS fingerprint spoofing via curl_cffi — no browser needed.
+_SCRAPLING_HTTP = {"99acres_sale", "99acres_rent", "magicbricks", "proptiger", "squareyards"}
+# Dynamic: stealth Playwright — reuses PLAYWRIGHT_BROWSERS_PATH, no extra download.
+_SCRAPLING_DYNAMIC = {"housing_sale", "nobroker"}
+
+# Portal-specific CSS selectors for listing card extraction.
+# Tried in order — first selector returning ≥3 cards wins. Wrong selectors are
+# harmless (no match → empty → fallback to full BeautifulSoup clean).
+# These target the repeating card containers, not individual fields — AI reads
+# the card text and infers structure, which is more resilient than field selectors.
+_PORTAL_CARD_SELECTORS: dict[str, list[str]] = {
+    "99acres_sale":  ["[id^='srp_tuple_']", ".card-container", "[class*='srpList'] li"],
+    "99acres_rent":  ["[id^='srp_tuple_']", ".card-container", "[class*='srpList'] li"],
+    "magicbricks":   ["[class*='projectCard']", ".mb-srp__list__items li", "[class*='PropertyList'] li"],
+    "housing_sale":  ["[data-q='property-card']", "[class*='listingCard']", "[class*='listing-card']"],
+    "proptiger":     ["[class*='projectTile']", "[class*='newCard']", "[class*='tilesList'] li"],
+    "nobroker":      ["[class*='propertyCard']", ".resultTile", "[class*='tuple']"],
+    "squareyards":   ["[class*='property-card']", "[class*='listing-card']", "[class*='projectCard']"],
+}
+
 EXTRACTION_PROMPT = """\
 You are extracting real estate listings data from raw webpage text.
 Return ONLY a JSON array. Each object must use exactly these keys:
@@ -115,17 +146,19 @@ WEBPAGE TEXT:
 def _ai_extract(text: str, market: str) -> list[dict]:
     """
     Send truncated page text to Cerebras for structured extraction.
-    Cerebras 8192 token cap: truncate to 2500 chars to leave room for response.
+    Cerebras budget: 8192 total - 1000 response - ~150 prompt ≈ 7042 input tokens
+    (~28k chars). 6000-char cap is safe and 2.4× more signal than the old 2500 limit.
     Falls back to Gemini Flash if Cerebras unavailable.
     """
-    truncated = text[:2500]
+    truncated = text[:6000]
     prompt = EXTRACTION_PROMPT + truncated
 
     raw_response = ""
-    try:
-        import litellm
+    import litellm
 
-        if CEREBRAS_API_KEY:
+    cerebras_error = None
+    if CEREBRAS_API_KEY:
+        try:
             resp = litellm.completion(
                 model=f"openai/{CEREBRAS_MODEL}",
                 api_key=CEREBRAS_API_KEY,
@@ -134,8 +167,16 @@ def _ai_extract(text: str, market: str) -> list[dict]:
                 max_tokens=1000,
                 temperature=0.0,
             )
-            raw_response = resp.choices[0].message.content.strip()
-        elif GEMINI_API_KEY:
+            content = resp.choices[0].message.content
+            raw_response = content.strip() if content else ""
+            if not raw_response:
+                logger.warning("[PortalScout] Cerebras returned empty content")
+        except Exception as exc:
+            cerebras_error = exc
+            logger.warning(f"[PortalScout] Cerebras extraction error ({type(exc).__name__}): {exc}")
+
+    if not raw_response and GEMINI_API_KEY:
+        try:
             resp = litellm.completion(
                 model=GEMINI_CEO_MODEL,
                 api_key=GEMINI_API_KEY,
@@ -143,12 +184,23 @@ def _ai_extract(text: str, market: str) -> list[dict]:
                 max_tokens=1000,
                 temperature=0.0,
             )
-            raw_response = resp.choices[0].message.content.strip()
-        else:
+            content = resp.choices[0].message.content
+            raw_response = content.strip() if content else ""
+            if raw_response and cerebras_error:
+                logger.info(
+                    "[PortalScout] Gemini fallback succeeded after Cerebras error "
+                    f"({type(cerebras_error).__name__})"
+                )
+            elif not raw_response:
+                logger.warning("[PortalScout] Gemini returned empty content")
+        except Exception as exc:
+            logger.warning(f"[PortalScout] Gemini extraction error ({type(exc).__name__}): {exc}")
+
+    if not raw_response:
+        if not CEREBRAS_API_KEY and not GEMINI_API_KEY:
             logger.warning("[PortalScout] No AI key available for extraction")
-            return []
-    except Exception as exc:
-        logger.warning(f"[PortalScout] AI extraction error: {exc}")
+        else:
+            logger.warning("[PortalScout] All extraction paths returned empty — no listings parsed")
         return []
 
     return _parse_json_response(raw_response)
@@ -193,6 +245,40 @@ def _clean_html(html: str) -> str:
     text = soup.get_text(separator=" ", strip=True)
     text = re.sub(r"\s{3,}", "\n", text)
     return text
+
+
+def _scrapling_targeted_text(page, src: str, max_cards: int = 30) -> str:
+    """
+    Use Scrapling's native CSS to extract listing card text — zero AI cost,
+    runs before BeautifulSoup. Each card becomes one line of pipe-separated
+    field values. Returns empty string if no selector matches ≥3 cards,
+    so the caller falls back to the full HTML clean path gracefully.
+
+    Why this matters: full-page BeautifulSoup produces ~10-20k chars of mixed
+    nav/footer/content. We then truncate to 6000 and hand it to AI. With
+    targeted CSS we feed AI 30 × 400-char listing snippets = pure signal,
+    no noise. Extraction accuracy goes up, token waste goes down.
+    """
+    for selector in _PORTAL_CARD_SELECTORS.get(src, []):
+        try:
+            elements = page.css(selector)
+            if not elements:
+                continue
+            snippets: list[str] = []
+            for el in elements[:max_cards]:
+                parts = el.css("::text").getall()
+                card = " | ".join(p.strip() for p in parts if p.strip() and len(p.strip()) > 1)
+                if len(card) > 30:
+                    snippets.append(card[:600])
+            if len(snippets) >= 3:
+                logger.debug(
+                    f"[PortalScout][Scrapling CSS][{src}] selector '{selector}' → "
+                    f"{len(snippets)} cards"
+                )
+                return "\n".join(snippets)
+        except Exception:
+            continue
+    return ""
 
 
 # ── Normalization ─────────────────────────────────────────────────────────────
@@ -318,12 +404,25 @@ class PortalScout:
 
     def _scout_source(self, src: str) -> list[dict]:
         url = self.urls[src]
-        if src in PLAYWRIGHT_SOURCES:
-            text = self._playwright_fetch(url)
-            if not text:
+        text = ""
+
+        if _SCRAPLING_OK:
+            if src in _SCRAPLING_DYNAMIC:
+                text = self._scrapling_dynamic_fetch(url, src)
+            elif src in _SCRAPLING_HTTP:
+                text = self._scrapling_http_fetch(url, src)
+
+        if not text:
+            # Fallback: existing Playwright / requests path
+            if src in PLAYWRIGHT_SOURCES:
+                logger.info(f"[PortalScout][{src}] Scrapling unavailable or empty → Playwright fallback")
+                text = self._playwright_fetch(url)
+                if not text:
+                    logger.info(f"[PortalScout][{src}] Playwright empty → requests fallback")
+                    text = self._requests_fetch(url)
+            else:
+                logger.info(f"[PortalScout][{src}] Scrapling unavailable or empty → requests fallback")
                 text = self._requests_fetch(url)
-        else:
-            text = self._requests_fetch(url)
 
         if not text:
             logger.debug(f"[PortalScout][{src}] No content retrieved")
@@ -332,6 +431,56 @@ class PortalScout:
         raw_items = _ai_extract(text, self.market)
         results = [_normalize(r, src, self.market, url) for r in raw_items]
         return [r for r in results if r is not None]
+
+    # ── Scrapling fetchers ────────────────────────────────────────────────────
+
+    def _scrapling_http_fetch(self, url: str, src: str) -> str:
+        """TLS fingerprint spoofing via curl_cffi — no browser, bypasses bot headers."""
+        try:
+            page = Fetcher.get(url, stealthy_headers=True, timeout=30)
+            if page is None:
+                return ""
+            html = getattr(page, "body", None) or ""
+            if len(html) < 500:
+                logger.debug(f"[PortalScout][Scrapling HTTP][{src}] {len(html)} chars — bot-wall, skipping")
+                return ""
+            # CSS-targeted extraction first — pure listing signal, no nav/footer noise
+            targeted = _scrapling_targeted_text(page, src)
+            if targeted:
+                return targeted
+            # Fallback: full BeautifulSoup clean
+            result = _clean_html(html)
+            logger.debug(f"[PortalScout][Scrapling HTTP][{src}] full clean: {len(result)} chars")
+            return result
+        except Exception as exc:
+            logger.debug(f"[PortalScout][Scrapling HTTP][{src}] {exc}")
+        return ""
+
+    def _scrapling_dynamic_fetch(self, url: str, src: str) -> str:
+        """Stealth Playwright — patches webdriver flag, reuses existing Chromium."""
+        try:
+            page = DynamicFetcher.fetch(
+                url, headless=True, network_idle=True, disable_resources=True, timeout=30000
+            )
+            if page is None:
+                return ""
+            html = getattr(page, "body", None) or ""
+            if len(html) < 500:
+                logger.debug(f"[PortalScout][Scrapling Dynamic][{src}] {len(html)} chars — bot-wall, skipping")
+                return ""
+            # CSS-targeted extraction first — pure listing signal, no nav/footer noise
+            targeted = _scrapling_targeted_text(page, src)
+            if targeted:
+                return targeted
+            # Fallback: full BeautifulSoup clean
+            result = _clean_html(html)
+            logger.debug(f"[PortalScout][Scrapling Dynamic][{src}] full clean: {len(result)} chars")
+            return result
+        except Exception as exc:
+            logger.debug(f"[PortalScout][Scrapling Dynamic][{src}] {exc}")
+        return ""
+
+    # ── Legacy fetchers (fallback) ────────────────────────────────────────────
 
     def _requests_fetch(self, url: str) -> str:
         try:

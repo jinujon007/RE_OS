@@ -358,6 +358,38 @@ class FeasibilityTool(BaseTool):
         return json.dumps(feasibility_summary(f), indent=2)
 
 
+class IntelSearchTool(BaseTool):
+    name: str = "intel_search"
+    description: str = (
+        "Search past intel reports for relevant context. "
+        "Input: JSON with 'query' (str — e.g. 'Yelahanka absorption trend Q1 2026'), "
+        "'market' (optional — Yelahanka/Devanahalli/Hebbal). "
+        "Returns top-5 excerpts from past reports with source and relevance score. "
+        "Call before forming your market assessment to leverage accumulated intelligence."
+    )
+
+    def _run(self, input_str: str) -> str:
+        try:
+            params = json.loads(input_str)
+        except (json.JSONDecodeError, TypeError):
+            return json.dumps({
+                "error": "intel_search expects a JSON object with 'query' (str) and optional 'market' (str)",
+                "results": [],
+            })
+        try:
+            from utils.embedder import IntelEmbedder
+            q = str(params.get("query", "")).strip()
+            market = params.get("market")
+            if not q:
+                return json.dumps({"results": [], "note": "intel_search: empty query — provide a 'query' string"})
+            if market and market.lower() not in ("yelahanka", "devanahalli", "hebbal"):
+                return json.dumps({"results": [], "note": f"intel_search: unknown market '{market}' — use Yelahanka, Devanahalli, or Hebbal"})
+            results = IntelEmbedder().search(q, market=market, n=5)
+            return json.dumps({"results": results, "count": len(results)}, indent=2)
+        except Exception as e:
+            return json.dumps({"error": f"intel_search failed: {e}", "results": []})
+
+
 class FeasibilityAnalystTool(BaseTool):
     name: str = "full_feasibility"
     description: str = (
@@ -448,7 +480,8 @@ def create_analyst_agent() -> Agent:
             "target_sell_psf. Not part of the standard pipeline sequence. "
             "ADJUNCT TOOLS — fsi_calculator / typology_recommender / green_coverage: Call only when evaluating a specific land parcel. Use avg_listing_psf from market_summary_query as input to typology_recommender. Not part of standard pipeline sequence. "
             "ADJUNCT TOOL — full_feasibility: Call when financial feasibility of a specific land parcel is requested. "
-            "Returns base/bull/bear IRR with GO/MARGINAL/NO-GO verdict."
+            "Returns base/bull/bear IRR with GO/MARGINAL/NO-GO verdict. "
+            "ADJUNCT TOOL — intel_search: Search past intel reports for relevant context before forming market assessment."
         ),
         tools=[
             MarketSummaryTool(),
@@ -460,6 +493,7 @@ def create_analyst_agent() -> Agent:
             TypologyRecommenderTool(),
             GreenCoverageTool(),
             FeasibilityAnalystTool(),
+            IntelSearchTool(),
         ],
         llm=get_analysis_llm(),
         verbose=True,

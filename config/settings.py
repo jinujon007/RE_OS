@@ -110,6 +110,10 @@ HF_API_KEY = os.getenv("HF_API_KEY", "")
 HF_INFERENCE_BASE = "https://router.huggingface.co/hf-inference/models"
 FINBERT_MODEL_ID = "ProsusAI/finbert"
 
+# ── INTELLIGENCE LAYER (Phase 8.5) ────────────────────────────────────────────
+# ChromaDB persistent path for intel report embeddings (maps to chroma_data volume)
+CHROMA_DB_PATH = os.environ.get("CHROMA_DB_PATH", "/app/data/chroma")
+
 # ── REDIS ────────────────────────────────────────────────────────────────────
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 

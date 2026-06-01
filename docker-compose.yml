@@ -90,6 +90,7 @@ services:
       CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
       JINA_API_KEY: ${JINA_API_KEY:-}
       HF_API_KEY: ${HF_API_KEY:-}
+      CHROMA_DB_PATH: /app/data/chroma
     ports:
       - "8050:8050"
     volumes:
@@ -97,6 +98,7 @@ services:
       - re_os_outputs:/app/outputs
       - re_os_logs:/app/logs
       - hf_cache:/root/.cache/huggingface
+      - chroma_data:/app/data/chroma
     depends_on:
       postgres:
         condition: service_healthy
@@ -153,11 +155,13 @@ services:
       CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
       JINA_API_KEY: ${JINA_API_KEY:-}
       HF_API_KEY: ${HF_API_KEY:-}
+      CHROMA_DB_PATH: /app/data/chroma
     volumes:
       - ./:/app
       - re_os_outputs:/app/outputs
       - re_os_logs:/app/logs
       - hf_cache:/root/.cache/huggingface
+      - chroma_data:/app/data/chroma
     depends_on:
       postgres:
         condition: service_healthy
@@ -183,3 +187,4 @@ volumes:
   re_os_outputs:
   re_os_logs:
   hf_cache:
+  chroma_data:

@@ -1133,6 +1133,26 @@ body {
     </div>
 
     <div class="infra-section">
+      <div class="infra-title">INTEL SEARCH</div>
+      <div style="display:flex;gap:4px;margin-bottom:6px;">
+        <input id="intel-search-q" type="text" placeholder="e.g. Yelahanka PSF trend 2026"
+          style="flex:1;background:#0f1520;border:1px solid #2a3a55;color:#c9d1d9;padding:5px 8px;font-family:'Courier New',monospace;font-size:10px;border-radius:4px;"
+          onkeydown="if(event.key==='Enter')runIntelSearch()">
+        <select id="intel-search-market" style="background:#0f1520;border:1px solid #2a3a55;color:#8b949e;padding:4px;font-family:'Courier New',monospace;font-size:9px;border-radius:4px;">
+          <option value="">All</option>
+          <option value="yelahanka">Yelahanka</option>
+          <option value="devanahalli">Devanahalli</option>
+          <option value="hebbal">Hebbal</option>
+        </select>
+        <button onclick="runIntelSearch()" style="background:#1a2235;border:1px solid #2a3a55;color:#58a6ff;padding:5px 10px;font-size:9px;cursor:pointer;border-radius:4px;">SEARCH</button>
+        <button onclick="clearIntelSearch()" style="background:#1a1010;border:1px solid #484f58;color:#6b7280;padding:5px 6px;font-size:9px;cursor:pointer;border-radius:4px;">✕</button>
+      </div>
+      <div id="intel-search-results" style="max-height:220px;overflow-y:auto;"></div>
+      <div id="intel-search-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
+      <div id="intel-search-spinner" style="display:none;color:#58a6ff;font-size:8px;margin-top:4px;">⟳ Searching...</div>
+    </div>
+
+    <div class="infra-section">
       <div class="infra-title">ALERTS
         <button class="db-explorer-refresh" onclick="pollAlerts()" title="Refresh">⟳</button>
       </div>
@@ -1358,6 +1378,59 @@ async function pollAgents() {
   }
 }
 
+
+async function runIntelSearch() {
+  const q = (document.getElementById('intel-search-q').value || '').trim();
+  const market = document.getElementById('intel-search-market').value;
+  const resultEl = document.getElementById('intel-search-results');
+  const statusEl = document.getElementById('intel-search-status');
+  const spinner = document.getElementById('intel-search-spinner');
+  if (!q) return;
+  statusEl.textContent = '';
+  spinner.style.display = 'block';
+  resultEl.innerHTML = '';
+  try {
+    const url = `/api/intel/search?q=${encodeURIComponent(q)}${market ? '&market='+encodeURIComponent(market) : ''}`;
+    const data = await fetch(url).then(r => r.json());
+    spinner.style.display = 'none';
+    if (data.error) {
+      statusEl.textContent = data.error;
+      resultEl.innerHTML = '<div style="color:#f85149;font-size:8px;padding:4px;">' + escapeHtml(data.error) + '</div>';
+      return;
+    }
+    if (!data.results || !data.results.length) {
+      resultEl.innerHTML = '<div style="color:#484f58;font-size:8px;padding:4px;">No results \u2014 run a pipeline first to build the index.</div>';
+      statusEl.textContent = '';
+      return;
+    }
+    resultEl.innerHTML = data.results.map(r => {
+      const pct = Math.round((r.score || 0) * 100);
+      const truncated = (r.text || '').slice(0, 280);
+      const ellipsis = (r.text || '').length > 280 ? '\u2026' : '';
+      return '<div style="border:1px solid #1a2235;border-radius:4px;padding:6px 8px;margin-bottom:5px;">'
+        + '<div style="display:flex;justify-content:space-between;margin-bottom:3px;">'
+        + '<span style="color:#58a6ff;font-family:\'Press Start 2P\',cursive;font-size:6px;">' + escapeHtml(r.market || '\u2014') + '</span>'
+        + '<span style="color:#484f58;font-size:7px;">' + escapeHtml(r.source || '') + ' \u00b7 ' + pct + '%</span>'
+        + '</div>'
+        + '<div style="font-size:8px;color:#c9d1d9;line-height:1.4;">' + escapeHtml(truncated) + ellipsis + '</div>'
+        + '</div>';
+    }).join('');
+    statusEl.textContent = data.cached ? data.results.length + ' results for "' + escapeHtml(q) + '" (cached)' : data.results.length + ' results for "' + escapeHtml(q) + '"';
+    markUpdated('intel-search');
+  } catch (e) {
+    spinner.style.display = 'none';
+    statusEl.textContent = 'Search failed: ' + e.message;
+    resultEl.innerHTML = '<div style="color:#f85149;font-size:8px;padding:4px;">' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function clearIntelSearch() {
+  document.getElementById('intel-search-q').value = '';
+  document.getElementById('intel-search-market').value = '';
+  document.getElementById('intel-search-results').innerHTML = '';
+  document.getElementById('intel-search-status').textContent = '';
+  document.getElementById('intel-search-spinner').style.display = 'none';
+}
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, ch => ({

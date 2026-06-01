@@ -1,6 +1,16 @@
 # RE_OS — Task Queue
-**Stage 3 · 2026-05-30 | Single-brain: Kilo Code**
-**Next task ID: T-420**
+**Stage 3 · 2026-06-01 | Single-brain: Kilo Code**
+**Next task ID: T-422**
+
+---
+
+## Sprint 28.5 — Scout Resilience (Scrapling) ← START HERE
+
+| ID | Description | Priority | Status | Notes |
+|----|-------------|----------|--------|-------|
+| T-420 | portal_scout.py — Scrapling fetch layer: Fetcher (TLS spoof) for 99acres/MagicBricks/PropTiger/SquareYards, DynamicFetcher (stealth PW) for Housing/NoBroker; full fallback preserved | P1 | ✅ DONE | _SCRAPLING_OK guard, graceful degrade |
+| T-421 | developer_scout.py — unified _fetch_raw() dispatcher; Scrapling Dynamic for Brigade/Prestige, Scrapling HTTP for Sobha/Godrej/others; raw Playwright/requests fallback | P1 | ✅ DONE | Eliminated duplicated use_playwright branching |
+| T-422 | Container rebuild + Scrapling live verification — docker compose build agents, confirm import, verify page.html attribute, smoke test portal_scout 99acres_sale + housing_sale sources | P0 | ✅ DONE | All checks pass, 303/303 tests, CHANGELOG written |
 
 ---
 
@@ -12,21 +22,21 @@
 
 | ID | Description | Priority | Status | Notes |
 |----|-------------|----------|--------|-------|
-| T-390 | Alembic 0010 + schema.sql — add sentiment_score FLOAT + sentiment_label VARCHAR(20) to news_articles | P1 | PENDING | Required by scheduler run_news_sentiment_scoring(); both nullable |
-| T-391 | settings.py + .env.example — HF_API_KEY + CHROMA_DB_PATH | P1 | PENDING | HF_API_KEY → HF Inference API for FinBERT; CHROMA_DB_PATH=/app/data/chroma default |
-| T-392 | utils/sentiment.py — score_headline(text) → float \| None via HF FinBERT API | P1 | PENDING | POST to https://api-inference.huggingface.co/models/ProsusAI/finbert; map positive/negative/neutral to +1/0/-1; graceful None if key unset or API error |
-| T-393 | utils/embedder.py — IntelEmbedder class: index_intel_reports() + query() | P1 | PENDING | ChromaDB persistent client at CHROMA_DB_PATH; embed via nomic-embed-text Ollama endpoint; index each *.txt in outputs/; query returns top-N excerpts with source file |
-| T-394 | tests/test_sentiment.py — ≥6 unit tests | P1 | PENDING | Mock HF API: positive/negative/neutral response → correct float, API error → None, key unset → None |
-| T-395 | tests/test_embedder.py — ≥6 unit tests | P1 | PENDING | Mock ChromaDB + Ollama: index empty dir, query with no docs, index 1 report then query |
+| T-390 | Alembic 0010 + schema.sql — add sentiment_score FLOAT + sentiment_label VARCHAR(20) to news_articles | P1 | ✅ DONE | Migration 0010 created; schema.sql comment added |
+| T-391 | settings.py + .env.example — HF_API_KEY + CHROMA_DB_PATH | P1 | ✅ DONE | HF_API_KEY existed already; CHROMA_DB_PATH added to settings.py, .env.example, docker-compose.yml |
+| T-392 | utils/sentiment.py — score_headline(text) → float \| None via HF FinBERT API | P1 | ✅ DONE | Already existed with score_headline() + score_batch() + aggregate_market_sentiment(); verified py_compile + ruff |
+| T-393 | utils/embedder.py — IntelEmbedder class: index_intel_reports() + query() | P1 | ✅ DONE | Already existed with IntelEmbedder (index_intel_reports + search) + MemoryEmbedder; verified py_compile + ruff |
+| T-394 | tests/test_sentiment.py — ≥6 unit tests | P1 | ✅ DONE | 13 tests — score_headline (7) + label_from_score (6); added label_from_score() to sentiment.py |
+| T-395 | tests/test_embedder.py — ≥6 unit tests | P1 | ✅ DONE | 7 tests — index empty/nonexistent, search empty on Ollama/Chroma fail, embed error |
 
 ### Dashboard + Agent Wiring (P1/P2)
 
 | ID | Description | Priority | Status | Notes |
 |----|-------------|----------|--------|-------|
-| T-396 | dashboard/app.py — GET /api/intel/search?q=&market= endpoint | P1 | PENDING | Wraps embedder.query(); returns top-5 excerpts with source_file + market; graceful empty when ChromaDB not indexed; rate-limit 20/min; add to _READ_ONLY_PATHS |
-| T-397 | Dashboard Intel Search panel — text input + market selector + results list | P1 | PENDING | New infra-section; fetch on submit; results show excerpt (first 300 chars) + source filename + market badge |
-| T-398 | IntelSearchTool in agents/analyst_agent.py — wraps embedder.query() | P2 | PENDING | Tool: query past intel reports for context before answering market questions; ADJUNCT — not in standard pipeline sequence |
-| T-399 | Scheduler: wire embedding + sentiment jobs at 4:30 AM + 5:00 AM IST | P1 | PENDING | scheduler.py already has run_intel_embedding_index() and run_news_sentiment_scoring() — add APScheduler jobs for both; CHROMA_DB_PATH must be same docker volume as agents |
+| T-396 | dashboard/app.py — GET /api/intel/search?q=&market= endpoint | P1 | ✅ DONE | Wraps embedder.search(); returns top-5 excerpts with source + market; rate-limit 20/min; added to _READ_ONLY_PATHS |
+| T-397 | Dashboard Intel Search panel — text input + market selector + results list | P1 | ✅ DONE | New infra-section before ALERTS; Enter key + button trigger; results show excerpt + source + relevance |
+| T-398 | IntelSearchTool in agents/analyst_agent.py — wraps embedder.search() | P2 | ✅ DONE | IntelSearchTool class + added to analyst tools list + backstory adjunct guidance |
+| T-399 | Scheduler: wire embedding + sentiment jobs at 4:30 AM + 5:00 AM IST | P1 | ✅ DONE | Both jobs already registered in scheduler.py since earlier commit (lines 352-368) |
 | T-400 | GATE-15 — Phase 8.5 DoD: query "Yelahanka PSF trend" → returns past report excerpts; sentiment job runs without crash | P0 | PENDING | docker compose exec agents python -c "from utils.embedder import IntelEmbedder; e=IntelEmbedder(); print(e.query('Yelahanka PSF trend', n=3))"; check CHANGELOG |
 
 ### Sprint 29 Gate

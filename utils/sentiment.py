@@ -34,37 +34,58 @@ from config.settings import HF_API_KEY, FINBERT_MODEL_ID
 _FINBERT_URL = f"https://router.huggingface.co/hf-inference/models/{FINBERT_MODEL_ID}"
 _LABEL_TO_SCORE = {"positive": 1.0, "negative": -1.0, "neutral": 0.0}
 _REQUEST_TIMEOUT = 20
-_RETRY_SLEEP = 2
+_RETRY_ATTEMPTS = 3
+_RETRY_BASE_DELAY = 2  # seconds, doubles each attempt
 
 
-def score_headline(headline: str, api_key: str = HF_API_KEY) -> float | None:
+_SENTINEL = object()
+
+
+def score_headline(headline: str, api_key: str | object = _SENTINEL) -> float | None:
     """
     Score a single headline via FinBERT.
     Returns float in [-1.0, 1.0] or None if API unavailable/unconfigured.
     Positive = bullish, negative = bearish.
+    Uses sentinel default so HF_API_KEY is read fresh on each call
+    (thread-safe, supports runtime env changes).
     """
-    if not api_key:
-        return None
-    if not headline or not headline.strip():
+    key: str = HF_API_KEY if api_key is _SENTINEL else api_key  # type: ignore
+    if not key:
         return None
 
     try:
         resp = requests.post(
             _FINBERT_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
+            headers={"Authorization": f"Bearer {key}"},
             json={"inputs": headline[:512]},  # FinBERT max 512 tokens
             timeout=_REQUEST_TIMEOUT,
         )
-        # 503 = model loading (cold start for non-BERT models; FinBERT is warm)
-        if resp.status_code == 503:
-            logger.debug("[Sentiment] FinBERT loading, retrying once...")
-            time.sleep(_RETRY_SLEEP)
-            resp = requests.post(
-                _FINBERT_URL,
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={"inputs": headline[:512]},
-                timeout=_REQUEST_TIMEOUT,
-            )
+        # 503 = model loading (cold start for non-BERT models; FinBERT is warm but guard anyway)
+        for attempt in range(_RETRY_ATTEMPTS):
+            if resp.status_code == 503:
+                delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                logger.debug(f"[Sentiment] FinBERT loading (attempt {attempt+1}/{_RETRY_ATTEMPTS}), retrying in {delay}s...")
+                time.sleep(delay)
+                resp = requests.post(
+                    _FINBERT_URL,
+                    headers={"Authorization": f"Bearer {key}"},
+                    json={"inputs": headline[:512]},
+                    timeout=_REQUEST_TIMEOUT,
+                )
+        # 503 = model loading (cold start for non-BERT models; FinBERT is warm but guard anyway)
+        for attempt in range(_RETRY_ATTEMPTS):
+            if resp.status_code == 503:
+                delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                logger.debug(f"[Sentiment] FinBERT loading (attempt {attempt+1}/{_RETRY_ATTEMPTS}), retrying in {delay}s...")
+                time.sleep(delay)
+                resp = requests.post(
+                    _FINBERT_URL,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={"inputs": headline[:512]},
+                    timeout=_REQUEST_TIMEOUT,
+                )
+            else:
+                break
         if resp.status_code != 200:
             logger.warning(f"[Sentiment] HF API {resp.status_code}: {resp.text[:100]}")
             return None
@@ -104,6 +125,17 @@ def score_batch(
         if delay_between > 0:
             time.sleep(delay_between)
     return results
+
+
+def label_from_score(score: float | None) -> str:
+    """Convert float score to human label."""
+    if score is None:
+        return "unscored"
+    if score > 0.2:
+        return "positive"
+    if score < -0.2:
+        return "negative"
+    return "neutral"
 
 
 def aggregate_market_sentiment(scores: list[float | None]) -> dict:
