@@ -15,12 +15,23 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("news_articles", sa.Column("sentiment_score", sa.Float(), nullable=True))
-    op.add_column("news_articles", sa.Column("sentiment_label", sa.String(20), nullable=True))
-    op.create_index("idx_news_articles_sentiment_score", "news_articles", ["sentiment_score"])
+    # Use raw SQL with IF NOT EXISTS so this migration is idempotent when the
+    # columns were already created by schema.sql (fresh Docker deployment path).
+    op.execute(
+        "ALTER TABLE news_articles "
+        "ADD COLUMN IF NOT EXISTS sentiment_score FLOAT"
+    )
+    op.execute(
+        "ALTER TABLE news_articles "
+        "ADD COLUMN IF NOT EXISTS sentiment_label VARCHAR(20)"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_news_articles_sentiment_score "
+        "ON news_articles(sentiment_score)"
+    )
 
 
 def downgrade() -> None:
-    op.drop_index("idx_news_articles_sentiment_score", table_name="news_articles")
-    op.drop_column("news_articles", "sentiment_label")
-    op.drop_column("news_articles", "sentiment_score")
+    op.execute("DROP INDEX IF EXISTS idx_news_articles_sentiment_score")
+    op.execute("ALTER TABLE news_articles DROP COLUMN IF EXISTS sentiment_label")
+    op.execute("ALTER TABLE news_articles DROP COLUMN IF EXISTS sentiment_score")

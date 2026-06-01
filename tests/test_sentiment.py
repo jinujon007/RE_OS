@@ -168,3 +168,42 @@ class TestLabelFromScore:
 
     def test_none_returns_unscored(self):
         assert label_from_score(None) == "unscored"
+
+
+class TestAggregateMarketSentiment:
+    def test_empty_list_returns_neutral(self):
+        from utils.sentiment import aggregate_market_sentiment
+        result = aggregate_market_sentiment([])
+        assert result["label"] == "neutral"
+        assert result["scored"] == 0
+        assert result["avg_score"] == 0.0
+
+    def test_all_none_returns_neutral(self):
+        from utils.sentiment import aggregate_market_sentiment
+        result = aggregate_market_sentiment([None, None, None])
+        assert result["label"] == "neutral"
+        assert result["scored"] == 0
+
+    def test_positive_majority(self):
+        from utils.sentiment import aggregate_market_sentiment
+        result = aggregate_market_sentiment([0.8, 0.6, 0.7])
+        assert result["label"] == "positive"
+        assert result["scored"] == 3
+        assert result["positive_pct"] == 100.0
+
+    def test_negative_majority(self):
+        from utils.sentiment import aggregate_market_sentiment
+        result = aggregate_market_sentiment([-0.5, -0.7, -0.3])
+        assert result["label"] == "negative"
+        assert result["negative_pct"] == 100.0
+
+    def test_mixed_scores_ignores_none(self):
+        from utils.sentiment import aggregate_market_sentiment
+        result = aggregate_market_sentiment([0.8, None, -0.2, None])
+        assert result["scored"] == 2
+        assert result["avg_score"] == round((0.8 + (-0.2)) / 2, 4)
+
+    def test_avg_score_precision(self):
+        from utils.sentiment import aggregate_market_sentiment
+        result = aggregate_market_sentiment([0.3, 0.5])
+        assert result["avg_score"] == 0.4

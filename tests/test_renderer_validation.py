@@ -4,11 +4,8 @@ Confirms the Midjourney prompt output format (--ar 16:9 --v 6 suffix).
 """
 
 import json
-import sys
-import os
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 pytestmark = pytest.mark.unit
 
 

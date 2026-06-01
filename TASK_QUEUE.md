@@ -1,6 +1,6 @@
 # RE_OS — Task Queue
 **Stage 3 · 2026-06-01 | Single-brain: Kilo Code**
-**Next task ID: T-422**
+**Next task ID: T-423**
 
 ---
 
@@ -37,13 +37,13 @@
 | T-397 | Dashboard Intel Search panel — text input + market selector + results list | P1 | ✅ DONE | New infra-section before ALERTS; Enter key + button trigger; results show excerpt + source + relevance |
 | T-398 | IntelSearchTool in agents/analyst_agent.py — wraps embedder.search() | P2 | ✅ DONE | IntelSearchTool class + added to analyst tools list + backstory adjunct guidance |
 | T-399 | Scheduler: wire embedding + sentiment jobs at 4:30 AM + 5:00 AM IST | P1 | ✅ DONE | Both jobs already registered in scheduler.py since earlier commit (lines 352-368) |
-| T-400 | GATE-15 — Phase 8.5 DoD: query "Yelahanka PSF trend" → returns past report excerpts; sentiment job runs without crash | P0 | PENDING | docker compose exec agents python -c "from utils.embedder import IntelEmbedder; e=IntelEmbedder(); print(e.query('Yelahanka PSF trend', n=3))"; check CHANGELOG |
+| T-400 | GATE-15 — Phase 8.5 DoD: query "Yelahanka PSF trend" → returns past report excerpts; sentiment job runs without crash | P0 | ✅ DONE | IntelEmbedder indexed 12 chunks from 6 reports; query "Yelahanka PSF trend" → 3 results (score 0.46–0.60); sentiment returns None gracefully; scheduler has both jobs; Alembic 0010 applied; /api/intel/search returns results; Phase 8.5 → COMPLETE |
 
 ### Sprint 29 Gate
 
 | Gate | Unlocked By | Status |
 |------|-------------|--------|
-| GATE-15 | T-400 — semantic query returns excerpts; sentiment column exists; scheduler jobs registered | PENDING |
+| GATE-15 | T-400 — semantic query returns excerpts; sentiment column exists; scheduler jobs registered | ✅ PASSED |
 
 ---
 
@@ -57,12 +57,12 @@
 
 | ID | Description | Priority | Status | Notes |
 |----|-------------|----------|--------|-------|
-| T-401 | utils/rera_compliance_checker.py — RERAComplianceChecker: check developer RERA record from DB | P1 | PENDING | Input: developer_name; query rera_projects + developers tables; returns: total projects, active/completed split, delayed count, avg delay months, any is_active=False anomalies |
-| T-402 | utils/zone_risk_checker.py — ZoneRiskChecker: market + zone → regulatory risk summary | P1 | PENDING | Input: market, zone; query regulatory_zones table; returns: FAR, setbacks, max height, airport/greenbelt flags from overlay_constraints table; flag if zone is restricted |
-| T-403 | RERAComplianceTool + ZoneRiskTool — add to agents/board_room/legal_head.py | P1 | PENDING | BaseTool wrappers; update legal_head agent backstory to mention real data sources; max_iter stays 2 |
-| T-404 | agents/compliance_researcher_agent.py — standalone Legal/Compliance Researcher | P1 | PENDING | Uses RERAComplianceTool + ZoneRiskTool + EncumbranceCheckTool (Kaveri wrapper); ANALYSIS LLM tier; reports to Legal Head |
-| T-405 | utils/kaveri_encumbrance.py — EncumbranceChecker: wraps existing kaveri scraper, queries guidance_values + kaveri_registrations from DB | P1 | PENDING | Input: market, survey_no (optional); returns: avg guidance value PSF, registration count in 180-day window, avg transaction PSF, guidance gap %; uses DB-first, Kaveri portal fallback |
-| T-406 | Wire Legal Head auto-context to Board Room — guidance value + zone risk pre-computed | P1 | PENDING | In board_room.py, key=="legal": query guidance_values + regulatory_zones for pitch market; prepend to legal dept_question (same pattern as engineering FSI + finance IRR) |
+| T-401 | utils/rera_compliance_checker.py — RERAComplianceChecker: check developer RERA record from DB | P1 | ✅ DONE | Input: developer_name; query rera_projects + developers tables; returns: total projects, active/completed split, delayed count, avg delay months, any is_active=False anomalies |
+| T-402 | utils/zone_risk_checker.py — ZoneRiskChecker: market + zone → regulatory risk summary | P1 | ✅ DONE | Input: market, zone; query regulatory_zones table; returns: FAR, setbacks, max height, airport/greenbelt flags from overlay_constraints table; flag if zone is restricted |
+| T-403 | RERAComplianceTool + ZoneRiskTool — add to agents/board_room/legal_head.py | P1 | ✅ DONE | BaseTool wrappers; update legal_head agent backstory to mention real data sources; max_iter stays 2 |
+| T-404 | agents/compliance_researcher_agent.py — standalone Legal/Compliance Researcher | P1 | ✅ DONE | Uses RERAComplianceTool + ZoneRiskTool + EncumbranceCheckTool (Kaveri wrapper); ANALYSIS LLM tier; reports to Legal Head |
+| T-405 | utils/kaveri_encumbrance.py — EncumbranceChecker: wraps existing kaveri scraper, queries guidance_values + kaveri_registrations from DB | P1 | ✅ DONE | Input: market, survey_no (optional); returns: avg guidance value PSF, registration count in 180-day window, avg transaction PSF, guidance gap %; uses DB-first, Kaveri portal fallback |
+| T-406 | Wire Legal Head auto-context to Board Room — guidance value + zone risk pre-computed | P1 | ✅ DONE | In board_room.py, key=="legal": query guidance_values + regulatory_zones for pitch market; prepend to legal dept_question (same pattern as engineering FSI + finance IRR) |
 
 ### Dashboard + Docs (P2)
 

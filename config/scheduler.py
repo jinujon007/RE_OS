@@ -148,12 +148,8 @@ def run_news_sentiment_scoring():
     """
     from config.settings import HF_API_KEY
     if not HF_API_KEY:
+        # Debug-only — HF key is optional; noisy Discord alert every night is unhelpful
         logger.debug("[Scheduler] HF_API_KEY not set — skipping sentiment scoring")
-        from utils.discord_notifier import send_system_alert
-        try:
-            send_system_alert("HF_API_KEY unset — nightly sentiment scoring disabled")
-        except Exception:
-            pass
         return
     try:
         from utils.sentiment import score_headline, label_from_score

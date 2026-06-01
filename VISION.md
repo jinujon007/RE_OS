@@ -35,7 +35,7 @@ The output of every agent feeds the institutional knowledge base. Nothing is los
 | Board Room crew | ✅ Live — 5 dept heads (BD/Finance/Engineering/Ops/Legal), action extraction, approval UI | `crews/board_room.py` |
 | Agent Memory layer | ✅ Live — read/write/decay/confidence, weekly decay job, pipeline injection | `utils/agent_memory.py` |
 | Parser Agent | 🔵 Standalone only | `agents/parser_agent.py` |
-| Organizer Agent | 🔴 Deprecated | `agents/organizer_agent.py` |
+| Organizer Agent | 🗑️ Removed — replaced by `utils/db_organizer.py` | — |
 | 3-market pipeline | ✅ Live — Yelahanka, Devanahalli, Hebbal | `crews/market_intel_crew.py` |
 | Enterprise tests + CI | ✅ Live — pytest, ruff, .github/workflows | `tests/` |
 
@@ -441,17 +441,17 @@ Two AI brains co-develop (Claude Code + Cline). Rules:
 ### Phase 8.5 — Intelligence Layer (Semantic Search + Sentiment)
 **Goal:** Accumulated intel reports become queryable. News articles scored by FinBERT sentiment. Analyst uses past intelligence as context before forming market assessments.
 **Effort:** 1–2 sessions
-**Status:** 🟡 IN PROGRESS — scheduler already has run_intel_embedding_index() + run_news_sentiment_scoring(); backing utilities being built (Sprint 29)
+**Status:** ✅ COMPLETE — 2026-06-01 (GATE-15 PASSED)
 
 **Tasks:**
-- [ ] P8.5.1 — Alembic 0010: sentiment_score + sentiment_label on news_articles — T-390
-- [ ] P8.5.2 — utils/sentiment.py — HF FinBERT API, graceful skip if key unset — T-392
-- [ ] P8.5.3 — utils/embedder.py — IntelEmbedder (ChromaDB + nomic-embed-text Ollama) — T-393
-- [ ] P8.5.4 — /api/intel/search endpoint — T-396
-- [ ] P8.5.5 — Dashboard Intel Search panel — T-397
-- [ ] P8.5.6 — IntelSearchTool in Analyst Agent — T-398
-- [ ] P8.5.7 — Scheduler: register embedding + sentiment cron jobs — T-399
-- [ ] P8.5.8 — GATE-15 DoD — T-400
+- [x] P8.5.1 — Alembic 0010: sentiment_score + sentiment_label on news_articles — T-390
+- [x] P8.5.2 — utils/sentiment.py — HF FinBERT API, graceful skip if key unset — T-392
+- [x] P8.5.3 — utils/embedder.py — IntelEmbedder (ChromaDB + nomic-embed-text Ollama) — T-393
+- [x] P8.5.4 — /api/intel/search endpoint — T-396
+- [x] P8.5.5 — Dashboard Intel Search panel — T-397
+- [x] P8.5.6 — IntelSearchTool in Analyst Agent — T-398
+- [x] P8.5.7 — Scheduler: register embedding + sentiment cron jobs — T-399
+- [x] P8.5.8 — GATE-15 DoD — T-400
 
 **Definition of done:** Semantic query "Yelahanka PSF trend" returns excerpts from past reports. Sentiment job scores new articles nightly.
 
@@ -460,8 +460,7 @@ Two AI brains co-develop (Claude Code + Cline). Rules:
 ### Phase 8 — Agent Hiring & Onboarding System
 **Goal:** The office is never frozen at a fixed headcount. New agents (employees) can be defined, hired, and onboarded without touching core code. Jinu writes a job description; the system creates the agent.
 **Effort:** 2–3 sessions
-**Status:** 🟡 IN PROGRESS — Sprint 31 (T-408–T-415)
-**Status:** Not started. Foundational for long-term scalability.
+**Status:** 🟡 IN PROGRESS — Sprint 31 (T-409–T-419). Registry scaffold, agent factory, DB table, built-in YAML agents, and dashboard hiring panel all pending.
 
 **The concept:**
 Every agent is defined by a spec file — their "employment contract." The system reads these specs at startup and instantiates agents dynamically. New hire = new spec file + registry entry. No hardcoded imports. No Dockerfile rebuild.
@@ -607,23 +606,6 @@ One agent whose only job is watching the other agents. It reads run logs, measur
 **Definition of done:** Board Room pitch with developer name + market → Legal Head cites actual RERA project count + zone risk level from DB. GATE-16 passed.
 
 ---
-
-### Phase 12 — Legal Department (original spec reference)
-**Status:** Not started. High value for land acquisition decisions — should be wired to Finance feasibility.
-
-**Tasks:**
-- [ ] P12.1 — `agents/legal_head_agent.py`: real estate law strategy, risk assessment
-- [ ] P12.2 — `agents/compliance_researcher_agent.py`: RERA, BDA, BBMP, encumbrance, title chain
-- [ ] P12.3 — Tool: `EncumbranceChecker(survey_no, taluk)` → Kaveri online encumbrance certificate check
-- [ ] P12.4 — Tool: `RERAComplianceCheck(developer_name)` → outstanding violations, pending approvals
-- [ ] P12.5 — Tool: `ZoneRegulationFetcher(location)` → BDA master plan zone, permissible use
-- [ ] P12.6 — Tool: `LitigationScanner(developer_name)` → court case mentions (news + legal databases)
-- [ ] P12.7 — Integration with Finance: feasibility brief includes Legal risk score before go/no-go
-- [ ] P12.8 — Integration with Scout Division: RERA Scout flags new approvals → Legal confirms clean title
-- [ ] P12.9 — Board Room: Legal Head responds to any pitch mentioning land/acquisition with risk assessment
-- [ ] P12.10 — Dashboard: Legal panel — active title checks, open risk flags, RERA compliance status
-
-**Definition of done:** Feed a land survey number to the Legal dept. Receive an encumbrance status, RERA compliance check on the developer, and zone regulation summary within 3 minutes. Legal risk score flows into Finance feasibility brief.
 
 ---
 
