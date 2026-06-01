@@ -27,9 +27,11 @@ import time
 import requests
 from loguru import logger
 
-from config.settings import HF_API_KEY, HF_INFERENCE_BASE, FINBERT_MODEL_ID
+from config.settings import HF_API_KEY, FINBERT_MODEL_ID
 
-_FINBERT_URL = f"{HF_INFERENCE_BASE}/{FINBERT_MODEL_ID}"
+# HuggingFace migrated from api-inference.huggingface.co to router.huggingface.co
+# in 2025 as part of the Inference Providers rollout.
+_FINBERT_URL = f"https://router.huggingface.co/hf-inference/models/{FINBERT_MODEL_ID}"
 _LABEL_TO_SCORE = {"positive": 1.0, "negative": -1.0, "neutral": 0.0}
 _REQUEST_TIMEOUT = 20
 _RETRY_SLEEP = 2

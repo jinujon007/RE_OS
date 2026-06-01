@@ -105,6 +105,7 @@ def test_heavy_falls_back_to_openrouter(monkeypatch, mock_llm):
     monkeypatch.setattr(r, "GROQ_API_KEY", "")
     monkeypatch.setattr(r, "GEMINI_API_KEY", "")
     monkeypatch.setattr(r, "NVIDIA_API_KEY", "")
+    monkeypatch.setattr(r, "SAMBANOVA_API_KEY", "")  # skip SambaNova
     monkeypatch.setattr(r, "OPENROUTER_API_KEY", "test-or-key")
     r.get_heavy_llm()
     call_kwargs = mock_llm.call_args
@@ -118,7 +119,9 @@ def test_heavy_falls_back_to_ollama_when_no_keys(monkeypatch, mock_llm):
     monkeypatch.setattr(r, "GROQ_API_KEY", "")
     monkeypatch.setattr(r, "GEMINI_API_KEY", "")
     monkeypatch.setattr(r, "NVIDIA_API_KEY", "")
+    monkeypatch.setattr(r, "SAMBANOVA_API_KEY", "")   # skip SambaNova
     monkeypatch.setattr(r, "OPENROUTER_API_KEY", "")
+    monkeypatch.setattr(r, "CLOUDFLARE_API_KEY", "")  # skip Cloudflare
     r.get_heavy_llm()
     call_kwargs = mock_llm.call_args
     model = call_kwargs.kwargs.get("model", "") or (
@@ -158,6 +161,8 @@ def test_analysis_falls_back_to_ollama_when_all_excluded(monkeypatch, mock_llm):
     monkeypatch.setattr(r, "GROQ_API_KEY", "")
     monkeypatch.setattr(r, "GEMINI_API_KEY", "")
     monkeypatch.setattr(r, "NVIDIA_API_KEY", "")
+    monkeypatch.setattr(r, "SAMBANOVA_API_KEY", "")   # skip SambaNova
+    monkeypatch.setattr(r, "CLOUDFLARE_API_KEY", "")  # skip Cloudflare
     r.get_analysis_llm()
     call_kwargs = mock_llm.call_args
     model = call_kwargs.kwargs.get("model", "") or (

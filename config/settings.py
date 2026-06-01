@@ -106,7 +106,8 @@ JINA_READER_BASE = "https://r.jina.ai"
 # Used for: FinBERT real estate news sentiment scoring (nightly batch).
 # Sign up: huggingface.co → Settings → Access Tokens → New token (read scope)
 HF_API_KEY = os.getenv("HF_API_KEY", "")
-HF_INFERENCE_BASE = "https://api-inference.huggingface.co/models"
+# HF migrated to router.huggingface.co (Inference Providers) in 2025
+HF_INFERENCE_BASE = "https://router.huggingface.co/hf-inference/models"
 FINBERT_MODEL_ID = "ProsusAI/finbert"
 
 # ── REDIS ────────────────────────────────────────────────────────────────────
