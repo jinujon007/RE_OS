@@ -7,11 +7,12 @@
 [![Python 3.11](https://img.shields.io/badge/python-3.11-3776AB.svg?logo=python&logoColor=white)](https://python.org)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED.svg?logo=docker&logoColor=white)](https://docker.com)
 [![CrewAI](https://img.shields.io/badge/CrewAI-0.80-FF6B35.svg)](https://crewai.com)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/jinujon007/RE_OS/actions/workflows/ci.yml/badge.svg)](https://github.com/jinujon007/RE_OS/actions/workflows/ci.yml)
 [![Stars](https://img.shields.io/github/stars/jinujon007/RE_OS?style=social)](https://github.com/jinujon007/RE_OS/stargazers)
 
-[Quick Start](#quick-start) · [Architecture](#architecture) · [Features](#features) · [Docs](#documentation) · [Roadmap](#roadmap)
+[Quick Start](#quick-start) · [Architecture](#architecture) · [Features](#features) · [Dashboard](#dashboard) · [Docs](#documentation) · [Roadmap](#roadmap)
 
 </div>
 
@@ -89,6 +90,14 @@ The pipeline runs in three stages — no LLM touches the data before it is valid
 | **2 — Store** | Records validated, deduplicated, batch-upserted to PostGIS (idempotent, UUID-keyed). Pure Python — no LLM. |
 | **3 — Brief** | Pre-built DB views queried → absorption rate, PSF bands, Grade A competition → CEO synthesizes one strategic action. |
 
+On top of the core pipeline, RE_OS ships a complete **virtual real estate office**:
+
+- **Dashboard (port 8050)** — org chart, intel board, task board, live log stream, DB explorer, Board Room sessions
+- **Board Room** — 5 department heads (BD / Finance / Engineering / Ops / Legal) run concurrently on any acquisition pitch; auto-computes IRR, FSI, zone risk, RERA compliance, and outputs a structured deal memo
+- **Intelligence Layer** — ChromaDB semantic search across all past intel reports; FinBERT sentiment scoring on news; BGE-M3 embeddings; cross-encoder reranking
+- **Agent Hiring** — define new specialist agents in YAML and hire them from the dashboard with no code change
+- **Prometheus + Grafana** — built-in observability stack, auto-provisioned datasource and dashboard
+
 ---
 
 ## Architecture
@@ -107,7 +116,7 @@ flowchart TB
 
     subgraph Stage2["Stage 2 · Python Organizer  (no LLM)"]
         ORG["Validate + deduplicate → batch upsert"]
-        DB[("PostgreSQL + PostGIS\n14 tables · 4 analytics views")]
+        DB[("PostgreSQL + PostGIS\n16 tables · 4 analytics views")]
         ORG --> DB
     end
 
@@ -117,29 +126,44 @@ flowchart TB
         ANA --> CEO
     end
 
+    subgraph Observability["Observability"]
+        PROM["Prometheus\n(metrics scrape)"]
+        GRAF["Grafana\n(dashboards)"]
+        PROM --> GRAF
+    end
+
     OUT["intel_report_YYYYMMDD.txt"]
+    DASH["Dashboard · port 8050\n(FastAPI + org chart + board room)"]
 
     Sources --> Stage1
     Stage1 --> Stage2
     Stage2 --> Stage3
     Stage3 --> OUT
+    Stage3 --> DASH
+    DB --> Observability
 
     SCHED["Scheduler · 2AM IST"] -. daily trigger .-> Stage1
     Stage1 -. "checkpoint bypass\n(if ran today)" .-> Stage3
-    OLLAMA["Ollama · local LLM"] -. fallback .-> Stage1 & Stage3
+    OLLAMA["Ollama · local LLM\n(GPU, CUDA 12.5)"] -. fallback .-> Stage1 & Stage3
 ```
 
 ---
 
 ## Features
 
-- **Multi-source scraping** — RERA Karnataka (Playwright AJAX intercept + POST fallback + hardcoded fallback), property portal listings, Kaveri registration and guidance value data
-- **Tiered LLM routing** — Cerebras → Groq → Gemini → NVIDIA → OpenRouter → Ollama. Free tier first, local fallback always available. A full three-market run costs $0.
-- **PostGIS data store** — 14 tables with geospatial support, 4 pre-built analytics views (`v_market_inventory`, `v_developer_scorecard`, `v_market_brief`, `v_active_projects`)
+- **Multi-source scraping** — RERA Karnataka (Playwright AJAX intercept + POST fallback), property portal listings (99acres, MagicBricks, Housing, NoBroker via Scrapling TLS-spoofing), Kaveri registration and guidance value data
+- **Tiered LLM routing** — Cerebras → Groq → Gemini → NVIDIA → SambaNova → OpenRouter → Cloudflare → Ollama. Free tier first, local fallback always available. A full three-market run costs $0.
+- **PostGIS data store** — 16 tables with geospatial support, 4 pre-built analytics views (`v_market_inventory`, `v_developer_scorecard`, `v_market_brief`, `v_active_projects`)
 - **Developer grading** — automatic A/B/C classification: Grade A = recognised brand or ≥500 units; B = 100–499; C = <100
+- **Board Room** — 5 concurrent department heads (BD / Finance / Engineering / Ops / Legal) evaluate any land acquisition; auto-IRR from live DB data, FSI calculation, zone risk, RERA compliance check
+- **Intelligence Layer** — ChromaDB semantic search across all past reports; FinBERT sentiment on news articles; BGE-M3 embeddings; cross-encoder reranking
+- **Dashboard (port 8050)** — FastAPI server with org chart, intel board, task board, DB explorer, Board Room session history, live log stream; Prometheus `/metrics` endpoint
+- **Agent Memory** — per-agent confidence-weighted memory with configurable decay; injected into pipeline context automatically
+- **Agent Hiring** — YAML agent registry; hire specialist agents from the dashboard without Python changes or Docker rebuilds
 - **Checkpointed pipeline** — today's Stage 1 checkpoint means failed runs restart from Stage 3; no re-scraping
-- **Autonomous scheduling** — APScheduler runs RERA refresh at 2 AM IST daily; market snapshots at 6 AM
-- **Scout Division** — six specialised scouts active in Stage 1: RERA Karnataka, RERA Detail, Portal, Developer, News, and Kaveri. SHA-based dedup and cross-source reconciliation via ScoutMemory.
+- **Autonomous scheduling** — APScheduler runs RERA refresh at 2 AM IST daily; market snapshots at 6 AM; embedding + sentiment jobs at 4:30–5 AM
+- **Observability** — Prometheus + Grafana pre-configured in docker-compose; anonymous admin access to dashboards out of the box
+- **Scout Division** — six specialised scouts: RERA Karnataka, RERA Detail, Portal, Developer, News, Kaveri. SHA-based dedup via ScoutMemory.
 
 ---
 
@@ -164,10 +188,12 @@ Open `.env` and add your `GROQ_API_KEY`. Get one free at [console.groq.com](http
 
 ```bash
 docker compose up -d
-docker compose ps   # all 5 containers should show "running"
+docker compose ps   # all 7 containers should show "running"
 ```
 
 First boot: ~3–5 minutes (image pulls + database init). Subsequent boots: ~15 seconds.
+
+Containers started: `re_os_db` (PostGIS) · `re_os_ollama` · `re_os_redis` · `re_os_agents` (FastAPI + crews) · `re_os_scheduler` (APScheduler) · `re_os_prometheus` · `re_os_grafana`
 
 ### 3. Pull the local LLM (one-time, ~5 GB — optional)
 
@@ -230,22 +256,41 @@ Cerebras and Groq are separate budgets — no TPM conflicts between tiers. See [
 
 ---
 
+## Dashboard
+
+Open `http://localhost:8050` after `docker compose up -d`.
+
+| Panel | What It Shows |
+|-------|--------------|
+| **Org Chart** | All active agents and their roles; hire new agents from YAML templates |
+| **Intel Board** | Latest market briefs per market; semantic search across all past reports |
+| **Task Board** | Board Room session history; approve/reject department recommendations |
+| **DB Explorer** | Live queries against analytics views — no psql required |
+| **Log Stream** | Tail `crew.log` in-browser |
+| **Metrics** | `GET /metrics` — Prometheus scrape endpoint |
+
+Board Room: `POST /api/board/run` with `{"market": "Yelahanka", "pitch": "5-acre R2 site, target launch ₹6,500 PSF"}` → 5-dept concurrent evaluation → structured deal memo in ~90 seconds.
+
+Grafana dashboards: `http://localhost:3000` (anonymous admin, pre-provisioned RE_OS dashboard).
+
+---
+
 ## Database Schema
 
-14 tables (UUID primary keys, PostGIS geometry support):
+16 tables (UUID primary keys, PostGIS geometry support):
 
-`micro_markets` · `developers` · `rera_projects` · `project_snapshots` · `listings` · `kaveri_registrations` · `guidance_values` · `regulatory_zones` · `overlay_constraints` · `infrastructure_pipeline` · `market_snapshots` · `agent_runs`
+`micro_markets` · `developers` · `rera_projects` · `project_snapshots` · `listings` · `kaveri_registrations` · `guidance_values` · `regulatory_zones` · `overlay_constraints` · `infrastructure_pipeline` · `market_snapshots` · `agent_runs` · `news_articles` · `board_sessions` · `agent_memories` · `tasks`
 
 **Pre-built analytics views:**
 
 | View | What It Shows |
 |------|--------------|
-| `v_market_inventory` | Active units, PSF range, absorption rate per micro-market |
-| `v_active_projects` | All live RERA projects with developer grade and status |
-| `v_developer_scorecard` | Developer ranking by units, grade, project count |
+| `v_market_inventory` | Active units, PSF range, absorption rate, months-of-supply per micro-market |
+| `v_active_projects` | All live RERA projects with developer grade, delay status, distress score |
+| `v_developer_scorecard` | Developer ranking by units, grade, project count, absorption rate |
 | `v_market_brief` | Combined brief ready for Analyst Agent queries |
 
-Full schema: [`database/schema.sql`](database/schema.sql)
+Full schema: [`database/schema.sql`](database/schema.sql) · Migrations: [`alembic/versions/`](alembic/versions/)
 
 ---
 
@@ -253,7 +298,7 @@ Full schema: [`database/schema.sql`](database/schema.sql)
 
 ```bash
 # ── STACK ──────────────────────────────────────────────────────────────────
-docker compose up -d                           # start all 5 containers
+docker compose up -d                           # start all 7 containers
 docker compose ps                              # check status
 docker compose down                            # stop (data preserved)
 docker compose down -v                         # stop + wipe DB
@@ -319,11 +364,14 @@ A `Makefile` wraps the most common commands. Requires `make` installed.
 
 | File | What It Covers |
 |------|----------------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Deep-dive: agents, pipeline stages, data flow, LLM routing, DB schema |
+| [ROADMAP.md](ROADMAP.md) | Phased roadmap with milestones and gates |
 | [HOW_TO_RUN.md](HOW_TO_RUN.md) | Daily operation — every command, every error, every fix |
 | [SETUP.md](SETUP.md) | First-time setup from zero to first run |
-| [VISION.md](VISION.md) | 14-phase roadmap to full Virtual Real Estate Office |
+| [VISION.md](VISION.md) | 14-phase vision for the full Virtual Real Estate Office |
 | [MODELS.md](MODELS.md) | Free model reference and daily capacity math |
-| [CHANGELOG.md](CHANGELOG.md) | File-level change log |
+| [CHANGELOG.md](CHANGELOG.md) | File-level change log (all phases) |
+| [docs/](docs/) | API reference, agent catalogue, deployment guides |
 
 ---
 
@@ -340,10 +388,11 @@ A `Makefile` wraps the most common commands. Requires `make` installed.
 - [x] **Phase 8.5** — Intelligence Layer: ChromaDB semantic search, FinBERT sentiment, BGE-M3, cross-encoder reranker
 - [x] **Phase 12** — Legal Dept: RERA compliance checker, zone risk, encumbrance from DB
 - [x] **Sprints 32–33** — HF Foundation: GPU Ollama, BGE-M3, Qwen2.5-1.5B, semantic dedup, BERTScore eval
-- [ ] **Sprint 39** — Data Foundation: IGR transactions, distressed developer alerting, Kaveri fix, months-of-supply ← **ACTIVE**
+- [x] **Sprint 39** — Data Foundation: IGR transactions, distressed developer alerting, Prometheus metrics, months-of-supply
+- [ ] **Sprints 40–45** — V1 Completion: live data quality 100%, remaining open-data integrations
 - [ ] **v2 Architecture (Sprints 60–66)** — Schema-first redesign, Unified Ingest Engine, 5 Intel Modules, Opportunity Engine, Telegram field interface
 
-Full vision and phase specs: [VISION.md](VISION.md) · v2 architecture rationale: [REPLAN.md](REPLAN.md)
+Full vision and phase specs: [VISION.md](VISION.md) · v2 architecture rationale: [REPLAN.md](REPLAN.md) · Detailed roadmap: [ROADMAP.md](ROADMAP.md)
 
 ---
 

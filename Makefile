@@ -2,11 +2,13 @@
 # Usage: make <target>
 # Requires: Docker Desktop running
 
-.PHONY: up down ps logs rebuild \
+.PHONY: up down ps logs logs-scheduler rebuild \
         run run-yelahanka run-devanahalli run-hebbal \
+        board \
         db db-inventory db-projects db-developers db-reset \
-        lint format syntax-check test health \
-        ollama-pull ci clean
+        dashboard grafana prometheus \
+        lint format syntax-check test test-cov health \
+        ollama-pull ci clean migrate
 
 # ── STACK ─────────────────────────────────────────────────────────────────────
 
@@ -21,6 +23,9 @@ ps:
 
 logs:
 	docker compose logs agents --tail 50 -f
+
+logs-scheduler:
+	docker compose logs scheduler --tail 50 -f
 
 rebuild:
 	docker compose build agents && docker compose up -d agents
@@ -38,6 +43,33 @@ run-devanahalli:
 
 run-hebbal:
 	docker compose exec agents python crews/market_intel_crew.py --market Hebbal
+
+# ── BOARD ROOM ────────────────────────────────────────────────────────────────
+
+board:
+	@echo "Usage: make board MARKET=Yelahanka PITCH='5-acre R2 site, target ₹6500 PSF'"
+	@[ -n "$(MARKET)" ] || (echo "Set MARKET=<market>"; exit 1)
+	@[ -n "$(PITCH)" ] || (echo "Set PITCH='<pitch text>'"; exit 1)
+	docker compose exec agents python -c "\
+	  import requests, json; \
+	  r = requests.post('http://localhost:8050/api/board/run', \
+	    headers={'X-API-Key': '$(DASHBOARD_API_KEY)'}, \
+	    json={'market': '$(MARKET)', 'pitch': '$(PITCH)'}); \
+	  print(json.dumps(r.json(), indent=2))"
+
+# ── DASHBOARD & OBSERVABILITY ─────────────────────────────────────────────────
+
+dashboard:
+	@echo "Dashboard: http://localhost:8050"
+	@docker compose exec agents curl -s http://localhost:8050/api/health | python -m json.tool
+
+grafana:
+	@echo "Grafana: http://localhost:3000 (anonymous admin)"
+	@docker compose ps grafana
+
+prometheus:
+	@echo "Prometheus metrics from agents:"
+	@docker compose exec agents curl -s http://localhost:8050/metrics | head -40
 
 # ── DATABASE ──────────────────────────────────────────────────────────────────
 
@@ -71,7 +103,13 @@ format:
 	ruff format .
 
 test:
-	pytest tests/ -v --tb=short
+	pytest tests/ -v --tb=short -m unit
+
+test-cov:
+	pytest tests/ -m unit --tb=short --cov=agents --cov=config --cov=crews --cov=scrapers --cov=utils --cov=dashboard --cov-report=term-missing
+
+migrate:
+	docker compose exec agents alembic upgrade head
 
 ci: lint test syntax-check
 

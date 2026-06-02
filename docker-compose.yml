@@ -2,6 +2,44 @@
 # Multi-agent system: PostgreSQL+PostGIS | Ollama | Redis | Agent Crew
 # Boot: docker compose up -d
 
+# ── SHARED ENVIRONMENT (applied to both agents + scheduler) ───────────────────
+x-agent-env: &agent-env
+  DATABASE_URL: postgresql://re_os_user:${DB_PASSWORD}@postgres:5432/re_os
+  OLLAMA_BASE_URL: http://ollama:11434
+  REDIS_URL: redis://redis:6379
+  CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
+  CEREBRAS_MODEL: ${CEREBRAS_MODEL:-gpt-oss-120b}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GROQ_API_KEY: ${GROQ_API_KEY:-}
+  NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  TARGET_MARKETS: ${TARGET_MARKETS:-Yelahanka,Devanahalli,Hebbal}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  DASHBOARD_API_KEY: ${DASHBOARD_API_KEY:-}
+  DASHBOARD_API_KEY_PREV: ${DASHBOARD_API_KEY_PREV:-}
+  DASHBOARD_ALLOWED_ORIGINS: ${DASHBOARD_ALLOWED_ORIGINS:-http://localhost:8050}
+  DISCORD_WEBHOOK_RERA_YELAHANKA: ${DISCORD_WEBHOOK_RERA_YELAHANKA:-}
+  DISCORD_WEBHOOK_RERA_DEVANAHALLI: ${DISCORD_WEBHOOK_RERA_DEVANAHALLI:-}
+  DISCORD_WEBHOOK_RERA_HEBBAL: ${DISCORD_WEBHOOK_RERA_HEBBAL:-}
+  DISCORD_WEBHOOK_COMPETITOR: ${DISCORD_WEBHOOK_COMPETITOR:-}
+  DISCORD_WEBHOOK_PRICE: ${DISCORD_WEBHOOK_PRICE:-}
+  DISCORD_WEBHOOK_INTEL: ${DISCORD_WEBHOOK_INTEL:-}
+  DISCORD_WEBHOOK_SYSTEM: ${DISCORD_WEBHOOK_SYSTEM:-}
+  SAMBANOVA_API_KEY: ${SAMBANOVA_API_KEY:-}
+  CLOUDFLARE_API_KEY: ${CLOUDFLARE_API_KEY:-}
+  CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+  JINA_API_KEY: ${JINA_API_KEY:-}
+  HF_API_KEY: ${HF_API_KEY:-}
+  CHROMA_DB_PATH: /app/data/chroma
+
+# ── SHARED VOLUMES (applied to both agents + scheduler) ───────────────────────
+x-agent-volumes: &agent-volumes
+  - ./:/app
+  - re_os_outputs:/app/outputs
+  - re_os_logs:/app/logs
+  - hf_cache:/root/.cache/huggingface
+  - chroma_data:/app/data/chroma
+
 services:
 
   # ── DATABASE ──────────────────────────────────────────────────────────────
@@ -67,43 +105,10 @@ services:
     container_name: re_os_agents
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://re_os_user:${DB_PASSWORD}@postgres:5432/re_os
-      OLLAMA_BASE_URL: http://ollama:11434
-      REDIS_URL: redis://redis:6379
-      # API Keys from .env — Docker Compose picks these up automatically
-      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
-      CEREBRAS_MODEL: ${CEREBRAS_MODEL:-gpt-oss-120b}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
-      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      TARGET_MARKETS: ${TARGET_MARKETS:-Yelahanka,Devanahalli,Hebbal}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      DASHBOARD_API_KEY: ${DASHBOARD_API_KEY:-}
-      DASHBOARD_API_KEY_PREV: ${DASHBOARD_API_KEY_PREV:-}
-      DASHBOARD_ALLOWED_ORIGINS: ${DASHBOARD_ALLOWED_ORIGINS:-http://localhost:8050}
-      DISCORD_WEBHOOK_RERA_YELAHANKA: ${DISCORD_WEBHOOK_RERA_YELAHANKA:-}
-      DISCORD_WEBHOOK_RERA_DEVANAHALLI: ${DISCORD_WEBHOOK_RERA_DEVANAHALLI:-}
-      DISCORD_WEBHOOK_RERA_HEBBAL: ${DISCORD_WEBHOOK_RERA_HEBBAL:-}
-      DISCORD_WEBHOOK_COMPETITOR: ${DISCORD_WEBHOOK_COMPETITOR:-}
-      DISCORD_WEBHOOK_PRICE: ${DISCORD_WEBHOOK_PRICE:-}
-      DISCORD_WEBHOOK_INTEL: ${DISCORD_WEBHOOK_INTEL:-}
-      DISCORD_WEBHOOK_SYSTEM: ${DISCORD_WEBHOOK_SYSTEM:-}
-      # ── HuggingFace / Jina / SambaNova / Cloudflare (zero-cost providers) ──
-      SAMBANOVA_API_KEY: ${SAMBANOVA_API_KEY:-}
-      CLOUDFLARE_API_KEY: ${CLOUDFLARE_API_KEY:-}
-      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
-      JINA_API_KEY: ${JINA_API_KEY:-}
-      HF_API_KEY: ${HF_API_KEY:-}
-      CHROMA_DB_PATH: /app/data/chroma
+      <<: *agent-env
     ports:
       - "8050:8050"
-    volumes:
-      - ./:/app
-      - re_os_outputs:/app/outputs
-      - re_os_logs:/app/logs
-      - hf_cache:/root/.cache/huggingface
-      - chroma_data:/app/data/chroma
+    volumes: *agent-volumes
     depends_on:
       postgres:
         condition: service_healthy
@@ -134,39 +139,8 @@ services:
     container_name: re_os_scheduler
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://re_os_user:${DB_PASSWORD}@postgres:5432/re_os
-      OLLAMA_BASE_URL: http://ollama:11434
-      REDIS_URL: redis://redis:6379
-      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
-      CEREBRAS_MODEL: ${CEREBRAS_MODEL:-gpt-oss-120b}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
-      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      TARGET_MARKETS: ${TARGET_MARKETS:-Yelahanka,Devanahalli,Hebbal}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      DASHBOARD_API_KEY: ${DASHBOARD_API_KEY:-}
-      DASHBOARD_API_KEY_PREV: ${DASHBOARD_API_KEY_PREV:-}
-      DISCORD_WEBHOOK_RERA_YELAHANKA: ${DISCORD_WEBHOOK_RERA_YELAHANKA:-}
-      DISCORD_WEBHOOK_RERA_DEVANAHALLI: ${DISCORD_WEBHOOK_RERA_DEVANAHALLI:-}
-      DISCORD_WEBHOOK_RERA_HEBBAL: ${DISCORD_WEBHOOK_RERA_HEBBAL:-}
-      DISCORD_WEBHOOK_COMPETITOR: ${DISCORD_WEBHOOK_COMPETITOR:-}
-      DISCORD_WEBHOOK_PRICE: ${DISCORD_WEBHOOK_PRICE:-}
-      DISCORD_WEBHOOK_INTEL: ${DISCORD_WEBHOOK_INTEL:-}
-      DISCORD_WEBHOOK_SYSTEM: ${DISCORD_WEBHOOK_SYSTEM:-}
-      # ── HuggingFace / Jina / SambaNova / Cloudflare (zero-cost providers) ──
-      SAMBANOVA_API_KEY: ${SAMBANOVA_API_KEY:-}
-      CLOUDFLARE_API_KEY: ${CLOUDFLARE_API_KEY:-}
-      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
-      JINA_API_KEY: ${JINA_API_KEY:-}
-      HF_API_KEY: ${HF_API_KEY:-}
-      CHROMA_DB_PATH: /app/data/chroma
-    volumes:
-      - ./:/app
-      - re_os_outputs:/app/outputs
-      - re_os_logs:/app/logs
-      - hf_cache:/root/.cache/huggingface
-      - chroma_data:/app/data/chroma
+      <<: *agent-env
+    volumes: *agent-volumes
     depends_on:
       postgres:
         condition: service_healthy
