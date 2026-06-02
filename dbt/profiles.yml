@@ -1,0 +1,27 @@
+re_os:
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('DBT_POSTGRES_HOST', 're_os_db') }}"
+      user: "{{ env_var('DBT_POSTGRES_USER', 're_os') }}"
+      password: "{{ env_var('DBT_POSTGRES_PASSWORD', 're_os_pass') }}"
+      port: "{{ env_var('DBT_POSTGRES_PORT', '5432') | int }}"
+      dbname: "{{ env_var('DBT_POSTGRES_DB', 're_os') }}"
+      schema: "{{ env_var('DBT_POSTGRES_SCHEMA', 'public') }}"
+      threads: "{{ env_var('DBT_THREADS', '4') | int }}"
+      keepalives_idle: 0
+      connect_timeout: 10
+      retries: 2
+    prod:
+      type: postgres
+      host: "{{ env_var('DBT_POSTGRES_HOST') }}"
+      user: "{{ env_var('DBT_POSTGRES_USER') }}"
+      password: "{{ env_var('DBT_POSTGRES_PASSWORD') }}"
+      port: "{{ env_var('DBT_POSTGRES_PORT') | int }}"
+      dbname: "{{ env_var('DBT_POSTGRES_DB') }}"
+      schema: "{{ env_var('DBT_POSTGRES_SCHEMA', 'public') }}"
+      threads: 8
+      keepalives_idle: 30
+      connect_timeout: 30
+      retries: 3

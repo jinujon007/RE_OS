@@ -1,0 +1,113 @@
+version: 2
+
+models:
+  - name: v_market_inventory
+    description: "Micro-market inventory summary — project counts, units, absorption, listing PSF per market."
+    columns:
+      - name: micro_market
+        description: "Market name (e.g. Yelahanka, Devanahalli, Hebbal)"
+        tests:
+          - not_null
+      - name: total_projects
+        description: "Count of active RERA-registered projects"
+      - name: total_units
+        description: "Sum of all units across active projects"
+      - name: total_sold
+        description: "Total sold units"
+      - name: total_unsold
+        description: "Total unsold units"
+      - name: avg_absorption_pct
+        description: "Average absorption rate across projects in the market"
+      - name: avg_min_psf
+        description: "Average of minimum per-sqft prices across projects"
+      - name: avg_max_psf
+        description: "Average of maximum per-sqft prices across projects"
+      - name: avg_listing_psf
+        description: "Average listing price per sqft from portal data"
+      - name: unique_developers
+        description: "Distinct developer count in the market"
+
+  - name: v_market_brief
+    description: "Single-query market brief with pricing, absorption, months-of-supply, and supply/demand label."
+    columns:
+      - name: micro_market
+        description: "Market name"
+        tests:
+          - not_null
+      - name: total_projects
+        description: "Active RERA-registered project count"
+      - name: total_units
+        description: "Total residential units across all active projects"
+      - name: avg_listing_psf
+        description: "Average listing PSF from portal data"
+        tests:
+          - not_null
+      - name: months_of_supply
+        description: "Months to sell current inventory at current absorption rate. Derived from kaveri_registrations as absorption proxy."
+      - name: supply_label
+        description: "Supply-demand classification: UNDERSUPPLY (<9mo), BALANCED (9-18mo), OVERSUPPLY (>18mo), INSUFFICIENT_DATA"
+        tests:
+          - accepted_values:
+              values: ["UNDERSUPPLY", "BALANCED", "OVERSUPPLY", "INSUFFICIENT_DATA"]
+      - name: floor_psf
+        description: "Estimated floor PSF (avg_listing_psf × 0.85 or avg_min_psf as fallback)"
+      - name: ceiling_psf
+        description: "Estimated ceiling PSF (avg_listing_psf × 1.15 or avg_max_psf as fallback)"
+      - name: grade_a_developers
+        description: "Count of Grade A developers active in the market"
+      - name: grade_b_developers
+        description: "Count of Grade B developers active in the market"
+      - name: data_as_of
+        description: "Most recent scrape timestamp for the market"
+
+  - name: v_developer_scorecard
+    description: "Developer performance scorecard — project count, absorption, delays, and market presence."
+    columns:
+      - name: developer
+        description: "Developer name"
+        tests:
+          - not_null
+      - name: grade
+        description: "Developer grade (A/B/C)"
+        tests:
+          - accepted_values:
+              values: ["A", "B", "C"]
+      - name: total_projects
+        description: "Total RERA projects for this developer"
+      - name: avg_absorption_pct
+        description: "Average absorption rate across projects"
+      - name: completed
+        description: "Completed project count"
+      - name: delayed
+        description: "Delayed project count"
+      - name: avg_delay_months
+        description: "Average delay in months across all projects"
+      - name: markets_active_in
+        description: "Comma-separated list of markets the developer is active in"
+
+  - name: v_active_projects
+    description: "Active RERA projects with developer and market names. Core listing for dashboard and reports."
+    columns:
+      - name: rera_number
+        description: "RERA registration number (unique identifier)"
+        tests:
+          - not_null
+          - unique
+      - name: project_name
+        description: "Project name"
+        tests:
+          - not_null
+      - name: developer_name
+        description: "Developer name"
+        tests:
+          - not_null
+      - name: developer_grade
+        description: "Developer grade (A/B/C)"
+      - name: micro_market
+        description: "Micro-market name"
+      - name: project_type
+        description: "Type of project (Apartment, Villa, Plotted, etc.)"
+      - name: total_units
+        description: "Total residential units"
+      - name: project_status
+        description: "Current project status from RERA"

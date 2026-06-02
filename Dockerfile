@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
     libdbus-1-3 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
     libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
+    gdal-bin libgdal-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Python dependencies (installed before COPY . . for layer caching)
@@ -31,6 +32,7 @@ RUN mkdir -p \
     /app/outputs/yelahanka/checkpoints \
     /app/outputs/devanahalli/checkpoints \
     /app/outputs/hebbal/checkpoints \
+    /app/outputs/rajankunte/checkpoints \
     /app/logs
 
 # Non-root user — run the application as re_os, not root

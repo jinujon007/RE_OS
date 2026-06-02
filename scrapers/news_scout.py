@@ -41,15 +41,13 @@ from bs4 import BeautifulSoup
 from loguru import logger
 
 from config.settings import (
-    GEMINI_API_KEY,
-    GEMINI_CEO_MODEL,
     CEREBRAS_API_KEY,
     CEREBRAS_BASE_URL,
     CEREBRAS_MODEL,
-    JINA_API_KEY,
-    JINA_READER_BASE,
-    HF_API_KEY,
+    GEMINI_API_KEY,
+    GEMINI_LIGHT_MODEL,
 )
+from config.metrics import scraper_runs_total
 from scrapers.scout_memory import ScoutMemory
 
 
@@ -485,6 +483,28 @@ class NewsScout:
 
         # AI analysis: extract structured intelligence
         analyzed = _ai_analyze_articles(unique_raw, self.market)
+
+        # Fallback: if AI analysis returns empty, store raw articles without enrichment
+        # This prevents 0-article runs when LLM is rate-limited or returns non-JSON
+        if not analyzed:
+            logger.warning(
+                f"[NewsScout] {self.market}: AI analysis returned 0 results for "
+                f"{len(unique_raw)} unique articles — falling back to raw storage"
+            )
+            analyzed = [
+                {
+                    "headline": a.get("title", ""),
+                    "url": a.get("url", ""),
+                    "published": a.get("published", ""),
+                    "signal_type": "other",
+                    "projects_mentioned": [],
+                    "developers_mentioned": [],
+                    "price_signal": "",
+                    "key_insight": a.get("snippet", "")[:200],
+                }
+                for a in unique_raw[:20]
+            ]
+
         findings = [_normalize_article(a, self.market) for a in analyzed]
         findings = [f for f in findings if f is not None]
 
@@ -518,6 +538,7 @@ def scout_news(market: str, days_back: int = 60) -> list[dict]:
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(findings, f, indent=2, default=str)
 
+    scraper_runs_total.labels(source="news", market=market, status="success").inc()
     new_total = sum(1 for f in findings if f.get("is_new"))
     print(f"\n{'=' * 55}")
     print(f"NEWS SCOUT — {market.upper()}")

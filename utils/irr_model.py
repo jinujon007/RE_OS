@@ -13,6 +13,15 @@ T-477: IGR Transaction PSF Integration
   Falls back to listings PSF if <5 IGR records.
   Source tracked in GDVResult.igr_source.
 
+T-720/T-721: Risk Metrics (Tier 1 — Financial Intelligence Depth)
+  IRRResult extended with:
+    - re_sharpe_ratio(irr, risk_free, irr_std): RE-adapted Sharpe = (IRR - 7% Gsec) / scenario_std
+    - empyrical.sharpe_ratio + max_drawdown from 54-month cashflow projection
+    - best/worst_case_irr_pct from bull/bear scenario IRRs
+  _build_monthly_returns(): constructs 54-month cashflow / equity Series for empyrical.
+  _compute_risk_metrics(): orchestrates both RE-Sharpe and empyrical metrics.
+  Graceful degrades when empyrical not installed — still emits RE-adapted Sharpe.
+
 Design decisions:
   - GDVEstimator returns psf=0.0 when insufficient IGR data (< MIN_IGR_RECORDS).
     Caller provides the fallback PSF (listing PSF from market data). This separation
@@ -23,6 +32,11 @@ Design decisions:
     regardless of write failure.
   - Market names are normalized to title-case before ILIKE query (YELAHANKA -> Yelahanka)
     for robustness against inconsistent casing from pitch text.
+  - Two separate Sharpe computations: empyrical.sharpe_ratio (financial — returns-based) is
+    computed from monthly cashflow series for max_drawdown; re_sharpe_ratio (RE-adapted —
+    IRR-based) is the primary Sharpe used in Board Room context. The RE-adapted version
+    uses (IRR - 7% Gsec) / scenario_IRR_std because real estate IRR doesn't follow
+    normal distribution assumptions of traditional Sharpe.
 """
 import json
 from dataclasses import dataclass, field
@@ -70,6 +84,12 @@ class IRRResult:
     debt_required: float
     payback_months: int
     verdict: str   # GO | MARGINAL | NO-GO
+    # ── Risk bands (Tier 1 — Financial Intelligence Depth) ──────────────────────
+    sharpe_ratio: float = 0.0        # RE-adapted Sharpe (irr - risk_free) / irr_std
+    max_drawdown_pct: float = 0.0    # Max peak-to-trough decline %
+    best_case_irr_pct: float = 0.0   # p75 (bull scenario)
+    worst_case_irr_pct: float = 0.0  # p25 (bear scenario)
+    risk_free_return_pct: float = 7.0  # Indian Gsec benchmark %
 
 @dataclass
 class ScenarioResult:
@@ -164,13 +184,25 @@ def compare_scenarios(
     bull = calc_irr(land_cost, sellable_area_sqft, bull_psf)
     bear = calc_irr(land_cost, sellable_area_sqft, bear_psf)
 
+    # ── Risk bands (Tier 1) ─────────────────────────────────────────────────
+    risk = _compute_risk_metrics(
+        land_cost=base.land_cost,
+        construction_cost=base.construction_cost,
+        gdv=base.gdv,
+        equity_required=base.equity_required,
+        simple_irr_pct=base.simple_irr_pct,
+        bull_irr_pct=bull.simple_irr_pct,
+        bear_irr_pct=bear.simple_irr_pct,
+    )
+    for r in (base, bull, bear):
+        r.sharpe_ratio = risk["sharpe_ratio"]
+        r.max_drawdown_pct = risk["max_drawdown_pct"]
+        r.best_case_irr_pct = risk["best_case_irr_pct"]
+        r.worst_case_irr_pct = risk["worst_case_irr_pct"]
+
     if base.verdict == "GO" and bear.verdict != "NO-GO":
         rec = "PROCEED — base and bear cases both viable."
     elif base.verdict == "GO" and bear.verdict == "NO-GO":
-        # NOTE: This branch is mathematically unreachable with +-10% PSF swing
-        # (the fixed construction cost of ₹2,200/sqft makes the gap between
-        # 20% and 12% IRR wider than a 10% revenue swing can bridge).
-        # Preserved as defensive code for future scenario widening.
         rec = "CONDITIONAL — base GO but bear NO-GO. Negotiate land cost or add JD structure."
     elif base.verdict == "MARGINAL":
         rec = "HOLD — marginal base case. Improve land cost or increase sell PSF before committing."
@@ -334,6 +366,164 @@ class GDVEstimator:
 
         self._cache[market] = (result[0], result[1], result[2], now + ttl)
         return result
+
+
+# ── Risk Metrics (Tier 1 — Financial Intelligence Depth) ──────────────────────
+# Two-layer design:
+#   1. RE-adapted Sharpe (re_sharpe_ratio) — primary: (IRR - 7% Gsec) / scenario_IRR_std.
+#      Computed from 3 scenario IRRs (base/bull/bear). No empyrical dependency.
+#   2. empyrical metrics — secondary: max_drawdown from 54-month cashflow/equity series.
+#      Gracefully degrades when empyrical not installed.
+# Rationale: Real estate IRR doesn't follow normal distribution assumptions of
+# traditional financial Sharpe. The RE-adapted version uses scenario variance
+# as risk proxy instead of daily/monthly return volatility.
+_MIN_IRR_STD: float = 0.5  # minimum std in %pts — prevents inflated Sharpe from near-zero variance
+
+
+def _build_monthly_returns(
+    land_cost: float,
+    construction_cost: float,
+    gdv: float,
+    equity_required: float,
+    timeline_months: int = TOTAL_TIMELINE_MONTHS,
+):
+    """Project monthly net cashflow / equity to produce a returns Series.
+
+    Cashflow structure:
+      t=0 to t=17 (pre-RERA):      -monthly_construction (land cost at t=0)
+      t=18 to t=53 (sell period):  +monthly_revenue - monthly_construction
+
+    Returns empty Series if inputs are zero to avoid division by zero.
+
+    Guards:
+      - timeline_months < LAND_TO_RERA_MONTHS: clamps sell_months to 1
+        to avoid zero-length or negative sell periods.
+      - gdv or equity_required <= 0: returns empty Series.
+
+    Limitations:
+      - Flat construction spend (no ramp-up/tail-off during sell phase)
+      - Flat sales velocity (no early-bird premium or absorption curve)
+      Both simplifications are acceptable for risk banding (not for DCF).
+    """
+    import pandas as _pd
+    if equity_required <= 0 or gdv <= 0:
+        return _pd.Series(dtype=float)
+
+    rera_months = min(LAND_TO_RERA_MONTHS, max(timeline_months, 1))
+    sell_months = max(timeline_months - rera_months, 1)
+    monthly_construction = construction_cost / max(timeline_months, 1)
+    monthly_revenue = gdv / sell_months
+
+    cashflows = []
+    for m in range(rera_months):
+        cf = -monthly_construction
+        if m == 0:
+            cf -= land_cost
+        cashflows.append(cf)
+    for m in range(sell_months):
+        cashflows.append(monthly_revenue - monthly_construction)
+
+    return _pd.Series(cashflows) / equity_required
+
+
+def re_sharpe_ratio(irr_pct: float, risk_free_rate: float = 0.07, irr_std: float = 0.0) -> float:
+    """Real-estate adapted Sharpe ratio: (IRR - risk-free rate) / IRR std.
+
+    Uses scenario variance as risk proxy instead of return volatility —
+    appropriate for real estate where IRR distributions are non-normal.
+
+    Guards:
+      - irr_std <= _MIN_IRR_STD (0.5% pts): returns 0 (prevents inflated
+        Sharpe from near-zero variance).
+      - risk_free_rate < 0: clamped to 0 (negative risk-free is
+        theoretically possible but not in Indian RE context).
+      - NaN in any input: treated as 0 (catches upstream propagation failures).
+
+    Args:
+        irr_pct: Project IRR in percent (e.g. 18.0 for 18%).
+        risk_free_rate: Risk-free rate as decimal (0.07 = 7% Indian Gsec).
+        irr_std: Standard deviation of IRR across scenarios (in percent points).
+
+    Returns:
+        Float Sharpe ratio. 0.0 if irr_std is effectively zero or inputs degenerate.
+    """
+    import math as _math
+    if any(_math.isnan(v) for v in (irr_pct, risk_free_rate, irr_std) if isinstance(v, (int, float))):
+        return 0.0
+    if irr_std <= _MIN_IRR_STD:
+        return 0.0
+    rf_pct = max(risk_free_rate, 0.0) * 100
+    return round((irr_pct - rf_pct) / irr_std, 4)
+
+
+def _compute_risk_metrics(
+    land_cost: float,
+    construction_cost: float,
+    gdv: float,
+    equity_required: float,
+    simple_irr_pct: float,
+    bull_irr_pct: float,
+    bear_irr_pct: float,
+    timeline_months: int = TOTAL_TIMELINE_MONTHS,
+    risk_free_rate: float = 0.07,
+) -> dict:
+    """Compute risk metrics: RE-adapted Sharpe, empyrical max_drawdown, best/worst case IRR.
+
+    Order:
+      1. RE-adapted Sharpe from scenario IRR variance (always available).
+      2. empyrical max_drawdown from monthly cashflow series (gracefully degrades).
+      3. Best/worst case IRR from bull/bear scenarios (always available).
+
+    Returns dict with keys: sharpe_ratio, max_drawdown_pct,
+    best_case_irr_pct, worst_case_irr_pct.
+    """
+    import statistics as _stats
+    from loguru import logger as _log
+
+    irr_values = [simple_irr_pct, bull_irr_pct, bear_irr_pct]
+    irr_std = _stats.stdev(irr_values) if len(set(irr_values)) > 1 else 0.0
+    re_sharpe = re_sharpe_ratio(simple_irr_pct, risk_free_rate, irr_std)
+
+    result = {
+        "sharpe_ratio": re_sharpe,
+        "max_drawdown_pct": 0.0,
+        "best_case_irr_pct": round(bull_irr_pct, 1),
+        "worst_case_irr_pct": round(bear_irr_pct, 1),
+    }
+
+    # empyrical max_drawdown from monthly returns (optional — degrades gracefully)
+    try:
+        import empyrical as _ep
+    except ImportError:
+        _log.debug("[IRR] empyrical not installed — skipping max_drawdown computation")
+        return result
+
+    import time as _time
+    _t0 = _time.time()
+    monthly_returns = _build_monthly_returns(
+        land_cost, construction_cost, gdv, equity_required, timeline_months
+    )
+    if len(monthly_returns) < 3:
+        return result
+
+    try:
+        mdd_raw = _ep.max_drawdown(monthly_returns)
+        mdd_val = None
+        if mdd_raw is not None:
+            mdd_f = float(mdd_raw)
+            if not (mdd_f != mdd_f):  # NaN check: NaN is the only float where x != x
+                mdd_val = mdd_f
+        if mdd_val is not None:
+            result["max_drawdown_pct"] = round(mdd_val * 100, 2)
+        else:
+            _log.debug("[IRR] max_drawdown returned NaN — likely degenerate cashflow series")
+    except Exception:
+        _log.warning("[IRR] empyrical max_drawdown failed (non-fatal)")
+        _log.debug("[IRR] risk metrics computation took {:.3f}s".format(_time.time() - _t0))
+        return result
+
+    _log.debug("[IRR] risk metrics computation took {:.3f}s".format(_time.time() - _t0))
+    return result
 
 
 # ── IGR Source Logging (T-477) ─────────────────────────────────────────────────

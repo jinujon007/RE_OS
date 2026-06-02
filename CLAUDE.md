@@ -165,6 +165,7 @@ RE_OS/
 │
 ├── tests/                       ← pytest (validator, checkpointer, llm_router) + conftest
 ├── .github/workflows/ci.yml     ← py_compile + pytest + ruff CI
+├── docs/solutions/              ← documented solutions to past problems (integration patterns, DB patterns, best practices); organized by category with YAML frontmatter (module, tags, problem_type)
 └── logs/ + outputs/             ← crew.log (573KB), run_history.jsonl, intel reports
 ```
 

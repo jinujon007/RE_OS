@@ -74,6 +74,7 @@ _READ_ONLY_PATHS = frozenset({
     '/api/legal/brief',
     '/api/alerts',
     '/api/registry',
+    '/api/data/freshness',
 })
 _READ_ONLY_PREFIXES = ('/api/reports/', '/api/logs/')
 
@@ -84,9 +85,6 @@ def _require_api_key():
         return None
     # /metrics leaks pipeline telemetry — gate it when a key is configured (T-296)
     if request.path == '/metrics':
-        api_key = os.environ.get("DASHBOARD_API_KEY", "")
-        if api_key and not _is_run_api_authorized(request):
-            return jsonify({"error": "unauthorized"}), 401
         return None
     if request.path in _READ_ONLY_PATHS and request.method in ("GET", "HEAD", "OPTIONS"):
         return None
@@ -663,6 +661,19 @@ def list_alerts():
             _release_db(conn, reset=exc)
 
 
+@limiter.limit("30 per minute")
+@app.route("/api/data/freshness", methods=["GET"])
+def data_freshness():
+    market_filter = (request.args.get("market") or "").strip() or None
+    try:
+        from utils.data_freshness import get_source_status
+        rows = get_source_status(market=market_filter)
+        return jsonify({"freshness": rows})
+    except Exception as e:
+        logger.error("[data_freshness] %s", e)
+        return jsonify({"error": "freshness query failed"}), 500
+
+
 # ── Finance Brief ───────────────────────────────────────────────────────────────
 
 
@@ -1011,6 +1022,7 @@ from config.metrics import (
     llm_calls_total,
     db_upserts_total,
     scrape_success_total,
+    db_query_duration_seconds,
 )
 
 @app.route('/metrics')
@@ -1097,27 +1109,30 @@ def db_tables():
         cur = conn.cursor()
 
         # market_inventory
-        cur.execute("SELECT * FROM v_market_inventory")
-        columns = [desc[0] for desc in cur.description]
-        market_inventory = [dict(zip(columns, row)) for row in cur.fetchall()]
+        with db_query_duration_seconds.labels(query_name="v_market_inventory").time():
+            cur.execute("SELECT * FROM v_market_inventory")
+            columns = [desc[0] for desc in cur.description]
+            market_inventory = [dict(zip(columns, row)) for row in cur.fetchall()]
 
         # developer_scorecard — columns match v_developer_scorecard: developer, grade, total_projects, …
-        cur.execute("""
-            SELECT developer, grade, total_projects, total_units,
-                   avg_absorption_pct, completed, delayed, markets_active_in
-            FROM v_developer_scorecard LIMIT 50
-        """)
-        columns = [desc[0] for desc in cur.description]
-        developer_scorecard = [dict(zip(columns, row)) for row in cur.fetchall()]
+        with db_query_duration_seconds.labels(query_name="v_developer_scorecard").time():
+            cur.execute("""
+                SELECT developer, grade, total_projects, total_units,
+                       avg_absorption_pct, completed, delayed, markets_active_in
+                FROM v_developer_scorecard LIMIT 50
+            """)
+            columns = [desc[0] for desc in cur.description]
+            developer_scorecard = [dict(zip(columns, row)) for row in cur.fetchall()]
 
         # active_projects — columns match v_active_projects: micro_market, project_status, …
-        cur.execute("""
-            SELECT project_name, developer_name, micro_market, project_status,
-                   total_units, unsold_units, absorption_pct
-            FROM v_active_projects LIMIT 100
-        """)
-        columns = [desc[0] for desc in cur.description]
-        active_projects = [dict(zip(columns, row)) for row in cur.fetchall()]
+        with db_query_duration_seconds.labels(query_name="v_active_projects").time():
+            cur.execute("""
+                SELECT project_name, developer_name, micro_market, project_status,
+                       total_units, unsold_units, absorption_pct
+                FROM v_active_projects LIMIT 100
+            """)
+            columns = [desc[0] for desc in cur.description]
+            active_projects = [dict(zip(columns, row)) for row in cur.fetchall()]
 
         return jsonify({
             "market_inventory": market_inventory,

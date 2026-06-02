@@ -81,13 +81,14 @@ def _query_market_supply(market: str) -> tuple[str, str]:
     if not market:
         return "N/A", "N/A"
     try:
-        from utils.db import get_engine as _ge
+        from utils.db import get_engine as _ge, db_query_duration_seconds
         from sqlalchemy import text as _st
         with _ge().connect() as _c:
-            row = _c.execute(
-                _st("SELECT months_of_supply, supply_label FROM v_market_brief WHERE micro_market ILIKE :m LIMIT 1"),
-                {"m": f"%{market}%"},
-            ).fetchone()
+            with db_query_duration_seconds.labels(query_name="v_market_brief").time():
+                row = _c.execute(
+                    _st("SELECT months_of_supply, supply_label FROM v_market_brief WHERE micro_market ILIKE :m LIMIT 1"),
+                    {"m": f"%{market}%"},
+                ).fetchone()
             if row:
                 months_str = str(row[0]) if row[0] is not None else "N/A"
                 return months_str, str(row[1]) if row[1] else "N/A"
@@ -142,13 +143,14 @@ def _ceo_decompose(pitch: str, market: str, _session_excluded: set) -> Optional[
 
         mos_context = ""
         try:
-            from utils.db import get_engine as _mos_ge
+            from utils.db import get_engine as _mos_ge, db_query_duration_seconds
             from sqlalchemy import text as _mos_st
             with _mos_ge().connect() as _mos_c:
-                _mos_row = _mos_c.execute(
-                    _mos_st("SELECT months_of_supply, supply_label FROM v_market_brief WHERE micro_market ILIKE :m LIMIT 1"),
-                    {"m": f"%{market}%"},
-                ).fetchone()
+                with db_query_duration_seconds.labels(query_name="v_market_brief").time():
+                    _mos_row = _mos_c.execute(
+                        _mos_st("SELECT months_of_supply, supply_label FROM v_market_brief WHERE micro_market ILIKE :m LIMIT 1"),
+                        {"m": f"%{market}%"},
+                    ).fetchone()
                 if _mos_row and _mos_row[0] is not None:
                     mos_context = f"Market supply: {_mos_row[0]} months ({_mos_row[1]})"
                     if _mos_row[1] == "OVERSUPPLY":
@@ -381,6 +383,38 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                 except Exception:
                     logger.debug("[board_room] Distressed dev lookup failed for {}", market_safe)
 
+            # Infrastructure score (T-718) — only for land-related pitches (expensive: DB + OSM)
+            if market_safe and _pitch_mentions_land(pitch):
+                try:
+                    from utils.infrastructure_scorer import InfrastructureScorer
+                    from utils.db import get_engine as _infra_ge
+                    from sqlalchemy import text as _infra_st
+                    with _infra_ge().connect() as _infra_c:
+                        _centroid = _infra_c.execute(
+                            _infra_st("SELECT ST_X(centroid::geometry), ST_Y(centroid::geometry) FROM micro_markets WHERE name ILIKE :m LIMIT 1"),
+                            {"m": f"%{market_safe}%"},
+                        ).fetchone()
+                    if _centroid:
+                        _lng, _lat = float(_centroid[0]), float(_centroid[1])
+                        _scorer = InfrastructureScorer()
+                        _infra_r = _scorer.score(_lat, _lng, market_safe)
+                        logger.info("[board_room] Infrastructure score for {}: metro={}m NH44={}m BIAL={}km walk={}/10",
+                                     market_safe,
+                                     _infra_r.dist_to_nearest_metro_m or "N/A",
+                                     _infra_r.dist_to_nh44_m or "N/A",
+                                     _infra_r.dist_to_bial_km or "N/A",
+                                     _infra_r.walkability_score or "N/A")
+                        bd_context += (
+                            f"\n[INFRASTRUCTURE — {market_safe}] "
+                            f"Metro: {_infra_r.dist_to_nearest_metro_m or 'N/A'}m | "
+                            f"NH-44: {_infra_r.dist_to_nh44_m or 'N/A'}m | "
+                            f"BIAL: {_infra_r.dist_to_bial_km or 'N/A'}km | "
+                            f"CBD: {_infra_r.dist_to_cbd_km or 'N/A'}km | "
+                            f"Walkability: {_infra_r.walkability_score or 'N/A'}/10\n"
+                        )
+                except Exception:
+                    logger.debug("[board_room] Infrastructure score failed for %s", market_safe)
+
             # months_of_supply signal for BD (T-485)
             if market_safe:
                 mos_val, mos_label = _query_market_supply(market_safe)
@@ -450,11 +484,18 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                     elif not market_safe:
                         psf_source_note = " (listing PSF — no market for IGR lookup)"
 
+                    best_irr = scenarios.bull.simple_irr_pct
+                    base_irr = scenarios.base.simple_irr_pct
+                    worst_irr = scenarios.bear.simple_irr_pct
+                    drawdown = scenarios.base.max_drawdown_pct
+                    sharpe = scenarios.base.sharpe_ratio
                     irr_context = (
                         f"\n\n[AUTO IRR CALC — {sqft:,.0f} sqft site, ₹{sell_psf:,.0f} PSF{psf_source_note}]\n"
-                        f"Base IRR: {scenarios.base.simple_irr_pct:.1f}% ({scenarios.base.verdict}) | "
-                        f"Bull: {scenarios.bull.simple_irr_pct:.1f}% | "
-                        f"Bear: {scenarios.bear.simple_irr_pct:.1f}% ({scenarios.bear.verdict})\n"
+                        f"Base IRR: {base_irr:.1f}% ({scenarios.base.verdict}) | "
+                        f"Bull: {best_irr:.1f}% | "
+                        f"Bear: {worst_irr:.1f}% ({scenarios.bear.verdict})\n"
+                        f"Risk bands: best {best_irr:.1f}% / base {base_irr:.1f}% / worst {worst_irr:.1f}%"
+                        f", max drawdown {drawdown:.1f}%, Sharpe {sharpe:.2f}\n"
                         f"Land cost est.: ₹{scenarios.base.land_cost/1e7:.1f}Cr | "
                         f"GDV est.: ₹{scenarios.base.gdv/1e7:.1f}Cr\n"
                         f"Recommendation: {scenarios.recommendation}\n"
@@ -462,6 +503,11 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                 except Exception as exc:
                     logger.warning("[board_room] finance auto-IRR calc failed for market=%s pitch=%s: %s",
                                    market, pitch[:80], exc)
+                    irr_context = (
+                        f"\n\n[AUTO IRR CALC — {sqft:,.0f} sqft site, ₹{sell_psf:,.0f} PSF]\n"
+                        f"[IRR computation failed — {exc}]. Finance assessment will be based on LLM reasoning alone."
+                        f"\n"
+                    )
 
             # months_of_supply signal from v_market_brief (T-485)
             if market_safe:

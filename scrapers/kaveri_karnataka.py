@@ -25,6 +25,8 @@ import argparse
 from datetime import date, timedelta
 from loguru import logger
 
+from config.metrics import scraper_runs_total
+
 # ── Scrapling availability ────────────────────────────────────────────────────
 _SCRAPLING_OK = False
 try:
@@ -1058,10 +1060,12 @@ if __name__ == "__main__":
 
     if args.type in ("gv", "both"):
         gv = scraper.scrape_guidance_values(args.market)
+        scraper_runs_total.labels(source="kaveri", market=args.market, status="success").inc()
         print(f"\n── Guidance Values ({len(gv)} records) ──")
         print(json.dumps(gv[:3], indent=2, default=str))
 
     if args.type in ("reg", "both"):
         reg = scraper.scrape_registrations(args.market, months_back=args.months)
+        scraper_runs_total.labels(source="kaveri", market=args.market, status="success").inc()
         print(f"\n── Registrations ({len(reg)} records) ──")
         print(json.dumps(reg[:3], indent=2, default=str))

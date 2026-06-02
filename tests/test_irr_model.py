@@ -7,6 +7,7 @@ from utils.irr_model import (
     EQUITY_RATIO, DEBT_RATIO, TOTAL_TIMELINE_MONTHS,
     RERA_TO_POSSESSION_MONTHS,
     LandCostResult, GDVResult, IRRResult, ScenarioResult,
+    re_sharpe_ratio, _build_monthly_returns, _compute_risk_metrics,
 )
 
 
@@ -288,6 +289,159 @@ class TestGDVEstimator:
         assert source == "insufficient_records"
 
 
+class TestRiskMetrics:
+    """Risk metric functions: re_sharpe_ratio, _build_monthly_returns, _compute_risk_metrics."""
+
+    def test_re_sharpe_ratio_basic(self):
+        """(18% IRR, 7% Gsec, 5% std) = (18-7)/5 = 2.2"""
+        assert re_sharpe_ratio(18.0, 0.07, 5.0) == 2.2
+
+    def test_re_sharpe_ratio_negative_irr(self):
+        """Negative excess return → negative Sharpe."""
+        sr = re_sharpe_ratio(3.0, 0.07, 5.0)
+        assert sr < 0
+
+    def test_re_sharpe_ratio_zero_std_returns_zero(self):
+        """Zero std (all scenarios identical) → no risk penalty → 0 Sharpe."""
+        assert re_sharpe_ratio(18.0, 0.07, 0.0) == 0.0
+
+    def test_re_sharpe_ratio_small_std_clamped(self):
+        """Std below _MIN_IRR_STD (0.5) is clamped → returns 0, not inflated."""
+        assert re_sharpe_ratio(18.0, 0.07, 0.1) == 0.0
+
+    def test_re_sharpe_ratio_boundary_std(self):
+        """Std exactly at _MIN_IRR_STD → still clamped (<=, not <)."""
+        assert re_sharpe_ratio(18.0, 0.07, 0.5) == 0.0
+
+    def test_re_sharpe_ratio_nan_input_returns_zero(self):
+        """NaN in any parameter → 0 (no crash)."""
+        import math
+        assert re_sharpe_ratio(math.nan, 0.07, 5.0) == 0.0
+        assert re_sharpe_ratio(18.0, math.nan, 5.0) == 0.0
+        assert re_sharpe_ratio(18.0, 0.07, math.nan) == 0.0
+
+    def test_re_sharpe_ratio_negative_rf_clamped(self):
+        """Negative risk-free rate clamped to 0 → (18-0)/5 = 3.6."""
+        assert re_sharpe_ratio(18.0, -0.05, 5.0) == 3.6
+
+    def test_build_monthly_returns_short_timeline(self):
+        """Timeline shorter than LAND_TO_RERA_MONTHS produces valid series."""
+        mr = _build_monthly_returns(10_000_000, 50_000_000, 100_000_000, 36_000_000, timeline_months=12)
+        assert len(mr) >= 1
+        # Month 0 still includes land cost
+        assert mr.iloc[0] == (-10_000_000 - 50_000_000/12) / 36_000_000
+
+    def test_build_monthly_returns_zero_gdv(self):
+        """Zero GDV → empty Series."""
+        import pandas as pd
+        mr = _build_monthly_returns(10_000_000, 50_000_000, 0, 36_000_000)
+        assert isinstance(mr, pd.Series) and len(mr) == 0
+
+    def test_build_monthly_returns_negative_land_capped(self):
+        """Negative land cost → treated as 0 (clamped upstream)."""
+        import pandas as pd
+        mr = _build_monthly_returns(-10_000_000, 50_000_000, 100_000_000, 36_000_000)
+        assert isinstance(mr, pd.Series) and len(mr) == TOTAL_TIMELINE_MONTHS
+
+    def test_build_monthly_returns_length(self):
+        """A 54-month project produces 54 monthly returns."""
+        mr = _build_monthly_returns(10_000_000, 50_000_000, 100_000_000, 36_000_000)
+        assert len(mr) == TOTAL_TIMELINE_MONTHS
+
+    def test_build_monthly_returns_zero_equity(self):
+        """Zero equity required → empty Series (no division by zero)."""
+        import pandas as pd
+        mr = _build_monthly_returns(10_000_000, 50_000_000, 100_000_000, 0)
+        assert isinstance(mr, pd.Series) and len(mr) == 0
+
+    def test_build_monthly_returns_negative_cashflow_first_month(self):
+        """Month 0 should have land cost + construction = most negative."""
+        mr = _build_monthly_returns(10_000_000, 50_000_000, 100_000_000, 36_000_000)
+        assert mr.iloc[0] < mr.iloc[1]  # land cost makes month 0 more negative
+
+    def test_build_monthly_returns_positive_during_sell(self):
+        """Sell-period months should be less negative (or positive) than pre-RERA."""
+        mr = _build_monthly_returns(10_000_000, 50_000_000, 100_000_000, 36_000_000)
+        sell_start = 18  # LAND_TO_RERA_MONTHS
+        # Revenue partially offsets construction in sell phase
+        assert mr.iloc[sell_start] > mr.iloc[1]
+
+    def test_compute_risk_metrics_basic(self):
+        """Compute risk metrics returns all 4 keys with expected types."""
+        r = _compute_risk_metrics(
+            land_cost=10_000_000, construction_cost=50_000_000,
+            gdv=100_000_000, equity_required=36_000_000,
+            simple_irr_pct=10.5, bull_irr_pct=13.8, bear_irr_pct=3.9,
+        )
+        assert isinstance(r, dict)
+        assert "sharpe_ratio" in r
+        assert "max_drawdown_pct" in r
+        assert "best_case_irr_pct" in r
+        assert "worst_case_irr_pct" in r
+        assert r["best_case_irr_pct"] == 13.8
+        assert r["worst_case_irr_pct"] == 3.9
+
+    def test_compute_risk_metrics_best_worst_rounding(self):
+        """Best/worst case IRRs should be rounded to 1 decimal."""
+        r = _compute_risk_metrics(
+            land_cost=0, construction_cost=0,
+            gdv=0, equity_required=0,
+            simple_irr_pct=10.555, bull_irr_pct=14.777, bear_irr_pct=4.222,
+        )
+        assert r["best_case_irr_pct"] == 14.8
+        assert r["worst_case_irr_pct"] == 4.2
+
+    def test_compute_risk_metrics_sharpe_with_std(self):
+        """With non-zero std across scenarios, Sharpe should be non-zero."""
+        r = _compute_risk_metrics(
+            land_cost=10_000_000, construction_cost=50_000_000,
+            gdv=100_000_000, equity_required=36_000_000,
+            simple_irr_pct=10.5, bull_irr_pct=13.8, bear_irr_pct=3.9,
+        )
+        # std of [10.5, 13.8, 3.9] ≈ 4.97, so (10.5 - 7) / 4.97 ≈ 0.70
+        assert r["sharpe_ratio"] > 0
+        assert r["sharpe_ratio"] < 1.0
+
+    def test_compute_risk_metrics_identical_scenarios_zero_sharpe(self):
+        """All scenarios identical → zero std → Sharpe = 0."""
+        r = _compute_risk_metrics(
+            land_cost=0, construction_cost=0,
+            gdv=0, equity_required=0,
+            simple_irr_pct=10.0, bull_irr_pct=10.0, bear_irr_pct=10.0,
+        )
+        assert r["sharpe_ratio"] == 0.0
+
+
+class TestCompareScenariosRiskBands:
+    """Risk band propagation on compare_scenarios."""
+
+    def test_risk_bands_on_base(self):
+        """Base IRRResult after compare_scenarios should have risk bands populated."""
+        s = compare_scenarios(15_000_000, 10000, 7000)
+        assert s.base.best_case_irr_pct > 0
+        assert s.base.worst_case_irr_pct > 0
+        assert s.base.sharpe_ratio != 0.0
+
+    def test_risk_bands_all_scenarios_have_same_range(self):
+        """All 3 scenarios should share the same risk band range."""
+        s = compare_scenarios(15_000_000, 10000, 7000)
+        assert s.base.best_case_irr_pct == s.bull.best_case_irr_pct
+        assert s.base.worst_case_irr_pct == s.bear.worst_case_irr_pct
+
+    def test_risk_free_rate_default_on_irr_result(self):
+        """IRRResult carries a default 7% risk-free rate."""
+        r = calc_irr(10_000_000, 10000, 9000)
+        assert r.risk_free_return_pct == 7.0
+
+    def test_all_zero_inputs_risk_bands_zero(self):
+        """Degenerate inputs should produce zero risk bands (no crash)."""
+        s = compare_scenarios(0, 0, 0)
+        assert s.base.sharpe_ratio == 0.0
+        assert s.base.max_drawdown_pct == 0.0
+        assert s.base.best_case_irr_pct == 0.0
+        assert s.base.worst_case_irr_pct == 0.0
+
+
 class TestDataclassContracts:
     def test_land_cost_result_fields(self):
         r = calc_land_cost(43560, 4000, 10.0)
@@ -300,6 +454,15 @@ class TestDataclassContracts:
         assert hasattr(r, "verdict") and isinstance(r.verdict, str)
         assert hasattr(r, "equity_required") and isinstance(r.equity_required, (int, float))
         assert hasattr(r, "payback_months") and isinstance(r.payback_months, int)
+
+    def test_irr_result_has_risk_fields(self):
+        """IRRResult should carry all 5 risk metric fields."""
+        r = calc_irr(10_000_000, 10000, 9000)
+        assert hasattr(r, "sharpe_ratio")
+        assert hasattr(r, "max_drawdown_pct")
+        assert hasattr(r, "best_case_irr_pct")
+        assert hasattr(r, "worst_case_irr_pct")
+        assert hasattr(r, "risk_free_return_pct")
 
     def test_scenario_result_structure(self):
         s = compare_scenarios(15_000_000, 10000, 7000)

@@ -1,0 +1,12 @@
+# RE_OS — Prometheus scrape configuration
+# Scraped by the Prometheus service (re_os_prometheus) every 15s.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "re_os"
+    honor_labels: true
+    static_configs:
+      - targets: ["re_os_agents:8050"]
+    metrics_path: /metrics

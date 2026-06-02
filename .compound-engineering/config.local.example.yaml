@@ -1,0 +1,26 @@
+# Compound Engineering — RE_OS config template
+# Copy to config.local.yaml (gitignored) and edit.
+
+project:
+  name: RE_OS
+  description: Multi-agent real estate intelligence OS for LLS. North Bengaluru micro-markets.
+  primary_language: python
+  stack: [PostgreSQL, Docker, CrewAI, Flask, ChromaDB, HuggingFace, Playwright]
+
+compound:
+  learnings_path: .compound-engineering/learnings
+  auto_link_to: CHANGELOG.md
+
+product_pulse:
+  output_dir: docs/pulse-reports
+  signals:
+    - RERA project counts per micro-market
+    - Scraper success/failure rates
+    - GATE status
+
+code_review:
+  emphasize:
+    - ce-correctness-reviewer
+    - ce-data-integrity-guardian
+    - ce-security-reviewer
+    - ce-reliability-reviewer

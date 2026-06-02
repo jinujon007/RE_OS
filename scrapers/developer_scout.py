@@ -50,12 +50,13 @@ except Exception:
     _SCRAPLING_OK = False
 
 from config.settings import (
-    GEMINI_API_KEY,
-    GEMINI_CEO_MODEL,
     CEREBRAS_API_KEY,
     CEREBRAS_BASE_URL,
     CEREBRAS_MODEL,
+    GEMINI_API_KEY,
+    GEMINI_LIGHT_MODEL,
 )
+from config.metrics import scraper_runs_total
 from scrapers.scout_memory import ScoutMemory
 
 
@@ -746,6 +747,7 @@ def scout_developers(market: str, developers: list[str] | None = None) -> list[d
     except Exception as _alert_err:
         logger.warning(f"[DeveloperScout] Competitor alert failed for {market}: {_alert_err}")
 
+    scraper_runs_total.labels(source="developer", market=market, status="success").inc()
     print(f"\n{'=' * 55}")
     print(f"DEVELOPER SCOUT — {market.upper()}")
     print(f"{'=' * 55}")

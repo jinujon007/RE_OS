@@ -39,6 +39,7 @@ from datetime import datetime, UTC
 from loguru import logger
 
 from crewai import LLM
+from config.metrics import llm_router_fallbacks_total
 from config.settings import (
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
@@ -198,6 +199,7 @@ def get_heavy_llm(temperature: float = 0.1, excluded: set = None) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
+    llm_router_fallbacks_total.labels(tier="heavy", provider="groq").inc()
     if GEMINI_API_KEY and not _excl("gemini_flash") and not is_near_quota("gemini_flash"):
         logger.info(
             f"[Router] HEAVY fallback → Google AI Studio {GEMINI_CEO_MODEL} (250k TPM)"
@@ -209,6 +211,7 @@ def get_heavy_llm(temperature: float = 0.1, excluded: set = None) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
+    llm_router_fallbacks_total.labels(tier="heavy", provider="gemini_flash").inc()
     if NVIDIA_API_KEY and not _excl("nvidia") and not is_near_quota("nvidia"):
         logger.info("[Router] HEAVY fallback → NVIDIA NIM 405B")
         return LLM(
@@ -219,6 +222,7 @@ def get_heavy_llm(temperature: float = 0.1, excluded: set = None) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
+    llm_router_fallbacks_total.labels(tier="heavy", provider="nvidia").inc()
     if SAMBANOVA_API_KEY and not _excl("sambanova") and not is_near_quota("sambanova"):
         logger.info(f"[Router] HEAVY fallback → SambaNova {SAMBANOVA_HEAVY_MODEL} (20M tok/day)")
         return LLM(
@@ -229,6 +233,7 @@ def get_heavy_llm(temperature: float = 0.1, excluded: set = None) -> LLM:
             max_tokens=4096,
             num_retries=2,
         )
+    llm_router_fallbacks_total.labels(tier="heavy", provider="sambanova").inc()
     if OPENROUTER_API_KEY and not _excl("openrouter") and not is_near_quota("openrouter"):
         logger.info("[Router] HEAVY fallback → OpenRouter")
         return LLM(
@@ -238,6 +243,7 @@ def get_heavy_llm(temperature: float = 0.1, excluded: set = None) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
+    llm_router_fallbacks_total.labels(tier="heavy", provider="openrouter").inc()
     if CLOUDFLARE_API_KEY and CLOUDFLARE_ACCOUNT_ID and not _excl("cloudflare") and not is_near_quota("cloudflare"):
         logger.warning("[Router] HEAVY last-resort → Cloudflare Workers AI (10K neurons/day)")
         cf_base = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1"
@@ -249,6 +255,7 @@ def get_heavy_llm(temperature: float = 0.1, excluded: set = None) -> LLM:
             max_tokens=2048,
             num_retries=1,
         )
+    llm_router_fallbacks_total.labels(tier="heavy", provider="cloudflare").inc()
     logger.warning("[Router] HEAVY fallback → Ollama (slow, no cloud keys set)")
     return LLM(
         model=f"ollama/{OLLAMA_MODEL}",
@@ -274,6 +281,7 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
+    llm_router_fallbacks_total.labels(tier="analysis", provider="cerebras").inc()
     if GROQ_API_KEY and not _is_excluded("groq") and not is_near_quota("groq"):
         logger.info(
             f"[Router] ANALYSIS fallback → Groq {GROQ_ANALYST_MODEL} (shares CEO 30k TPM)"
@@ -285,6 +293,7 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
+    llm_router_fallbacks_total.labels(tier="analysis", provider="groq").inc()
     if GEMINI_API_KEY and not _is_excluded("gemini_flash") and not is_near_quota("gemini_flash"):
         logger.info(
             f"[Router] ANALYSIS fallback → Google AI Studio {GEMINI_CEO_MODEL} (250k TPM)"
@@ -296,6 +305,7 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
+    llm_router_fallbacks_total.labels(tier="analysis", provider="gemini_flash").inc()
     if NVIDIA_API_KEY and not _is_excluded("nvidia") and not is_near_quota("nvidia"):
         logger.info(
             f"[Router] ANALYSIS fallback → NVIDIA NIM {NVIDIA_ANALYST_MODEL} (40 req/min)"
@@ -308,6 +318,7 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             max_tokens=4096,
             num_retries=3,
         )
+    llm_router_fallbacks_total.labels(tier="analysis", provider="nvidia").inc()
     if SAMBANOVA_API_KEY and not _is_excluded("sambanova") and not is_near_quota("sambanova"):
         logger.info(f"[Router] ANALYSIS fallback → SambaNova {SAMBANOVA_HEAVY_MODEL}")
         return LLM(
@@ -318,6 +329,7 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             max_tokens=4096,
             num_retries=2,
         )
+    llm_router_fallbacks_total.labels(tier="analysis", provider="sambanova").inc()
     if CLOUDFLARE_API_KEY and CLOUDFLARE_ACCOUNT_ID and not _is_excluded("cloudflare") and not is_near_quota("cloudflare"):
         logger.warning("[Router] ANALYSIS last-resort → Cloudflare Workers AI")
         cf_base = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1"
@@ -329,6 +341,7 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             max_tokens=2048,
             num_retries=1,
         )
+    llm_router_fallbacks_total.labels(tier="analysis", provider="cloudflare").inc()
     logger.warning("[Router] ANALYSIS fallback → Ollama (slow)")
     return LLM(
         model=f"ollama/{OLLAMA_MODEL}",
@@ -356,6 +369,7 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
             max_tokens=512,
             num_retries=3,
         )
+    llm_router_fallbacks_total.labels(tier="light", provider="cerebras").inc()
     if GEMINI_API_KEY and not _is_excluded("gemini_gemma") and not is_near_quota("gemini_gemma"):
         logger.info(
             f"[Router] LIGHT fallback → Google AI Studio {GEMINI_LIGHT_MODEL} (15k TPM)"
@@ -367,6 +381,7 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
             max_tokens=512,
             num_retries=3,
         )
+    llm_router_fallbacks_total.labels(tier="light", provider="gemini_gemma").inc()
     if NVIDIA_API_KEY and not _is_excluded("nvidia") and not is_near_quota("nvidia"):
         logger.info(
             f"[Router] LIGHT fallback → NVIDIA NIM {NVIDIA_LIGHT_MODEL} (40 req/min)"
@@ -379,6 +394,7 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
             max_tokens=512,
             num_retries=3,
         )
+    llm_router_fallbacks_total.labels(tier="light", provider="nvidia").inc()
     if SAMBANOVA_API_KEY and not _is_excluded("sambanova") and not is_near_quota("sambanova"):
         logger.info(f"[Router] LIGHT fallback → SambaNova {SAMBANOVA_HEAVY_MODEL}")
         return LLM(
@@ -389,6 +405,7 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
             max_tokens=512,
             num_retries=2,
         )
+    llm_router_fallbacks_total.labels(tier="light", provider="sambanova").inc()
     if CLOUDFLARE_API_KEY and CLOUDFLARE_ACCOUNT_ID and not _is_excluded("cloudflare") and not is_near_quota("cloudflare"):
         logger.warning("[Router] LIGHT last-resort → Cloudflare Workers AI")
         cf_base = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1"
@@ -400,6 +417,7 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
             max_tokens=512,
             num_retries=1,
         )
+    llm_router_fallbacks_total.labels(tier="light", provider="cloudflare").inc()
     logger.warning("[Router] LIGHT fallback → Ollama Qwen2.5:1.5b (local, fast)")
     return LLM(
         model=f"ollama/{OLLAMA_QWEN_MODEL}",

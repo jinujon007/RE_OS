@@ -35,11 +35,11 @@ class TestSend:
                     result = send("rera_yelahanka", "Test", "body")
                     assert result is False
 
-    def test_unknown_channel_skipped(self):
+    def test_unknown_channel_returns_false(self):
         with patch("utils.discord_notifier._log_alert") as mock_log:
             result = send("nonexistent_channel", "Title", "msg")
             assert result is False
-            mock_log.assert_called_with("nonexistent_channel", "Title", "msg", COLOR_BLUE, "skipped")
+            mock_log.assert_not_called()
 
 
 class TestFormatters:

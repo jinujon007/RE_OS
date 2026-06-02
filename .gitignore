@@ -11,6 +11,11 @@ build/
 
 # Environment
 .env
+
+# dbt compiled output + logs
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
 .env.*
 !.env.example
 
@@ -114,3 +119,10 @@ TASK_ARCHIVE.md
 # Obsidian notes (vault files that don't belong in product repo)
 *.canvas
 RE_OS Home.md
+
+# Code intelligence index (generated at runtime by codegraph — not source)
+.codegraph/
+
+# Vault daily logs that bleed in from parent directory when running Claude Code
+"01 Daily/"
+01 Daily/

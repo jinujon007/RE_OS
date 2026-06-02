@@ -48,6 +48,7 @@ from config.settings import (
     GEMINI_API_KEY,
     GEMINI_CEO_MODEL,
 )
+from config.metrics import scraper_runs_total
 from scrapers.scout_memory import ScoutMemory
 
 
@@ -93,6 +94,16 @@ SCRAPE_HEADERS = {
     "Accept-Language": "en-IN,en;q=0.9",
     "Accept-Encoding": "gzip, deflate, br",
 }
+
+_USER_AGENT_POOL = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+]
+
+_UA_BAN_ROTATION = 0
 
 # Minimal stealth patches injected before page load — removes the most-checked
 # bot signals without requiring playwright-stealth or any extra dependency.
@@ -515,7 +526,11 @@ class PortalScout:
 
     def _requests_fetch(self, url: str) -> str:
         try:
-            resp = self.session.get(url, timeout=25)
+            source_key = next(
+                (k for k, v in self.urls.items() if v == url), None
+            )
+            headers = _get_rotated_headers(source_key or "")
+            resp = self.session.get(url, headers=headers, timeout=25)
             time.sleep(1)
             if resp.status_code == 200:
                 return _clean_html(resp.text)
@@ -601,6 +616,7 @@ def scout_market(market: str, sources: list[str] | None = None) -> list[dict]:
     except Exception as _alert_err:
         logger.warning(f"[PortalScout] Price alert failed for {market}: {_alert_err}")
 
+    scraper_runs_total.labels(source="portal", market=market, status="success").inc()
     print(f"\n{'=' * 55}")
     print(f"PORTAL SCOUT — {market.upper()}")
     print(f"{'=' * 55}")

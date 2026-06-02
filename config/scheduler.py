@@ -399,6 +399,13 @@ if __name__ == "__main__":
     logger.add("logs/scheduler.log", rotation="50 MB")
     os.makedirs("logs", exist_ok=True)
 
+    # Startup guard: ensure output directories exist for every market
+    # Prevents permission denied / checkpoint write failures at runtime
+    for market in TARGET_MARKETS:
+        slug = market.lower().replace(" ", "_")
+        os.makedirs(os.path.join("outputs", slug, "checkpoints"), exist_ok=True)
+        logger.info(f"Scheduler: ensured output dir for {market}")
+
     scheduler = BlockingScheduler(timezone="Asia/Kolkata")
 
     # Independent RERA cron jobs — one per market, staggered 30 min apart

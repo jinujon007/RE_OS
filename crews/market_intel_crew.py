@@ -51,6 +51,7 @@ from config.metrics import (
     llm_calls_total,
     db_upserts_total,
     scrape_success_total,
+    pipeline_stage_duration_seconds,
 )
 from utils.validator import validate_and_log
 from utils.db_organizer import DBOrganizer, _write_stage_event
@@ -631,13 +632,15 @@ def run_market_intelligence(market_name: str) -> str:
                 rl.agent_done("scrape_listings")
                 stage1_ok = True
             except Exception as s1_exc:
+                s1_duration = round((datetime.now() - stage1_started).total_seconds(), 2)
+                pipeline_stage_duration_seconds.labels(stage="data_crew").observe(s1_duration)
                 _log_event(
                     run_id,
                     market_name,
                     "stage_1_scrape",
                     "failed",
                     error=str(s1_exc),
-                    duration_seconds=round((datetime.now() - stage1_started).total_seconds(), 2),
+                    duration_seconds=s1_duration,
                 )
                 _write_stage_event_to_db(
                     run_id,
@@ -646,7 +649,7 @@ def run_market_intelligence(market_name: str) -> str:
                     "failed",
                     stage=1,
                     error=str(s1_exc),
-                    duration_seconds=round((datetime.now() - stage1_started).total_seconds(), 2),
+                    duration_seconds=s1_duration,
                     metadata={"records_scraped": records_scraped},
                 )
                 print(f"\n  [!!] Stage 1 failed: {s1_exc}")
@@ -660,13 +663,15 @@ def run_market_intelligence(market_name: str) -> str:
             else "  Stage 1 partial (fallback to cache)."
         )
         if stage1_ok:
+            stage1_duration = round((datetime.now() - stage1_started).total_seconds(), 2)
+            pipeline_stage_duration_seconds.labels(stage="data_crew").observe(stage1_duration)
             scrape_success_total.labels(market=market_name).inc()
             _log_event(
                 run_id,
                 market_name,
                 "stage_1_scrape",
                 "success",
-                duration_seconds=round((datetime.now() - stage1_started).total_seconds(), 2),
+                duration_seconds=stage1_duration,
             )
             _write_stage_event_to_db(
                 run_id,
@@ -703,13 +708,15 @@ def run_market_intelligence(market_name: str) -> str:
         try:
             db_stats = organizer.run(market_name, valid)
         except Exception as s2_exc:
+            s2_duration = round((datetime.now() - stage2_started).total_seconds(), 2)
+            pipeline_stage_duration_seconds.labels(stage="organizer").observe(s2_duration)
             _log_event(
                 run_id,
                 market_name,
                 "stage_2_db",
                 "failed",
                 error=str(s2_exc),
-                duration_seconds=round((datetime.now() - stage2_started).total_seconds(), 2),
+                duration_seconds=s2_duration,
             )
             _write_stage_event_to_db(
                 run_id,
@@ -718,7 +725,7 @@ def run_market_intelligence(market_name: str) -> str:
                 "failed",
                 stage=2,
                 error=str(s2_exc),
-                duration_seconds=round((datetime.now() - stage2_started).total_seconds(), 2),
+                duration_seconds=s2_duration,
                 metadata={"inserted": db_stats.get("inserted", 0), "updated": db_stats.get("updated", 0), "failed": db_stats.get("failed", 0)},
             )
             market_logger.error(f"[run:{run_id}] STAGE 2 DB write FAILED: {s2_exc}\n{traceback.format_exc()}")
@@ -809,12 +816,14 @@ def run_market_intelligence(market_name: str) -> str:
         else:
             logger.info("[Crew] No rera_detail_scout checkpoint — skipping")
 
+        stage2_duration = round((datetime.now() - stage2_started).total_seconds(), 2)
+        pipeline_stage_duration_seconds.labels(stage="organizer").observe(stage2_duration)
         _log_event(
             run_id,
             market_name,
             "stage_2_db",
             "success",
-            duration_seconds=round((datetime.now() - stage2_started).total_seconds(), 2),
+            duration_seconds=stage2_duration,
             rera_inserted=db_stats.get("inserted", 0),
             rera_updated=db_stats.get("updated", 0),
         )
@@ -909,24 +918,28 @@ def run_market_intelligence(market_name: str) -> str:
                 market_name,
             )
         except Exception as s3_exc:
-            _log_event(
-                run_id,
-                market_name,
-                "stage_3_intel",
-                "failed",
-                error=str(s3_exc),
-                duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
-            )
-            _write_stage_event_to_db(
-                run_id,
-                market_name,
-                "stage_3_end",
-                "failed",
-                stage=3,
-                error=str(s3_exc),
-                duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
-                metadata={"has_fallback": has_fallback_data},
-            )
+            # Defensive: never let stage_3_end be unwritten, even if logging itself fails
+            try:
+                _log_event(
+                    run_id,
+                    market_name,
+                    "stage_3_intel",
+                    "failed",
+                    error=str(s3_exc),
+                    duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
+                )
+                _write_stage_event_to_db(
+                    run_id,
+                    market_name,
+                    "stage_3_end",
+                    "failed",
+                    stage=3,
+                    error=str(s3_exc)[:2000],
+                    duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
+                    metadata={"has_fallback": has_fallback_data},
+                )
+            except Exception as log_exc:
+                logger.error(f"[run:{run_id}] stage_3_end logging FAILED: {log_exc}")
             logger.error(f"[run:{run_id}] STAGE 3 FAILED: {s3_exc}\n{traceback.format_exc()}")
             rl.finish(status="failed", error=f"Stage 3: {s3_exc}")
             _clear_excluded()
@@ -935,12 +948,14 @@ def run_market_intelligence(market_name: str) -> str:
             ) from s3_exc
         rl.agent_done("analyst")
         rl.agent_done("ceo")
+        stage3_duration = round((datetime.now() - stage3_started).total_seconds(), 2)
+        pipeline_stage_duration_seconds.labels(stage="intel_crew").observe(stage3_duration)
         _log_event(
             run_id,
             market_name,
             "stage_3_intel",
             "success",
-            duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
+            duration_seconds=stage3_duration,
         )
         _write_stage_event_to_db(
             run_id,

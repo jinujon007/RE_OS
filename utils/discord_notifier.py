@@ -1,7 +1,10 @@
 """
 RE_OS — Discord Notifier (Phase 7 — Alerts)
 Sends structured embed messages to Discord via webhooks.
+
 All webhook URLs are optional — missing URL = skipped (not an error).
+Exception: DISCORD_WEBHOOK_URL (general purpose) is REQUIRED in production.
+When unset, send() raises ConfigurationError so tests and health checks catch misconfiguration early.
 
 Discord channel map (set webhook URLs in .env):
   rera_yelahanka   → DISCORD_WEBHOOK_RERA_YELAHANKA
@@ -11,12 +14,18 @@ Discord channel map (set webhook URLs in .env):
   price            → DISCORD_WEBHOOK_PRICE
   intel            → DISCORD_WEBHOOK_INTEL
   system           → DISCORD_WEBHOOK_SYSTEM
+  health           → DISCORD_WEBHOOK_SYSTEM  (alias)
 """
 import json
 import os
 from datetime import datetime, timezone
 
 from loguru import logger
+
+
+class ConfigurationError(Exception):
+    """Raised when a required Discord webhook URL is not configured."""
+    pass
 
 COLOR_GREEN  = 3066993
 COLOR_RED    = 15158332
@@ -32,7 +41,10 @@ _CHANNEL_ENV_MAP = {
     "price":            "DISCORD_WEBHOOK_PRICE",
     "intel":            "DISCORD_WEBHOOK_INTEL",
     "system":           "DISCORD_WEBHOOK_SYSTEM",
+    "health":           "DISCORD_WEBHOOK_SYSTEM",  # alias — maps to same webhook as system
 }
+
+_VALID_CHANNELS = frozenset(_CHANNEL_ENV_MAP)
 
 
 def _get_webhook_url(channel: str) -> str | None:
@@ -41,6 +53,20 @@ def _get_webhook_url(channel: str) -> str | None:
         return None
     raw = (os.environ.get(env_key) or "").strip()
     return raw or None
+
+
+def _get_required_webhook_url(channel: str) -> str:
+    url = _get_webhook_url(channel)
+    if url:
+        return url
+    # Fallback to general DISCORD_WEBHOOK_URL
+    general = (os.environ.get("DISCORD_WEBHOOK_URL") or "").strip()
+    if general:
+        return general
+    raise ConfigurationError(
+        f"No Discord webhook configured for channel '{channel}'. "
+        f"Set {_CHANNEL_ENV_MAP.get(channel, 'DISCORD_WEBHOOK_URL')} or DISCORD_WEBHOOK_URL in .env."
+    )
 
 
 def _log_alert(channel: str, title: str, message: str, color: int, status: str) -> None:
@@ -65,11 +91,29 @@ def send(channel: str, title: str, message: str = "", color: int = COLOR_BLUE) -
     import urllib.request
     import urllib.error
 
-    url = _get_webhook_url(channel)
-    if not url:
-        logger.debug(f"[Discord] Channel '{channel}' not configured — skipping alert: {title}")
-        _log_alert(channel, title, message, color, "skipped")
+    if channel not in _VALID_CHANNELS:
+        logger.warning(f"[Discord] Unknown channel '{channel}' — valid: {sorted(_VALID_CHANNELS)}")
         return False
+
+    # Health/system channels require a webhook — raise if missing so tests + alerts catch it
+    require_webhook = channel in ("system", "health")
+    if require_webhook:
+        try:
+            url = _get_required_webhook_url(channel)
+        except ConfigurationError as exc:
+            logger.error(f"[Discord] {exc}")
+            _log_alert(channel, title, message, color, "skipped")
+            raise
+    else:
+        url = _get_webhook_url(channel)
+        if not url:
+            logger.debug(f"[Discord] Channel '{channel}' not configured — skipping alert: {title}")
+            _log_alert(channel, title, message, color, "skipped")
+            return False
+
+    # Discord embed description limit is 4096 chars; truncate at word boundary
+    if message and len(message) > 4080:
+        message = message[:4080].rsplit(" ", 1)[0] + "\n\n[Truncated — full details in agent_runs table]"
 
     payload = json.dumps({
         "embeds": [{
@@ -144,3 +188,19 @@ def send_system_alert(job_name: str, error: str) -> bool:
     title   = f"Scheduler error — {job_name}"
     message = f"**Job:** `{job_name}`\n**Error:** {error[:500]}"
     return send("system", title, message, COLOR_RED)
+
+
+def send_quality_alert(market: str, errors: list, warnings: list) -> bool:
+    """Send a data quality alert to the health channel."""
+    title = f"Data Quality — {market}"
+    parts = [f"**{len(errors)} error(s), {len(warnings)} warning(s)**"]
+    if errors:
+        parts.append("")
+        parts.extend(f"❌ `{e['table']}.{e['column']}`: {e.get('expectation', '?')}" for e in errors[:5])
+    if warnings:
+        parts.append("")
+        parts.extend(f"⚠️ `{w['table']}.{w['column']}`: {w.get('expectation', '?')}" for w in warnings[:5])
+    return send("health", title, "\n".join(parts), COLOR_RED if errors else COLOR_AMBER)
+
+
+

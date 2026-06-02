@@ -33,6 +33,7 @@ from typing import Any
 
 from loguru import logger
 
+from config.metrics import scraper_runs_total, safe_scraper_market
 from config.settings import TARGET_MARKETS
 
 
@@ -344,6 +345,7 @@ class IGRTransactionScout:
 
         meta = IGR_MARKET_META.get(market, {})
         if not meta:
+            scraper_runs_total.labels(source="igr", market=safe_scraper_market(market), status="failed").inc()
             logger.error(f"[IGRScout] No metadata for market: {market}")
             return []
 
@@ -358,6 +360,7 @@ class IGRTransactionScout:
         # Retry strategy: try Playwright once, POST up to 2 times with backoff
         # The portal is unreliable — retrying helps with transient network failures
         # without overloading the server (3s rate limiter applies).
+        _m = safe_scraper_market(market)
 
         # 1. Playwright (no retry — expensive browser launch)
         self.metrics["playwright_calls"] += 1
@@ -365,6 +368,7 @@ class IGRTransactionScout:
         if records:
             for r in records:
                 r["source"] = "portal_playwright"
+            scraper_runs_total.labels(source="igr", market=_m, status="success").inc()
             elapsed = time.time() - start_ts
             logger.info(f"[IGRScout] Playwright returned {len(records)} records for {market} ({elapsed:.1f}s)")
             return records
@@ -376,15 +380,17 @@ class IGRTransactionScout:
             if records:
                 for r in records:
                     r["source"] = "portal_post"
+                scraper_runs_total.labels(source="igr", market=_m, status="success").inc()
                 elapsed = time.time() - start_ts
                 logger.info(f"[IGRScout] POST returned {len(records)} records for {market} ({elapsed:.1f}s)")
                 return records
             if attempt == 0:
-                backoff = MIN_REQUEST_INTERVAL_S * 2
+                backoff = 6
                 logger.debug(f"[IGRScout] POST attempt {attempt+1} failed — retrying in {backoff:.0f}s")
                 time.sleep(backoff)
 
         # 3. Hardcoded fallback
+        scraper_runs_total.labels(source="igr", market=_m, status="failed").inc()
         self.metrics["fallback_calls"] += 1
         elapsed = time.time() - start_ts
         logger.warning(f"[IGRScout] Portal unreachable after {elapsed:.1f}s — using {market} fallback data")
