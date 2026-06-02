@@ -38,7 +38,7 @@ Multi-agent real estate intelligence OS for LLS. Six AI scouts scrape RERA Karna
 - GPU allocated to ollama container via `deploy.resources.reservations.devices[0].capabilities[gpu]` in docker-compose.yml
 - sentence-transformers uses same GPU when Ollama embedding unavailable (Sprint 32)
 
-**Current state (2026-06-02):** Sprint 39 active (T-475–T-487, GATE-25) — data foundation: IGR transactions, distressed developer alerting, Kaveri fix, months_of_supply. After GATE-25: v2 architecture (Sprints 60–66). v1 Sprints 40–57 PAUSED. HF Sprints 34–38 DEFERRED.
+**Current state (2026-06-02):** Sprint 39 COMPLETE — GATE-25 PASSED. Next: T-710 (/ce-compound Sprint 39 learnings, Claude runs) then Sprint 60 v2 Phase 0 — complete 20-table schema (T-709, T-652–T-659, GATE-44). v1 Sprints 40–57 PAUSED. HF Sprints 34–38 DEFERRED.
 
 **Dev workflow:** Claude Code (architect) + Kilo Code (sole implementer). Cline retired 2026-05-29. See `AGENTS.md` + `KILO_BRIEF.md`.
 
@@ -258,7 +258,7 @@ Get-Content logs/crew.log -Wait -Tail 50
 | GATE-17 | Phase 8 DoD — hire agent from dashboard, appears in org chart | ✅ PASSED (2026-06-01) |
 | GATE-18 | HF Foundation — BGE-M3 + Qwen2.5-1.5B + ST fallback | ✅ PASSED (2026-06-01) |
 | GATE-19 | HF Search Quality — semantic dedup + reranker + BERTScore | ✅ PASSED (2026-06-01) |
-| GATE-25 | Sprint 39 — IGR live + distressed dev alert + months_of_supply | 🔴 PENDING |
+| GATE-25 | Sprint 39 — IGR live + distressed dev alert + months_of_supply | ✅ PASSED (2026-06-02) |
 | GATE-44 | v2 Phase 0 — complete 20-table schema live | 🔴 PENDING |
 | GATE-45 | v2 Phase 1 — Unified Ingest Engine all plugins run | 🔴 PENDING |
 | GATE-46 | v2 Phase 2a — all 5 intel modules return IntelPackage | 🔴 PENDING |
