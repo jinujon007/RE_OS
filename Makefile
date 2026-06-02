@@ -8,7 +8,7 @@
         db db-inventory db-projects db-developers db-reset \
         dashboard grafana prometheus \
         lint format syntax-check test test-cov health \
-        ollama-pull ci clean migrate
+        ollama-pull install-hooks ci clean migrate
 
 # ── STACK ─────────────────────────────────────────────────────────────────────
 
@@ -110,6 +110,10 @@ test-cov:
 
 migrate:
 	docker compose exec agents alembic upgrade head
+
+install-hooks:
+	git config core.hooksPath .githooks
+	@echo "Pre-commit hook active. Dev files will be blocked at commit time."
 
 ci: lint test syntax-check
 

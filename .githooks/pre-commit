@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# RE_OS pre-commit hook — blocks dev-only files from entering the product repo.
+# Install once: git config core.hooksPath .githooks
+# Or: make install-hooks
+
+set -euo pipefail
+
+BLOCKED=(
+  # AI assistant instruction files
+  "CLAUDE.md"
+  "BRAIN_BRIEF.md"
+  "AGENTS.md"
+  # Sprint / task tracking
+  "TASK_QUEUE.md"
+  "TASK_BRIEFS.md"
+  "TASK_ARCHIVE.md"
+  "TODOS.md"
+  "CURRENT_TASK.md"
+  "DISPATCH.md"
+  "GOVERNANCE.md"
+  "REPLAN.md"
+  "STRATEGY.md"
+  "SUPPORT.md"
+  "NEXT_TASKS.md"
+  "BEGINNER_GUIDE.md"
+  # AI tool configs
+  ".kilocoderules"
+  ".clinerules"
+  "KILO_BRIEF.md"
+  "CLINE_BRIEF.md"
+  "TOOL_GUIDE.md"
+  "DEVLOG.md"
+  "OPERATIONAL_REVIEW.md"
+)
+
+STAGED=$(git diff --cached --name-only)
+
+FOUND=()
+
+for file in "${BLOCKED[@]}"; do
+  if echo "$STAGED" | grep -qxF "$file"; then
+    FOUND+=("$file")
+  fi
+done
+
+# Catch anything in dev directories
+for pattern in "01 Daily/" "plans/" "kilo_logs/" "kilo_output/" ".compound-engineering/" "test-results/"; do
+  if echo "$STAGED" | grep -qF "$pattern"; then
+    FOUND+=("$pattern (matched in staged files)")
+  fi
+done
+
+# Catch Obsidian vault bleed — git quotes high-unicode paths with octal sequences
+# The Obsidian private-use-area separators appear as \357\200\272 or \357\201\234 in git output
+STAGED_QUOTED=$(git diff --cached --name-only -z | cat)
+if echo "$STAGED_QUOTED" | grep -qE '\\\\357\\\\[12][0-9][0-9]\\\\[0-9]'; then
+  FOUND+=("Obsidian vault path detected — path contains private-use-area unicode separators")
+fi
+
+if [ ${#FOUND[@]} -gt 0 ]; then
+  echo ""
+  echo "  COMMIT BLOCKED — dev-only files staged:"
+  echo ""
+  for f in "${FOUND[@]}"; do
+    echo "    ✗  $f"
+  done
+  echo ""
+  echo "  These files teach the AI assistant how to work here."
+  echo "  They are not product. Un-stage them:"
+  echo ""
+  echo "    git reset HEAD <file>"
+  echo ""
+  exit 1
+fi
+
+exit 0

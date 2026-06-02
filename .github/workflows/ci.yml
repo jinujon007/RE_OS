@@ -205,3 +205,43 @@ jobs:
         run: |
           psql -h localhost -U re_os_user -d re_os_test -f database/schema.sql
           echo "Schema applied successfully"
+
+  repo-hygiene:
+    name: Dev-file Hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify no dev-only files in tracked tree
+        run: |
+          BLOCKED=(
+            CLAUDE.md BRAIN_BRIEF.md AGENTS.md
+            TASK_QUEUE.md TASK_BRIEFS.md TASK_ARCHIVE.md TODOS.md
+            CURRENT_TASK.md DISPATCH.md GOVERNANCE.md REPLAN.md
+            STRATEGY.md SUPPORT.md NEXT_TASKS.md BEGINNER_GUIDE.md
+            .kilocoderules .clinerules
+            KILO_BRIEF.md CLINE_BRIEF.md TOOL_GUIDE.md DEVLOG.md OPERATIONAL_REVIEW.md
+          )
+          FAILED=0
+          for f in "${BLOCKED[@]}"; do
+            if git ls-files --error-unmatch "$f" 2>/dev/null; then
+              echo "BLOCKED: $f is tracked — dev files must not enter the product repo"
+              FAILED=1
+            fi
+          done
+          # Check for dev directories
+          for dir in "01 Daily" "plans" "kilo_logs" "kilo_output" ".compound-engineering" "test-results"; do
+            if git ls-files | grep -q "^${dir}/"; then
+              echo "BLOCKED: ${dir}/ contains tracked files — dev directories must not enter the product repo"
+              FAILED=1
+            fi
+          done
+          if [ $FAILED -ne 0 ]; then
+            echo ""
+            echo "Run: git rm --cached <file> && git commit"
+            exit 1
+          fi
+          echo "Clean — no dev files in tracked tree"
