@@ -422,6 +422,32 @@ CREATE TABLE infrastructure_pipeline (
 );
 
 -- ============================================================
+-- OSM EDGES — Tier 1: Geospatial Foundation (T-716)
+-- Cached OSMnx street network edges for spatial queries without re-fetching.
+-- Populated by utils/osm_download.py.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS osm_edges (
+    id BIGSERIAL PRIMARY KEY,
+    market VARCHAR(100) NOT NULL,
+    u BIGINT NOT NULL,
+    v BIGINT NOT NULL,
+    key INT,
+    osmid BIGINT,
+    length FLOAT,
+    name TEXT,
+    highway TEXT,
+    geom GEOMETRY(LineString, 4326)
+);
+CREATE INDEX IF NOT EXISTS idx_osm_edges_market_geom
+    ON osm_edges USING GIST (market, geom);
+CREATE INDEX IF NOT EXISTS idx_osm_edges_u
+    ON osm_edges (u);
+CREATE INDEX IF NOT EXISTS idx_osm_edges_v
+    ON osm_edges (v);
+CREATE INDEX IF NOT EXISTS idx_osm_edges_uv
+    ON osm_edges (u, v);
+
+-- ============================================================
 -- MICRO MARKET SNAPSHOTS
 -- Aggregated intelligence per market per period
 -- This is what Jinu reads
@@ -722,8 +748,9 @@ LEFT JOIN micro_markets m ON r.micro_market_id = m.id
 WHERE r.is_active = TRUE;
 
 -- Micro-market inventory summary
--- avg_listing_psf: market-rate PSF from portal listings (listings.price_psf).
--- RERA data has no pricing — listings are the only PSF source.
+-- avg_listing_psf: median listing PSF per market (PERCENTILE_CONT(0.5)).
+-- Median is used instead of AVG to eliminate outlier contamination from luxury listings
+-- (e.g. Devanahalli had avg=₹10,148 due to a small number of high-end projects averaging up).
 CREATE VIEW v_market_inventory AS
 SELECT
     m.name                                      AS micro_market,
@@ -749,6 +776,8 @@ ORDER BY total_units DESC NULLS LAST;
 
 -- Single-query market brief — analyst reads this instead of 3 separate queries
 -- avg_listing_psf is the authoritative market-rate PSF signal from portal data.
+-- Uses PERCENTILE_CONT(0.5) MEDIAN instead of AVG to eliminate outlier contamination
+-- (T-782 fix: Devanahalli avg was ₹10,148 due to luxury listing outliers).
 -- floor_psf / ceiling_psf are derived from listing PSF ±15% when available.
 -- months_of_supply uses kaveri_registrations (actual transactions) as absorption proxy:
 --   ROUND(active_units::NUMERIC / NULLIF(monthly_registrations*12,0)*12,1)
@@ -765,9 +794,9 @@ WITH market_agg AS (
         ROUND(AVG(r.absorption_pct), 1)         AS avg_absorption_pct,
         ROUND(AVG(r.price_min_psf), 0)          AS avg_min_psf,
         ROUND(AVG(r.price_max_psf), 0)          AS avg_max_psf,
-        ROUND(AVG(l_agg.avg_listing_psf), 0)    AS avg_listing_psf,
-        ROUND(MIN(COALESCE(l_agg.avg_listing_psf * 0.85, r.price_min_psf)), 0) AS floor_psf,
-        ROUND(MAX(COALESCE(l_agg.avg_listing_psf * 1.15, r.price_max_psf)), 0) AS ceiling_psf,
+        ROUND(AVG(l_agg.median_listing_psf), 0)    AS avg_listing_psf,
+        ROUND(MIN(COALESCE(l_agg.median_listing_psf * 0.85, r.price_min_psf)), 0) AS floor_psf,
+        ROUND(MAX(COALESCE(l_agg.median_listing_psf * 1.15, r.price_max_psf)), 0) AS ceiling_psf,
         COUNT(DISTINCT r.developer_id)          AS unique_developers,
         COUNT(DISTINCT CASE WHEN d.grade = 'A' THEN d.id END) AS grade_a_developers,
         COUNT(DISTINCT CASE WHEN d.grade = 'B' THEN d.id END) AS grade_b_developers,
@@ -778,7 +807,8 @@ WITH market_agg AS (
     LEFT JOIN rera_projects r  ON r.micro_market_id = m.id AND r.is_active = TRUE
     LEFT JOIN developers d     ON r.developer_id = d.id
     LEFT JOIN (
-        SELECT micro_market_id, AVG(price_psf) AS avg_listing_psf
+        SELECT micro_market_id,
+               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_psf) AS median_listing_psf
         FROM listings
         WHERE price_psf IS NOT NULL AND price_psf > 1000 AND price_psf < 50000
         GROUP BY micro_market_id
@@ -901,7 +931,7 @@ ORDER BY total_units DESC NULLS LAST;
 -- (e.g. 0013_foo), update this stamp to the new revision ID so that
 -- fresh deployments see the DB as current.
 --
--- Current HEAD: 0013_add_igr_transactions
+-- Current HEAD: 0014_add_osm_edges
 -- ============================================================
 CREATE TABLE IF NOT EXISTS alembic_version (
     version_num VARCHAR(32) NOT NULL,
@@ -910,5 +940,5 @@ CREATE TABLE IF NOT EXISTS alembic_version (
 
 -- Stamp to current HEAD — safe to re-run (ON CONFLICT DO NOTHING)
 INSERT INTO alembic_version (version_num)
-VALUES ('0013_add_igr_transactions')
+VALUES ('0014_add_osm_edges')
 ON CONFLICT (version_num) DO NOTHING;

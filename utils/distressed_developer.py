@@ -4,7 +4,8 @@ RE_OS — Distressed Developer Scanner (Sprint 39 — Data Foundation)
 Queries rera_projects for developers with delayed/incomplete projects
 and computes a distress score.
 
-distress_score = (delay_months * 0.4) + (incomplete_ratio * 0.3) + (complaint_proxy * 0.3)
+distress_score = (LEAST(avg_delay_months/24, 1.0) * 0.4) + (LEAST(incomplete_ratio, 1.0) * 0.3) + (LEAST(complaint_proxy, 1.0) * 0.3)
+All three components are clamped to [0,1] — max score = 1.0, threshold = 0.6.
 
 Data already in DB — zero new scraping required.
 Returns ranked list of distressed developers for JD/JV targeting.
@@ -58,10 +59,11 @@ def scan_distressed_developers(market: str | None = None,
         Ranked list of DistressedDeveloper, highest score first.
         Empty list on DB error or no matches.
 
-    Score formula:
-        distress_score = (avg_delay_months * 0.4)
-                       + (overdue_projects / total_projects * 0.3)
-                       + (complaint_count / total_projects * 0.3)
+    Score formula (all components normalized to [0,1] — max score = 1.0):
+        distress_score = LEAST(avg_delay_months / 24.0, 1.0) * 0.4
+                       + LEAST(overdue_projects / total_projects, 1.0) * 0.3
+                       + LEAST(complaint_count / total_projects, 1.0) * 0.3
+        24 months = maximum delay reference (normalization cap).
     """
     records: list[DistressedDeveloper] = []
     max_results = min(max(max_results, 1), 100)
@@ -112,12 +114,12 @@ def scan_distressed_developers(market: str | None = None,
                              ELSE 0 END AS incomplete_ratio,
                         complaint_count,
                         ROUND(
-                            COALESCE(avg_delay_months, 0) * :delay_w
+                            LEAST(COALESCE(avg_delay_months, 0) / 24.0, 1.0) * :delay_w
                             + (CASE WHEN total_projects > 0
-                                    THEN (overdue_projects::numeric / NULLIF(total_projects, 0)) * :incomplete_w
+                                    THEN LEAST((overdue_projects::numeric / NULLIF(total_projects, 0)), 1.0) * :incomplete_w
                                     ELSE 0 END)
                             + (CASE WHEN total_projects > 0
-                                    THEN (complaint_count::numeric / NULLIF(total_projects, 0)) * :complaint_w
+                                    THEN LEAST((complaint_count::numeric / NULLIF(total_projects, 0)), 1.0) * :complaint_w
                                     ELSE 0 END)
                         , 2) AS distress_score
                     FROM dev_stats

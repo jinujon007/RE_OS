@@ -140,10 +140,12 @@ class DBOrganizer:
     # ── Public ─────────────────────────────────────────────────────────────────
 
     def run(self, market_name: str, records: list) -> dict:
-        """
-        Batch upsert validated RERA records for a market.
+        """Batch upsert validated RERA records for a market.
         Returns stats dict — also logs run to agent_runs table.
         """
+        if not market_name or not market_name.strip():
+            raise ValueError("market_name is required")
+        market_name = market_name.strip()
         started = time.time()
         inserted = updated = failed = 0
         dev_grade_inputs: dict[str, tuple[str, int]] = {}  # dev_id → (name, max_units)
@@ -212,11 +214,79 @@ class DBOrganizer:
         }
 
         self._log_run(market_name, stats)
+
+        # ── Data quality checkpoint (blocks Stage 3 on ERROR severity) ──
+        from utils.data_quality import DataQualityError
+        qc_result = self._run_quality_check(market_name, stats)
+        if not qc_result["success"]:
+            raise DataQualityError(market_name, qc_result)
+
         logger.info(
             f"[DBOrganizer] Done — {inserted} inserted, {updated} updated, "
             f"{failed} failed ({duration}s)"
         )
         return stats
+
+    def _run_quality_check(self, market_name: str, upsert_stats: dict) -> dict:
+        """Run GE checkpoint, log to agent_runs, send Discord alert on failure."""
+        try:
+            from utils.data_quality import (
+                run_data_quality_checkpoint,
+                format_data_quality_alert,
+                DataQualityError,
+            )
+            qc = run_data_quality_checkpoint(market_name)
+            if qc["success"]:
+                return qc
+
+            logger.error(
+                f"[DBOrganizer] Data quality FAILED for {market_name}: "
+                f"{len(qc.get('failed_expectations', []))} error(s), "
+                f"{len(qc.get('warnings', []))} warning(s)"
+            )
+
+            try:
+                import json as _json
+                with self.engine.begin() as log_conn:
+                    log_conn.execute(
+                        text("""
+                        INSERT INTO agent_runs (
+                            agent_name, task_type, micro_market, status,
+                            records_scraped, records_failed,
+                            error_message, metadata, completed_at
+                        ) VALUES (
+                            'organizer', 'data_quality', :market, 'failed',
+                            :total, :failed, :error, CAST(:meta AS jsonb), NOW()
+                        )
+                        """),
+                        {
+                            "market": market_name,
+                            "total": upsert_stats.get("total", 0),
+                            "failed": upsert_stats.get("failed", 0),
+                            "error": (
+                                f"Data quality: {len(qc.get('failed_expectations', []))} errors, "
+                                f"{len(qc.get('warnings', []))} warnings"
+                            ),
+                            "meta": _json.dumps(qc, default=str),
+                        },
+                    )
+            except Exception as log_exc:
+                logger.warning(f"[DBOrganizer] Failed log quality failure: {log_exc}")
+
+            from utils.discord_notifier import send, send_quality_alert
+            alert_msg = format_data_quality_alert(market_name, qc)
+            if alert_msg:
+                send_quality_alert(
+                    market_name,
+                    qc.get("failed_expectations", []),
+                    qc.get("warnings", []),
+                )
+
+            return qc
+
+        except Exception as qc_exc:
+            logger.warning(f"[DBOrganizer] Quality check error (non-fatal): {qc_exc}")
+            return {"success": True, "failed_expectations": [], "warnings": []}
 
     def run_portal_scout(self, market_name: str, findings: list) -> dict:
         """Upsert portal scout findings into listings table using cid."""
