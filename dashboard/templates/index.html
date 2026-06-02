@@ -405,6 +405,14 @@ body {
 .infra-label { color: #6b7280; }
 .infra-value { color: #c9d1d9; }
 
+.freshness-LIVE { color: #3fb950; }
+.freshness-AGING { color: #f0a020; }
+.freshness-STALE { color: #f85149; }
+.freshness-badge { display:inline-block;padding:1px 5px;border-radius:3px;font-size:7px;font-weight:bold; }
+.freshness-badge.LIVE { background:#0f2a0f;color:#3fb950;border:1px solid #3fb950; }
+.freshness-badge.AGING { background:#2a1f0f;color:#f0a020;border:1px solid #f0a020; }
+.freshness-badge.STALE { background:#2a0f0f;color:#f85149;border:1px solid #f85149; }
+
 .run-item {
   display: flex;
   gap: 6px;
@@ -1180,6 +1188,29 @@ body {
       </div>
       <div id="alerts-list" style="max-height:200px;overflow-y:auto;"></div>
       <div id="alerts-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
+    </div>
+
+    <div class="infra-section">
+      <div class="infra-title">DATA FRESHNESS
+        <button class="db-explorer-refresh" onclick="pollFreshness()" title="Refresh">⟳</button>
+      </div>
+      <div id="freshness-table-wrap" style="max-height:200px;overflow-y:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:8px;">
+          <thead>
+            <tr style="color:#484f58;border-bottom:1px solid #2a3a55;">
+              <th style="text-align:left;padding:3px 4px;">Source</th>
+              <th style="text-align:left;padding:3px 4px;">Market</th>
+              <th style="text-align:left;padding:3px 4px;">Last Scraped</th>
+              <th style="text-align:right;padding:3px 4px;">Records</th>
+              <th style="text-align:center;padding:3px 4px;">Freshness</th>
+            </tr>
+          </thead>
+          <tbody id="freshness-tbody">
+            <tr><td colspan="5" style="color:#484f58;text-align:center;padding:12px;">Loading freshness data...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="freshness-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
     </div>
 
     <div class="infra-section">
