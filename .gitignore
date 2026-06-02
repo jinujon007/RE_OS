@@ -87,42 +87,54 @@ data/eval/
 # Backup files
 *.bak
 
-# Internal ops docs (private LLS context — not for public repo)
+# ── PRIVATE CONTEXT ── not for public repo ────────────────────────────────────
+# AI assistant instruction files (contain private LLS context, system prompts)
+CLAUDE.md
 BRAIN_BRIEF.md
-NEXT_TASKS.md
-plans/(CAI)*
 
-# Dev tooling — local workflow only, not product source
+# Development tracking — internal sprint/task management
+NEXT_TASKS.md
+TASK_QUEUE.md
+TASK_BRIEFS.md
+TASK_ARCHIVE.md
+TODOS.md
+CURRENT_TASK.md
+DISPATCH.md
+GOVERNANCE.md
+REPLAN.md
+STRATEGY.md
+SUPPORT.md
+BEGINNER_GUIDE.md
+
+# ── DEV TOOLING ── local workflow only, not product source ────────────────────
 .claude/
 .cline_logs/
+.clinerules
+.kilocoderules
+.compound-engineering/
 kilo_logs/
+kilo_output/
 scripts/
 plans/
+test-results/
+
 AGENTS.md
-TASK_QUEUE.md
 task.md
 DEVLOG.md
 TOOL_GUIDE.md
 OPERATIONAL_REVIEW.md
-.clinerules
 CLINE_BRIEF.md
-CURRENT_TASK.md
 KILO_BRIEF.md
-TASK_ARCHIVE.md
 
-# Compound Engineering local config (machine-specific, not shared)
-.compound-engineering/*.local.yaml
-
-# VS Code personal settings (contains local paths and credentials)
+# ── IDE & LOCAL ENVIRONMENT ───────────────────────────────────────────────────
 .vscode/
 
-# Obsidian notes (vault files that don't belong in product repo)
+# ── OBSIDIAN VAULT BLEED ── vault notes that don't belong in product repo ─────
+# Obsidian uses private-use-area unicode for path separators (U+F03A, U+F05C)
+# — these patterns catch vault files accidentally visible from this working dir
 *.canvas
 RE_OS Home.md
-
-# Code intelligence index (generated at runtime by codegraph — not source)
-.codegraph/
-
-# Vault daily logs that bleed in from parent directory when running Claude Code
-"01 Daily/"
 01 Daily/
+
+# ── CODE INTELLIGENCE INDEX ── generated at runtime ──────────────────────────
+.codegraph/
