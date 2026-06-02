@@ -11,25 +11,25 @@ groq>=0.11.0
 # Database
 psycopg2-binary==2.9.9
 sqlalchemy==2.0.35
-geoalchemy2==0.15.2
+geoalchemy2==0.20.0
 
 # Web scraping
 requests==2.32.3
-beautifulsoup4==4.12.3
+beautifulsoup4==4.14.3
 lxml>=6.0.2                 # Bumped from 5.3.0 — scrapling requires lxml>=6.0.2
 playwright>=1.56.0,<2.0.0           # scrapling[fetchers]>=0.4.0 requires playwright>=1.56.0
-httpx[http2]==0.27.2
+httpx[http2]==0.28.1
 # Scrapling: TLS fingerprint spoofing (Fetcher) + stealth Playwright (DynamicFetcher)
 # Replaces plain requests for bot-protected portals. No scrapling install needed —
 # DynamicFetcher reuses the Playwright Chromium already at PLAYWRIGHT_BROWSERS_PATH.
 scrapling[fetchers]>=0.4.0
 
 # Task queue
-redis==5.1.1
+redis==7.4.0
 rq==1.16.1
 
 # Scheduling
-apscheduler==3.10.4
+apscheduler==3.11.2
 
 # Data processing
 pandas==3.0.3
@@ -38,6 +38,24 @@ numpy==2.4.6
 # Geo utilities
 shapely==2.1.2
 pyproj==3.7.0
+geopandas>=0.14.0,<1.0.0
+osmnx>=1.9.0,<2.0.0
+pysal>=23.1.0,<25.0.0
+pandana>=0.7.0,<1.0.0
+
+# Financial risk metrics (Tier 1 — Financial Intelligence Depth)
+# empyrical: Sharpe ratio, max drawdown from monthly returns series
+#   Last PyPI release 2022 — unmaintained but stable for current API surface.
+#   Falls back gracefully (max_drawdown=0) when unavailable.
+empyrical>=0.5.5
+# pyfolio: portfolio-level risk (T-767 — portfolio correlation, portfolio Sharpe)
+#   Lazy-imports matplotlib/seaborn at function call level — no crash on import.
+#   Only used when >=2 active deals exist in deal_pipeline.
+pyfolio>=0.9.0
+
+# Time-series forecasting (Tier 3 — PSF Forecasting)
+# mlforecast: LightGBM-backed PSF forecast models per market (T-762+)
+mlforecast>=0.13.0
 
 # Utilities
 python-dotenv==1.2.2
@@ -55,12 +73,22 @@ chromadb>=0.5.10,<0.6.0
 
 alembic>=1.13.0
 
-# Dashboard
+# dbt — SQL transformation layer (Tier 2)
+dbt-core>=1.7.0
+dbt-postgres>=1.7.0
+
+# Great Expectations — data quality checks (Tier 2)
+great-expectations>=0.18.0
+
+# Dashboard (v2 — FastAPI migration)
 flask>=3.0.0
 flask-cors>=4.0.0
 gunicorn>=21.2.0
 prometheus-client>=0.21.0
 flask-limiter>=3.5
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+slowapi>=0.1.9
 
 # Scout utilities (portal + news extraction)
 price-parser>=0.3.4
