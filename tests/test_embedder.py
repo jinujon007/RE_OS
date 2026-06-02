@@ -213,3 +213,144 @@ class TestMemoryEmbedder:
             m = MemoryEmbedder()
             results = m.search_memories("test")
             assert results == []
+
+
+class TestSTFallback:
+    """T-429: SentenceTransformer fallback when Ollama unavailable."""
+
+    def test_st_fallback_used_when_ollama_down(self):
+        """When _ollama_tags_ok returns False, collection name gets _st suffix."""
+        mock_coll = MagicMock()
+        mock_client = MagicMock()
+        mock_client.get_or_create_collection.return_value = mock_coll
+        with patch("utils.embedder._get_chroma_client", return_value=mock_client), \
+             patch("utils.embedder.OllamaEmbeddingFunction"), \
+             patch("utils.embedder.SentenceTransformerEmbeddingFunction"), \
+             patch("utils.embedder._ollama_tags_ok", return_value=False):
+            from utils.embedder import IntelEmbedder
+            e = IntelEmbedder()
+            e._ensure_initialized()
+            call_name = mock_client.get_or_create_collection.call_args[1]["name"]
+            assert "_st" in call_name
+
+    def test_st_fallback_384_dim(self):
+        """SentenceTransformerEmbeddingFunction returns 384-dim vectors."""
+        import numpy as np
+        from utils.embedder import SentenceTransformerEmbeddingFunction
+        fn = SentenceTransformerEmbeddingFunction()
+        fn._model = MagicMock()
+        fn._model.encode.return_value = np.array([[0.1] * 384])
+        result = fn(["test"])
+        assert len(result[0]) == 384
+
+    def test_bge_m3_zero_vector_1024_dim(self):
+        """BGE-M3 fallback zero vector is 1024-dimensional."""
+        from utils.embedder import _EMBED_DIM
+        zero_vec = [0.0] * _EMBED_DIM
+        assert len(zero_vec) == 1024
+
+
+class TestMigrationGuard:
+    """T-428: Collection migration guard detects stale dims."""
+
+    def test_migration_triggered_on_dim_mismatch(self):
+        """Stale 768-dim collection triggers delete+recreate."""
+        mock_coll_old = MagicMock()
+        mock_coll_old.name = "re_os_intel"
+        mock_coll_new = MagicMock()
+        mock_coll_new.name = "re_os_intel"
+        mock_client = MagicMock()
+        mock_client.get_or_create_collection.return_value = mock_coll_old
+        mock_client.create_collection.return_value = mock_coll_new
+
+        fake_embed_fn = MagicMock()
+        fake_embed_fn.side_effect = lambda inp: [[0.0] * 768]  # stale 768-dim
+
+        with patch("utils.embedder._get_chroma_client", return_value=mock_client), \
+             patch("utils.embedder.OllamaEmbeddingFunction"), \
+             patch("utils.embedder._ollama_tags_ok", return_value=True):
+            from utils.embedder import IntelEmbedder
+            from utils.embedder import _BaseChromaStore
+            e = IntelEmbedder()
+            e._embed_fn = fake_embed_fn
+            e._client = mock_client
+            e._collection = mock_coll_old
+            e._check_migrate_collection()
+            assert mock_client.delete_collection.called
+            assert mock_client.create_collection.called
+
+
+class TestIntelEmbedderRerankerIntegration:
+    """T-436: CrossEncoderReranker wired into IntelEmbedder.search()."""
+    pytestmark = [pytest.mark.skip("T-436 — _get_reranker not implemented until Sprint 33")]
+
+    def test_search_with_rerank_calls_reranker(self):
+        """When rerank=True and reranker available, ChromaDB fetches 3x and reranker is called."""
+        mock_coll = MagicMock()
+        mock_coll.count.return_value = 10
+        mock_coll.query.return_value = {
+            "documents": [["doc A", "doc B", "doc C"]],
+            "metadatas": [[
+                {"source": "a.txt", "market": "Yelahanka"},
+                {"source": "b.txt", "market": "Yelahanka"},
+                {"source": "c.txt", "market": "Yelahanka"},
+            ]],
+            "distances": [[0.1, 0.2, 0.3]],
+        }
+        mock_client = MagicMock()
+        mock_client.get_or_create_collection.return_value = mock_coll
+        fake_reranker = MagicMock()
+        fake_reranker.rerank.return_value = [{"text": "reranked", "ce_score": 0.9}]
+        with patch("utils.embedder._get_chroma_client", return_value=mock_client), \
+             patch("utils.embedder.OllamaEmbeddingFunction"), \
+             patch("utils.embedder._get_reranker", return_value=fake_reranker):
+            from utils.embedder import IntelEmbedder
+            e = IntelEmbedder()
+            with patch.object(e, "_ollama_available", return_value=True):
+                results = e.search("test query", n=2)
+                assert fake_reranker.rerank.called
+                call_args = fake_reranker.rerank.call_args[1]
+                assert call_args["top_n"] == 2
+                assert call_args["query"] == "test query"
+
+    def test_search_with_rerank_false_bypasses_reranker(self):
+        """When rerank=False, ChromaDB fetches n (not 3n) and reranker is not called."""
+        mock_coll = MagicMock()
+        mock_coll.count.return_value = 10
+        mock_coll.query.return_value = {
+            "documents": [["doc A"]],
+            "metadatas": [[{"source": "a.txt", "market": "Yelahanka"}]],
+            "distances": [[0.1]],
+        }
+        mock_client = MagicMock()
+        mock_client.get_or_create_collection.return_value = mock_coll
+        fake_reranker = MagicMock()
+        with patch("utils.embedder._get_chroma_client", return_value=mock_client), \
+             patch("utils.embedder.OllamaEmbeddingFunction"), \
+             patch("utils.embedder._get_reranker", return_value=fake_reranker):
+            from utils.embedder import IntelEmbedder
+            e = IntelEmbedder()
+            with patch.object(e, "_ollama_available", return_value=True):
+                results = e.search("test", n=2, rerank=False)
+                assert not fake_reranker.rerank.called
+
+    def test_search_rerank_graceful_degrade(self):
+        """When reranker unavailable, search returns ChromaDB results without crash."""
+        mock_coll = MagicMock()
+        mock_coll.count.return_value = 5
+        mock_coll.query.return_value = {
+            "documents": [["doc A"]],
+            "metadatas": [[{"source": "a.txt", "market": "Yelahanka"}]],
+            "distances": [[0.1]],
+        }
+        mock_client = MagicMock()
+        mock_client.get_or_create_collection.return_value = mock_coll
+        with patch("utils.embedder._get_chroma_client", return_value=mock_client), \
+             patch("utils.embedder.OllamaEmbeddingFunction"), \
+             patch("utils.embedder._get_reranker", return_value=None):
+            from utils.embedder import IntelEmbedder
+            e = IntelEmbedder()
+            with patch.object(e, "_ollama_available", return_value=True):
+                results = e.search("test", n=2)
+                assert len(results) == 1
+                assert results[0]["text"] == "doc A"

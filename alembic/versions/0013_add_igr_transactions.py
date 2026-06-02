@@ -1,14 +1,10 @@
-"""Add igr_transactions table for Karnataka IGR sale deed data (Sprint 39 — T-476).
-
-IGR = Inspector General of Registration. Actual registered transaction prices.
-transaction_psf is 15-25% below listing PSF — critical for accurate IRR calculations.
-
+"""Add igr_transactions table (Sprint 39 — Data Foundation).
 Revision ID: 0013_add_igr_transactions
 Revises: 0012_agent_registry_hired_on_idx
 Create Date: 2026-06-02
 """
 from typing import Sequence, Union
-
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0013_add_igr_transactions"
@@ -18,35 +14,41 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute("""
-        CREATE TABLE IF NOT EXISTS igr_transactions (
-            id              VARCHAR(32) PRIMARY KEY,
-            market          VARCHAR(100) NOT NULL,
-            survey_no       VARCHAR(200),
-            seller_name     TEXT,
-            buyer_name      TEXT,
-            consideration_amount  BIGINT,
-            area_sqft       NUMERIC(12, 1),
-            transaction_psf NUMERIC(10, 0)
-                GENERATED ALWAYS AS (
-                    ROUND(consideration_amount::NUMERIC / NULLIF(area_sqft, 0))
-                ) STORED,
-            registration_date  DATE,
-            sro_office      VARCHAR(200),
-            source          VARCHAR(50) NOT NULL DEFAULT 'fallback'
-                            CHECK (source IN ('portal_playwright', 'portal_post', 'fallback')),
-            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    """)
-    op.execute("""
-        CREATE INDEX IF NOT EXISTS idx_igr_transactions_market_date
-            ON igr_transactions(market, registration_date DESC)
-    """)
-    op.execute("""
-        CREATE INDEX IF NOT EXISTS idx_igr_transactions_survey_no
-            ON igr_transactions(survey_no)
-    """)
+    op.create_table(
+        "igr_transactions",
+        sa.Column("id", sa.String(32), primary_key=True),
+        sa.Column("market", sa.String(100), nullable=False),
+        sa.Column("micro_market_id", sa.UUID(), nullable=True),
+        sa.Column("survey_no", sa.String(100), nullable=True),
+        sa.Column("seller_name", sa.Text(), nullable=True),
+        sa.Column("buyer_name", sa.Text(), nullable=True),
+        sa.Column("consideration_amount", sa.BigInteger(), nullable=True),
+        sa.Column("area_sqft", sa.Numeric(12, 2), nullable=True),
+        sa.Column(
+            "transaction_psf", sa.Numeric(12, 2),
+            sa.Computed("ROUND(consideration_amount / NULLIF(area_sqft, 0), 0)"),
+            nullable=True,
+        ),
+        sa.Column("registration_date", sa.Date(), nullable=True),
+        sa.Column("sro_office", sa.String(200), nullable=True),
+        sa.Column(
+            "source", sa.String(50), nullable=False, server_default="fallback",
+        ),
+        sa.Column("created_at", sa.TIMESTAMP(), server_default=sa.func.now()),
+        sa.CheckConstraint(
+            "source IN ('portal_playwright', 'portal_post', 'fallback')",
+            name="chk_igr_source",
+        ),
+        sa.ForeignKeyConstraint(
+            ["micro_market_id"], ["micro_markets.id"],
+            name="fk_igr_micro_market",
+        ),
+    )
+    op.create_index("idx_igr_market_date", "igr_transactions", ["market", sa.text("registration_date DESC")])
+    op.create_index("idx_igr_survey_no", "igr_transactions", ["survey_no"])
 
 
 def downgrade() -> None:
-    op.execute("DROP TABLE IF EXISTS igr_transactions")
+    op.drop_index("idx_igr_survey_no", table_name="igr_transactions")
+    op.drop_index("idx_igr_market_date", table_name="igr_transactions")
+    op.drop_table("igr_transactions")

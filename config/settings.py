@@ -25,6 +25,7 @@ DATABASE_URL = os.getenv(
 # Used by: Scraper, Parser, Organizer agents (structured extraction, no deep reasoning)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+OLLAMA_QWEN_MODEL = os.getenv("OLLAMA_QWEN_MODEL", "qwen2.5:1.5b")
 
 # Tier 1b — Cerebras: FREE, 1M tokens/day, 60-100k TPM, fastest inference available
 # No credit card. Instant API key. llama3.1-8b at 1,800+ tok/s.
@@ -107,6 +108,8 @@ JINA_READER_BASE = "https://r.jina.ai"
 # sign up: huggingface.co → Settings → Access Tokens → New token (read scope)
 HF_API_KEY = os.getenv("HF_API_KEY", "")
 FINBERT_MODEL_ID = "ProsusAI/finbert"
+FINBERT_TONE_MODEL_ID = "ProsusAI/finbert-tone"
+FINBERT_TONE_MODEL_ID = "ProsusAI/finbert-tone"
 
 # ── INTELLIGENCE LAYER (Phase 8.5) ────────────────────────────────────────────
 # ChromaDB persistent path for intel report embeddings (maps to chroma_data volume)
@@ -199,6 +202,7 @@ DISCORD_WEBHOOK_COMPETITOR       = os.environ.get("DISCORD_WEBHOOK_COMPETITOR", 
 DISCORD_WEBHOOK_PRICE            = os.environ.get("DISCORD_WEBHOOK_PRICE", "")
 DISCORD_WEBHOOK_INTEL            = os.environ.get("DISCORD_WEBHOOK_INTEL", "")
 DISCORD_WEBHOOK_SYSTEM           = os.environ.get("DISCORD_WEBHOOK_SYSTEM", "")
+DISCORD_WEBHOOK_BD_OPPORTUNITIES = os.environ.get("DISCORD_WEBHOOK_BD_OPPORTUNITIES", "")
 
 DISCORD_CHANNELS = {
     "rera_yelahanka":   DISCORD_WEBHOOK_RERA_YELAHANKA,
@@ -208,6 +212,7 @@ DISCORD_CHANNELS = {
     "price":            DISCORD_WEBHOOK_PRICE,
     "intel":            DISCORD_WEBHOOK_INTEL,
     "system":           DISCORD_WEBHOOK_SYSTEM,
+    "bd_opportunities": DISCORD_WEBHOOK_BD_OPPORTUNITIES,
 }
 
 # ── AGENT RUN STATUSES ────────────────────────────────────────────────────────

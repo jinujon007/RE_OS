@@ -13,13 +13,19 @@ Sentiment labels:
 Scores stored in news_articles.sentiment_score (FLOAT, -1.0 to +1.0):
   +1.0 = strong positive, -1.0 = strong negative, 0.0 = neutral
 
+Tone functions (Sprint 35):
+  score_headline_tone(text, api_key) → {bullish, bearish, neutral} or None
+  aggregate_market_sentiment_tone(headlines, api_key) → aggregate dict
+
 Usage:
-  from utils.sentiment import score_headline, score_batch
+  from utils.sentiment import score_headline, score_batch, score_headline_tone
   score = score_headline("Prestige launches 500-unit project in Yelahanka at ₹7,500 PSF")
   # → 0.82
-
-  scores = score_batch(["headline 1", "headline 2"], hf_api_key="hf_...")
-  # → [0.82, -0.34]
+  tone = score_headline_tone("Property market surges")
+  # → {"bullish": 0.9, "bearish": 0.05, "neutral": 0.05}
+  aggregate = aggregate_market_sentiment_tone(["headline 1", "headline 2"])
+  # → {"bullish_pct": 65.0, "bearish_pct": 20.0, "neutral_pct": 15.0,
+  #     "dominant": "bullish", "confidence": 65.0}
 """
 
 import time
@@ -27,11 +33,11 @@ import time
 import requests
 from loguru import logger
 
-from config.settings import HF_API_KEY, FINBERT_MODEL_ID
+from config.settings import HF_API_KEY, FINBERT_MODEL_ID, FINBERT_TONE_MODEL_ID
 
 # HuggingFace migrated from api-inference.huggingface.co to router.huggingface.co
 # in 2025 as part of the Inference Providers rollout.
-_FINBERT_URL = f"https://router.huggingface.co/hf-inference/models/{FINBERT_MODEL_ID}"
+_FINBERT_BASE_URL = "https://router.huggingface.co/hf-inference/models/"
 _LABEL_TO_SCORE = {"positive": 1.0, "negative": -1.0, "neutral": 0.0}
 _REQUEST_TIMEOUT = 20
 _RETRY_ATTEMPTS = 3
@@ -41,7 +47,43 @@ _RETRY_BASE_DELAY = 2  # seconds, doubles each attempt
 _SENTINEL = object()
 
 
-def score_headline(headline: str, api_key: str | object = _SENTINEL) -> float | None:
+def _call_hf_api(headline: str, model_id: str, api_key: str) -> list | None:
+    """Shared HF Inference API call with retry logic.
+    Returns parsed JSON list or None on failure."""
+    try:
+        resp = requests.post(
+            f"{_FINBERT_BASE_URL}{model_id}",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"inputs": headline[:512]},
+            timeout=_REQUEST_TIMEOUT,
+        )
+        for attempt in range(_RETRY_ATTEMPTS):
+            if resp.status_code == 503:
+                delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                logger.debug(f"[Sentiment] Model loading (attempt {attempt+1}/{_RETRY_ATTEMPTS}), retrying in {delay}s...")
+                time.sleep(delay)
+                resp = requests.post(
+                    f"{_FINBERT_BASE_URL}{model_id}",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={"inputs": headline[:512]},
+                    timeout=_REQUEST_TIMEOUT,
+                )
+            else:
+                break
+        if resp.status_code != 200:
+            logger.warning(f"[Sentiment] HF API {resp.status_code}: {resp.text[:100]}")
+            return None
+        data = resp.json()
+        if not data or not isinstance(data, list):
+            return None
+        candidates = data[0] if isinstance(data[0], list) else data
+        return candidates
+    except Exception as exc:
+        logger.debug(f"[Sentiment] HF API call error: {exc}")
+        return None
+
+
+def score_headline(headline: str, api_key: str | object = _SENTINEL, model_id: str = FINBERT_MODEL_ID) -> float | None:
     """
     Score a single headline via FinBERT.
     Returns float in [-1.0, 1.0] or None if API unavailable/unconfigured.
@@ -53,58 +95,18 @@ def score_headline(headline: str, api_key: str | object = _SENTINEL) -> float | 
     if not key:
         return None
 
-    try:
-        resp = requests.post(
-            _FINBERT_URL,
-            headers={"Authorization": f"Bearer {key}"},
-            json={"inputs": headline[:512]},  # FinBERT max 512 tokens
-            timeout=_REQUEST_TIMEOUT,
-        )
-        # 503 = model loading (cold start for non-BERT models; FinBERT is warm but guard anyway)
-        for attempt in range(_RETRY_ATTEMPTS):
-            if resp.status_code == 503:
-                delay = _RETRY_BASE_DELAY * (2 ** attempt)
-                logger.debug(f"[Sentiment] FinBERT loading (attempt {attempt+1}/{_RETRY_ATTEMPTS}), retrying in {delay}s...")
-                time.sleep(delay)
-                resp = requests.post(
-                    _FINBERT_URL,
-                    headers={"Authorization": f"Bearer {key}"},
-                    json={"inputs": headline[:512]},
-                    timeout=_REQUEST_TIMEOUT,
-                )
-        # 503 = model loading (cold start for non-BERT models; FinBERT is warm but guard anyway)
-        for attempt in range(_RETRY_ATTEMPTS):
-            if resp.status_code == 503:
-                delay = _RETRY_BASE_DELAY * (2 ** attempt)
-                logger.debug(f"[Sentiment] FinBERT loading (attempt {attempt+1}/{_RETRY_ATTEMPTS}), retrying in {delay}s...")
-                time.sleep(delay)
-                resp = requests.post(
-                    _FINBERT_URL,
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json={"inputs": headline[:512]},
-                    timeout=_REQUEST_TIMEOUT,
-                )
-            else:
-                break
-        if resp.status_code != 200:
-            logger.warning(f"[Sentiment] HF API {resp.status_code}: {resp.text[:100]}")
-            return None
+    candidates = _call_hf_api(headline, model_id, key)
+    if not candidates:
+        return None
 
-        data = resp.json()
-        # HF pipeline response: [[{"label": "positive", "score": 0.92}, ...]]
-        if not data or not isinstance(data, list):
-            return None
-        candidates = data[0] if isinstance(data[0], list) else data
-        # Pick the highest-confidence label
+    try:
         best = max(candidates, key=lambda x: x.get("score", 0))
         label = best.get("label", "").lower()
         confidence = best.get("score", 0.5)
         base_score = _LABEL_TO_SCORE.get(label, 0.0)
-        # Scale by confidence so a low-confidence positive is near 0
         return round(base_score * confidence, 4)
-
     except Exception as exc:
-        logger.debug(f"[Sentiment] score_headline error: {exc}")
+        logger.debug(f"[Sentiment] score_headline parse error: {exc}")
         return None
 
 
@@ -125,6 +127,88 @@ def score_batch(
         if delay_between > 0:
             time.sleep(delay_between)
     return results
+
+
+def score_headline_tone(headline: str, api_key: str | object = _SENTINEL) -> dict[str, float] | None:
+    """
+    Score a single headline for tone (bullish/bearish/neutral) using FinBERT-tone.
+    Returns dict with keys 'bullish', 'bearish', 'neutral' (each 0.0-1.0) or None if API unavailable.
+    """
+    key: str = HF_API_KEY if api_key is _SENTINEL else api_key  # type: ignore
+    if not key:
+        return None
+
+    candidates = _call_hf_api(headline, FINBERT_TONE_MODEL_ID, key)
+    if not candidates:
+        return None
+
+    try:
+        tone_scores = {"bullish": 0.0, "bearish": 0.0, "neutral": 0.0}
+        for candidate in candidates:
+            label = candidate.get("label", "").lower()
+            score = candidate.get("score", 0.0)
+            if label in tone_scores:
+                tone_scores[label] = score
+        return tone_scores
+    except Exception as exc:
+        logger.debug(f"[Sentiment] score_headline_tone parse error: {exc}")
+        return None
+
+
+def aggregate_market_sentiment_tone(headlines: list[str], api_key: str | object = _SENTINEL) -> dict[str, float | str]:
+    """
+    Aggregate headline tone scores into a market-level sentiment summary.
+    Ignores None values (failed API calls). Adds 0.1s delay between requests
+    to stay within HF free tier rate limits.
+    Always returns a dict (never None).
+
+    Returns:
+        {
+            "bullish_pct": float,     # 0-100
+            "bearish_pct": float,     # 0-100
+            "neutral_pct": float,     # 0-100
+            "dominant": str,          # "bullish" | "bearish" | "neutral"
+            "confidence": float,      # 0-100, percentage of dominant tone
+        }
+    """
+    tone_results = []
+    for headline in headlines:
+        tone_score = score_headline_tone(headline, api_key=api_key)
+        if tone_score is not None:
+            tone_results.append(tone_score)
+            time.sleep(0.1)  # rate-limit guard
+    
+    if not tone_results:
+        return {"bullish_pct": 0.0, "bearish_pct": 0.0, "neutral_pct": 0.0, "dominant": "neutral", "confidence": 0.0}
+    
+    # Calculate averages
+    avg_bullish = sum(t["bullish"] for t in tone_results) / len(tone_results)
+    avg_bearish = sum(t["bearish"] for t in tone_results) / len(tone_results)
+    avg_neutral = sum(t["neutral"] for t in tone_results) / len(tone_results)
+    
+    # Convert to percentages
+    bullish_pct = round(avg_bullish * 100, 1)
+    bearish_pct = round(avg_bearish * 100, 1)
+    neutral_pct = round(avg_neutral * 100, 1)
+    
+    # Determine dominant tone
+    if bullish_pct > bearish_pct and bullish_pct > neutral_pct:
+        dominant = "bullish"
+        confidence = bullish_pct
+    elif bearish_pct > bullish_pct and bearish_pct > neutral_pct:
+        dominant = "bearish"
+        confidence = bearish_pct
+    else:
+        dominant = "neutral"
+        confidence = neutral_pct
+    
+    return {
+        "bullish_pct": bullish_pct,
+        "bearish_pct": bearish_pct,
+        "neutral_pct": neutral_pct,
+        "dominant": dominant,
+        "confidence": round(confidence, 1)
+    }
 
 
 def label_from_score(score: float | None) -> str:

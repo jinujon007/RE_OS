@@ -4,16 +4,28 @@ Wraps existing Kaveri scraper, queries guidance_values + kaveri_registrations fr
 Input: market, survey_no (optional)
 Returns: avg guidance value PSF, registration count in 180-day window,
 avg transaction PSF, guidance gap %; uses DB-first, Kaveri portal fallback.
+
+Also exposes parse_document() — converts any PDF/DOCX/XLSX to markdown via MarkItDown,
+used by the Legal Head to read EC certificates, RERA approval PDFs, and sale deeds.
 """
+import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from loguru import logger
+
+# Max characters returned from a parsed document — keeps LLM context bounded
+_DOCUMENT_MAX_CHARS: int = 6000
 
 # Encumbrance check window — number of days of registration history to analyse
 _ENCUMBRANCE_WINDOW_DAYS: int = 180
 
 # Guidance gap threshold — gap % above this triggers a risk flag
 _GUIDANCE_GAP_THRESHOLD_PCT: float = 20.0
+
+# Portal scrape cache — avoids re-scraping within TTL
+_portal_cache: dict = {}
+_portal_cache_ttl: int = 3600  # 1 hour
 
 
 @dataclass
@@ -94,8 +106,8 @@ def check_encumbrance(
             if survey_no:
                 survey_no_clean = survey_no.strip()
                 if survey_no_clean:
-                    survey_clause = " AND r.survey_number ILIKE :survey"
-                    survey_params["survey"] = f"%{survey_no_clean}%"
+                    survey_clause = " AND r.survey_number = :survey"
+                    survey_params["survey"] = survey_no_clean
                     logger.info("[Encumbrance] Filtering by survey_no=%s", survey_no_clean)
 
             # Get avg guidance value PSF for this market
@@ -189,12 +201,29 @@ def check_encumbrance(
     )
 
 
+def _invalidate_portal_cache(market: str | None = None) -> None:
+    """Invalidate portal cache for a specific market or entirely."""
+    global _portal_cache
+    if market:
+        _portal_cache.pop(market.lower(), None)
+    else:
+        _portal_cache.clear()
+
+
 def _fetch_from_kaveri_portal(market: str) -> dict:
     """Fallback: scrape Kaveri portal directly when DB has no data.
 
     Returns dict with optional 'guidance_values' and 'registrations' lists,
     or empty dict if portal is unreachable.
     """
+    global _portal_cache
+    cache_key = market.lower().strip()
+    cached = _portal_cache.get(cache_key)
+    now = time.time()
+    if cached and (now - cached["ts"]) < _portal_cache_ttl:
+        logger.debug("[Encumbrance] Using cached Kaveri portal data for market=%s", market)
+        return cached["data"]
+
     try:
         from scrapers.kaveri_karnataka import KaveriScraper
         scraper = KaveriScraper()
@@ -206,10 +235,45 @@ def _fetch_from_kaveri_portal(market: str) -> dict:
             result["guidance_values"] = gv
         if reg:
             result["registrations"] = reg
+        _portal_cache[cache_key] = {"data": result, "ts": now}
         return result
     except Exception as exc:
         logger.warning("[Encumbrance] Kaveri portal fallback failed for market=%s: %s", market, exc)
         return {}
+
+
+def parse_document(file_path: str, max_chars: int = _DOCUMENT_MAX_CHARS) -> str:
+    """Convert a document (PDF, DOCX, XLSX, PPTX, HTML, etc.) to markdown using MarkItDown.
+
+    Used by the Legal Head to read EC certificates, RERA approval PDFs, sale deeds,
+    and layout approval letters that the user supplies as local file paths.
+
+    Args:
+        file_path: Path to the document file.
+        max_chars: Cap on returned text to keep LLM context bounded (default 6000).
+
+    Returns:
+        Markdown text of the document, truncated at max_chars if needed.
+        Returns a descriptive error string if file not found or conversion fails.
+    """
+    file_path = (file_path or "").strip()
+    if not file_path:
+        return "[parse_document] No file path provided."
+    if not os.path.exists(file_path):
+        return f"[parse_document] File not found: {file_path}"
+
+    try:
+        from markitdown import MarkItDown
+        md_converter = MarkItDown()
+        result = md_converter.convert(file_path)
+        text = result.text_content or ""
+        if len(text) > max_chars:
+            text = text[:max_chars] + f"\n\n[...truncated at {max_chars} chars]"
+        logger.info("[parse_document] Parsed file={} chars={}", os.path.basename(file_path), len(text))
+        return text
+    except Exception as exc:
+        logger.warning("[parse_document] Failed to parse '%s': %s", file_path, exc)
+        return f"[parse_document] Conversion failed: {exc}"
 
 
 if __name__ == "__main__":

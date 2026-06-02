@@ -21,7 +21,6 @@ from config.settings import TARGET_MARKETS
 from sqlalchemy import text
 from utils.db import get_engine
 from utils.scheduler_helpers import safe_job as _safe_job
-from utils.sentiment import score_headline, label_from_score
 
 
 def _send_rera_alert(market: str, job_start) -> None:
@@ -143,6 +142,7 @@ def run_intel_embedding_index():
 
 def _score_one_article(row) -> tuple[str, float | None, str | None]:
     """Score a single article via FinBERT. Returns (article_id, score, label)."""
+    from utils.sentiment import score_headline, label_from_score
     article_id, title, key_insight = row
     text_to_score = title or ""
     if key_insight:
@@ -172,49 +172,53 @@ def run_news_sentiment_scoring():
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         engine = get_engine()
-        with engine.connect() as conn:
-            rows = conn.execute(text("""
-                SELECT id, title, key_insight
-                FROM news_articles
-                WHERE sentiment_score IS NULL
-                  AND title IS NOT NULL
-                  AND title != ''
-                ORDER BY created_at DESC
-                LIMIT 200
-            """)).fetchall()
-
-        if not rows:
-            logger.debug("[Scheduler] Sentiment: no unscored articles")
-            return
-
-        # Parallel scoring — HF API calls are IO-bound
-        scored_results: list[tuple[str, float, str]] = []
-        failed = 0
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            futures = {pool.submit(_score_one_article, row): row for row in rows}
-            for future in as_completed(futures):
-                article_id, score, label = future.result()
-                if score is not None:
-                    scored_results.append((article_id, score, label))
-                else:
-                    failed += 1
-
-        # Batch DB writes — short transactions every 25 rows to avoid long-held locks
-        BATCH_SIZE = 25
         written = 0
-        for i in range(0, len(scored_results), BATCH_SIZE):
-            batch = scored_results[i:i + BATCH_SIZE]
-            with engine.begin() as conn:
-                for article_id, score, label in batch:
-                    conn.execute(
-                        text("UPDATE news_articles SET sentiment_score = :s, sentiment_label = :l WHERE id = :id"),
-                        {"s": score, "l": label, "id": article_id},
-                    )
-                    written += 1
+        failed = 0
+        BATCH_LIMIT = 1000
+        PAGE_SIZE = 200
+        offset = 0
+
+        # Paginate to handle more than 200 articles
+        while offset < BATCH_LIMIT:
+            with engine.connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT id, title, key_insight
+                    FROM news_articles
+                    WHERE sentiment_score IS NULL
+                      AND title IS NOT NULL
+                      AND title != ''
+                    ORDER BY created_at DESC
+                    LIMIT :lim OFFSET :off
+                """), {"lim": PAGE_SIZE, "off": offset}).fetchall()
+
+            if not rows:
+                break
+
+            scored_results: list[tuple[str, float, str]] = []
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futures = {pool.submit(_score_one_article, row): row for row in rows}
+                for future in as_completed(futures):
+                    article_id, score, label = future.result()
+                    if score is not None:
+                        scored_results.append((article_id, score, label))
+                    else:
+                        failed += 1
+
+            # Batch DB writes — short transactions every 25 rows
+            for i in range(0, len(scored_results), 25):
+                batch = scored_results[i:i + 25]
+                with engine.begin() as conn:
+                    for article_id, score, label in batch:
+                        conn.execute(
+                            text("UPDATE news_articles SET sentiment_score = :s, sentiment_label = :l WHERE id = :id"),
+                            {"s": score, "l": label, "id": article_id},
+                        )
+                        written += 1
+
+            offset += PAGE_SIZE
 
         logger.info(
-            f"[Scheduler] Sentiment scoring: {written} scored, {failed} failed "
-            f"out of {len(rows)} articles"
+            f"[Scheduler] Sentiment scoring: {written} scored, {failed} failed"
         )
     except Exception as exc:
         logger.warning(f"[Scheduler] Sentiment scoring failed (non-fatal): {exc}")
@@ -285,6 +289,35 @@ def run_market_snapshot():
             logger.error(f"  Snapshot failed for {market}: {e}")
 
 
+def run_bertscore_evaluation():
+    """Weekly BERTScore evaluation — Monday 04:00 IST.
+    Compares latest intel reports against reference corpus.
+    Sends Discord SYSTEM alert if score drops below threshold."""
+    try:
+        import evaluate  # pre-check: fail fast if missing, before 120s thread pool timeout
+        from utils.report_evaluator import ReportEvaluator
+        result = ReportEvaluator().evaluate_latest()
+        score = result.get("score")
+        delta = result.get("delta")
+        if result.get("alert") and score is not None:
+            try:
+                from utils.discord_notifier import send
+                msg = (f"BERTScore F1={score:.4f} "
+                       f"(delta={delta:+.4f}) — quality regression detected. "
+                       f"Candidates: {result['candidates']}, Refs: {result['references']}")
+                send("system", "⚠ BERTScore Regression", msg)
+            except Exception as exc:
+                logger.warning(f"[Scheduler] BERTScore alert failed: {exc}")
+        if score is not None:
+            logger.info(f"[Scheduler] BERTScore eval done — score={score:.4f} "
+                         f"delta={delta:+.4f} alert={result.get('alert', False)}")
+        else:
+            logger.info(f"[Scheduler] BERTScore eval {result.get('status', '?')} — "
+                         f"{result.get('candidates', 0)} candidates, {result.get('references', 0)} refs")
+    except Exception as exc:
+        logger.warning(f"[Scheduler] BERTScore evaluation failed (non-fatal): {exc}")
+
+
 def recover_stuck_board_sessions():
     """Set board sessions stuck at 'active' for >30 minutes to 'failed'."""
 
@@ -306,6 +339,62 @@ def recover_stuck_board_sessions():
         logger.warning(f"[Scheduler] Failed to recover stuck board sessions: {e}")
 
 
+def run_distressed_developer_scan():
+    """Scan for distressed developers and alert via Discord if score > 0.6."""
+    try:
+        from utils.distressed_developer import (
+            scan_distressed_developers,
+            format_distress_alert,
+            _DISTRESS_SCORE_THRESHOLD,
+        )
+        from utils.discord_notifier import send
+
+        for market in ["Yelahanka", "Devanahalli", "Hebbal"]:
+            results = scan_distressed_developers(
+                market, min_score=_DISTRESS_SCORE_THRESHOLD,
+            )
+            for dev in results:
+                alert = format_distress_alert(dev)
+                logger.info(f"[DistressedDev] Alert: {alert}")
+                try:
+                    send("bd_opportunities", "Distressed Developer Alert", alert)
+                except Exception as exc:
+                    logger.warning(f"[DistressedDev] Discord send failed: {exc}")
+    except Exception as exc:
+        logger.warning(f"[Scheduler] Distressed developer scan failed: {exc}")
+
+
+def run_igr_transaction_scrape():
+    """Weekly IGR transaction scrape for all markets — Sunday 05:30 IST."""
+    from scrapers.igr_karnataka import IGRTransactionScout
+    for market in ["Yelahanka", "Devanahalli", "Hebbal"]:
+        try:
+            scout = IGRTransactionScout()
+            transactions = scout.run(market=market, days_back=30)
+            if transactions:
+                stats = scout.insert_transactions(transactions, market=market)
+                logger.info(
+                    f"[IGRScout] {market}: {stats['inserted']} inserted, "
+                    f"{stats['skipped']} skipped, {stats['failed']} failed"
+                )
+            else:
+                logger.info(f"[IGRScout] {market}: 0 transactions found")
+        except Exception as exc:
+            logger.warning(f"[Scheduler] IGR scrape failed for {market}: {exc}")
+
+
+def run_kaveri_scrape():
+    """Weekly Kaveri guidance value scrape for all markets — Sunday 05:00 IST."""
+    from scrapers.kaveri_karnataka import KaveriScraper
+    for market in ["Yelahanka", "Devanahalli", "Hebbal"]:
+        try:
+            scraper = KaveriScraper()
+            gv = scraper.scrape_guidance_values(market)
+            logger.info(f"[KaveriScraper] {market}: {len(gv)} guidance value records")
+        except Exception as exc:
+            logger.warning(f"[Scheduler] Kaveri scrape failed for {market}: {exc}")
+
+
 if __name__ == "__main__":
     logger.add("logs/scheduler.log", rotation="50 MB")
     os.makedirs("logs", exist_ok=True)
@@ -314,25 +403,22 @@ if __name__ == "__main__":
 
     # Independent RERA cron jobs — one per market, staggered 30 min apart
     scheduler.add_job(
-        run_single_market_rera,
+        lambda: _safe_job(lambda: run_single_market_rera("Yelahanka"), "rera_yelahanka"),
         CronTrigger(hour=2, minute=30),
-        kwargs={"market": "Yelahanka"},
         id="rera_yelahanka",
         name="RERA refresh — Yelahanka",
         misfire_grace_time=3600,
     )
     scheduler.add_job(
-        run_single_market_rera,
+        lambda: _safe_job(lambda: run_single_market_rera("Devanahalli"), "rera_devanahalli"),
         CronTrigger(hour=3, minute=0),
-        kwargs={"market": "Devanahalli"},
         id="rera_devanahalli",
         name="RERA refresh — Devanahalli",
         misfire_grace_time=3600,
     )
     scheduler.add_job(
-        run_single_market_rera,
+        lambda: _safe_job(lambda: run_single_market_rera("Hebbal"), "rera_hebbal"),
         CronTrigger(hour=3, minute=30),
-        kwargs={"market": "Hebbal"},
         id="rera_hebbal",
         name="RERA refresh — Hebbal",
         misfire_grace_time=3600,
@@ -357,7 +443,7 @@ if __name__ == "__main__":
 
     # Weekly memory decay — Monday 03:00 UTC (T-298)
     scheduler.add_job(
-        run_memory_decay,
+        lambda: _safe_job(run_memory_decay, "memory_decay"),
         CronTrigger(day_of_week="mon", hour=3, minute=0, timezone="UTC"),
         id="memory_decay",
         name="Weekly Agent Memory Decay",
@@ -366,7 +452,7 @@ if __name__ == "__main__":
 
     # Stuck board session recovery — every hour (T-315)
     scheduler.add_job(
-        recover_stuck_board_sessions,
+        lambda: _safe_job(recover_stuck_board_sessions, "recover_board_sessions"),
         "interval", hours=1,
         id="recover_board_sessions",
         name="Recover Stuck Board Sessions",
@@ -391,6 +477,42 @@ if __name__ == "__main__":
         misfire_grace_time=3600,
     )
 
+    # Weekly BERTScore evaluation — Monday 04:00 IST (Sun 22:30 UTC)
+    scheduler.add_job(
+        lambda: _safe_job(run_bertscore_evaluation, "bertscore_eval"),
+        CronTrigger(day_of_week="mon", hour=4, minute=0, timezone="Asia/Kolkata"),
+        id="bertscore_eval",
+        name="Weekly BERTScore Quality Evaluation",
+        misfire_grace_time=7200,
+    )
+
+    # Weekly Kaveri guidance value scrape — Sunday 05:00 IST
+    scheduler.add_job(
+        lambda: _safe_job(run_kaveri_scrape, "kaveri_scrape"),
+        CronTrigger(day_of_week="sun", hour=5, minute=0, timezone="Asia/Kolkata"),
+        id="kaveri_scrape",
+        name="Weekly Kaveri Guidance Value Scrape",
+        misfire_grace_time=3600,
+    )
+
+    # Weekly IGR transaction scrape — Sunday 05:30 IST (after Kaveri)
+    scheduler.add_job(
+        lambda: _safe_job(run_igr_transaction_scrape, "igr_scrape"),
+        CronTrigger(day_of_week="sun", hour=5, minute=30, timezone="Asia/Kolkata"),
+        id="igr_scrape",
+        name="Weekly IGR Transaction Scrape",
+        misfire_grace_time=3600,
+    )
+
+    # Daily distressed developer scan — 06:15 IST (after market snapshot at 06:00)
+    scheduler.add_job(
+        lambda: _safe_job(run_distressed_developer_scan, "distressed_dev_scan"),
+        CronTrigger(hour=6, minute=15),
+        id="distressed_dev_scan",
+        name="Daily Distressed Developer Scan (JD/JV targets)",
+        misfire_grace_time=3600,
+    )
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
     logger.info("  2:30 AM IST — RERA Yelahanka")
@@ -399,9 +521,11 @@ if __name__ == "__main__":
     logger.info("  4:30 AM IST — Intel embedding index (ChromaDB)")
     logger.info("  5:00 AM IST — News sentiment scoring (FinBERT)")
     logger.info("  6:00 AM IST — Market snapshots")
+    logger.info("  6:15 AM IST — Distressed developer scan (JD/JV targets)")
     logger.info("  Every 6 hrs — Listings scan")
     logger.info("  Every 1 hr  — Board session recovery (T-315)")
     logger.info("  Monday 03:00 UTC — Agent memory decay")
+    logger.info("  Monday 04:00 IST — BERTScore quality evaluation")
     logger.info(f"Active jobs: {[j.id for j in scheduler.get_jobs()]}")
 
     scheduler.start()

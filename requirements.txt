@@ -17,7 +17,7 @@ geoalchemy2==0.15.2
 requests==2.32.3
 beautifulsoup4==4.12.3
 lxml>=6.0.2                 # Bumped from 5.3.0 — scrapling requires lxml>=6.0.2
-playwright>=1.48.0,<2.0.0           # Bumped from ==1.48.0 — scrapling[fetchers] requires playwright>=1.56.0
+playwright>=1.56.0,<2.0.0           # scrapling[fetchers]>=0.4.0 requires playwright>=1.56.0
 httpx[http2]==0.27.2
 # Scrapling: TLS fingerprint spoofing (Fetcher) + stealth Playwright (DynamicFetcher)
 # Replaces plain requests for bot-protected portals. No scrapling install needed —
@@ -69,8 +69,28 @@ dateparser>=1.2.0
 # PDF extraction (MIT — machine-readable RERA PDFs, sale deeds, encumbrance certs)
 pdfplumber>=0.11.0
 
+# Document → Markdown conversion (PDF, DOCX, XLSX, PPTX, HTML, images, etc.)
+# Used by: Legal Head (EC PDFs), RERA detail scout (approval docs), IGR (Excel downloads)
+markitdown>=0.1.0
+
 # Evaluation — ROUGE quality metrics for analyst briefs (no torch required)
 rouge-score>=0.1.2
+
+# HF embeddings + reranking + evaluation (Sprints 32–37)
+sentence-transformers>=2.7.0  # semantic dedup + cross-encoder reranker
+evaluate>=0.4.0  # BERTScore weekly eval
+
+# ── Sprint 36 — HF RERA Extractor (QLoRA Fine-Tune) ──────────────────────────
+# Training: pip install these in the agents container for GPU fine-tuning
+# torch>=2.1.0            # CUDA 12.1+ required for RTX 3050 4GB
+# transformers>=4.38.0     # Qwen2.5 support
+# accelerate>=0.27.0       # device_map="auto"
+# peft>=0.9.0              # QLoRA (LoRAConfig, get_peft_model)
+# trl>=0.8.0               # SFTTrainer
+# bitsandbytes>=0.43.0     # 4-bit quantization (nf4)
+# datasets>=2.18.0         # HuggingFace Dataset wrapper
+# llama-cpp-python>=0.2.0  # GGUF export (CUDA-enabled)
+datasets>=2.18.0  # eval harness
 
 # Testing
 pytest>=7.0

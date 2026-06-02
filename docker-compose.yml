@@ -32,6 +32,7 @@ services:
     restart: unless-stopped
     volumes:
       - ollama_data:/root/.ollama
+      - ./models:/app/models:ro
     # Port not published — agents communicate via internal Docker network (http://ollama:11434)
     deploy:
       resources:

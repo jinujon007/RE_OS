@@ -566,10 +566,17 @@ One agent whose only job is watching the other agents. It reads run logs, measur
 
 ---
 
+### Sprint 37 — HF Vision: Florence-2 Evaluation
+**Goal:** Evaluate Florence-2-base on RTX 3050 4GB for site plan analysis and Kannada OCR.
+**Effort:** 1 session
+**Status:** ✅ COMPLETE (GATE-23 PASSED) — 2026-06-02
+
+**Decision:** GO (with conditions). Florence-2-base runs within RTX 3050 4GB budget (2.05 GB VRAM, 3.55s max inference). OCR quality is FAIR — degrades on watermarks, Kannada text, and dense tables. Primary integration: Phase 12 as fallback OCR for scanned PDFs. PaddleOCR recommended as primary OCR engine for Production. Full report: `outputs/florence2_eval.md`.
+
 ### Phase 11 — PR & Brand Department
 **Goal:** LLS brand intelligence and content generation. Monitors press, plans social, writes copy.
 **Effort:** 2–3 sessions
-**Status:** Not started.
+**Status:** Not started. Florence-2 image captioning capability (Sprint 37) may be integrated as secondary use case.
 
 **Tasks:**
 - [ ] P11.1 — `agents/pr_head_agent.py`: brand narrative, positioning, press strategy
@@ -590,20 +597,20 @@ One agent whose only job is watching the other agents. It reads run logs, measur
 ### Phase 12 — Legal Department (Real Tools)
 **Goal:** Real estate legal intelligence. Title chains, encumbrance, RERA compliance, regulatory risk — all DB-grounded, not LLM guesses.
 **Effort:** 1–2 sessions
-**Status:** 🟡 IN PROGRESS — Sprint 30 (T-401–T-407)
+**Status:** ✅ COMPLETE — Sprint 30 (T-401–T-408)
 
 **Decision 7 resolved (2026-05-30):** Data sources = Kaveri Online (already scraped) + RERA Karnataka DB + regulatory_zones table. Indiankanoon deferred.
 
 **Tasks:**
-- [ ] P12.1 — utils/rera_compliance_checker.py — T-401
-- [ ] P12.2 — utils/zone_risk_checker.py — T-402
-- [ ] P12.3 — RERAComplianceTool + ZoneRiskTool → Legal Head agent — T-403
-- [ ] P12.4 — agents/compliance_researcher_agent.py — T-404
-- [ ] P12.5 — Wire Legal Head auto-context to Board Room — T-405
-- [ ] P12.6 — Dashboard Legal panel — T-406
-- [ ] P12.7 — GATE-16 DoD — T-407
+- [x] P12.1 — utils/rera_compliance_checker.py — T-401
+- [x] P12.2 — utils/zone_risk_checker.py — T-402
+- [x] P12.3 — RERAComplianceTool + ZoneRiskTool → Legal Head agent — T-403
+- [x] P12.4 — agents/compliance_researcher_agent.py — T-404
+- [x] P12.5 — Wire Legal Head auto-context to Board Room — T-405
+- [x] P12.6 — Dashboard Legal panel — T-407
+- [x] P12.7 — GATE-16 DoD — T-408
 
-**Definition of done:** Board Room pitch with developer name + market → Legal Head cites actual RERA project count + zone risk level from DB. GATE-16 passed.
+**Definition of done:** ✅ Met. Board Room pitch "5-acre Devanahalli site, R2 zone, Brigade developer" → Legal auto-context computes Brigade RERA record (1 Devanahalli project, CLEAN signal) + Devanahalli R2 zone risk (LOW, FAR=3.0, height=24m, coverage=60%) from DB. Dashboard Legal panel shows CLEAR/RISK/BLOCKED badge. GATE-16 passed.
 
 ---
 

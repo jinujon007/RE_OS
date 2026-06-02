@@ -341,6 +341,28 @@ Developer grades: Grade A = known major brand OR ≥500 units. B = 100–499. C 
 
 ---
 
+## Goal-Driven Execution
+
+Every task spec written for Kilo Code must define verifiable success criteria — not just what to do, but how to confirm it's done.
+
+**Transform imperatives into goals:**
+- "Fix the Kaveri scraper" → "Write a test that hits the Kaveri endpoint and asserts ≥1 guidance value returned. Make it pass."
+- "Add IGR transaction ingestion" → "Run the IGR scraper against Yelahanka; assert ≥10 rows in `kaveri_registrations`; pytest green."
+- "Fix a bug" → "Write a test that reproduces it. Make it pass. The test must fail before the fix and pass after."
+
+**Multi-step tasks get a plan with a verify step per stage:**
+```
+1. Add DB column → verify: alembic upgrade head succeeds
+2. Wire scraper → verify: scraped records appear in table
+3. Add alert → verify: alert fires within 30s of scrape
+```
+
+Strong success criteria let Kilo loop independently. Weak criteria ("make it work") require Jinu to eyeball every step.
+
+**The gate is the success criterion at phase scale.** Individual task specs follow the same pattern.
+
+---
+
 ## Skill Routing
 
 - Bugs/errors → `/investigate`

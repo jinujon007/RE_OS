@@ -4,6 +4,7 @@ Queries the DB for a developer's RERA project history and compliance signals.
 Supports optional market scoping to distinguish track record per micro-market.
 """
 from dataclasses import dataclass, field
+from datetime import datetime
 from loguru import logger
 
 
@@ -16,6 +17,8 @@ class RERAComplianceResult:
     completed_projects: int
     delayed_projects: int
     avg_delay_months: float
+    last_project_completed_at: str | None  # ISO date of most recently completed project
+    months_since_last_project: float | None
     inactive_anomalies: list[dict]  # projects where is_active=False for investigation
     compliance_signal: str           # CLEAN | WATCH | RISK | UNKNOWN
     notes: list[str]
@@ -46,6 +49,7 @@ def check_developer_compliance(
         return RERAComplianceResult(
             developer_name="", market=market, total_projects=0, active_projects=0,
             completed_projects=0, delayed_projects=0, avg_delay_months=0.0,
+            last_project_completed_at=None, months_since_last_project=None,
             inactive_anomalies=[], compliance_signal="UNKNOWN",
             notes=["Empty developer name provided"],
         )
@@ -53,16 +57,28 @@ def check_developer_compliance(
     notes = []
     try:
         with get_engine().connect() as conn:
-            # Step 1: Resolve developer_id — prefer exact match, fall back to ILIKE
-            dev_row = conn.execute(
-                text("""
-                    SELECT id, name FROM developers
-                    WHERE name ILIKE :exact
-                    LIMIT 1
-                """),
-                {"exact": developer_name},
-            ).fetchone()
-
+            # Step 1: Resolve developer_id — market-scoped exact match first, then market fuzzy, then global fallback
+            dev_row = None
+            if market:
+                dev_row = conn.execute(
+                    text("""
+                        SELECT DISTINCT d.id, d.name FROM developers d
+                        JOIN rera_projects r ON r.developer_id = d.id
+                        JOIN micro_markets mm ON mm.id = r.micro_market_id
+                        WHERE d.name ILIKE :exact AND mm.name ILIKE :market
+                        LIMIT 1
+                    """),
+                    {"exact": developer_name, "market": f"%{market}%"},
+                ).fetchone()
+            if not dev_row:
+                dev_row = conn.execute(
+                    text("""
+                        SELECT id, name FROM developers
+                        WHERE name ILIKE :exact
+                        LIMIT 1
+                    """),
+                    {"exact": developer_name},
+                ).fetchone()
             if not dev_row:
                 dev_row = conn.execute(
                     text("""
@@ -78,6 +94,7 @@ def check_developer_compliance(
                     developer_name=developer_name, market=market,
                     total_projects=0, active_projects=0, completed_projects=0,
                     delayed_projects=0, avg_delay_months=0.0,
+                    last_project_completed_at=None, months_since_last_project=None,
                     inactive_anomalies=[], compliance_signal="UNKNOWN",
                     notes=["Developer not found in RERA Karnataka DB — verify name or check RERA portal directly"],
                 )
@@ -93,14 +110,16 @@ def check_developer_compliance(
                 market_clause = " AND mm.name ILIKE :market"
                 market_params["market"] = f"%{market}%"
 
-            # Step 3: Aggregate compliance stats
+            # Step 3: Aggregate compliance stats + recency
             row = conn.execute(text(f"""
                 SELECT
                     COUNT(r.id) AS total,
                     COUNT(CASE WHEN r.is_active THEN 1 END) AS active,
                     COUNT(CASE WHEN r.project_status = 'Completed' THEN 1 END) AS completed,
                     COUNT(CASE WHEN r.delay_months > 0 THEN 1 END) AS delayed,
-                    COALESCE(ROUND(AVG(r.delay_months)::numeric, 1), 0) AS avg_delay
+                    COALESCE(ROUND(AVG(r.delay_months)::numeric, 1), 0) AS avg_delay,
+                    MAX(r.completion_date) AS last_completed,
+                    MAX(r.created_at) AS last_activity
                 FROM rera_projects r
                 JOIN developers d ON d.id = r.developer_id
                 LEFT JOIN micro_markets mm ON mm.id = r.micro_market_id
@@ -138,6 +157,7 @@ def check_developer_compliance(
             developer_name=developer_name, market=market,
             total_projects=0, active_projects=0, completed_projects=0,
             delayed_projects=0, avg_delay_months=0.0,
+            last_project_completed_at=None, months_since_last_project=None,
             inactive_anomalies=[], compliance_signal="UNKNOWN",
             notes=["DB query failed — manual check required"],
         )
@@ -147,12 +167,24 @@ def check_developer_compliance(
     completed = int(row[2]) if row[2] else 0
     delayed = int(row[3]) if row[3] else 0
     avg_delay = round(float(row[4]) if row[4] else 0.0, 1)
+    last_completed_str = str(row[5]) if row[5] else None
+    last_activity_str = str(row[6]) if row[6] else None
+
+    # Compute months since last completed project
+    months_since_last = None
+    if last_completed_str:
+        try:
+            last_dt = datetime.fromisoformat(last_completed_str)
+            months_since_last = round((datetime.now() - last_dt).days / 30.44, 1)
+        except (ValueError, TypeError):
+            pass
 
     if total == 0:
         return RERAComplianceResult(
             developer_name=resolved_name, market=market,
             total_projects=0, active_projects=0, completed_projects=0,
             delayed_projects=0, avg_delay_months=0.0,
+            last_project_completed_at=None, months_since_last_project=None,
             inactive_anomalies=[], compliance_signal="UNKNOWN",
             notes=[f"Developer '{resolved_name}' found but has no projects in "
                    f"{'market ' + market if market else 'DB'}"],
@@ -173,10 +205,13 @@ def check_developer_compliance(
 
     if inactive_anomalies:
         notes.append(f"{len(inactive_anomalies)} project(s) with inactive/cancelled/suspended status — review details.")
+    if months_since_last is not None and months_since_last > 36:
+        notes.append(f"No completed projects in {months_since_last:.0f} months — verify developer is still active in this market.")
 
     market_tag = f" (market: {market})" if market else ""
-    logger.info("[RERACompliance] developer=%s%s total=%d active=%d delayed=%d signal=%s anomalies=%d",
-                resolved_name, market_tag, total, active, delayed, signal, len(inactive_anomalies))
+    logger.info("[RERACompliance] developer=%s%s total=%d active=%d delayed=%d signal=%s anomalies=%d last_completed=%s",
+                resolved_name, market_tag, total, active, delayed, signal, len(inactive_anomalies),
+                last_completed_str or "none")
 
     return RERAComplianceResult(
         developer_name=resolved_name,
@@ -186,6 +221,8 @@ def check_developer_compliance(
         completed_projects=completed,
         delayed_projects=delayed,
         avg_delay_months=avg_delay,
+        last_project_completed_at=last_completed_str,
+        months_since_last_project=months_since_last,
         inactive_anomalies=inactive_anomalies,
         compliance_signal=signal,
         notes=notes,

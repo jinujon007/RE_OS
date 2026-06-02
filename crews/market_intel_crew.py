@@ -381,7 +381,8 @@ def _build_data_crew(market_name: str) -> Crew:
 
 def _build_intel_crew(market_name: str, db_stats: dict, has_fallback_data: bool = False,
                       ceo_memory_context: str = "", analyst_memory_context: str = "",
-                      appreciation_forecasts_json: str = "") -> Crew:
+                      appreciation_forecasts_json: str = "",
+                      news_headlines_context: str = "") -> Crew:
     analyst = create_analyst_agent()
     ceo = create_ceo_agent()
     # CEO synthesizes in the intel crew — no re-delegation back to analyst
@@ -421,6 +422,8 @@ def _build_intel_crew(market_name: str, db_stats: dict, has_fallback_data: bool 
                f"Use the pre-computed appreciation forecasts in the context. "
                f"Do not invent PSF projections — cite the forecast data."
                if appreciation_forecasts_json else "")
+            + (f"\n\n## Headline Sentiment\n{news_headlines_context}\n"
+               if news_headlines_context else "")
         ),
         expected_output=(
             "Formatted market brief with: inventory overview, top 5 projects, developer scorecard, "
@@ -864,17 +867,44 @@ def run_market_intelligence(market_name: str) -> str:
                 pass
         appreciation_forecasts_json = json.dumps(forecasts, indent=2) if forecasts else ""
 
+        # Build news headline sentiment context (T-451)
+        news_headlines_context = ""
+        try:
+            from utils.sentiment import aggregate_market_sentiment_tone
+            from sqlalchemy import text as sa_text
+            with get_engine().connect() as conn:
+                rows = conn.execute(sa_text("""
+                    SELECT headline FROM news_articles
+                    WHERE market ILIKE :market
+                      AND headline IS NOT NULL
+                      AND created_at >= NOW() - INTERVAL '14 days'
+                    ORDER BY created_at DESC LIMIT 20
+                """), {"market": f"%{market_name}%"}).fetchall()
+            headlines = [r[0] for r in rows if r[0]]
+            if len(headlines) >= 3:
+                tone = aggregate_market_sentiment_tone(headlines)
+                if tone and tone.get("dominant"):
+                    news_headlines_context = (
+                        f"Market mood: {tone['dominant']} "
+                        f"({tone['bullish_pct']:.0f}% bullish, {tone['bearish_pct']:.0f}% bearish) "
+                        f"based on {len(headlines)} recent headlines."
+                    )
+        except Exception as exc:
+            logger.debug(f"[Crew] News sentiment tone skipped: {exc}")
+
         try:
             intel_crew = _build_intel_crew(market_name, db_stats, has_fallback_data=has_fallback_data,
                                          ceo_memory_context=ceo_memory_context,
                                          analyst_memory_context=analyst_memory_context,
-                                         appreciation_forecasts_json=appreciation_forecasts_json)
+                                         appreciation_forecasts_json=appreciation_forecasts_json,
+                                         news_headlines_context=news_headlines_context)
             result = _kickoff_with_fallback(
                 intel_crew,
                 lambda: _build_intel_crew(market_name, db_stats, has_fallback_data=has_fallback_data,
                                         ceo_memory_context=ceo_memory_context,
                                         analyst_memory_context=analyst_memory_context,
-                                        appreciation_forecasts_json=appreciation_forecasts_json),
+                                        appreciation_forecasts_json=appreciation_forecasts_json,
+                                        news_headlines_context=news_headlines_context),
                 "Stage 3 (intel)",
                 market_name,
             )
@@ -959,7 +989,6 @@ def run_market_intelligence(market_name: str) -> str:
         # Intel alert via Discord — non-fatal
         try:
             from utils.discord_notifier import send_intel_alert
-            from utils.db import get_engine
             from sqlalchemy import text
             with get_engine().connect() as _conn:
                 row = _conn.execute(text("""

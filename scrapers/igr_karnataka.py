@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import threading
 import time
 from datetime import date, timedelta
 from typing import Any
@@ -81,17 +82,19 @@ MIN_REQUEST_INTERVAL_S = 3.0
 
 
 class RateLimiter:
-    """Per-instance rate limiter — prevents cross-scout timer interference."""
+    """Per-instance rate limiter — prevents cross-scout timer interference. Thread-safe."""
 
     def __init__(self, interval_s: float = MIN_REQUEST_INTERVAL_S):
         self._interval = interval_s
         self._last_ts = 0.0
+        self._lock = threading.Lock()
 
     def wait(self) -> None:
-        elapsed = time.time() - self._last_ts
-        if elapsed < self._interval:
-            time.sleep(self._interval - elapsed)
-        self._last_ts = time.time()
+        with self._lock:
+            elapsed = time.time() - self._last_ts
+            if elapsed < self._interval:
+                time.sleep(self._interval - elapsed)
+            self._last_ts = time.time()
 
 
 _PLAYWRIGHT_AVAILABLE: bool | None = None
@@ -159,6 +162,7 @@ class IGRTransactionScout:
     def __init__(self):
         self.session = None
         self.rate_limiter = RateLimiter()
+        self.metrics: dict[str, int] = {"playwright_calls": 0, "post_calls": 0, "fallback_calls": 0, "rows_normalized": 0}
         try:
             import requests as req_lib
             self.session = req_lib.Session()
@@ -177,15 +181,18 @@ class IGRTransactionScout:
         from playwright.sync_api import sync_playwright, TimeoutError as PwTimeout
 
         records: list[dict[str, Any]] = []
+        data_capture: list[dict] = []
+        browser = None
         try:
             with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=True)
+                browser = pw.chromium.launch(headless=True, args=["--no-sandbox", "--disable-gpu"], timeout=20000)
                 ctx = browser.new_context(user_agent=HEADERS["User-Agent"], locale="en-IN")
                 page = ctx.new_page()
                 page.set_default_timeout(30000)
+
+                self.rate_limiter.wait()
                 page.goto(REG_SEARCH_URL, wait_until="domcontentloaded")
 
-                # Fill form fields
                 for name, value in {
                     "district": meta.get("district", ""),
                     "taluk": meta.get("taluk", ""),
@@ -202,8 +209,6 @@ class IGRTransactionScout:
 
                 submit_btn = page.locator("input[type='submit'], button[type='submit']").first
                 if submit_btn.is_visible(timeout=5000):
-                    data_capture: list[dict] = []
-
                     def _on_response(resp):
                         if resp.status == 200 and "data" in resp.url.lower():
                             try:
@@ -217,18 +222,23 @@ class IGRTransactionScout:
                     submit_btn.click()
                     page.wait_for_timeout(5000)
                     page.wait_for_load_state("networkidle", timeout=10000)
-                    browser.close()
 
-                    for row in data_capture:
-                        try:
-                            records.append(self._normalize_row(row, meta))
-                        except Exception:
-                            continue
-
-                return records
         except (PwTimeout, Exception) as exc:
             logger.info(f"[IGRScout] Playwright failed: {exc}")
             return []
+        finally:
+            if browser:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+
+        for row in data_capture:
+            try:
+                records.append(self._normalize_row(row, meta))
+            except Exception:
+                continue
+        return records
 
     # ── Direct POST path ─────────────────────────────────────────────
 
@@ -273,18 +283,44 @@ class IGRTransactionScout:
     # ── Row normalisation ───────────────────────────────────────────
 
     def _normalize_row(self, row: dict, meta: dict) -> dict[str, Any]:
-        """Normalise a raw portal row to the standard output schema."""
+        """Normalise a raw portal row to the standard output schema.
+
+        Args:
+            row: Raw dict from portal JSON response.
+            meta: Market metadata dict for fallback values.
+
+        Returns:
+            Normalised dict with all output schema keys.
+
+        Raises:
+            ValueError: If row is None or empty.
+        """
+        if not row or not isinstance(row, dict):
+            raise ValueError("Empty or invalid row")
+
+        # Input guards: cap string lengths for DB safety
+        raw_survey = str(row.get("regNo") or row.get("registrationNo") or "")[:100]
+        raw_seller = str(row.get("sellerName") or "")[:500]
+        raw_buyer = str(row.get("buyerName") or str(row.get("buyerType") or ""))[:500]
+        raw_date = str(row.get("registrationDate") or row.get("transactionDate") or "")[:20]
+        raw_sro = str(row.get("sroOffice") or meta.get("taluk", ""))[:200]
+
         consideration_raw = float(row.get("transactionAmount") or 0)
         area_raw = float(row.get("area") or row.get("areaSqft") or 0)
+
+        # Cap consideration to prevent overflow (max ~Rs1000Cr = 10^10)
+        consideration_safe = min(max(consideration_raw, 0), 10_000_000_000)
+        area_safe = min(max(area_raw, 0), 1_000_000)  # cap area at 1M sqft
+
+        self.metrics["rows_normalized"] += 1
         return {
-            "survey_no": str(row.get("regNo") or row.get("registrationNo") or ""),
-            "seller": str(row.get("sellerName") or ""),
-            "buyer": str(row.get("buyerName") or str(row.get("buyerType") or "")),
-            "consideration_amount": int(round(consideration_raw)),
-            "area_sqft": round(area_raw, 1),
-            "registration_date": str(row.get("registrationDate") or row.get("transactionDate") or ""),
-            "sro_office": str(row.get("sroOffice") or meta.get("taluk", "")),
-            "source": "portal",
+            "survey_no": raw_survey,
+            "seller": raw_seller,
+            "buyer": raw_buyer,
+            "consideration_amount": int(round(consideration_safe)),
+            "area_sqft": round(area_safe, 1),
+            "registration_date": raw_date,
+            "sro_office": raw_sro,
         }
 
     # ── Public entry point ──────────────────────────────────────────
@@ -292,11 +328,20 @@ class IGRTransactionScout:
     def run(self, market: str = "Yelahanka", days_back: int = 30) -> list[dict[str, Any]]:
         """Scrape IGR transactions for the given market.
 
-        Returns a list of dicts with keys: survey_no, seller, buyer,
-        consideration_amount, area_sqft, registration_date, sro_office, source.
+        Args:
+            market: Target market name (Yelahanka/Devanahalli/Hebbal). Capped at 100 chars.
+            days_back: Days of history to scan. Clamped to [1, 365].
 
-        Fallback chain: Playwright → POST → hardcoded fallback.
+        Returns:
+            List of transaction dicts with keys: survey_no, seller, buyer,
+            consideration_amount, area_sqft, registration_date, sro_office, source.
+
+        Fallback chain: Playwright -> POST -> hardcoded fallback.
+        Latency budget: ~10s for Playwright, ~20s for POST, ~0s for fallback.
         """
+        market = (market or "").strip()[:100]
+        days_back = max(1, min(int(days_back), 365))
+
         meta = IGR_MARKET_META.get(market, {})
         if not meta:
             logger.error(f"[IGRScout] No metadata for market: {market}")
@@ -308,29 +353,45 @@ class IGRTransactionScout:
         to_str = to_date.isoformat()
 
         logger.info(f"[IGRScout] Scraping {market} from {from_str} to {to_str}")
+        start_ts = time.time()
 
-        # 1. Playwright
+        # Retry strategy: try Playwright once, POST up to 2 times with backoff
+        # The portal is unreliable — retrying helps with transient network failures
+        # without overloading the server (3s rate limiter applies).
+
+        # 1. Playwright (no retry — expensive browser launch)
+        self.metrics["playwright_calls"] += 1
         records = self._scrape_via_playwright(meta, from_str, to_str)
         if records:
             for r in records:
                 r["source"] = "portal_playwright"
-            logger.info(f"[IGRScout] Playwright returned {len(records)} records")
+            elapsed = time.time() - start_ts
+            logger.info(f"[IGRScout] Playwright returned {len(records)} records for {market} ({elapsed:.1f}s)")
             return records
 
-        # 2. Direct POST
-        records = self._scrape_via_post(meta, from_str, to_str)
-        if records:
-            for r in records:
-                r["source"] = "portal_post"
-            logger.info(f"[IGRScout] POST returned {len(records)} records")
-            return records
+        # 2. Direct POST (retry with exponential backoff: 3s, 6s)
+        for attempt in range(2):
+            self.metrics["post_calls"] += 1
+            records = self._scrape_via_post(meta, from_str, to_str)
+            if records:
+                for r in records:
+                    r["source"] = "portal_post"
+                elapsed = time.time() - start_ts
+                logger.info(f"[IGRScout] POST returned {len(records)} records for {market} ({elapsed:.1f}s)")
+                return records
+            if attempt == 0:
+                backoff = MIN_REQUEST_INTERVAL_S * 2
+                logger.debug(f"[IGRScout] POST attempt {attempt+1} failed — retrying in {backoff:.0f}s")
+                time.sleep(backoff)
 
         # 3. Hardcoded fallback
-        logger.warning(f"[IGRScout] Portal unreachable — using {market} fallback data")
+        self.metrics["fallback_calls"] += 1
+        elapsed = time.time() - start_ts
+        logger.warning(f"[IGRScout] Portal unreachable after {elapsed:.1f}s — using {market} fallback data")
         fb = _fallback_transactions(market)
         for r in fb:
             r["source"] = "fallback"
-        logger.info(f"[IGRScout] Fallback returned {len(fb)} records")
+        logger.info(f"[IGRScout] Fallback returned {len(fb)} records for {market}")
         return fb
 
     # ── DB Insertion ────────────────────────────────────────────────
@@ -362,17 +423,6 @@ class IGRTransactionScout:
 
                     result = conn.execute(
                         text("""
-                            SELECT 1 FROM igr_transactions
-                            WHERE id = :id
-                        """),
-                        {"id": dedup_id},
-                    )
-                    if result.fetchone():
-                        stats["skipped"] += 1
-                        continue
-
-                    conn.execute(
-                        text("""
                             INSERT INTO igr_transactions
                                 (id, market, survey_no, seller_name, buyer_name,
                                  consideration_amount, area_sqft, registration_date,
@@ -396,7 +446,10 @@ class IGRTransactionScout:
                             "source": rec.get("source", "fallback"),
                         },
                     )
-                    stats["inserted"] += 1
+                    if result.rowcount > 0:
+                        stats["inserted"] += 1
+                    else:
+                        stats["skipped"] += 1
                 except Exception as exc:
                     logger.warning(f"[IGRScout] Insert failed for {rec.get('survey_no')}: {exc}")
                     stats["failed"] += 1
@@ -410,7 +463,7 @@ class IGRTransactionScout:
 
 def _main() -> None:
     parser = argparse.ArgumentParser(description="Scrape Karnataka IGR portal for sale deeds.")
-    parser.add_argument("--market", required=True, choices=[m.strip() for m in TARGET_MARKETS], help="Market to scrape")
+    parser.add_argument("--market", required=True, choices=list(IGR_MARKET_META.keys()), help="Market to scrape")
     parser.add_argument("--days", type=int, default=30, help="Days of history to scan (default: 30)")
     parser.add_argument("--no-db", action="store_true", help="Print only, skip DB insert")
     args = parser.parse_args()

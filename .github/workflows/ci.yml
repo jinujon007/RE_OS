@@ -72,6 +72,38 @@ jobs:
           DB_PASSWORD: test_password_for_ci
         run: pytest tests/ -v -m unit --tb=short --cov=agents --cov=config --cov=crews --cov=scrapers --cov=utils --cov=dashboard --cov-report=term-missing --cov-fail-under=50
 
+      - name: BERTScore regression check
+        continue-on-error: true
+        run: |
+          if ! command -v bc &>/dev/null; then
+            echo "bc not available — installing"
+            sudo apt-get update -qq && sudo apt-get install -y -qq bc
+          fi
+          FILE="outputs/eval_scores.jsonl"
+          if [ ! -f "$FILE" ]; then
+            echo "No eval_scores.jsonl found — skipping regression check"
+            exit 0
+          fi
+          COUNT=$(wc -l < "$FILE")
+          if [ "$COUNT" -lt 2 ]; then
+            echo "Only $COUNT entry found — need >=2 for regression check"
+            exit 0
+          fi
+          LATEST=$(tail -1 "$FILE" | grep -o '"score": [0-9.]*' | head -1 | awk '{print $2}')
+          PREV=$(tail -2 "$FILE" | head -1 | grep -o '"score": [0-9.]*' | head -1 | awk '{print $2}')
+          if [ -z "$LATEST" ] || [ -z "$PREV" ]; then
+            echo "Could not extract scores from eval_scores.jsonl"
+            exit 0
+          fi
+          THRESHOLD=$(echo "$PREV - 0.05" | bc)
+          if [ "$(echo "$LATEST >= $THRESHOLD" | bc)" -eq 1 ]; then
+            echo "BERTScore OK: latest=$LATEST >= threshold=$THRESHOLD (previous=$PREV - 0.05)"
+            exit 0
+          else
+            echo "BERTScore regression: latest=$LATEST < threshold=$THRESHOLD (previous=$PREV - 0.05)"
+            exit 1
+          fi
+
   secrets-scan:
     name: Secrets Scan
     runs-on: ubuntu-latest

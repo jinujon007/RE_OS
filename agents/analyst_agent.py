@@ -15,7 +15,7 @@ from config.llm_router import get_analysis_llm
 from utils.db import get_engine
 from utils.feasibility import LandFeasibility, feasibility_summary
 from utils.fsi_calculator import calculate_fsi
-from utils.irr_model import calc_land_cost, calc_gdv, calc_irr, compare_scenarios
+from utils.irr_model import calc_land_cost, calc_gdv, calc_irr, compare_scenarios, GDVEstimator, log_igr_lookup
 from agents.architect_agent import FSICalculatorTool, TypologyRecommenderTool, GreenCoverageTool
 
 
@@ -50,6 +50,8 @@ class MarketSummaryTool(BaseTool):
                     overdue_high_unsold_projects,
                     floor_psf,
                     ceiling_psf,
+                    months_of_supply,
+                    supply_label,
                     data_as_of
                 FROM v_market_brief
                 WHERE micro_market ILIKE :market
@@ -166,6 +168,12 @@ class MarketSummaryTool(BaseTool):
                 ),
                 "guidance_values": [dict(r._mapping) for r in gv_summary],
             }
+
+            inv = result.get("inventory", {})
+            mos = inv.get("months_of_supply")
+            label = inv.get("supply_label")
+            if mos is not None and label:
+                result["inventory_signal"] = f"Inventory signal: {mos} months ({label})"
 
             return json.dumps(result, indent=2, default=str)
 
@@ -290,6 +298,12 @@ class ReportGeneratorTool(BaseTool):
             except (ValueError, TypeError):
                 return str(val)
 
+        mos = inv.get("months_of_supply")
+        label = inv.get("supply_label")
+        mos_line = ""
+        if mos is not None and label:
+            mos_line = f"Inventory signal: {mos} months ({label})"
+
         lines = [
             f"═══ RE_OS | {market.upper()} MARKET INTELLIGENCE ═══",
             f"Generated: {__import__('datetime').datetime.now().strftime('%d %b %Y, %H:%M IST')}",
@@ -302,6 +316,10 @@ class ReportGeneratorTool(BaseTool):
             f"Avg absorption:     {_fmt(inv.get('avg_absorption_pct', 0), '.1f')}%",
             f"Price range:        ₹{_fmt(inv.get('avg_min_psf', 0))} – ₹{_fmt(inv.get('avg_max_psf', 0))} psf",
             f"Active developers:  {_fmt(inv.get('unique_developers', 0))}",
+            f"Months of supply:   {_fmt(mos, '.1f')} ({label if label else 'N/A'})",
+            "",
+            "── INVENTORY SIGNAL ──",
+            mos_line if mos_line else "Insufficient data to determine supply signal.",
             "",
             "── TOP PROJECTS ──",
         ]
@@ -419,6 +437,21 @@ class FeasibilityAnalystTool(BaseTool):
 
             fsi_r       = calculate_fsi(land_area, zone, efficiency, market)
             lc_r        = calc_land_cost(land_area, gv_psf, disc)
+
+            igr_info = {"igr_source": None, "igr_record_count": 0}
+            market_safe = (market or "").strip()
+            if market_safe:
+                try:
+                    est = GDVEstimator()
+                    gdv_r = est.estimate(fsi_r.sellable_area_sqft, market_safe)
+                    if gdv_r.igr_source and gdv_r.igr_record_count >= GDVEstimator.MIN_IGR_RECORDS:
+                        sell_psf = gdv_r.sell_psf
+                        igr_info = {"igr_source": gdv_r.igr_source, "igr_record_count": gdv_r.igr_record_count}
+                        log_igr_lookup(market_safe, gdv_r.igr_source, gdv_r.igr_record_count, gdv_r.sell_psf,
+                                       "FeasibilityAnalystTool")
+                except Exception:
+                    pass
+
             scenarios   = compare_scenarios(lc_r.negotiated_land_cost, fsi_r.sellable_area_sqft, sell_psf)
 
             return json.dumps({
@@ -441,6 +474,8 @@ class FeasibilityAnalystTool(BaseTool):
                     "total_project_cost": scenarios.base.total_project_cost,
                     "equity_required": scenarios.base.equity_required,
                     "gdv": scenarios.base.gdv,
+                    "igr_source": igr_info["igr_source"],
+                    "igr_record_count": igr_info["igr_record_count"],
                 },
                 "scenarios": {
                     "base":  {"irr_pct": scenarios.base.simple_irr_pct,  "verdict": scenarios.base.verdict},

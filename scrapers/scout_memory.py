@@ -20,11 +20,55 @@ Canonical ID (cid) strategy:
 import hashlib
 import json
 import os
+import threading
 from datetime import datetime
 from loguru import logger
 
 
+# ── Semantic dedup (Sprint 33) ────────────────────────────────────────────
+# Lazy-loaded SentenceTransformer model — 33MB e5-small-v2, GPU-accelerated
+_semantic_model = None
+_semantic_model_lock = threading.Lock()
+_EMBED_DIM = 384  # e5-small-v2 output dimension
+
+
+def _get_semantic_model():
+    """Lazy-load intfloat/e5-small-v2 on first call. Thread-safe singleton."""
+    global _semantic_model
+    if _semantic_model is None:
+        with _semantic_model_lock:
+            if _semantic_model is None:
+                try:
+                    from sentence_transformers import SentenceTransformer
+                    _semantic_model = SentenceTransformer(
+                        "intfloat/e5-small-v2",
+                        device="cuda",
+                    )
+                except Exception as exc:
+                    logger.warning(f"[ScoutMemory] Failed to load e5-small-v2: {exc}")
+                    _semantic_model = False
+    return _semantic_model if _semantic_model is not False else None
+
+
+def _cosine_sim_norm(a: list[float], b: list[float]) -> float:
+    """Cosine similarity for normalized vectors — dot product."""
+    return sum(x * y for x, y in zip(a, b)) if len(a) == len(b) else 0.0
+
+
 class ScoutMemory:
+    """Deduplication engine for scout findings.
+
+    Two-layer dedup:
+      1. SHA-based CID exact match (fast path)
+      2. Semantic cosine-similarity via e5-small-v2 (second line)
+
+    Semantic cache (class-level, in-memory only):
+      - Per-market, max 500 embedding vectors
+      - NOT persisted across restarts — first items after restart have no
+        semantic protection until cache warms up.
+      - O(n) linear scan per comparison; at 60 items/min this is ~120ms/min.
+        Future optimisation: FAISS/IVF indexing.
+    """
     def __init__(self, market: str, base_dir: str | None = None):
         self.market = market
         if base_dir is None:
@@ -86,7 +130,13 @@ class ScoutMemory:
             self._save()
             return False
 
-        self._idx[cid] = {
+        # Semantic dedup — second line of defense after SHA fast-path
+        label_text = self._label(data)
+        if label_text and self._semantic_is_duplicate(label_text, self.market):
+            return False
+
+        # Data dicts contain primitives (strings, numbers) — shallow copy is safe, avoids deepcopy overhead
+        entry_data = {
             "cid": cid,
             "source": source,
             "market": self.market,
@@ -96,6 +146,7 @@ class ScoutMemory:
             "data_hash": data_hash,
             "label": self._label(data),
         }
+        self._idx[cid] = entry_data
         self._log_new(cid, data, source, now)
         self._save()
         return True
@@ -174,6 +225,64 @@ class ScoutMemory:
         return hashlib.md5(
             json.dumps(safe, sort_keys=True, default=str).encode()
         ).hexdigest()
+
+    # ── Semantic dedup ──────────────────────────────────────────────────────
+    # Class-level cache: shared across all ScoutMemory instances.
+    # NOT thread-safe — consistent with _idx access pattern (ScoutMemory is single-threaded).
+    _recent_embeddings: dict = {}  # market.lower() → list[384-dim vectors]
+    _MAX_CACHE_PER_MARKET: int = 500
+    _MAX_EMBED_CHARS: int = 2000   # e5-small-v2 context window is 512 tokens
+
+    @classmethod
+    def clear_cache(cls, market: str | None = None):
+        """Explicitly clear semantic cache for one market or all markets."""
+        if market:
+            cls._recent_embeddings.pop(market.lower(), None)
+        else:
+            cls._recent_embeddings.clear()
+
+    def _semantic_is_duplicate(
+        self, text: str, market: str, threshold: float = 0.92
+    ) -> bool:
+        """Embed text and compare against cached market vectors.
+        SHA fast-path runs first — this is the second line of defense.
+        On semantic pass: append embedding to market cache.
+        Returns True if any cached vector exceeds similarity threshold.
+        Gracefully no-ops if model fails to load."""
+        model = _get_semantic_model()
+        if model is None:
+            return False
+        text = (text or "").strip()[:self._MAX_EMBED_CHARS]
+        if not text:
+            return False
+        try:
+            embedding = model.encode(text, normalize_embeddings=True)[0].tolist()
+        except Exception as exc:
+            logger.warning(f"[ScoutMemory] Embedding failed: {exc}")
+            return False
+
+        if len(embedding) != _EMBED_DIM:
+            logger.warning(f"[ScoutMemory] Unexpected embed dim {len(embedding)} (expected {_EMBED_DIM}) — skipping dedup")
+            return False
+
+        market_key = market.lower()
+        cache = self._recent_embeddings.setdefault(market_key, [])
+
+        for vec in cache:
+            if len(embedding) != len(vec):
+                logger.warning(
+                    f"[ScoutMemory] Dim mismatch: embed={len(embedding)} cache={len(vec)} — skipping comparison"
+                )
+                continue
+            if _cosine_sim_norm(embedding, vec) > threshold:
+                logger.info(f"[ScoutMemory] Semantic duplicate blocked: {text[:60]}")
+                return True
+
+        # Not a duplicate — cache embedding for future comparisons
+        cache.append(embedding)
+        if len(cache) > self._MAX_CACHE_PER_MARKET:
+            cache.pop(0)
+        return False
 
     @staticmethod
     def _label(data: dict) -> str:

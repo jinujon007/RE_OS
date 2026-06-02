@@ -485,6 +485,14 @@ body {
 .intel-signal.watch { color: #f0a020; }
 .intel-signal.no-go { color: #f85149; }
 
+/* Legal compliance badge — accessible contrast ratios (WCAG AA) */
+.legal-badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 7px; font-weight: bold; }
+.legal-badge.clear { background: #1a3a1a; color: #3fb950; }
+.legal-badge.watch { background: #3a2a1a; color: #f0a020; }
+.legal-badge.risk { background: #3a1a1a; color: #f85149; }
+.legal-badge.blocked { background: #3a0a0a; color: #f85149; }
+.legal-badge.unknown { background: #1a1a2a; color: #6b7280; }
+
 .org-chart {
   display: grid;
   gap: 6px;
@@ -1143,6 +1151,7 @@ body {
       <div id="legal-brief-content" style="font-size:9px;color:#c9d1d9;line-height:1.5;max-height:200px;overflow-y:auto;white-space:pre-wrap;"></div>
       <div id="legal-brief-meta" style="color:#484f58;font-size:7px;margin-top:2px;"></div>
       <div id="legal-brief-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
+      <div id="legal-brief-spinner" style="display:none;color:#9b7ec7;font-size:9px;margin-top:4px;">⟳ Loading legal data...</div>
     </div>
 
     <div class="infra-section">
@@ -1171,6 +1180,14 @@ body {
       </div>
       <div id="alerts-list" style="max-height:200px;overflow-y:auto;"></div>
       <div id="alerts-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
+    </div>
+
+    <div class="infra-section">
+      <div class="infra-title">AGENT REGISTRY
+        <button class="db-explorer-refresh" onclick="pollRegistry()" title="Refresh">⟳</button>
+      </div>
+      <div id="registry-list" style="max-height:200px;overflow-y:auto;"></div>
+      <div id="registry-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
     </div>
 
   </div>
@@ -1469,23 +1486,31 @@ function renderOrgChart(agents, errorMsg) {
     wrap.innerHTML = `<div class="empty-msg">${escapeHtml(errorMsg)}</div>`;
     return;
   }
-  const order = ['ceo', 'analyst', 'scraper', 'processor', 'sentinel'];
-  const rows = order
+  const _DEPT_COLORS = { bd: '#f0a020', engineering: '#58a6ff', finance: '#3fb950', legal: '#9b7ec7', ops: '#f85149', process: '#6b7280', scout: '#3a9fff', board: '#7b5ea7' };
+  const cabinOrder = ['ceo', 'analyst', 'scraper', 'processor', 'sentinel'];
+  const cabinSet = new Set(cabinOrder);
+  const cabinRows = cabinOrder
     .map(id => agents && agents[id] ? { id, ...agents[id] } : null)
     .filter(Boolean);
-  if (!rows.length) {
+  const extraRows = Object.entries(agents || {})
+    .filter(([id]) => !cabinSet.has(id))
+    .map(([id, val]) => ({ id, ...val }));
+  const allRows = [...cabinRows, ...extraRows];
+  if (!allRows.length) {
     wrap.innerHTML = '<div class="empty-msg">No agents found</div>';
     return;
   }
   const _HAS_CMD = { ceo: 1, analyst: 1, scraper: 1 };
-  wrap.innerHTML = rows.map(agent => {
+  wrap.innerHTML = allRows.map(agent => {
     const status = String(agent.state || agent.status || 'offline').toLowerCase();
     const lastAction = String(agent.last_action || '').slice(0, 40);
     const cmdAttr = _HAS_CMD[agent.id] ? `onclick="toggleCommand('${agent.id}')"` : '';
+    const deptColor = _DEPT_COLORS[(agent.department || '').toLowerCase()] || null;
+    const deptTag = deptColor ? `<span style="margin-left:4px;padding:1px 4px;border-radius:3px;font-size:6px;background:${deptColor}33;color:${deptColor};">${escapeHtml(agent.department.toUpperCase())}</span>` : '';
     return `
       <div class="org-card ${escapeHtml(status)}" ${cmdAttr} style="${_HAS_CMD[agent.id] ? 'cursor:pointer;' : ''}">
         <div class="org-head">
-          <span class="org-name">${escapeHtml(agent.name || agent.id)}</span>
+          <span class="org-name">${escapeHtml(agent.name || agent.id)}${deptTag}</span>
           <span class="org-status ${escapeHtml(status)}">${escapeHtml(status.toUpperCase())}</span>
         </div>
         <div class="org-role">${escapeHtml(agent.role || '—')}</div>
@@ -1829,27 +1854,35 @@ async function pollLegalBrief() {
   const metaEl = document.getElementById('legal-brief-meta');
   const statusEl = document.getElementById('legal-brief-status');
   const badgeEl = document.getElementById('legal-brief-badge');
+  const spinnerEl = document.getElementById('legal-brief-spinner');
   const firstLoad = !contentEl.textContent;
-  if (firstLoad) contentEl.textContent = 'Loading…';
+  if (firstLoad) { contentEl.textContent = ''; spinnerEl.style.display = 'block'; }
   try {
     const data = await fetch('/api/legal/brief').then(r => r.json());
+    spinnerEl.style.display = 'none';
     if (data.brief) {
       marketEl.textContent = data.brief.market || '';
       const raw = data.brief.response || '';
-      // Determine compliance badge from response text
+      // Determine compliance badge from structured verdict line (first 200 chars)
+      const header = raw.slice(0, 200).toUpperCase();
+      let badgeClass = 'unknown';
       let badgeText = 'UNKNOWN';
-      let badgeColor = '#6b7280';
-      const upper = raw.toUpperCase();
-      if (/\bCLEAN\b|\bCLEAR\b/.test(upper)) { badgeText = 'CLEAR'; badgeColor = '#3fb950'; }
-      else if (/\bWATCH\b/.test(upper)) { badgeText = 'WATCH'; badgeColor = '#f0a020'; }
-      else if (/\bRISK\b/.test(upper)) { badgeText = 'RISK'; badgeColor = '#f85149'; }
-      else if (/\bBLOCKED\b/.test(upper)) { badgeText = 'BLOCKED'; badgeColor = '#f85149'; }
+      if (/\b(?:VERDICT|SIGNAL)\s*[:：]\s*CLEAR\b/.test(header) || /\bCLEAN\b/.test(header)) {
+        badgeText = 'CLEAR'; badgeClass = 'clear';
+      } else if (/\b(?:VERDICT|SIGNAL)\s*[:：]\s*WATCH\b/.test(header) || /\bWATCH\b(?:\s|$)/.test(header)) {
+        badgeText = 'WATCH'; badgeClass = 'watch';
+      } else if (/\b(?:VERDICT|SIGNAL)\s*[:：]\s*(?:RISK|BLOCKED|CONDITIONAL)\b/.test(header) || /\bRISK\b/.test(header)) {
+        badgeText = 'RISK'; badgeClass = 'risk';
+      } else if (/\bBLOCKED\b/.test(header)) {
+        badgeText = 'BLOCKED'; badgeClass = 'blocked';
+      }
+      badgeEl.className = 'legal-badge ' + badgeClass;
       badgeEl.textContent = badgeText;
-      badgeEl.style.background = badgeColor + '33';
-      badgeEl.style.color = badgeColor;
       badgeEl.style.display = 'inline';
-      const truncated = raw.length > 800;
-      contentEl.textContent = raw.slice(0, 800) + (truncated ? '\n\n[... response truncated at 800 chars]' : '');
+      const CHARS = 800;
+      const truncated = raw.length > CHARS;
+      const content = truncated ? raw.slice(0, raw.lastIndexOf(' ', CHARS)) : raw;
+      contentEl.textContent = content + (truncated ? '\n\n[... response truncated at 800 chars]' : '');
       const ts = data.brief.created_at
         ? new Date(data.brief.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', hour12: false })
         : '';
@@ -1865,6 +1898,7 @@ async function pollLegalBrief() {
       statusEl.textContent = '';
     }
   } catch (e) {
+    spinnerEl.style.display = 'none';
     contentEl.textContent = 'Failed to load legal brief.';
     statusEl.textContent = 'Retrying in 60s…';
   } finally {
@@ -1909,6 +1943,58 @@ async function pollAlerts() {
 }
 pollAlerts();
 setInterval(pollAlerts, 60000);
+
+// ── Agent Registry ──
+async function pollRegistry() {
+  const list = document.getElementById('registry-list');
+  const statusEl = document.getElementById('registry-status');
+  try {
+    const data = await fetch('/api/registry').then(r => r.json());
+    if (data.error) {
+      list.innerHTML = '<div style="color:#f85149;font-size:8px;">Error: ' + escapeHtml(data.error) + '</div>';
+      return;
+    }
+    if (!data.agents || !data.agents.length) {
+      list.innerHTML = '<div style="color:#484f58;font-size:8px;padding:4px;">No agents registered yet.</div>';
+      return;
+    }
+    const now = Date.now();
+    const dayMs = 86400000;
+    const _deptColors = { bd: '#f0a020', engineering: '#58a6ff', finance: '#3fb950', legal: '#9b7ec7', ops: '#f85149', process: '#6b7280', scout: '#3a9fff', board: '#7b5ea7' };
+    list.innerHTML = data.agents.map(a => {
+      const name = escapeHtml(a.name || a.id || '—');
+      const role = escapeHtml(a.role || '');
+      const active = a.active !== false;
+      const deptColor = _deptColors[(a.department || '').toLowerCase()] || '#6b7280';
+      const deptTag = '<span style="padding:1px 5px;border-radius:3px;font-size:6px;background:' + deptColor + '33;color:' + deptColor + ';flex-shrink:0;">' + escapeHtml((a.department || '—').toUpperCase()) + '</span>';
+      const tierTag = '<span style="font-size:7px;color:#484f58;flex-shrink:0;">' + escapeHtml(a.llm_tier || '') + '</span>';
+      // Recency badge: hired within 24h → green dot with "NEW"
+      let recencyTag = '';
+      if (a.hired_on) {
+        const hiredTs = new Date(a.hired_on).getTime();
+        if (!Number.isNaN(hiredTs) && (now - hiredTs) < dayMs) {
+          recencyTag = '<span style="padding:1px 5px;border-radius:3px;font-size:6px;background:#3fb95033;color:#3fb950;flex-shrink:0;font-weight:bold;">NEW</span>';
+        }
+      }
+      return '<div style="display:flex;gap:6px;padding:5px 0;border-bottom:1px solid #1a2235;align-items:center;">'
+        + '<span style="width:8px;height:8px;border-radius:50%;background:' + (active ? '#3fb950' : '#484f58') + ';flex-shrink:0;"></span>'
+        + '<div style="flex:1;min-width:0;">'
+        + '<div style="font-size:8px;color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + name + '</div>'
+        + '<div style="font-size:7px;color:#6b7280;">' + role + '</div>'
+        + '</div>'
+        + deptTag
+        + tierTag
+        + recencyTag
+        + '</div>';
+    }).join('');
+    statusEl.textContent = data.agents.length + ' agents · ' + new Date().toLocaleTimeString('en-IN', {hour12:false});
+    markUpdated('registry');
+  } catch (e) {
+    list.innerHTML = '<div style="color:#f85149;font-size:8px;">Failed to load registry.</div>';
+  }
+}
+pollRegistry();
+setInterval(pollRegistry, 60000);
 
 // ── Pipeline Control (T-282) ──
 const PIPELINE_SLUGS = ['yelahanka', 'devanahalli', 'hebbal'];

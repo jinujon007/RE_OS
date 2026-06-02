@@ -42,6 +42,7 @@ from crewai import LLM
 from config.settings import (
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
+    OLLAMA_QWEN_MODEL,
     GROQ_API_KEY,
     GROQ_CEO_MODEL,
     GROQ_ANALYST_MODEL,
@@ -399,11 +400,12 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
             max_tokens=512,
             num_retries=1,
         )
-    logger.warning("[Router] LIGHT fallback → Ollama (CPU-only, slow)")
+    logger.warning("[Router] LIGHT fallback → Ollama Qwen2.5:1.5b (local, fast)")
     return LLM(
-        model=f"ollama/{OLLAMA_MODEL}",
+        model=f"ollama/{OLLAMA_QWEN_MODEL}",
         base_url=OLLAMA_BASE_URL,
         temperature=temperature,
+        max_tokens=512,
     )
 
 

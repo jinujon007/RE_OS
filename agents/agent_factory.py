@@ -279,6 +279,11 @@ def sync_registry_to_db(registry_dir: Path | None = None) -> int:
     Idempotent — safe to call on every container start. Uses ON CONFLICT
     to update existing rows without error.
 
+    Ordering: specs are iterated in alphabetical filename order (via
+    scan_registry). If specs have cross-references via ``reports_to``,
+    ensure dependency order by prefixing filenames (e.g. ``01_ceo.yaml``,
+    ``02_analyst.yaml``).
+
     Args:
         registry_dir: Path to registry directory. Defaults to agents/registry/.
 
@@ -302,7 +307,8 @@ def sync_registry_to_db(registry_dir: Path | None = None) -> int:
                         INSERT INTO agent_registry
                             (id, name, role, department, spec, llm_tier, active, hired_on)
                         VALUES
-                            (:id, :name, :role, :dept, :spec::jsonb, :tier, :active, NOW())
+                            (:id, :name, :role, :dept, CAST(:spec AS jsonb), :tier, :active,
+                             COALESCE(:hired_on::timestamptz, NOW()))
                         ON CONFLICT (id) DO UPDATE SET
                             name       = EXCLUDED.name,
                             role       = EXCLUDED.role,
@@ -319,6 +325,7 @@ def sync_registry_to_db(registry_dir: Path | None = None) -> int:
                         "spec": _json.dumps(spec, default=str),
                         "tier": spec["llm_tier"],
                         "active": spec.get("active", True),
+                        "hired_on": spec.get("hired_on"),
                     },
                 )
                 synced += 1

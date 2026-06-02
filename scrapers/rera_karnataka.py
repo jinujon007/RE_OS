@@ -26,6 +26,7 @@ from bs4 import BeautifulSoup
 import json
 import re
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -34,6 +35,11 @@ import os
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import MARKET_RERA_CONFIG
+
+_RERA_MODEL_NAME = "rera-extractor:3b"
+_RERA_OLLAMA_URL = "http://ollama:11434/api/generate"
+_MODEL_BATCH_SIZE = 8        # rows per batch for parallel model calls (H-2 fix)
+_MODEL_MAX_WORKERS = 4       # parallel Ollama requests
 
 # Alternate subdistrict spellings to try when first attempt returns 0 results.
 # Ordered by decreasing likelihood. Scraper walks this list until non-zero results.
@@ -101,6 +107,114 @@ class RERAKarnatakaScraper:
         self.session.headers.update({**self._BASE_HEADERS, "User-Agent": ua})
         logger.debug(f"[RERA] UA rotated → {ua[:60]}…")
         return ua
+
+    def _extract_with_rera_model(self, html: str) -> list[dict] | None:
+        """Try extracting project data from raw HTML using the fine-tuned rera-extractor:3b model via Ollama.
+
+        Strategy:
+          1. Parse HTML table rows via BeautifulSoup (fast, no model call)
+          2. Submit each row to Ollama rera-extractor:3b in parallel (ThreadPoolExecutor, 4 workers)
+          3. Parse JSON responses, build project dicts
+          4. If >50% of rows fail → return None → caller falls back to _parse_html_table
+
+        Performance budget:
+          - 300 rows × ~2s per Ollama call ÷ 4 workers = ~150s theoretical max
+          - Expected: 60-90s for 300 rows (Ollama inference on RTX 3050)
+
+        Fallback triggers:
+          - Ollama model not loaded: all rows return None → >50% failure → None returned
+          - Ollama container down: urllib timeout on every call → >50% failure → None returned
+          - Table has no rows: immediate None return
+
+        Fix B-3: Log model failures at WARNING level so operators notice.
+        Fix H-2: Parallel batch calls via ThreadPoolExecutor to handle 300+ rows efficiently.
+        Fix H-4: extraction_path set only in _post_search, not per-project here.
+        """
+        import urllib.request
+
+        try:
+            from bs4 import BeautifulSoup as _BS
+            soup = _BS(html, "lxml")
+            rows = soup.select("table tbody tr")
+        except Exception as exc:
+            logger.debug(f"[RERA][Model] HTML parse failed: {exc}")
+            return None
+
+        if not rows:
+            logger.debug("[RERA][Model] No table rows found in HTML — falling back")
+            return None
+
+        logger.info(f"[RERA][Model] Attempting extraction on {len(rows)} rows (batch={_MODEL_BATCH_SIZE}, workers={_MODEL_MAX_WORKERS})")
+
+        projects: list[dict] = []
+        errors = 0
+
+        def _call_model(row_html: str) -> dict | None:
+            """Single Ollama model call for one HTML row."""
+            payload = json.dumps({
+                "model": _RERA_MODEL_NAME,
+                "prompt": (
+                    "Extract RERA fields as JSON from this record:\n"
+                    f"{row_html}\n\n"
+                    "Return ONLY JSON: {\"project_name\":...,\"developer\":...,\"units\":...,\"completion_date\":...,\"rera_id\":...}"
+                ),
+                "stream": False,
+                "options": {"temperature": 0.1, "top_p": 0.9},
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                _RERA_OLLAMA_URL,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    result = json.loads(resp.read())
+                response_text = result.get("response", "").strip()
+                return json.loads(response_text)
+            except (json.JSONDecodeError, KeyError, urllib.error.URLError) as exc:
+                logger.debug(f"[RERA][Model] Row extraction failed: {exc}")
+                return None
+
+        # Process rows in parallel batches
+        with ThreadPoolExecutor(max_workers=_MODEL_MAX_WORKERS) as executor:
+            future_map = {}
+            for i, row in enumerate(rows):
+                row_html = str(row)
+                future = executor.submit(_call_model, row_html)
+                future_map[future] = i
+
+            for future in as_completed(future_map):
+                idx = future_map[future]
+                try:
+                    parsed = future.result()
+                    if parsed is None:
+                        errors += 1
+                        continue
+                    project = {
+                        "rera_number": parsed.get("rera_id", ""),
+                        "project_name": parsed.get("project_name", ""),
+                        "developer_name": parsed.get("developer", ""),
+                        "total_units": int(parsed["units"]) if parsed.get("units") else 0,
+                        "possession_date": str(parsed.get("completion_date", "")),
+                        "data_source": "rera_karnataka_live",
+                        "scraped_at": datetime.now().isoformat(),
+                    }
+                    projects.append(project)
+                except Exception as exc:
+                    errors += 1
+                    logger.debug(f"[RERA][Model] Row {idx} failed: {exc}")
+
+        if errors > len(rows) * 0.5:
+            logger.warning(f"[RERA][Model] {errors}/{len(rows)} rows failed — model may not be loaded. Falling back.")
+            return None
+
+        if projects:
+            logger.info(f"[RERA][Model] Extracted {len(projects)}/{len(rows)} projects via rera-extractor:3b ({errors} errors)")
+            return projects
+
+        return None
 
     def scrape_market(self, market_name: str) -> tuple[list[dict], list]:
         """
@@ -193,12 +307,21 @@ class RERAKarnatakaScraper:
                 f"  [POST] {district}/{subdistrict} → {resp.status_code}, {size_mb:.1f} MB"
             )
 
-            projects = self._parse_html_table(resp.text, market_name)
+            projects = self._extract_with_rera_model(resp.text)
+            extraction_path = "rera_model"
+            if projects is None:
+                logger.info("  [RERA] Model extraction returned None — falling back to HTML parser")
+                projects = self._parse_html_table(resp.text, market_name)
+                extraction_path = "html_parser"
+
             if not projects:
                 logger.warning(
                     f"  [POST] 0 projects returned for {district}/{subdistrict}. "
                     f"Raw HTML (first 500 chars): {resp.text[:500]}"
                 )
+            else:
+                for p in projects:
+                    p["extraction_path"] = extraction_path
             return projects
 
         except requests.exceptions.RequestException as e:

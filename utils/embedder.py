@@ -2,10 +2,10 @@
 RE_OS — Embedder
 ─────────────────
 Semantic indexing of market intel reports and agent memories using
-nomic-embed-text served by the existing Ollama container (CPU, zero cost).
+bge-m3 served by the existing Ollama container (GPU, zero cost).
 
 Architecture:
-  - Embeddings: Ollama API → nomic-embed-text (274MB, ~1-2K tok/s on CPU)
+  - Embeddings: Ollama API → bge-m3 (1.2GB, 1024-dim, GPU-accelerated)
   - Storage:    ChromaDB PersistentClient (already in requirements)
   - No torch, no local model loading in the agents container.
 
@@ -36,6 +36,8 @@ Usage:
 
 import math
 import os
+import re
+import threading
 import time as time_module
 from datetime import datetime
 from pathlib import Path
@@ -51,10 +53,11 @@ from config.settings import OLLAMA_BASE_URL, CHROMA_DB_PATH
 # ChromaDB persistent path — maps to chroma_data volume in Docker.
 # Read from settings at module load time (Docker env is stable after container start).
 _CHROMA_PATH = os.getenv("CHROMA_DB_PATH") or CHROMA_DB_PATH
-_EMBED_MODEL = "nomic-embed-text"
+_EMBED_MODEL = "bge-m3"
+_EMBED_DIM = 1024  # bge-m3 output dimension
 _INTEL_COLLECTION = "re_os_intel"
 _MEMORY_COLLECTION = "re_os_memories"
-_EMBED_TIMEOUT = 30  # seconds — generous for CPU inference
+_EMBED_TIMEOUT = 30  # seconds — allows for GPU cold-load on first call (~9s); warm calls are <1s
 _OLLAMA_HEALTH_TTL = 10  # cache Ollama health-check result for N seconds
 _ollama_last_check: float = 0.0
 _ollama_last_status: bool = False
@@ -73,7 +76,28 @@ _metrics: dict[str, int] = {
     "chroma_unavailable_count": 0,
     "embed_text_calls": 0,
     "embed_text_failures": 0,
+    "rerank_applied": 0,
+    "rerank_unavailable": 0,
 }
+
+# Lazy-loaded CrossEncoderReranker singleton (wired to IntelEmbedder.search when rerank=True).
+# Thread-safe via double-checked locking. Shared across all IntelEmbedder instances —
+# the underlying cross-encoder model is itself a thread-safe singleton in utils/reranker.py.
+_reranker_instance = None
+_reranker_lock = threading.Lock()
+
+
+def _get_reranker():
+    global _reranker_instance
+    if _reranker_instance is None:
+        with _reranker_lock:
+            if _reranker_instance is None:
+                try:
+                    from utils.reranker import CrossEncoderReranker
+                    _reranker_instance = CrossEncoderReranker()
+                except Exception:
+                    _reranker_instance = False
+    return _reranker_instance if _reranker_instance is not False else None
 
 
 class OllamaEmbeddingFunction(EmbeddingFunction):
@@ -87,7 +111,7 @@ class OllamaEmbeddingFunction(EmbeddingFunction):
         results = []
         for text in input:
             vec = embed_text(text, base_url=self._base_url, model=self._model)
-            results.append(vec or [0.0] * 768)
+            results.append(vec or [0.0] * _EMBED_DIM)
         return results
 
 
@@ -132,15 +156,19 @@ def _get_chroma_client() -> chromadb.PersistentClient:
     return chromadb.PersistentClient(path=_CHROMA_PATH)
 
 
+_MARKET_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r'\byelahanka\b', re.I), "Yelahanka"),
+    (re.compile(r'\bdevanahalli\b', re.I), "Devanahalli"),
+    (re.compile(r'\bhebbal\b', re.I), "Hebbal"),
+]
+
+
 def _infer_market(path_str: str) -> str:
-    """Guess market from file path (checks directory name, then filename)."""
+    """Guess market from file path using word-boundary matching (prevents false positives)."""
     p = path_str.lower().replace("\\", "/")
-    if "yelahanka" in p:
-        return "Yelahanka"
-    if "devanahalli" in p:
-        return "Devanahalli"
-    if "hebbal" in p:
-        return "Hebbal"
+    for pattern, market_name in _MARKET_PATTERNS:
+        if pattern.search(p):
+            return market_name
     return "unknown"
 
 
@@ -157,6 +185,23 @@ def _ollama_tags_ok(base_url: str = OLLAMA_BASE_URL, timeout: int = 5) -> bool:
         _ollama_last_status = False
     _ollama_last_check = now
     return _ollama_last_status
+
+
+class SentenceTransformerEmbeddingFunction(EmbeddingFunction):
+    """ChromaDB-compatible embedding function backed by sentence-transformers (Ollama-down fallback).
+    Lazy-loads the model on first call — first invocation is slow (~5s).
+    Returns 384-dim vectors (all-MiniLM-L6-v2).
+    """
+
+    def __init__(self):
+        self._model = None
+
+    def __call__(self, input: Documents) -> Embeddings:
+        if self._model is None:
+            from sentence_transformers import SentenceTransformer
+            self._model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+        embeddings = self._model.encode(input, show_progress_bar=False)
+        return [e.tolist() if hasattr(e, "tolist") else list(e) for e in embeddings]
 
 
 class _BaseChromaStore:
@@ -179,12 +224,45 @@ class _BaseChromaStore:
         if self._collection is not None:
             return
         self._client = _get_chroma_client()
-        self._embed_fn = OllamaEmbeddingFunction()
+        if _ollama_tags_ok():
+            self._embed_fn = OllamaEmbeddingFunction()
+        else:
+            logger.warning("[Embedder] Ollama down — ST fallback active")
+            self._embed_fn = SentenceTransformerEmbeddingFunction()
+        base_name = self._collection_name
+        suffix = "" if _ollama_tags_ok() else "_st"
+        coll_name = f"{base_name}{suffix}"
         self._collection = self._client.get_or_create_collection(
-            name=self._collection_name,
+            name=coll_name,
             embedding_function=self._embed_fn,
             metadata={"hnsw:space": "cosine"},
         )
+        # Migration guard: detect stale nomic-embed-text (768-dim) collections
+        if _ollama_tags_ok():
+            self._check_migrate_collection()
+
+    def _check_migrate_collection(self):
+        """Detect and recreate stale 768-dim collections (pre-BGE-M3 migration)."""
+        try:
+            test_embed = self._embed_fn(["x"])
+            if not test_embed or not isinstance(test_embed, list):
+                return
+            first_vec = test_embed[0]
+            if not isinstance(first_vec, (list, tuple)):
+                return
+            if len(first_vec) != _EMBED_DIM:
+                logger.warning(
+                    "[Embedder] BGE-M3 migration: stale %d-dim collection '%s' detected, recreating",
+                    len(test_embed[0]), self._collection_name,
+                )
+                self._client.delete_collection(self._collection.name)
+                self._collection = self._client.create_collection(
+                    name=self._collection_name,
+                    embedding_function=self._embed_fn,
+                    metadata={"hnsw:space": "cosine"},
+                )
+        except Exception as exc:
+            logger.warning("[Embedder] Migration check failed (non-fatal): %s", exc)
 
     def _format_hits(self, results: dict) -> list[dict]:
         """Normalise ChromaDB query results into {text, ..., score} list.
@@ -276,7 +354,6 @@ class IntelEmbedder(_BaseChromaStore):
                 # aligned to sentence boundaries to prevent mid-sentence cuts.
                 # Higher overlap improves recall for entity-spanning queries like
                 # "Yelahanka PSF trend" where name and metric are 500+ chars apart.
-                import re as _re
                 _CHUNK_SIZE = 2000
                 _CHUNK_OVERLAP = 300
                 _MAX_CHARS = 8000
@@ -287,7 +364,7 @@ class IntelEmbedder(_BaseChromaStore):
                     _limit = _MAX_CHARS
                 text = text[:_limit]
                 # Split on sentence boundaries (newline or period + space)
-                sentences = _re.split(r'(?<=[.\n])\s+', text)
+                sentences = re.split(r'(?<=[.\n])\s+', text)
                 chunks = []
                 current = []
                 current_len = 0
@@ -381,17 +458,22 @@ class IntelEmbedder(_BaseChromaStore):
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:n]
 
-    def search(self, query: str, n: int = 5, market: str | None = None) -> list[dict]:
+    def search(self, query: str, n: int = 5, market: str | None = None, rerank: bool = True) -> list[dict]:
         """
         Semantic search over indexed intel reports.
         Falls back to keyword grep when Ollama unavailable.
+        When rerank=True, fetches 3x candidates from ChromaDB and applies
+        cross-encoder reranking for precision. Reranker is a no-op (silently
+        skipped) when Ollama or ChromaDB is down — keyword fallback results
+        are returned without reranking since the cross-encoder requires GPU.
         Returns list of {text, source, market, score} sorted by relevance.
         Score is in [0, 1] — higher is more relevant.
 
         Latency budget:
           - Ollama available: ~2-5s (embed + query round-trip to ChromaDB)
+          - + reranker: ~5-20ms per query on RTX 3050 (cross-encoder)
           - Keyword fallback: ~0.1-0.5s (file grep on outputs/)
-          - Ollama health check: cached 10s TTL — first call hits API, subsequent calls return cached
+          - Ollama health check: cached 10s TTL
         """
         _metrics["search_calls"] += 1
         if not self._ollama_available():
@@ -417,13 +499,26 @@ class IntelEmbedder(_BaseChromaStore):
                     return keyword_results
                 _metrics["search_empty"] += 1
                 return []
+            fetch_n = min(n * 3 if rerank else n, count)
             results = self._collection.query(
                 query_texts=[query],
-                n_results=min(n, count),
+                n_results=fetch_n,
                 where=where,
             )
+            hits = self._format_hits(results)
             _metrics["search_chroma_hits"] += 1
-            return self._format_hits(results)
+            if rerank and hits:
+                try:
+                    r = _get_reranker()
+                    if r:
+                        reranked = r.rerank(query=query, hits=hits, top_n=n)
+                        if reranked:
+                            _metrics["rerank_applied"] += 1
+                            return reranked
+                except Exception as exc:
+                    _metrics["rerank_unavailable"] += 1
+                    logger.debug(f"[Embedder] Reranker unavailable, returning ChromaDB order: {exc}")
+            return hits
         except Exception as exc:
             logger.warning(f"[Embedder] search failed: {exc}")
             keyword_results = self._keyword_search_fallback(query, n=n, market=market)
@@ -434,9 +529,9 @@ class IntelEmbedder(_BaseChromaStore):
             _metrics["search_empty"] += 1
             return []
 
-    def query(self, question: str, market: str | None = None, n: int = 5) -> list[dict]:
+    def query(self, question: str, market: str | None = None, n: int = 5, rerank: bool = True) -> list[dict]:
         """Alias for search() with parameter ordering matching TASK_BRIEFS spec."""
-        return self.search(question, n=n, market=market)
+        return self.search(question, n=n, market=market, rerank=rerank)
 
 
 class MemoryEmbedder(_BaseChromaStore):

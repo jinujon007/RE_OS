@@ -159,6 +159,135 @@ class TestCompareScenarios:
         assert "PASS" in s3.recommendation
 
 
+class TestGDVEstimator:
+    """GDVEstimator with mocked DB connection (T-477)."""
+
+    def test_estimate_returns_gdv_result(self):
+        from utils.irr_model import GDVEstimator
+        est = GDVEstimator()
+        result = est.estimate(sellable_area_sqft=10000, market="")
+        assert result.sellable_area_sqft == 10000
+        assert result.sell_psf == 0.0
+        assert result.igr_source is None  # no market → no IGR lookup attempted
+        assert result.igr_record_count == 0
+
+    def test_estimate_clamps_max_area(self):
+        from utils.irr_model import GDVEstimator
+        est = GDVEstimator()
+        result = est.estimate(sellable_area_sqft=50_000_000, market="")
+        assert result.sellable_area_sqft == 10_000_000
+
+    def test_estimate_clamps_negative_area(self):
+        from utils.irr_model import GDVEstimator
+        est = GDVEstimator()
+        result = est.estimate(sellable_area_sqft=-5000, market="")
+        assert result.sellable_area_sqft == 0.0
+
+    def test_estimate_empty_market_returns_zero_psf_no_source(self):
+        from utils.irr_model import GDVEstimator
+        est = GDVEstimator()
+        result = est.estimate(sellable_area_sqft=10000, market="")
+        assert result.sell_psf == 0.0
+        assert result.igr_source is None
+
+    def test_estimate_market_no_igr_data_passes_source_through(self):
+        from unittest.mock import patch
+        from utils.irr_model import GDVEstimator
+        with patch.object(GDVEstimator, "_query_igr_median_psf", return_value=(None, 2, "insufficient_records")):
+            est = GDVEstimator()
+            result = est.estimate(sellable_area_sqft=10000, market="Devanahalli")
+            assert result.igr_source == "insufficient_records"
+            assert result.igr_record_count == 2
+
+    def test_estimate_psf_sanity_rejects_outliers(self):
+        from unittest.mock import patch
+        from utils.irr_model import GDVEstimator
+        est = GDVEstimator()
+        est.clear_cache()
+        assert est._validate_psf(250) is None   # below ₹500/sqft
+        assert est._validate_psf(60000) is None  # above ₹50,000/sqft
+        assert est._validate_psf(5000) == 5000   # valid
+
+    def test_clear_cache_empties_cache(self):
+        from utils.irr_model import GDVEstimator
+        est = GDVEstimator()
+        est._cache["test"] = (5000.0, 10, "igr_portal", 9999999999.0)
+        assert len(est._cache) == 1
+        est.clear_cache()
+        assert len(est._cache) == 0
+
+    def test_query_igr_median_psf_db_error_returns_none(self):
+        from unittest.mock import patch
+        from utils.irr_model import GDVEstimator
+        with patch("utils.db.get_engine", side_effect=Exception("DB down")):
+            est = GDVEstimator()
+            psf, count, source = est._query_igr_median_psf("Yelahanka")
+        assert psf is None
+        assert count == 0
+        assert source == "table_unavailable"
+
+    def test_query_igr_median_psf_zero_rows(self):
+        from unittest.mock import MagicMock, patch
+        from utils.irr_model import GDVEstimator
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = None
+        mock_conn = MagicMock()
+        mock_conn.__enter__.return_value.execute.return_value = mock_result
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value = mock_conn
+        with patch("utils.db.get_engine", return_value=mock_engine):
+            est = GDVEstimator()
+            psf, count, source = est._query_igr_median_psf("Yelahanka")
+        assert psf is None
+        assert count == 0
+        assert source == "no_data"
+
+    def test_normalize_market_title_case(self):
+        from utils.irr_model import GDVEstimator
+        assert GDVEstimator._normalize_market("YELAHANKA") == "Yelahanka"
+        assert GDVEstimator._normalize_market("devanahalli") == "Devanahalli"
+        assert GDVEstimator._normalize_market("HEBBAL ") == "Hebbal"
+
+    def test_normalize_market_empty(self):
+        from utils.irr_model import GDVEstimator
+        assert GDVEstimator._normalize_market("") == ""
+        assert GDVEstimator._normalize_market("   ") == ""
+
+    def test_normalize_market_truncates_long(self):
+        from utils.irr_model import GDVEstimator
+        long_name = "A" * 200
+        result = GDVEstimator._normalize_market(long_name)
+        assert len(result) <= 100
+
+    def test_log_igr_lookup_db_error_does_not_raise(self):
+        from utils.irr_model import log_igr_lookup
+        from unittest.mock import patch
+        with patch("utils.db.get_engine", side_effect=Exception("DB down")):
+            log_igr_lookup("Yelahanka", "igr_portal", 10, 5500.0, "TestCaller")
+
+    def test_log_igr_lookup_ignores_empty_market(self):
+        from utils.irr_model import log_igr_lookup
+        from unittest.mock import patch
+        with patch("utils.db.get_engine", side_effect=Exception("DB down")):
+            log_igr_lookup("", None, 0, 0.0, "TestCaller")
+
+    def test_query_igr_median_psf_insufficient_records(self):
+        from unittest.mock import MagicMock, patch
+        from utils.irr_model import GDVEstimator
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = (5500.0, 3)
+        mock_conn = MagicMock()
+        mock_conn.__enter__.return_value.execute.return_value = mock_result
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value = mock_conn
+        with patch("utils.db.get_engine", return_value=mock_engine):
+            est = GDVEstimator()
+            psf, count, source = est._query_igr_median_psf("Yelahanka")
+        assert psf is None
+        assert count == 3
+        assert source == "insufficient_records"
+
+
 class TestDataclassContracts:
     def test_land_cost_result_fields(self):
         r = calc_land_cost(43560, 4000, 10.0)

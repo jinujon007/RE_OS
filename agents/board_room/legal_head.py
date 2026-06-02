@@ -13,11 +13,10 @@ from utils.kaveri_encumbrance import check_encumbrance
 class RERAComplianceTool(BaseTool):
     name: str = "rera_compliance_check"
     description: str = (
-        "Check a developer's RERA Karnataka compliance record from the DB. "
-        "Input: JSON with 'developer_name' (str) and optional 'market' (str). "
-        "Returns: total projects, active/completed split, delayed count, avg delay months, "
-        "inactive project anomalies, CLEAN/WATCH/RISK signal. "
-        "Pass market to scope the check to a specific micro-market."
+        "Check a developer's RERA Karnataka record from DB. "
+        "JSON input: {'developer_name': str, 'market'?: str}. "
+        "Returns projects, delays, signal (CLEAN|WATCH|RISK). "
+        "Returns UNKNOWN + empty stats if developer not in DB (valid result, not an error)."
     )
     def _run(self, input_str: str) -> str:
         try:
@@ -50,11 +49,9 @@ class RERAComplianceTool(BaseTool):
 class ZoneRiskTool(BaseTool):
     name: str = "zone_risk_check"
     description: str = (
-        "Check regulatory zone rules and overlay constraints for a market. "
-        "Input: JSON with 'market' (Yelahanka/Devanahalli/Hebbal), 'zone' (R1/R2/C1, default R2). "
-        "Returns: FAR (far_base), height limit, ground coverage %, setbacks, "
-        "overlay risks (airport funnel, green belt, lake buffer, heritage zone), risk level. "
-        "ground_coverage_pct is a percentage (55 = 55% of site area)."
+        "Check zone rules + overlay constraints for a market. "
+        "JSON input: {'market': str, 'zone'?: 'R1'|'R2'|'C1'}. "
+        "Returns FAR, height limit, setbacks, overlay risks, risk level (LOW|MEDIUM|HIGH|UNKNOWN)."
     )
     def _run(self, input_str: str) -> str:
         try:
@@ -85,11 +82,10 @@ class ZoneRiskTool(BaseTool):
 class EncumbranceCheckTool(BaseTool):
     name: str = "encumbrance_check"
     description: str = (
-        "Check encumbrance status for a market via Kaveri data. "
-        "Input: JSON with 'market' (str) and optional 'survey_no' (str). "
-        "Returns: avg guidance value PSF, transaction count in 180-day window, "
-        "avg transaction PSF, guidance gap %, risk flags. "
-        "Uses DB first, falls back to Kaveri portal scrape if DB empty."
+        "Check encumbrance via Kaveri data for a market. "
+        "JSON input: {'market': str, 'survey_no'?: str}. "
+        "Returns avg guidance value PSF, transaction count, gap %, risk flags. "
+        "DB-first, Kaveri portal fallback if DB empty."
     )
     def _run(self, input_str: str) -> str:
         try:
@@ -117,6 +113,30 @@ class EncumbranceCheckTool(BaseTool):
             return json.dumps({"error": str(e)})
 
 
+class DocumentParseTool(BaseTool):
+    name: str = "parse_document"
+    description: str = (
+        "Parse a legal document (PDF, DOCX, XLSX, PPTX, HTML) and return its text as markdown. "
+        "JSON input: {'file_path': str} — absolute or relative path to the file. "
+        "Use for EC certificates, RERA approval PDFs, sale deeds, layout approval letters. "
+        "Returns: {'content': str, 'char_count': int} or {'error': str}."
+    )
+    def _run(self, input_str: str) -> str:
+        try:
+            params = json.loads(input_str)
+        except (json.JSONDecodeError, TypeError):
+            return json.dumps({"error": "invalid JSON"})
+        try:
+            file_path = str(params.get("file_path", "")).strip()
+            from utils.kaveri_encumbrance import parse_document
+            text = parse_document(file_path)
+            logger.info("[DocumentParseTool] file=%s chars=%d", file_path, len(text))
+            return json.dumps({"content": text, "char_count": len(text)}, indent=2)
+        except Exception as e:
+            logger.warning("[DocumentParseTool] error: %s", e)
+            return json.dumps({"error": str(e)})
+
+
 def build_legal_head_agent():
     from crewai import Agent
     from config.llm_router import get_analysis_llm
@@ -126,8 +146,9 @@ def build_legal_head_agent():
         goal=(
             "Identify legal, regulatory, and title risks that could block or delay this project. "
             "You call rera_compliance_check for any named developer, zone_risk_check for any "
-            "named market, and encumbrance_check for market-level guidance value trends, "
-            "before forming your verdict. Your response is grounded in DB data, not general knowledge."
+            "named market, encumbrance_check for market-level guidance value trends, and "
+            "parse_document if a PDF or document file path is provided (EC cert, RERA approval, "
+            "sale deed). Your response is grounded in DB data and document content, not general knowledge."
         ),
         backstory=(
             "You are the Legal Head at LLS. Your lens: RERA Karnataka registration compliance, "
@@ -138,11 +159,12 @@ def build_legal_head_agent():
             "You respond with: CLEAR / RISK / BLOCKED. You name every unresolved legal item "
             "with its Karnataka-specific statute or regulatory body. "
             "You call rera_compliance_check for any named developer, zone_risk_check "
-            "for any named market, and encumbrance_check for market-level Kaveri data, "
-            "before forming your verdict. "
-            "Your response is grounded in DB data, not general knowledge."
+            "for any named market, encumbrance_check for market-level Kaveri data, and "
+            "parse_document for any PDF or document file the user provides — EC certificates, "
+            "RERA approval letters, sale deeds, layout approval orders. "
+            "Your response is grounded in DB data and document content, not general knowledge."
         ),
-        tools=[RERAComplianceTool(), ZoneRiskTool(), EncumbranceCheckTool()],
+        tools=[RERAComplianceTool(), ZoneRiskTool(), EncumbranceCheckTool(), DocumentParseTool()],
         llm=get_analysis_llm(),
         max_iter=3,
         verbose=False,

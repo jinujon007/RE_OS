@@ -94,6 +94,15 @@ SCRAPE_HEADERS = {
     "Accept-Encoding": "gzip, deflate, br",
 }
 
+# Minimal stealth patches injected before page load — removes the most-checked
+# bot signals without requiring playwright-stealth or any extra dependency.
+_STEALTH_SCRIPT = """\
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+Object.defineProperty(navigator, 'languages', {get: () => ['en-IN', 'en-US', 'en']});
+window.chrome = {runtime: {}};
+"""
+
 # Sources that require Playwright (heavy JS SPAs with bot detection workarounds)
 PLAYWRIGHT_SOURCES = {"housing_sale", "nobroker"}
 
@@ -369,6 +378,10 @@ class PortalScout:
         self.urls = PORTAL_URLS.get(market, {})
         self.session = requests.Session()
         self.session.headers.update(SCRAPE_HEADERS)
+        # Shared browser instance — lazy-init on first Playwright fallback call,
+        # kept alive for the duration of scout() to avoid repeated browser spawns.
+        self._pw_ctx = None
+        self._pw_browser = None
 
     def scout(self, sources: list[str] | None = None) -> list[dict]:
         """
@@ -379,21 +392,24 @@ class PortalScout:
         all_sources = list(self.urls.keys())
         targets = sources if sources else all_sources
 
-        for src in targets:
-            if src not in self.urls:
-                logger.warning(f"[PortalScout] Unknown source key: {src}")
-                continue
-            try:
-                findings = self._scout_source(src)
-                new, known = self.memory.mark_all(findings, source=src)
-                all_findings.extend(new + known)
-                logger.info(
-                    f"[PortalScout][{src}] "
-                    f"{len(findings)} found | {len(new)} new | {len(known)} known"
-                )
-                time.sleep(0.5)
-            except Exception as exc:
-                logger.warning(f"[PortalScout][{src}] Failed: {exc}")
+        try:
+            for src in targets:
+                if src not in self.urls:
+                    logger.warning(f"[PortalScout] Unknown source key: {src}")
+                    continue
+                try:
+                    findings = self._scout_source(src)
+                    new, known = self.memory.mark_all(findings, source=src)
+                    all_findings.extend(new + known)
+                    logger.info(
+                        f"[PortalScout][{src}] "
+                        f"{len(findings)} found | {len(new)} new | {len(known)} known"
+                    )
+                    time.sleep(0.5)
+                except Exception as exc:
+                    logger.warning(f"[PortalScout][{src}] Failed: {exc}")
+        finally:
+            self._close_playwright()
 
         new_total = sum(1 for f in all_findings if f.get("is_new"))
         logger.info(
@@ -401,6 +417,21 @@ class PortalScout:
             f"{len(all_findings)} total | {new_total} new discoveries"
         )
         return all_findings
+
+    def _close_playwright(self) -> None:
+        """Tear down the shared browser instance if it was started."""
+        if self._pw_browser:
+            try:
+                self._pw_browser.close()
+            except Exception:
+                pass
+            self._pw_browser = None
+        if self._pw_ctx:
+            try:
+                self._pw_ctx.stop()
+            except Exception:
+                pass
+            self._pw_ctx = None
 
     def _scout_source(self, src: str) -> list[dict]:
         url = self.urls[src]
@@ -494,26 +525,35 @@ class PortalScout:
         return ""
 
     def _playwright_fetch(self, url: str) -> str:
+        """
+        Last-resort Playwright fallback. Reuses a single browser instance across
+        all calls in a scout() run (session pool). Each URL gets a fresh context
+        so cookies/state don't leak between portals. Stealth JS patches applied
+        before page load to remove the most-checked bot signals.
+        """
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
             return ""
         try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(
+            if self._pw_browser is None:
+                self._pw_ctx = sync_playwright().start()
+                self._pw_browser = self._pw_ctx.chromium.launch(
                     headless=True,
                     args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
                 )
-                ctx = browser.new_context(
-                    user_agent=SCRAPE_HEADERS["User-Agent"], locale="en-IN"
-                )
-                page = ctx.new_page()
-                page.set_default_timeout(30_000)
-                page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-                page.wait_for_timeout(3000)
-                html = page.content()
-                browser.close()
-                return _clean_html(html)
+            ctx = self._pw_browser.new_context(
+                user_agent=SCRAPE_HEADERS["User-Agent"],
+                locale="en-IN",
+            )
+            page = ctx.new_page()
+            page.add_init_script(_STEALTH_SCRIPT)
+            page.set_default_timeout(30_000)
+            page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_timeout(3000)
+            html = page.content()
+            ctx.close()
+            return _clean_html(html)
         except Exception as exc:
             logger.debug(f"[PortalScout][Playwright] Failed for {url}: {exc}")
             return ""

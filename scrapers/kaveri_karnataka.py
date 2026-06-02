@@ -20,9 +20,18 @@ Run standalone:
 
 import requests
 import json
+import re
 import argparse
 from datetime import date, timedelta
 from loguru import logger
+
+# ── Scrapling availability ────────────────────────────────────────────────────
+_SCRAPLING_OK = False
+try:
+    from scrapling.fetchers import Fetcher
+    _SCRAPLING_OK = True
+except ImportError:
+    pass
 
 
 # ── Market metadata ────────────────────────────────────────────────────────────
@@ -49,6 +58,8 @@ MARKET_KAVERI_META = {
 }
 
 BASE_URL = "https://kaveri.karnataka.gov.in"
+MIRROR_URL = "https://kaveri2.karnataka.gov.in"
+IGR_GV_API_URL = "https://kaveri.karnataka.gov.in/api/gv/search"
 GV_SEARCH_URL = f"{BASE_URL}/GVSearch"
 REG_SEARCH_URL = f"{BASE_URL}/registration/search"
 
@@ -389,26 +400,56 @@ class KaveriScraper:
         """
         Fetch current guidance values for a micro-market.
         Returns list of GV records: locality, property_type, road_type, psf.
+
+        Sources tried in order (each logged):
+          1. Scrapling TLS spoof (kaveri.karnataka.gov.in)
+          2. kaveri2.karnataka.gov.in mirror (requests)
+          3. IGR guidance value API (kaveri.karnataka.gov.in/api/gv/search)
+          4. Playwright AJAX interception (legacy)
+          5. Direct POST form submit (legacy)
+          6. Hardcoded verified fallback (logged as warning — never silent)
         """
         logger.info(f"[KaveriScraper] Guidance values scrape: {market_name}")
         meta = MARKET_KAVERI_META.get(market_name, {})
         taluk = meta.get("taluk", market_name)
 
+        # 1. Scrapling TLS spoof
+        records = self._scrape_gv_with_scrapling(taluk, meta)
+        if records:
+            logger.info(f"[KaveriScraper][Scrapling TLS][{market_name}] {len(records)} GV records")
+            return records
+
+        # 2. kaveri2 mirror
+        records = self._scrape_gv_from_mirror(taluk, meta)
+        if records:
+            logger.info(f"[KaveriScraper][Mirror][{market_name}] {len(records)} GV records")
+            return records
+
+        # 3. IGR GV API
+        records = self._scrape_gv_from_igr_api(taluk, meta)
+        if records:
+            logger.info(f"[KaveriScraper][IGR API][{market_name}] {len(records)} GV records")
+            return records
+
+        # 4. Playwright (legacy)
         records = self._scrape_gv_with_playwright(taluk, meta)
-        if not records:
-            logger.info(
-                "[KaveriScraper] Playwright GV returned 0 — trying POST fallback"
-            )
-            records = self._scrape_gv_via_post(taluk, meta)
+        if records:
+            logger.info(f"[KaveriScraper][Playwright][{market_name}] {len(records)} GV records")
+            return records
 
-        if not records:
-            logger.warning(
-                f"[KaveriScraper] GV portal unreachable — using fallback data for {market_name}"
-            )
-            records = self._fallback_guidance_values(market_name)
+        # 5. Direct POST (legacy)
+        records = self._scrape_gv_via_post(taluk, meta)
+        if records:
+            logger.info(f"[KaveriScraper][POST][{market_name}] {len(records)} GV records")
+            return records
 
+        # 6. Hardcoded fallback — always logged as warning, never silent
+        logger.warning(
+            f"[KaveriScraper] All GV sources failed for {market_name} — using fallback data"
+        )
+        records = self._fallback_guidance_values(market_name)
         logger.info(
-            f"[KaveriScraper] Guidance values: {len(records)} records for {market_name}"
+            f"[KaveriScraper][Fallback][{market_name}] {len(records)} GV records"
         )
         return records
 
@@ -419,6 +460,13 @@ class KaveriScraper:
         Fetch recent property registrations for a micro-market.
         Returns list of registration records with transaction_amount, area_sqft, dates.
         months_back: how far back to fetch (default 6 months)
+
+        Sources tried in order (each logged):
+          1. Scrapling TLS spoof (kaveri.karnataka.gov.in)
+          2. kaveri2.karnataka.gov.in mirror (requests)
+          3. Playwright AJAX interception (legacy)
+          4. Direct POST form submit (legacy)
+          5. Hardcoded verified fallback (logged as warning — never silent)
         """
         logger.info(
             f"[KaveriScraper] Registration scrape: {market_name} ({months_back} months back)"
@@ -428,23 +476,229 @@ class KaveriScraper:
         from_date = (date.today() - timedelta(days=months_back * 30)).isoformat()
         to_date = date.today().isoformat()
 
+        # 1. Scrapling TLS spoof
+        records = self._scrape_reg_with_scrapling(meta, from_date, to_date)
+        if records:
+            logger.info(f"[KaveriScraper][Scrapling TLS][{market_name}] {len(records)} registration records")
+            return records
+
+        # 2. kaveri2 mirror
+        records = self._scrape_reg_from_mirror(meta, from_date, to_date)
+        if records:
+            logger.info(f"[KaveriScraper][Mirror][{market_name}] {len(records)} registration records")
+            return records
+
+        # 3. Playwright (legacy)
         records = self._scrape_reg_with_playwright(meta, from_date, to_date)
-        if not records:
-            logger.info(
-                "[KaveriScraper] Playwright reg returned 0 — trying POST fallback"
-            )
-            records = self._scrape_reg_via_post(meta, from_date, to_date)
+        if records:
+            logger.info(f"[KaveriScraper][Playwright][{market_name}] {len(records)} registration records")
+            return records
 
-        if not records:
-            logger.warning(
-                f"[KaveriScraper] Registration portal unreachable — using fallback data for {market_name}"
-            )
-            records = self._fallback_registrations(market_name)
+        # 4. Direct POST (legacy)
+        records = self._scrape_reg_via_post(meta, from_date, to_date)
+        if records:
+            logger.info(f"[KaveriScraper][POST][{market_name}] {len(records)} registration records")
+            return records
 
+        # 5. Hardcoded fallback — always logged as warning, never silent
+        logger.warning(
+            f"[KaveriScraper] All registration sources failed for {market_name} — using fallback data"
+        )
+        records = self._fallback_registrations(market_name)
         logger.info(
-            f"[KaveriScraper] Registrations: {len(records)} records for {market_name}"
+            f"[KaveriScraper][Fallback][{market_name}] {len(records)} registration records"
         )
         return records
+
+    # ── Guidance Values — Scrapling TLS spoof (new primary) ───────────────────
+
+    def _scrape_gv_with_scrapling(self, taluk: str, meta: dict) -> list[dict]:
+        """Try Scrapling Fetcher with TLS fingerprint spoofing against primary portal."""
+        if not _SCRAPLING_OK:
+            logger.debug("[KaveriScraper][Scrapling] Not available — skipping")
+            return []
+
+        try:
+            page = Fetcher.get(
+                GV_SEARCH_URL,
+                stealthy_headers=True,
+                follow_redirects=True,
+            )
+            html = getattr(page, "html", None) or str(page)
+            if len(html) > 1000:
+                records = self._parse_gv_html(html, meta)
+                if records:
+                    for r in records:
+                        r["source"] = "scrapling_tls"
+                    logger.info(
+                        f"[KaveriScraper][Scrapling TLS] {len(records)} GV records "
+                        f"({len(html)} chars)"
+                    )
+                    return records
+            logger.debug(
+                f"[KaveriScraper][Scrapling TLS] Page too short ({len(html)} chars)"
+            )
+        except Exception as exc:
+            logger.debug(f"[KaveriScraper][Scrapling TLS] Failed: {exc}")
+        return []
+
+    # ── Guidance Values — kaveri2 mirror ───────────────────────────────────────
+
+    def _scrape_gv_from_mirror(self, taluk: str, meta: dict) -> list[dict]:
+        """Try kaveri2.karnataka.gov.in mirror via requests POST."""
+        mirror_gv_url = f"{MIRROR_URL}/GVSearch"
+        try:
+            payload = {
+                "district": meta.get("district", "Bangalore Urban"),
+                "taluk": taluk,
+            }
+            resp = self.session.post(mirror_gv_url, data=payload, timeout=15)
+            if resp.status_code == 200 and len(resp.text) > 500:
+                records = self._parse_gv_html(resp.text, meta)
+                if records:
+                    for r in records:
+                        r["source"] = "mirror"
+                    logger.info(
+                        f"[KaveriScraper][Mirror] {len(records)} GV records from "
+                        f"kaveri2"
+                    )
+                    return records
+        except Exception as exc:
+            logger.debug(f"[KaveriScraper][Mirror] Failed: {exc}")
+        return []
+
+    # ── Guidance Values — IGR GV API ──────────────────────────────────────────
+
+    def _scrape_gv_from_igr_api(self, taluk: str, meta: dict) -> list[dict]:
+        """Try the IGR guidance value API endpoint."""
+        try:
+            payload = {
+                "district": meta.get("district", "Bangalore Urban"),
+                "taluk": taluk,
+            }
+            resp = self.session.post(IGR_GV_API_URL, data=payload, timeout=15)
+            if resp.status_code == 200:
+                try:
+                    body = resp.json()
+                    if isinstance(body, list) and body:
+                        records = []
+                        for item in body:
+                            records.append({
+                                "locality": item.get("locality", ""),
+                                "property_type": item.get("propertyType", "Residential"),
+                                "road_type": item.get("roadType", "Main Road"),
+                                "guidance_value_psf": float(
+                                    item.get("guidanceValuePsf", 0)
+                                ),
+                                "effective_from": item.get("effectiveFrom", "2024-04-01"),
+                                "source": "igr_api",
+                            })
+                        records = [r for r in records if r["guidance_value_psf"] > 0]
+                        if records:
+                            logger.info(
+                                f"[KaveriScraper][IGR API] {len(records)} GV records"
+                            )
+                            return records
+                except (json.JSONDecodeError, TypeError):
+                    # Not JSON — try HTML parse as fallback
+                    if len(resp.text) > 500:
+                        records = self._parse_gv_html(resp.text, meta)
+                        if records:
+                            for r in records:
+                                r["source"] = "igr_api"
+                            return records
+                    else:
+                        logger.debug(
+                            f"[KaveriScraper][IGR API] Non-JSON, non-HTML response "
+                            f"({resp.status_code}, {len(resp.text)} chars, "
+                            f"preview={resp.text[:200]})"
+                        )
+        except Exception as exc:
+            logger.debug(f"[KaveriScraper][IGR API] Failed: {exc}")
+        return []
+
+    # ── Registrations — Scrapling TLS spoof ──────────────────────────────────
+
+    def _scrape_reg_with_scrapling(
+        self, meta: dict, from_date: str, to_date: str
+    ) -> list[dict]:
+        """Try Scrapling Fetcher with TLS fingerprint spoofing for registrations."""
+        if not _SCRAPLING_OK:
+            return []
+
+        try:
+            page = Fetcher.get(
+                REG_SEARCH_URL,
+                stealthy_headers=True,
+                follow_redirects=True,
+            )
+            html = getattr(page, "html", None) or str(page)
+            if len(html) > 1000:
+                logger.debug(
+                    f"[KaveriScraper][Scrapling TLS] Reg page loaded ({len(html)} chars)"
+                )
+        except Exception as exc:
+            logger.debug(f"[KaveriScraper][Scrapling TLS] Reg failed: {exc}")
+            return []
+
+        # Try to extract JSON data from the page
+        json_match = re.search(
+            r'getAllRegistrations.*?(\[.*?\])',
+            html, re.DOTALL
+        )
+        if json_match:
+            try:
+                data = json.loads(json_match.group(1))
+                if data:
+                    records = self._normalize_reg_rows(data, meta)
+                    if records:
+                        for r in records:
+                            r["source"] = "scrapling_tls"
+                        logger.info(
+                            f"[KaveriScraper][Scrapling TLS] {len(records)} reg records"
+                        )
+                        return records
+            except (json.JSONDecodeError, Exception):
+                pass
+
+        return []
+
+    # ── Registrations — kaveri2 mirror ────────────────────────────────────────
+
+    def _scrape_reg_from_mirror(
+        self, meta: dict, from_date: str, to_date: str
+    ) -> list[dict]:
+        """Try kaveri2.karnataka.gov.in mirror for registrations."""
+        mirror_reg_url = f"{MIRROR_URL}/registration/search"
+        try:
+            payload = {
+                "district": meta.get("district", ""),
+                "taluk": meta.get("taluk", ""),
+                "fromDate": from_date,
+                "toDate": to_date,
+                "draw": "1",
+                "start": "0",
+                "length": "100",
+            }
+            resp = self.session.post(mirror_reg_url, data=payload, timeout=20)
+            if resp.status_code == 200:
+                try:
+                    body = resp.json()
+                    if isinstance(body, dict) and "data" in body:
+                        records = self._normalize_reg_rows(body["data"], meta)
+                        if records:
+                            for r in records:
+                                r["source"] = "mirror"
+                            logger.info(
+                                f"[KaveriScraper][Mirror] {len(records)} reg records "
+                                f"from kaveri2"
+                            )
+                            return records
+                except (json.JSONDecodeError, Exception):
+                    pass
+        except Exception as exc:
+            logger.debug(f"[KaveriScraper][Mirror] Reg failed: {exc}")
+        return []
 
     # ── Guidance Values — Playwright ───────────────────────────────────────────
 
@@ -775,13 +1029,13 @@ class KaveriScraper:
     # ── Hardcoded fallbacks ────────────────────────────────────────────────────
 
     def _fallback_guidance_values(self, market_name: str) -> list[dict]:
-        records = _FALLBACK_GV.get(market_name, [])
+        records = [dict(r) for r in _FALLBACK_GV.get(market_name, [])]
         for r in records:
             r.setdefault("source", "fallback_sample")
         return records
 
     def _fallback_registrations(self, market_name: str) -> list[dict]:
-        return _FALLBACK_REG.get(market_name, [])
+        return [dict(r) for r in _FALLBACK_REG.get(market_name, [])]
 
 
 # ── Standalone run ─────────────────────────────────────────────────────────────

@@ -17,12 +17,23 @@ build/
 # Logs & outputs (don't commit run data)
 logs/
 outputs/
+# BERTScore reference corpus files (manually selected — not auto-generated, but not source)
+outputs/references/*.txt
 kilo_output/
 kilo_logs/
 
 # Docker volumes
 postgres_data/
 ollama_data/
+
+# Training data (RERA extraction model — never commit real project data)
+data/training/
+
+# Model artifacts (large binary files — GGUF, checkpoints)
+models/*.gguf
+models/rera-extractor-3b/
+models/rera-extractor-3b-merged/
+models/gguf_export_info.json
 
 # ChromaDB persistent data (generated at runtime — not source)
 chroma_data/
@@ -65,6 +76,9 @@ htmlcov/
 tmp_*.py
 validate_renderer.py
 
+# Sprint 37 — synthetic eval images (generated, not source)
+data/eval/
+
 # Backup files
 *.bak
 
@@ -90,6 +104,9 @@ CLINE_BRIEF.md
 CURRENT_TASK.md
 KILO_BRIEF.md
 TASK_ARCHIVE.md
+
+# Compound Engineering local config (machine-specific, not shared)
+.compound-engineering/*.local.yaml
 
 # VS Code personal settings (contains local paths and credentials)
 .vscode/

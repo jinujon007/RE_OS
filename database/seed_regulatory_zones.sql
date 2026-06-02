@@ -11,7 +11,13 @@
 -- Authority: BDA (Bangalore Development Authority)
 -- DC Rules: BDA DC Rules 2015, Chapter 7 — Development Standards
 
-BEGIN;
+-- Seed regulatory zones for 3 primary markets
+-- Safe for both psql and SQLAlchemy execution contexts
+-- Idempotent: DELETE before INSERT ensures re-runnable
+-- Index: CREATE INDEX IF NOT EXISTS idx_regulatory_zones_type_code
+--        ON regulatory_zones(zone_type, zone_code);
+-- (zone_type + zone_code is the primary query filter in zone_risk_checker.py)
+
 DELETE FROM regulatory_zones WHERE authority = 'BDA';
 
 INSERT INTO regulatory_zones (
@@ -41,10 +47,3 @@ INSERT INTO regulatory_zones (
  2.75, 21, 58, 4.5, 1.5, 1.5, FALSE, 'BDA DC Rules 2015, Clause 7.3'),
 ('BDA', 'Hebbal',      'C1', 'Commercial — Core',
   2.50, 18, 60, 6.0, 3.0, 3.0, TRUE,  'BDA DC Rules 2015, Clause 7.5');
-
-COMMIT;
-
--- Verify
-SELECT zone_type, zone_code, far_base, max_height_m, ground_coverage_pct
-FROM regulatory_zones
-ORDER BY zone_type, zone_code;
