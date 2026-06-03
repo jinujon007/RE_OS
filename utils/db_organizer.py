@@ -273,7 +273,7 @@ class DBOrganizer:
             except Exception as log_exc:
                 logger.warning(f"[DBOrganizer] Failed log quality failure: {log_exc}")
 
-            from utils.discord_notifier import send, send_quality_alert
+            from utils.discord_notifier import send_quality_alert
             alert_msg = format_data_quality_alert(market_name, qc)
             if alert_msg:
                 send_quality_alert(
@@ -285,8 +285,9 @@ class DBOrganizer:
             return qc
 
         except Exception as qc_exc:
-            logger.warning(f"[DBOrganizer] Quality check error (non-fatal): {qc_exc}")
-            return {"success": True, "failed_expectations": [], "warnings": []}
+            logger.warning(f"[DBOrganizer] Quality check error (non-fatal): {qc_exc}", exc_info=True)
+            return {"success": True, "failed_expectations": [], "warnings": [],
+                    "note": f"Quality check exception: {qc_exc}"}
 
     def run_portal_scout(self, market_name: str, findings: list) -> dict:
         """Upsert portal scout findings into listings table using cid."""

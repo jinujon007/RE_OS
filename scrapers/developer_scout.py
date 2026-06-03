@@ -54,6 +54,7 @@ from config.settings import (
     CEREBRAS_BASE_URL,
     CEREBRAS_MODEL,
     GEMINI_API_KEY,
+    GEMINI_CEO_MODEL,
     GEMINI_LIGHT_MODEL,
 )
 from config.metrics import scraper_runs_total

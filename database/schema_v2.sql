@@ -723,6 +723,37 @@ CREATE TABLE IF NOT EXISTS opportunity_scores (
     pruned_at TIMESTAMPTZ
 );
 
+-- Idempotent constraint migration: ADD CONSTRAINT IF NOT EXISTS for existing tables
+-- (CREATE TABLE IF NOT EXISTS skips constraints on pre-existing tables)
+DO $$ BEGIN
+    ALTER TABLE opportunity_scores ADD CONSTRAINT uq_opp_scores_survey UNIQUE (survey_id, survey_no, micro_market_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+    ALTER TABLE opportunity_scores ADD CONSTRAINT chk_opp_scores_score_range CHECK (score >= 0 AND score <= 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+    ALTER TABLE opportunity_scores ADD CONSTRAINT chk_opp_scores_irr_score_range CHECK (irr_score >= 0 AND irr_score <= 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+    ALTER TABLE opportunity_scores ADD CONSTRAINT chk_opp_scores_legal_score_range CHECK (legal_score >= 0 AND legal_score <= 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+    ALTER TABLE opportunity_scores ADD CONSTRAINT chk_opp_scores_timing_score_range CHECK (timing_score >= 0 AND timing_score <= 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+    ALTER TABLE opportunity_scores ADD CONSTRAINT chk_opp_scores_distress_score_range CHECK (distress_score >= 0 AND distress_score <= 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+    ALTER TABLE opportunity_scores ADD CONSTRAINT chk_opp_scores_exclusivity_score_range CHECK (exclusivity_score >= 0 AND exclusivity_score <= 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 -- ingest_log: Data ingest audit trail
 CREATE TABLE IF NOT EXISTS ingest_log (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

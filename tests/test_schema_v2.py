@@ -31,14 +31,14 @@ def _get_columns(conn, table):
 
 @pytest.fixture(scope="function")
 def tx_conn():
-    """Transactional connection — all DML rolled back after test."""
+    """Transactional connection — autobegin in SQLAlchemy 2.0, rollback on teardown.
+    All DML within test is rolled back regardless of pass/fail."""
     engine = get_engine()
     conn = engine.connect()
-    trans = conn.begin()
     try:
         yield conn
     finally:
-        trans.rollback()
+        conn.rollback()
         conn.close()
 
 
@@ -164,61 +164,67 @@ class TestV2Views:
 
 class TestDML:
     def test_ingest_log_insertable(self, tx_conn):
-        with tx_conn.begin():
-            conn.execute(text("""
-                INSERT INTO ingest_log (plugin_id, market, status)
-                VALUES (:p, :m, :s)
-            """), {"p": "test_plugin", "m": "test_market", "s": "success"})
-            row = conn.execute(text("""
-                SELECT COUNT(*) FROM ingest_log WHERE plugin_id = 'test_plugin'
-            """)).fetchone()
-            assert row[0] >= 1, "ingest_log insert failed"
+        tx_conn.execute(text("""
+            INSERT INTO ingest_log (plugin_id, market, status)
+            VALUES (:p, :m, :s)
+        """), {"p": "test_plugin", "m": "test_market", "s": "success"})
+        row = tx_conn.execute(text("""
+            SELECT COUNT(*) FROM ingest_log WHERE plugin_id = 'test_plugin'
+        """)).fetchone()
+        assert row[0] >= 1, "ingest_log insert failed"
 
-    def test_ingest_log_idempotent_reinsert(self, tx_conn):
-        with tx_conn.begin():
-            conn.execute(text("""
-                INSERT INTO ingest_log (plugin_id, market, entity_type, status)
-                VALUES (:p, :m, :e, :s)
-            """), {"p": "test_dedup", "m": "test", "e": "test_entity", "s": "success"})
-            conn.execute(text("""
-                INSERT INTO ingest_log (plugin_id, market, entity_type, status)
-                VALUES (:p, :m, :e, :s)
-            """), {"p": "test_dedup", "m": "test", "e": "test_entity", "s": "success"})
-            row = conn.execute(text("""
-                SELECT COUNT(*) FROM ingest_log WHERE plugin_id = 'test_dedup'
-            """)).fetchone()
-            assert row[0] == 2, "ingest_log should allow multiple similar rows (no unique constraint)"
+    def test_ingest_log_append_only_no_unique_constraint(self, tx_conn):
+        """ingest_log is append-only audit log — no unique constraint on (plugin_id, market, entity_type).
+        Two identical inserts must produce two rows, not an upsert."""
+        tx_conn.execute(text("""
+            INSERT INTO ingest_log (plugin_id, market, entity_type, status)
+            VALUES (:p, :m, :e, :s)
+        """), {"p": "test_append", "m": "test", "e": "test_entity", "s": "success"})
+        tx_conn.execute(text("""
+            INSERT INTO ingest_log (plugin_id, market, entity_type, status)
+            VALUES (:p, :m, :e, :s)
+        """), {"p": "test_append", "m": "test", "e": "test_entity", "s": "success"})
+        row = tx_conn.execute(text("""
+            SELECT COUNT(*) FROM ingest_log WHERE plugin_id = 'test_append'
+        """)).fetchone()
+        assert row[0] == 2, "ingest_log should allow duplicate rows (append-only, no unique constraint)"
 
     def test_opportunity_scores_insertable(self, tx_conn):
-        with tx_conn.begin():
-            row = conn.execute(text("""
-                INSERT INTO opportunity_scores (survey_no, micro_market_id, score)
-                SELECT 'TEST-SURVEY', id, 0.7500
-                FROM micro_markets
-                WHERE slug = 'yelahanka'
-                RETURNING id
-            """)).fetchone()
-            assert row is not None, "opportunity_scores insert failed"
+        # Verify target market exists in seed data
+        market = tx_conn.execute(text(
+            "SELECT id FROM micro_markets WHERE slug = 'yelahanka'"
+        )).fetchone()
+        assert market is not None, "Seed data missing: micro_markets with slug='yelahanka'"
+        row = tx_conn.execute(text("""
+            INSERT INTO opportunity_scores (survey_no, micro_market_id, score)
+            SELECT 'TEST-SURVEY', id, 0.7500
+            FROM micro_markets
+            WHERE slug = 'yelahanka'
+            RETURNING id
+        """)).fetchone()
+        assert row is not None, "opportunity_scores insert failed"
 
     def test_deals_insertable(self, tx_conn):
-        with tx_conn.begin():
-            row = tx_conn.execute(text("""
-                INSERT INTO deals (deal_name, deal_type, stage)
-                VALUES (:n, :t, :s)
-                RETURNING id
-            """), {"n": "Test Deal", "t": "jd", "s": "evaluating"}).fetchone()
-            assert row is not None, "deals insert failed"
+        row = tx_conn.execute(text("""
+            INSERT INTO deals (deal_name, deal_type, stage)
+            VALUES (:n, :t, :s)
+            RETURNING id
+        """), {"n": "Test Deal", "t": "jd", "s": "evaluating"}).fetchone()
+        assert row is not None, "deals insert failed"
 
     def test_surveys_insertable(self, tx_conn):
-        with tx_conn.begin():
-            row = tx_conn.execute(text("""
-                INSERT INTO surveys (survey_no, micro_market_id)
-                SELECT 'TEST-SVY-001', id
-                FROM micro_markets
-                WHERE slug = 'devanahalli'
-                RETURNING id
-            """)).fetchone()
-            assert row is not None, "surveys insert failed"
+        market = tx_conn.execute(text(
+            "SELECT id FROM micro_markets WHERE slug = 'devanahalli'"
+        )).fetchone()
+        assert market is not None, "Seed data missing: micro_markets with slug='devanahalli'"
+        row = tx_conn.execute(text("""
+            INSERT INTO surveys (survey_no, micro_market_id)
+            SELECT 'TEST-SVY-001', id
+            FROM micro_markets
+            WHERE slug = 'devanahalli'
+            RETURNING id
+        """)).fetchone()
+        assert row is not None, "surveys insert failed"
 
 
 # ── Seed data validation tests ────────────────────────────────────────────────
@@ -258,20 +264,48 @@ class TestSeedData:
 # ── Negative / edge-case tests ────────────────────────────────────────────────
 
 class TestNegativeCases:
-    def test_unknown_table_raises(self, conn):
+    def test_unknown_table_not_present(self, conn):
         inspector = inspect(conn)
         tables = set(inspector.get_table_names())
-        assert "nonexistent_table_v2" not in tables
+        assert "nonexistent_table_v2" not in tables, "Unexpected phantom table"
 
     def test_opportunity_score_overflow_prevented(self, tx_conn):
-        with tx_conn.begin():
-            from sqlalchemy import exc
-            with pytest.raises((exc.DataError, exc.IntegrityError)):
-                tx_conn.execute(text("""
-                    INSERT INTO opportunity_scores (survey_no, micro_market_id, score, irr_score)
-                    SELECT 'OVERFLOW-TEST', id, 1.5, -0.1
-                    FROM micro_markets WHERE slug = 'yelahanka'
-                """))
+        from sqlalchemy import exc
+        market = tx_conn.execute(text(
+            "SELECT id FROM micro_markets WHERE slug = 'yelahanka'"
+        )).fetchone()
+        if not market:
+            pytest.skip("Seed data not loaded — micro_markets empty")
+        with pytest.raises((exc.DataError, exc.IntegrityError)):
+            tx_conn.execute(text("""
+                INSERT INTO opportunity_scores (survey_no, micro_market_id, score, irr_score)
+                SELECT 'OVERFLOW-TEST', id, 1.5, -0.1
+                FROM micro_markets WHERE slug = 'yelahanka'
+            """))
+
+
+class TestEdgeCases:
+    def test_empty_ingest_log_market_accepted(self, tx_conn):
+        """Empty string market should be accepted — no CHECK constraint."""
+        tx_conn.execute(text("""
+            INSERT INTO ingest_log (plugin_id, market, status)
+            VALUES (:p, :m, :s)
+        """), {"p": "test_empty", "m": "", "s": "success"})
+        row = tx_conn.execute(text(
+            "SELECT COUNT(*) FROM ingest_log WHERE plugin_id = 'test_empty'"
+        )).fetchone()
+        assert row[0] == 1, "Empty market string insert failed"
+
+    def test_long_plugin_id_truncation(self, tx_conn):
+        """Verify VARCHAR(100) accepts boundary-length plugin_id."""
+        tx_conn.execute(text("""
+            INSERT INTO ingest_log (plugin_id, market, status)
+            VALUES (:p, :m, :s)
+        """), {"p": "a" * 100, "m": "test", "s": "success"})
+        row = tx_conn.execute(text(
+            "SELECT COUNT(*) FROM ingest_log WHERE LENGTH(plugin_id) = 100"
+        )).fetchone()
+        assert row[0] == 1, "VARCHAR boundary insert failed"
 
 
 # ── T-709 index existence tests ──────────────────────────────────────────────
@@ -282,18 +316,18 @@ class TestIndexSpec:
             SELECT indexname FROM pg_indexes
             WHERE tablename = 'rera_projects' AND indexname = 'idx_rera_projects_distressed'
         """)).fetchone()
-        assert indexes is not None, "T-709 Path 1 index missing"
+        assert indexes is not None, "Index idx_rera_projects_distressed missing (T-709 Path 1)"
 
     def test_idx_kaveri_reg_market_date_exists(self, conn):
         indexes = conn.execute(text("""
             SELECT indexname FROM pg_indexes
             WHERE tablename = 'kaveri_registrations' AND indexname = 'idx_kaveri_reg_market_date'
         """)).fetchone()
-        assert indexes is not None, "T-709 Path 3 index missing"
+        assert indexes is not None, "Index idx_kaveri_reg_market_date missing (T-709 Path 3)"
 
     def test_idx_agent_registry_spec_gin_exists(self, conn):
         indexes = conn.execute(text("""
             SELECT indexname FROM pg_indexes
             WHERE tablename = 'agent_registry' AND indexname = 'idx_agent_registry_spec_gin'
         """)).fetchone()
-        assert indexes is not None, "T-709 Path 6 GIN index missing"
+        assert indexes is not None, "Index idx_agent_registry_spec_gin missing (T-709 Path 6)"

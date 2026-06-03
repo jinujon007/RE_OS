@@ -1,11 +1,15 @@
 """
 RE_OS — Agent Memory
 ──────────────────────
-Read, write, and decay structured facts in the agent_memories PostgreSQL table.
-Table is created by Alembic baseline migration (0001_initial.py).
+Read, write, detect conflicts in, generate weekly digests from, and decay
+structured facts in the agent_memories PostgreSQL table.
+Table created by Alembic baseline migration (0001_initial.py).
 
 Usage:
-    from utils.agent_memory import read_memories, write_memory, decay_memories
+    from utils.agent_memory import (
+        read_memories, write_memory, decay_memories,
+        detect_conflicts, generate_weekly_digest,
+    )
 
     # Before Stage 3 crew kickoff:
     facts = read_memories("ceo", "Yelahanka", limit=5)
@@ -15,8 +19,15 @@ Usage:
 
     # Scheduled decay (run weekly):
     decay_memories(days=30, decay_amount=0.1)
+
+    # Weekly conflict detection:
+    conflicts = detect_conflicts("Yelahanka")
+
+    # Weekly digest:
+    digest = generate_weekly_digest("Yelahanka")
 """
 
+import re
 from datetime import datetime, timedelta
 
 from loguru import logger
@@ -24,8 +35,23 @@ from sqlalchemy import create_engine, text
 
 from config.settings import DATABASE_URL
 
+__all__ = [
+    "read_memories",
+    "write_memory",
+    "decay_memories",
+    "detect_conflicts",
+    "generate_weekly_digest",
+]
+
 # Single engine — shared across all calls in this process
 _engine = None
+
+
+def _sanitize_market(market: str) -> str:
+    """Strip non-alphanumeric chars from market name. Returns empty string if invalid."""
+    if not market or not isinstance(market, str):
+        return ""
+    return re.sub(r'[^a-zA-Z0-9\s]', '', market).strip()
 
 
 def _get_engine():
@@ -39,7 +65,11 @@ def read_memories(agent_id: str, market: str, limit: int = 5) -> list[dict]:
     """Return top-N highest-confidence facts for this agent+market.
 
     Returns empty list if table is empty or DB unreachable — never raises.
+    Market is sanitized before query to prevent injection.
     """
+    sanitized = _sanitize_market(market)
+    if not sanitized:
+        return []
     try:
         with _get_engine().connect() as conn:
             rows = conn.execute(
@@ -47,12 +77,12 @@ def read_memories(agent_id: str, market: str, limit: int = 5) -> list[dict]:
                 SELECT fact, confidence, created_at
                 FROM agent_memories
                 WHERE agent_id = :agent_id
-                  AND market ILIKE :market
+                  AND market ILIKE :pattern
                   AND confidence >= 0.4
                 ORDER BY confidence DESC, created_at DESC
                 LIMIT :limit
                 """),
-                {"agent_id": agent_id, "market": f"%{market}%", "limit": limit},
+                {"agent_id": agent_id, "pattern": f"%{sanitized}%", "limit": limit},
             ).fetchall()
             return [{"fact": r[0], "confidence": r[1], "created_at": str(r[2])} for r in rows]
     except Exception as exc:
@@ -169,22 +199,16 @@ def detect_conflicts(market: str) -> list[dict]:
     Returns list of conflict dicts with keys: market, fact_prefix, agent_a, agent_b,
     value_a, value_b, pct_gap.
     """
-    import re
     import json
     import time
-    from loguru import logger
     
     conflicts = []
     start_time = time.time()
     
-    # Input validation - prevent SQL injection
-    if not market or not isinstance(market, str):
+    sanitized_market = _sanitize_market(market)
+    if not sanitized_market:
         logger.warning(f"[Memory] detect_conflicts rejected invalid market: {market!r}")
         return []
-    
-    # Sanitize market - allow only alphanumeric and spaces
-    import re as re_module
-    sanitized_market = re_module.sub(r'[^a-zA-Z0-9\s]', '', market).strip()
     if not sanitized_market:
         logger.warning("[Memory] detect_conflicts rejected sanitized market")
         return []
@@ -295,4 +319,67 @@ def detect_conflicts(market: str) -> list[dict]:
     except Exception as exc:
         duration_ms = (time.time() - start_time) * 1000
         logger.error(f"[Memory] detect_conflicts failed for {sanitized_market} after {duration_ms:.1f}ms: {exc}")
+        return []
+
+
+def generate_weekly_digest(market: str, max_fact_length: int = 0) -> list[dict]:
+    """Generate a weekly digest of top-5 highest-confidence facts for a market.
+
+    Queries agent_memories for the highest-confidence non-conflict facts,
+    ordered by confidence descending. Returns formatted dicts with fact,
+    confidence, agent_id, market, and created_at. Gracefully returns empty list
+    on DB error or invalid input.
+
+    Recorded to Prometheus via db_query_duration_seconds histogram under
+    query_name='generate_weekly_digest'.
+
+    Args:
+        market: Target market name (Yelahanka/Devanahalli/Hebbal). Sanitized.
+        max_fact_length: Max chars per fact text (0 = no truncation). Default 0.
+
+    Returns:
+        List of dicts with keys: fact, confidence, agent_id, market, created_at.
+        Empty list on error or no facts found.
+    """
+    sanitized = _sanitize_market(market)
+    if not sanitized:
+        logger.warning(f"[Memory] generate_weekly_digest rejected invalid market: {market!r}")
+        return []
+
+    try:
+        with _get_engine().connect() as conn:
+            from utils.db import timed_query
+
+            with timed_query("generate_weekly_digest"):
+                rows = conn.execute(
+                    text("""
+                    SELECT fact, confidence, agent_id, market, created_at
+                    FROM agent_memories
+                    WHERE market ILIKE :pattern
+                      AND confidence >= 0.4
+                      AND COALESCE(fact_type, 'fact') NOT IN ('conflict')
+                    ORDER BY confidence DESC, created_at DESC
+                    LIMIT 5
+                    """),
+                    {"pattern": f"%{sanitized}%"},
+                ).fetchall()
+
+            digest = []
+            for r in rows:
+                fact_text = str(r[0] or "")
+                if max_fact_length > 0 and len(fact_text) > max_fact_length:
+                    fact_text = fact_text[:max_fact_length] + "…"
+                digest.append({
+                    "fact": fact_text,
+                    "confidence": round(float(r[1]), 4) if r[1] is not None else 0.0,
+                    "agent_id": str(r[2] or ""),
+                    "market": str(r[3] or ""),
+                    "created_at": str(r[4]) if r[4] else "",
+                })
+
+            logger.info(f"[Memory] generate_weekly_digest({sanitized}): {len(digest)} facts")
+            return digest
+
+    except Exception as exc:
+        logger.warning(f"[Memory] generate_weekly_digest failed for {sanitized}: {exc}")
         return []

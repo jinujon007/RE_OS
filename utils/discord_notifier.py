@@ -42,6 +42,7 @@ _CHANNEL_ENV_MAP = {
     "intel":            "DISCORD_WEBHOOK_INTEL",
     "system":           "DISCORD_WEBHOOK_SYSTEM",
     "health":           "DISCORD_WEBHOOK_SYSTEM",  # alias — maps to same webhook as system
+    "bd_opportunities": "DISCORD_WEBHOOK_BD_OPPORTUNITIES",
 }
 
 _VALID_CHANNELS = frozenset(_CHANNEL_ENV_MAP)
@@ -191,7 +192,17 @@ def send_system_alert(job_name: str, error: str) -> bool:
 
 
 def send_quality_alert(market: str, errors: list, warnings: list) -> bool:
-    """Send a data quality alert to the health channel."""
+    """Send a data quality alert to the health channel.
+    
+    Args:
+        market: Market name (Yelahanka/Devanahalli/Hebbal).
+        errors: List of error dicts, each with keys: table, column, expectation,
+                bad_values (optional list), severity='ERROR'.
+        warnings: List of warning dicts, same key structure, severity='WARN'.
+    
+    Returns:
+        True if webhook POST succeeded, False otherwise.
+    """
     title = f"Data Quality — {market}"
     parts = [f"**{len(errors)} error(s), {len(warnings)} warning(s)**"]
     if errors:

@@ -109,7 +109,6 @@ JINA_READER_BASE = "https://r.jina.ai"
 HF_API_KEY = os.getenv("HF_API_KEY", "")
 FINBERT_MODEL_ID = "ProsusAI/finbert"
 FINBERT_TONE_MODEL_ID = "ProsusAI/finbert-tone"
-FINBERT_TONE_MODEL_ID = "ProsusAI/finbert-tone"
 
 # ── INTELLIGENCE LAYER (Phase 8.5) ────────────────────────────────────────────
 # ChromaDB persistent path for intel report embeddings (maps to chroma_data volume)
@@ -213,6 +212,22 @@ DISCORD_CHANNELS = {
     "intel":            DISCORD_WEBHOOK_INTEL,
     "system":           DISCORD_WEBHOOK_SYSTEM,
     "bd_opportunities": DISCORD_WEBHOOK_BD_OPPORTUNITIES,
+}
+
+# ── INGEST ENGINE (Sprint 61) ─────────────────────────────────────────────────
+# Per-plugin schedule overrides for IngestEngine.
+# Keys are plugin_id; None means use the default (every day at 02:00 IST).
+# Valid values: a crontab-style dict with day_of_week, hour, minute.
+# Example: {"kaveri_bhoomi": {"day_of_week": "sun", "hour": 5, "minute": 0}}
+PLUGIN_SCHEDULES: dict[str, dict | None] = {
+    "rera_karnataka": None,          # daily at 02:00 IST
+    "igr_karnataka": {"day_of_week": "sun", "hour": 5, "minute": 30},
+    "kaveri_bhoomi": {"day_of_week": "sun", "hour": 5, "minute": 0},
+    "portal_scout": None,            # daily at 02:00 IST
+    "developer_scout": {"day_of_week": "mon,thu", "hour": 4, "minute": 0},
+    "news_scout": None,              # daily at 02:00 IST
+    "distressed_scan": None,         # daily at 02:00 IST
+    "bbmp_khata": {"day_of_week": "wed", "hour": 4, "minute": 0},
 }
 
 # ── AGENT RUN STATUSES ────────────────────────────────────────────────────────

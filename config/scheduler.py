@@ -3,12 +3,17 @@ RE_OS — Scheduler
 ──────────────────
 Runs the agent crew on schedule. Runs inside Docker as a separate service.
 
-Schedule:
-- RERA Yelahanka: daily at 2:30 AM IST
-- RERA Devanahalli: daily at 3:00 AM IST
-- RERA Hebbal: daily at 3:30 AM IST
-- Listings scan: every 6 hours
-- Market snapshot generation: daily at 6:00 AM IST (before Jinu's morning)
+Schedule (post-Sprint-61 consolidation):
+- 02:00 AM IST — Unified Ingest Engine (all scrapers via DataPlugin adapters)
+- 04:30 AM IST — Intel embedding index (ChromaDB via Ollama nomic-embed-text)
+- 05:00 AM IST — News sentiment scoring (FinBERT via HF Inference API)
+- 06:00 AM IST — Market snapshots (daily RERA + listing aggregates)
+- 06:15 AM IST — Distressed developer scan (JD/JV targeting via Discord alert)
+- Every 1 hr   — Stuck board session recovery
+- Monday 03:00 UTC — Agent memory decay
+- Monday 03:30 UTC — Memory conflict detection (Discord alert)
+- Monday 03:45 IST — BERTScore quality evaluation
+- Monday 04:00 IST — Weekly memory digest (top-5 facts per market → Discord)
 """
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -395,6 +400,63 @@ def run_kaveri_scrape():
             logger.warning(f"[Scheduler] Kaveri scrape failed for {market}: {exc}")
 
 
+def run_ingest_engine():
+    """Combined ingest pipeline — runs at 02:00 IST by default.
+    Replaces 6 separate cron jobs (3 RERA + listings + kaveri + IGR).
+    Per-plugin schedule overrides in config.settings.PLUGIN_SCHEDULES.
+
+    IMPORTANT: All schedule times in PLUGIN_SCHEDULES are in **IST** (UTC+5:30).
+    This function converts current UTC to IST before comparing, so
+    ``day_of_week`` and ``hour`` checks match Indian calendar days correctly.
+    """
+    from datetime import datetime, timezone, timedelta
+    from ingest.engine import IngestEngine
+    from ingest.plugins import (
+        RERAPlugin, IGRPlugin, KaveriBhoomiPlugin,
+        PortalPlugin, DeveloperPlugin, NewsPlugin,
+        DistressedPlugin, BBMPPlugin,
+    )
+    from config.settings import PLUGIN_SCHEDULES, TARGET_MARKETS
+
+    _IST_OFFSET = timedelta(hours=5, minutes=30)
+    now_ist = datetime.now(timezone.utc) + _IST_OFFSET
+    today_ist = now_ist.strftime("%a").lower()
+    current_time_minutes = now_ist.hour * 60 + now_ist.minute
+
+    def _plugin_should_run(plugin_id: str) -> bool:
+        schedule = PLUGIN_SCHEDULES.get(plugin_id)
+        if schedule is None:
+            return True
+        days_str = schedule.get("day_of_week", today_ist)
+        days = [d.strip().lower()[:3] for d in days_str.split(",")]
+        if today_ist not in days:
+            return False
+        sched_minutes = schedule.get("hour", 2) * 60 + schedule.get("minute", 0)
+        return abs(current_time_minutes - sched_minutes) < 10
+
+    engine = IngestEngine(max_workers=3, global_rate=3.0)
+    all_plugins = [
+        RERAPlugin(), IGRPlugin(), KaveriBhoomiPlugin(),
+        PortalPlugin(), DeveloperPlugin(), NewsPlugin(),
+        DistressedPlugin(), BBMPPlugin(),
+    ]
+    for p in all_plugins:
+        if _plugin_should_run(p.plugin_id):
+            engine.register(p)
+            logger.info("[Scheduler] IngestEngine registered: {} (schedule active)", p.plugin_id)
+        else:
+            logger.info("[Scheduler] IngestEngine skipped: {} (not in schedule today)", p.plugin_id)
+
+    if not engine.registered_plugins:
+        logger.info("[Scheduler] IngestEngine: no plugins scheduled for today at this hour")
+        return
+
+    report = engine.run_all(markets=TARGET_MARKETS)
+    logger.info("[Scheduler] IngestEngine complete: {}", report.summary())
+    for s in report.failed_plugins:
+        logger.warning("[Scheduler] Plugin failed: {}/{} — {}", s.plugin_id, s.market, s.error_message)
+
+
 def run_conflict_detection():
     """Weekly memory conflict detection — Monday 03:30 UTC (after memory decay).
     Detects contradictory facts in agent_memories and alerts via Discord."""
@@ -421,6 +483,84 @@ def run_conflict_detection():
         logger.warning(f"[Scheduler] Conflict detection failed: {exc}")
 
 
+def run_weekly_digest():
+    """Weekly digest generation — Monday 04:00 IST (after conflict detection).
+    Generates top-5 highest-confidence facts for each market and logs them.
+    Sends Discord summary to intel channel. Fact text truncated to 200 chars."""
+    try:
+        from utils.agent_memory import generate_weekly_digest
+        from utils.discord_notifier import send
+
+        for market in ["Yelahanka", "Devanahalli", "Hebbal"]:
+            _MAX_FACT_LEN = 200
+            facts = generate_weekly_digest(market, max_fact_length=_MAX_FACT_LEN)
+            if facts:
+                lines = [f"**{market} — Weekly Digest**"]
+                for f in facts:
+                    lines.append(
+                        f"- [{f['agent_id']}] {f['fact']} "
+                        f"(conf: {f['confidence']:.1%})"
+                    )
+                summary = "\n".join(lines)
+                logger.info(f"[Scheduler] Weekly digest generated for {market}: {len(facts)} facts")
+                try:
+                    send("intel", f"📋 Weekly Digest — {market}", summary)
+                except Exception as exc:
+                    logger.warning(f"[Scheduler] Weekly digest Discord failed for {market}: {exc}")
+            else:
+                logger.info(f"[Scheduler] Weekly digest: no facts for {market}")
+    except Exception as exc:
+        logger.warning(f"[Scheduler] Weekly digest generation failed: {exc}")
+
+
+def run_opportunity_scoring():
+    """Daily opportunity scoring — 03:00 IST (after ingest completes at 02:00).
+    Scores all active surveys via OpportunityEngine and sends Discord alert
+    for any opportunity with composite score >0.80.
+    """
+    try:
+        from intelligence.opportunity_engine import OpportunityEngine
+        from utils.discord_notifier import send
+
+        from config.settings import TARGET_MARKETS
+        markets = [m.strip() for m in TARGET_MARKETS]
+
+        engine = OpportunityEngine(caller="scheduler")
+        results = engine.score_all(markets)
+
+        logger.info(f"[Scheduler] Opportunity scoring: {len(results)} scored across {markets}")
+
+        urgent = [r for r in results if r.score > 0.80]
+        if urgent:
+            for r in sorted(urgent, key=lambda x: x.score, reverse=True)[:10]:
+                alert_msg = (
+                    f"**{r.survey_no}** — {r.micro_market_id[:8]}\n"
+                    f"Score: **{r.score:.4f}** | IRR: {r.components.irr_score:.3f} "
+                    f"Legal: {r.components.legal_score:.3f} "
+                    f"Timing: {r.components.timing_score:.3f}\n"
+                    f"Action: {r.next_action}"
+                )
+                logger.info(f"[Scheduler] URGENT opportunity: {r.survey_no} score={r.score:.4f}")
+                try:
+                    send("bd_opportunities", f"🚀 URGENT — {r.survey_no}", alert_msg)
+                except Exception as exc:
+                    logger.warning(f"[Scheduler] Opportunity alert Discord failed: {exc}")
+
+        priority = [r for r in results if 0.60 < r.score <= 0.80]
+        if priority:
+            summary = "\n".join(
+                f"{r.survey_no} — score={r.score:.4f} — {r.next_action[:40]}"
+                for r in sorted(priority, key=lambda x: x.score, reverse=True)[:5]
+            )
+            try:
+                send("bd_opportunities", "Priority Opportunities — Review", summary)
+            except Exception as exc:
+                logger.warning(f"[Scheduler] Priority alert Discord failed: {exc}")
+
+    except Exception as exc:
+        logger.warning(f"[Scheduler] Opportunity scoring failed (non-fatal): {exc}")
+
+
 if __name__ == "__main__":
     logger.add("logs/scheduler.log", rotation="50 MB")
     os.makedirs("logs", exist_ok=True)
@@ -434,26 +574,22 @@ if __name__ == "__main__":
 
     scheduler = BlockingScheduler(timezone="Asia/Kolkata")
 
-    # Independent RERA cron jobs — one per market, staggered 30 min apart
+    # Unified Ingest Engine — replaces 6 separate cron jobs
+    # Per-plugin schedule overrides in config.settings.PLUGIN_SCHEDULES
     scheduler.add_job(
-        lambda: _safe_job(lambda: run_single_market_rera("Yelahanka"), "rera_yelahanka"),
-        CronTrigger(hour=2, minute=30),
-        id="rera_yelahanka",
-        name="RERA refresh — Yelahanka",
+        lambda: _safe_job(run_ingest_engine, "ingest_engine"),
+        CronTrigger(hour=2, minute=0),
+        id="ingest_engine",
+        name="Unified Ingest Engine (all plugins)",
         misfire_grace_time=3600,
     )
+
+    # Daily opportunity scoring at 3 AM IST (after ingest engine at 2 AM)
     scheduler.add_job(
-        lambda: _safe_job(lambda: run_single_market_rera("Devanahalli"), "rera_devanahalli"),
+        lambda: _safe_job(run_opportunity_scoring, "opportunity_scoring"),
         CronTrigger(hour=3, minute=0),
-        id="rera_devanahalli",
-        name="RERA refresh — Devanahalli",
-        misfire_grace_time=3600,
-    )
-    scheduler.add_job(
-        lambda: _safe_job(lambda: run_single_market_rera("Hebbal"), "rera_hebbal"),
-        CronTrigger(hour=3, minute=30),
-        id="rera_hebbal",
-        name="RERA refresh — Hebbal",
+        id="opportunity_scoring",
+        name="Daily Opportunity Scoring (GATE-47)",
         misfire_grace_time=3600,
     )
 
@@ -464,14 +600,6 @@ if __name__ == "__main__":
         id="market_snapshot",
         name="Daily Market Snapshot",
         misfire_grace_time=3600,
-    )
-
-    # Listings scan every 6 hours
-    scheduler.add_job(
-        lambda: _safe_job(run_listings_scan, "listings_scan"),
-        CronTrigger(hour="*/6"),
-        id="listings_scan",
-        name="6-Hourly Listings Scan",
     )
 
     # Weekly memory decay — Monday 03:00 UTC (T-298)
@@ -510,31 +638,14 @@ if __name__ == "__main__":
         misfire_grace_time=3600,
     )
 
-    # Weekly BERTScore evaluation — Monday 04:00 IST (Sun 22:30 UTC)
+    # Weekly BERTScore evaluation — Monday 03:45 IST (Sun 22:15 UTC)
+    # Runs before weekly digest (04:00 IST) to avoid time-slot conflict
     scheduler.add_job(
         lambda: _safe_job(run_bertscore_evaluation, "bertscore_eval"),
-        CronTrigger(day_of_week="mon", hour=4, minute=0, timezone="Asia/Kolkata"),
+        CronTrigger(day_of_week="mon", hour=3, minute=45, timezone="Asia/Kolkata"),
         id="bertscore_eval",
         name="Weekly BERTScore Quality Evaluation",
         misfire_grace_time=7200,
-    )
-
-    # Weekly Kaveri guidance value scrape — Sunday 05:00 IST
-    scheduler.add_job(
-        lambda: _safe_job(run_kaveri_scrape, "kaveri_scrape"),
-        CronTrigger(day_of_week="sun", hour=5, minute=0, timezone="Asia/Kolkata"),
-        id="kaveri_scrape",
-        name="Weekly Kaveri Guidance Value Scrape",
-        misfire_grace_time=3600,
-    )
-
-    # Weekly IGR transaction scrape — Sunday 05:30 IST (after Kaveri)
-    scheduler.add_job(
-        lambda: _safe_job(run_igr_transaction_scrape, "igr_scrape"),
-        CronTrigger(day_of_week="sun", hour=5, minute=30, timezone="Asia/Kolkata"),
-        id="igr_scrape",
-        name="Weekly IGR Transaction Scrape",
-        misfire_grace_time=3600,
     )
 
     # Daily distressed developer scan — 06:15 IST (after market snapshot at 06:00)
@@ -555,20 +666,28 @@ if __name__ == "__main__":
         misfire_grace_time=3600,
     )
 
+    # Weekly digest — Monday 04:00 IST (after conflict detection)
+    scheduler.add_job(
+        lambda: _safe_job(run_weekly_digest, "weekly_digest"),
+        CronTrigger(day_of_week="mon", hour=4, minute=0, timezone="Asia/Kolkata"),
+        id="weekly_digest",
+        name="Weekly Memory Digest (top-5 facts per market)",
+        misfire_grace_time=3600,
+    )
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
-    logger.info("  2:30 AM IST — RERA Yelahanka")
-    logger.info("  3:00 AM IST — RERA Devanahalli")
-    logger.info("  3:30 AM IST — RERA Hebbal")
-    logger.info("  4:30 AM IST — Intel embedding index (ChromaDB)")
-    logger.info("  5:00 AM IST — News sentiment scoring (FinBERT)")
-    logger.info("  6:00 AM IST — Market snapshots")
-    logger.info("  6:15 AM IST — Distressed developer scan (JD/JV targets)")
-    logger.info("  Every 6 hrs — Listings scan")
+    logger.info("  02:00 AM IST — Unified Ingest Engine (all scrapers)")
+    logger.info("  03:00 AM IST — Opportunity scoring (GATE-47)")
+    logger.info("  04:30 AM IST — Intel embedding index (ChromaDB)")
+    logger.info("  05:00 AM IST — News sentiment scoring (FinBERT)")
+    logger.info("  06:00 AM IST — Market snapshots")
+    logger.info("  06:15 AM IST — Distressed developer scan (JD/JV targets)")
     logger.info("  Every 1 hr  — Board session recovery (T-315)")
     logger.info("  Monday 03:00 UTC — Agent memory decay")
     logger.info("  Monday 03:30 UTC — Memory conflict detection")
-    logger.info("  Monday 04:00 IST — BERTScore quality evaluation")
+    logger.info("  Monday 03:45 IST — BERTScore quality evaluation")
+    logger.info("  Monday 04:00 IST — Weekly memory digest (top-5 facts)")
     logger.info(f"Active jobs: {[j.id for j in scheduler.get_jobs()]}")
 
     scheduler.start()

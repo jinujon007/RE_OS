@@ -105,6 +105,15 @@ _USER_AGENT_POOL = [
 
 _UA_BAN_ROTATION = 0
 
+
+def _get_rotated_headers(source_key: str = "") -> dict[str, str]:
+    import random
+    return {
+        "User-Agent": random.choice(_USER_AGENT_POOL),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-IN,en;q=0.9",
+    }
+
 # Minimal stealth patches injected before page load — removes the most-checked
 # bot signals without requiring playwright-stealth or any extra dependency.
 _STEALTH_SCRIPT = """\

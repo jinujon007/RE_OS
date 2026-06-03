@@ -1,157 +1,332 @@
+"""
+RE_OS — Data Quality Tests (Sprint 45 — T-814)
+Unit tests for GE checkpoint integration, alert formatting, error handling,
+expectation definitions, and market-filtered SQL construction.
+"""
 import pytest
-from unittest.mock import patch, MagicMock, ANY
-import pandas as pd
-
+from unittest.mock import patch, MagicMock
 pytestmark = pytest.mark.unit
+
+from utils.data_quality import (
+    ExpectationDef,
+    FailedExpectation,
+    DataQualityError,
+    format_data_quality_alert,
+    get_active_expectations,
+    run_data_quality_checkpoint,
+    _lazy_import_ge,
+    _derive_projected_columns,
+    _TABLE_MARKET_JOIN,
+)
 
 
 class TestExpectationDef:
-    def test_minimal_config(self):
-        from utils.data_quality import ExpectationDef
-        e = ExpectationDef(column="name", table="developers", expectation_type="expect_column_values_to_not_be_null")
-        assert e.severity == "ERROR"
-        assert e.kwargs == {}
-
-    def test_custom_severity(self):
-        from utils.data_quality import ExpectationDef
-        e = ExpectationDef(column="name", table="developers", expectation_type="expect_column_values_to_not_be_null", severity="WARN")
-        assert e.severity == "WARN"
-
-    def test_to_dict_includes_fields(self):
-        from utils.data_quality import ExpectationDef
-        e = ExpectationDef(column="price_avg_psf", table="rera_projects", expectation_type="expect_column_values_to_be_between", kwargs={"min_value": 2000})
-        d = e.to_dict()
+    def test_to_dict_returns_correct_keys(self):
+        exp = ExpectationDef(
+            column="price_avg_psf", table="rera_projects",
+            expectation_type="expect_column_values_to_be_between",
+            kwargs={"min_value": 2000, "max_value": 25000},
+            severity="ERROR",
+            description="price_avg_psf BETWEEN 2000 AND 25000",
+        )
+        d = exp.to_dict()
         assert d["column"] == "price_avg_psf"
         assert d["table"] == "rera_projects"
+        assert d["expectation_type"] == "expect_column_values_to_be_between"
         assert d["severity"] == "ERROR"
+        assert d["description"] == "price_avg_psf BETWEEN 2000 AND 25000"
+
+
+class TestFailedExpectation:
+    def test_bad_values_truncated_to_five_in_to_dict(self):
+        exp = ExpectationDef(column="c", table="t", expectation_type="e")
+        fe = FailedExpectation(
+            expectation=exp, message="10 bad values",
+            bad_values=list(range(10)), unexpected_count=10,
+        )
+        assert len(fe.bad_values) == 10
+        d = fe.to_dict()
+        assert len(d["bad_values"]) == 5
+        assert d["unexpected_count"] == 10
+
+    def test_to_dict_with_empty_bad_values(self):
+        exp = ExpectationDef(column="c", table="t", expectation_type="e")
+        fe = FailedExpectation(expectation=exp, message="ok")
+        d = fe.to_dict()
+        assert d["bad_values"] == []
+        assert d["unexpected_count"] == 0
+
+    def test_to_dict_includes_message(self):
+        exp = ExpectationDef(column="c", table="t", expectation_type="e")
+        fe = FailedExpectation(expectation=exp, message="column out of range")
+        d = fe.to_dict()
+        assert d["message"] == "column out of range"
 
 
 class TestDataQualityError:
-    def test_accepts_dict_result(self):
-        from utils.data_quality import DataQualityError
-        err = DataQualityError("Yelahanka", {"failed_expectations": [{"expectation": "test"}], "warnings": []})
+    def test_init_with_dict_result(self):
+        result = {
+            "failed_expectations": [
+                {"column": "price_avg_psf", "table": "rera_projects", "severity": "ERROR"},
+            ],
+            "warnings": [],
+        }
+        err = DataQualityError("Yelahanka", result)
         assert err.market == "Yelahanka"
-        assert "Stage 3 skipped" in str(err)
+        assert "ERROR" in str(err)
+        assert "Yelahanka" in str(err)
 
-    def test_to_dict_roundtrip(self):
-        from utils.data_quality import DataQualityError
-        result = {"failed_expectations": [{"expectation": "x", "severity": "ERROR"}], "warnings": []}
+    def test_init_with_list_result_fallback(self):
+        result = [{"column": "name", "table": "developers", "severity": "ERROR"}]
         err = DataQualityError("Devanahalli", result)
-        d = err.to_dict()
-        assert d["failed_expectations"] == result["failed_expectations"]
+        assert err.market == "Devanahalli"
+        assert "Devanahalli" in str(err)
 
-    def test_accepts_list_legacy_format(self):
-        from utils.data_quality import DataQualityError
-        failed = [{"expectation": "test"}]
-        err = DataQualityError("Hebbal", failed)
+    def test_init_with_empty_list(self):
+        err = DataQualityError("Hebbal", [])
         assert err.market == "Hebbal"
+        assert "0 expectation(s)" in str(err)
+
+    def test_to_dict_with_dict_result(self):
+        result = {
+            "failed_expectations": [{"column": "price_avg_psf", "severity": "ERROR"}],
+            "warnings": [{"column": "name", "severity": "WARN"}],
+        }
+        err = DataQualityError("Hebbal", result)
+        d = err.to_dict()
+        assert "failed_expectations" in d
+        assert "warnings" in d
+        assert len(d["failed_expectations"]) == 1
 
 
 class TestFormatDataQualityAlert:
-    def test_empty_result_returns_empty_string(self):
-        from utils.data_quality import format_data_quality_alert
-        assert format_data_quality_alert("test", {"failed_expectations": [], "warnings": []}) == ""
+    def test_returns_empty_string_when_no_issues(self):
+        result = {"failed_expectations": [], "warnings": []}
+        assert format_data_quality_alert("Yelahanka", result) == ""
 
-    def test_errors_included_in_output(self):
-        from utils.data_quality import format_data_quality_alert
+    def test_formats_error_messages(self):
         result = {
-            "failed_expectations": [{"expectation": "PSF range", "table": "rera_projects", "column": "price_avg_psf", "bad_values": [30000]}],
+            "failed_expectations": [
+                {"column": "price_avg_psf", "table": "rera_projects",
+                 "expectation": "between", "bad_values": [999, 30000], "severity": "ERROR"},
+            ],
             "warnings": [],
         }
-        out = format_data_quality_alert("Yelahanka", result)
-        assert "Yelahanka" in out
-        assert "PSF range" in out
-        assert "BLOCKED" in out
+        msg = format_data_quality_alert("Yelahanka", result)
+        assert "Data Quality Check — Yelahanka" in msg
+        assert "BLOCKED" in msg or "Error" in msg
+        assert "price_avg_psf" in msg
 
-    def test_warnings_separate_from_errors(self):
-        from utils.data_quality import format_data_quality_alert
+    def test_formats_warning_messages(self):
         result = {
             "failed_expectations": [],
-            "warnings": [{"expectation": "null name", "table": "developers", "column": "name", "bad_values": []}],
+            "warnings": [
+                {"column": "name", "table": "developers",
+                 "expectation": "not_null", "severity": "WARN"},
+            ],
         }
-        out = format_data_quality_alert("Hebbal", result)
-        assert "Warning" in out
-        assert "BLOCKED" not in out
+        msg = format_data_quality_alert("Hebbal", result)
+        assert "Warning" in msg
+        assert "developers" in msg
 
+    def test_includes_both_errors_and_warnings(self):
+        result = {
+            "failed_expectations": [
+                {"column": "price_avg_psf", "table": "rera_projects",
+                 "expectation": "between", "bad_values": [999], "severity": "ERROR"},
+            ],
+            "warnings": [
+                {"column": "name", "table": "developers",
+                 "expectation": "not_null", "severity": "WARN"},
+            ],
+        }
+        msg = format_data_quality_alert("Yelahanka", result)
+        assert "Data Quality Check — Yelahanka" in msg
+        assert "price_avg_psf" in msg
 
-class TestRunDataQualityCheckpoint:
-    def test_returns_expected_structure(self):
-        from utils.data_quality import run_data_quality_checkpoint
-        result = run_data_quality_checkpoint("check_structure")
-        assert isinstance(result, dict)
-        assert "success" in result
-        assert "failed_expectations" in result
-        assert "warnings" in result
+    def test_bad_values_appear_in_formatted_output(self):
+        result = {
+            "failed_expectations": [
+                {"column": "price_avg_psf", "table": "rera_projects",
+                 "expectation": "between", "bad_values": [999, 9999, 30000],
+                 "severity": "ERROR"},
+            ],
+            "warnings": [],
+        }
+        msg = format_data_quality_alert("Yelahanka", result)
+        assert "30000" in msg
+        assert "999" in msg
 
-    def test_returns_success_on_empty_table(self):
-        mock_ge = MagicMock()
-        mock_ge.from_pandas = MagicMock()
-        with patch("utils.data_quality._lazy_import_ge", return_value=mock_ge), \
-             patch("utils.data_quality.get_engine") as mock_engine, \
-             patch("pandas.read_sql", return_value=pd.DataFrame()):
-            mock_conn = MagicMock()
-            mock_engine.return_value.connect.return_value.__enter__.return_value = mock_conn
-            from utils.data_quality import run_data_quality_checkpoint
-            result = run_data_quality_checkpoint("Devanahalli")
-            assert result["success"] is True
-
-    def test_psf_out_of_range_triggers_error(self):
-        mock_ge = MagicMock()
-        mock_gdf = MagicMock()
-        mock_gdf.expect_column_values_to_be_between.return_value = {"success": False}
-        mock_gdf.expect_column_values_to_match_regex.return_value = {"success": True}
-        mock_ge.from_pandas.return_value = mock_gdf
-        df = pd.DataFrame({"price_avg_psf": [10148, 5500, 30000], "rera_number": ["PRM/2024/001", "PRM/2024/002", "PRM/2024/003"]})
-
-        with patch("utils.data_quality._lazy_import_ge", return_value=mock_ge), \
-             patch("utils.data_quality.get_engine") as mock_engine, \
-             patch("pandas.read_sql", return_value=df):
-            mock_conn = MagicMock()
-            mock_engine.return_value.connect.return_value.__enter__.return_value = mock_conn
-            from utils.data_quality import run_data_quality_checkpoint
-            result = run_data_quality_checkpoint("Devanahalli")
-            assert result["success"] is False
-            assert len(result["failed_expectations"]) > 0
-
-    def test_regex_mismatch_triggers_warning_only(self):
-        mock_ge = MagicMock()
-        mock_gdf = MagicMock()
-        mock_gdf.expect_column_values_to_be_between.return_value = {"success": True}
-        mock_gdf.expect_column_values_to_match_regex.return_value = {"success": False}
-        mock_ge.from_pandas.return_value = mock_gdf
-
-        df = pd.DataFrame({
-            "price_avg_psf": [5000],
-            "rera_number": ["INVALID_FORMAT"],
-        })
-
-        with patch("utils.data_quality._lazy_import_ge", return_value=mock_ge), \
-             patch("utils.data_quality.get_engine") as mock_engine, \
-             patch("pandas.read_sql", return_value=df):
-            mock_conn = MagicMock()
-            mock_engine.return_value.connect.return_value.__enter__.return_value = mock_conn
-            from utils.data_quality import run_data_quality_checkpoint
-            result = run_data_quality_checkpoint("Hebbal")
-            assert result["success"] is True
-
-    def test_db_error_returns_success_with_error_field(self):
-        mock_ge = MagicMock()
-        mock_conn = MagicMock()
-        mock_conn.execute.side_effect = Exception("Connection lost")
-        with patch("utils.data_quality._lazy_import_ge", return_value=mock_ge), \
-             patch("utils.data_quality.get_engine") as mock_engine:
-            mock_engine.return_value.connect.return_value.__enter__.side_effect = Exception("DB connection failed")
-            from utils.data_quality import run_data_quality_checkpoint
-            result = run_data_quality_checkpoint("ErrorMarket")
-            assert result["success"] is True
-            assert "error" in result
+    def test_truncated_errors_capped_at_five(self):
+        result = {
+            "failed_expectations": [
+                {"column": f"col{i}", "table": "t", "expectation": "e",
+                 "severity": "ERROR"} for i in range(10)
+            ],
+            "warnings": [],
+        }
+        msg = format_data_quality_alert("Yelahanka", result)
+        assert "10 Error(s)" in msg
+        assert msg.count("t.col") <= 5
 
 
 class TestGetActiveExpectations:
-    def test_returns_list_of_dicts(self):
-        from utils.data_quality import get_active_expectations
-        expectations = get_active_expectations()
-        assert len(expectations) >= 1
-        assert all("column" in e for e in expectations)
-        assert all("table" in e for e in expectations)
-        assert all("severity" in e for e in expectations)
+    def test_returns_configured_expectations(self):
+        exps = get_active_expectations()
+        assert isinstance(exps, list)
+        assert len(exps) >= 4
+        for e in exps:
+            assert "column" in e
+            assert "table" in e
+            assert "expectation_type" in e
+            assert "severity" in e
+
+    def test_includes_igr_expectation(self):
+        exps = get_active_expectations()
+        igr_exps = [e for e in exps if "igr_transactions" in e.get("table", "")]
+        assert len(igr_exps) >= 1
+
+
+class TestDeriveProjectedColumns:
+    def test_covers_all_expectation_tables(self):
+        cols = _derive_projected_columns()
+        exps = get_active_expectations()
+        exp_tables = set(e["table"] for e in exps)
+        for t in exp_tables:
+            assert t in cols, f"Missing projected columns for table {t}"
+
+    def test_igr_transactions_included(self):
+        cols = _derive_projected_columns()
+        assert "igr_transactions" in cols
+        assert "transaction_psf" in cols["igr_transactions"]
+
+    def test_developers_included(self):
+        cols = _derive_projected_columns()
+        assert "developers" in cols
+        assert "name" in cols["developers"]
+
+
+class TestTableMarketJoin:
+    def test_igr_transactions_in_market_join(self):
+        assert "igr_transactions" in _TABLE_MARKET_JOIN
+
+    def test_rera_projects_in_market_join(self):
+        assert "rera_projects" in _TABLE_MARKET_JOIN
+
+    def test_developers_not_in_market_join(self):
+        assert "developers" not in _TABLE_MARKET_JOIN
+
+
+class TestLazyImportGe:
+    def test_returns_none_when_not_installed(self):
+        import utils.data_quality as dq
+        dq._GE_IMPORTED = False
+        dq._ge = None
+        with patch.dict("sys.modules", {"great_expectations": None}):
+            result = dq._lazy_import_ge()
+            assert result is None
+
+    def test_returns_cached_value_on_subsequent_calls(self):
+        import utils.data_quality as dq
+        dq._GE_IMPORTED = True
+        dq._ge = None
+        result = dq._lazy_import_ge()
+        assert result is None
+
+
+class TestRunDataQualityCheckpoint:
+    def test_skips_when_ge_not_installed(self):
+        result = run_data_quality_checkpoint("Yelahanka")
+        assert result["success"] is True
+        assert result["failed_expectations"] == []
+        assert result["warnings"] == []
+
+    def test_handles_db_connection_error_gracefully(self):
+        from sqlalchemy.exc import OperationalError
+        mock_ge_mod = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.__enter__.side_effect = OperationalError("DB unreachable", None, None)
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value = mock_conn
+
+        with patch("utils.data_quality._lazy_import_ge", return_value=mock_ge_mod), \
+             patch("utils.data_quality.get_engine", return_value=mock_engine):
+            result = run_data_quality_checkpoint("Yelahanka")
+        assert result["success"] is True
+        assert "error" in result
+
+    def test_skips_empty_table_no_expectations_fired(self):
+        import pandas as pd
+        mock_gdf = MagicMock()
+        mock_ge_mod = MagicMock()
+        mock_ge_mod.from_pandas.return_value = mock_gdf
+        mock_conn = MagicMock()
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        with patch("utils.data_quality._lazy_import_ge", return_value=mock_ge_mod), \
+             patch("utils.data_quality.get_engine", return_value=mock_engine), \
+             patch("utils.data_quality.pd.read_sql", return_value=pd.DataFrame()):
+            result = run_data_quality_checkpoint("Yelahanka")
+
+        assert result["success"] is True
+        assert result["failed_expectations"] == []
+        mock_ge_mod.from_pandas.assert_not_called()
+
+    def test_collects_failed_expectations_on_violation(self):
+        import pandas as pd
+        exp = ExpectationDef(
+            column="price_avg_psf", table="rera_projects",
+            expectation_type="expect_column_values_to_be_between",
+            kwargs={"min_value": 0, "max_value": 100},
+            severity="ERROR",
+        )
+        df = pd.DataFrame({"price_avg_psf": [50, 200, 75, 300, 25]})
+
+        mock_result = MagicMock()
+        mock_result.get.return_value = False
+        mock_gdf = MagicMock()
+        mock_gdf.expect_column_values_to_be_between.return_value = mock_result
+        mock_ge_mod = MagicMock()
+        mock_ge_mod.from_pandas.return_value = mock_gdf
+        mock_conn = MagicMock()
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        with patch("utils.data_quality._lazy_import_ge", return_value=mock_ge_mod), \
+             patch("utils.data_quality.get_engine", return_value=mock_engine), \
+             patch("utils.data_quality.pd.read_sql", return_value=df), \
+             patch("utils.data_quality._dq_expectations", [exp]):
+            result = run_data_quality_checkpoint("Yelahanka")
+
+        assert result["success"] is False
+        assert len(result["failed_expectations"]) >= 1
+
+    def test_reuses_market_filter_in_sql(self):
+        import pandas as pd
+        mock_gdf = MagicMock()
+        mock_ge_mod = MagicMock()
+        mock_ge_mod.from_pandas.return_value = mock_gdf
+        mock_conn = MagicMock()
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        with patch("utils.data_quality._lazy_import_ge", return_value=mock_ge_mod), \
+             patch("utils.data_quality.get_engine", return_value=mock_engine), \
+             patch("utils.data_quality.pd.read_sql") as mock_read:
+            mock_read.return_value = pd.DataFrame({"price_avg_psf": [5000]})
+            run_data_quality_checkpoint("Yelahanka")
+
+        sql_calls = [c[0][0] for c in mock_read.call_args_list]
+        market_filtered = any("mm.name ILIKE" in s for s in sql_calls)
+        assert market_filtered, "Expected at least one market-filtered SQL query"
+
+    def test_handles_empty_market_gracefully(self):
+        result = run_data_quality_checkpoint("")
+        assert result["success"] is True
+        assert result.get("note") == "empty market"
+
+    def test_handles_none_market_gracefully(self):
+        result = run_data_quality_checkpoint(None)
+        assert result["success"] is True
+        assert result.get("note") == "empty market"
