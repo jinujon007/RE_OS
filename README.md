@@ -105,46 +105,62 @@ On top of the core pipeline, RE_OS ships a complete **virtual real estate office
 ```mermaid
 flowchart TB
     subgraph Sources["Data Sources"]
-        RERA["RERA Karnataka\n(Playwright AJAX)"]
-        PORT["99acres · MagicBricks"]
-        KAV["Kaveri Registry"]
+        RERA["RERA Karnataka\n(Playwright + POST)"]
+        PORT["Portal Scout\n(99acres · MagicBricks)"]
+        KAV["Kaveri · IGR\n(GV + registrations)"]
+        DEV["Developer Scout\n(Brigade · Prestige · Sobha)"]
+        NEWS["News Scout\n(Google News · ET Realty)"]
     end
 
-    subgraph Stage1["Stage 1 · Scraper Agent"]
-        SCR["Playwright intercept → POST fallback\nRecords validated → checkpoint saved"]
+    subgraph Ingest["Ingest Engine (02:00 IST)"]
+        IE["IngestEngine.run_all()\n8 DataPlugins · SHA-256 dedup\nSAVEPOINT upsert"]
     end
 
-    subgraph Stage2["Stage 2 · Python Organizer  (no LLM)"]
-        ORG["Validate + deduplicate → batch upsert"]
-        DB[("PostgreSQL + PostGIS\n16 tables · 4 analytics views")]
-        ORG --> DB
+    subgraph Store["Data Store"]
+        DB[("PostgreSQL + PostGIS\n35 tables · 6 views\nCHROMA[(ChromaDB\nsemantic index)]")]
     end
 
-    subgraph Stage3["Stage 3 · Intel Crew"]
-        ANA["Analyst Agent — queries DB views → market brief"]
-        CEO["CEO Agent — synthesizes → strategic action"]
-        ANA --> CEO
+    subgraph Intel["Intelligence Layer (5 modules)"]
+        MKT["MarketPulse\nPSF · absorption · supply"]
+        LEG["LegalPicture\nzone · encumbrance · RERA"]
+        FIN["FinancialEvaluation\nJD · JV · Purchase IRR"]
+        LND["LandPicture\nFSI · typology · flood"]
+        DEM["DemandSignals\nsentiment · listings · news"]
+        REG["IntelRegistry\n1hr cache · partial-failure safe"]
+        MKT & LEG & FIN & LND & DEM --> REG
+    end
+
+    subgraph Decision["Decision Layer"]
+        OPP["OpportunityEngine\nIRR·Legal·Timing·Distress·Excl\nweighted composite score"]
+        EVAL["/api/evaluate\nIntelPackage → BoardRoom\n→ DealMemo → InvestorBrief"]
+        REG --> OPP
+        REG --> EVAL
+    end
+
+    subgraph Output["Output Channels"]
+        DISC["Discord\nURGENT·PRIORITY·WATCH\nalerts per score band"]
+        DASH["Dashboard :8050\nFastAPI · Opportunity Queue\nDeal Pipeline · Board Room"]
+        TEL["Telegram Bot\n/evaluate → compact verdict\n≤1200 chars"]
     end
 
     subgraph Observability["Observability"]
-        PROM["Prometheus\n(metrics scrape)"]
-        GRAF["Grafana\n(dashboards)"]
+        PROM["Prometheus /metrics"]
+        GRAF["Grafana dashboards"]
         PROM --> GRAF
     end
 
-    OUT["intel_report_YYYYMMDD.txt"]
-    DASH["Dashboard · port 8050\n(FastAPI + org chart + board room)"]
+    Sources --> Ingest
+    Ingest --> Store
+    Store --> Intel
+    OPP -->|"score ≥ 0.80"| DISC
+    EVAL --> DISC
+    EVAL --> DASH
+    EVAL --> TEL
+    OPP --> DASH
+    Store --> Observability
 
-    Sources --> Stage1
-    Stage1 --> Stage2
-    Stage2 --> Stage3
-    Stage3 --> OUT
-    Stage3 --> DASH
-    DB --> Observability
-
-    SCHED["Scheduler · 2AM IST"] -. daily trigger .-> Stage1
-    Stage1 -. "checkpoint bypass\n(if ran today)" .-> Stage3
-    OLLAMA["Ollama · local LLM\n(GPU, CUDA 12.5)"] -. fallback .-> Stage1 & Stage3
+    SCHED["APScheduler\n02:00 Ingest · 03:00 Score\n04:30 Embed · 06:00 Snapshot"] -. triggers .-> Ingest & OPP
+    OLLAMA["Ollama · GPU\nCUDA 12.5 · llama3.1:8b"] -. LLM fallback .-> Intel & Decision
 ```
 
 ---

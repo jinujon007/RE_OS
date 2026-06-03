@@ -3,8 +3,9 @@ RE_OS — Scheduler
 ──────────────────
 Runs the agent crew on schedule. Runs inside Docker as a separate service.
 
-Schedule (post-Sprint-61 consolidation):
+Schedule (post-Sprint-63):
 - 02:00 AM IST — Unified Ingest Engine (all scrapers via DataPlugin adapters)
+- 03:00 AM IST — Opportunity scoring (GATE-47 — survey scoring + Discord alert)
 - 04:30 AM IST — Intel embedding index (ChromaDB via Ollama nomic-embed-text)
 - 05:00 AM IST — News sentiment scoring (FinBERT via HF Inference API)
 - 06:00 AM IST — Market snapshots (daily RERA + listing aggregates)
@@ -476,7 +477,7 @@ def run_conflict_detection():
                     )
                     logger.info(f"[ConflictDetection] {alert_msg}")
                     try:
-                        send("re_os_health", "Memory Conflict Detected", alert_msg)
+                        send("system", "Memory Conflict Detected", alert_msg)
                     except Exception as exc:
                         logger.warning(f"[ConflictDetection] Discord send failed: {exc}")
     except Exception as exc:
@@ -515,38 +516,51 @@ def run_weekly_digest():
 
 def run_opportunity_scoring():
     """Daily opportunity scoring — 03:00 IST (after ingest completes at 02:00).
-    Scores all active surveys via OpportunityEngine and sends Discord alert
-    for any opportunity with composite score >0.80.
+    Scores all active surveys via OpportunityEngine per market and sends Discord
+    alerts per band: URGENT (≥0.80 individual), PRIORITY (>0.60 summary),
+    WATCH (>0.40 summary). Logs elapsed time and empty-result diagnostics.
     """
+    import time as _time
+    from intelligence.opportunity_engine import OpportunityEngine
+    from utils.discord_notifier import send
+    from config.settings import TARGET_MARKETS
+
+    markets = [m.strip() for m in TARGET_MARKETS]
+    job_start = _time.time()
+
     try:
-        from intelligence.opportunity_engine import OpportunityEngine
-        from utils.discord_notifier import send
-
-        from config.settings import TARGET_MARKETS
-        markets = [m.strip() for m in TARGET_MARKETS]
-
         engine = OpportunityEngine(caller="scheduler")
         results = engine.score_all(markets)
+        elapsed = _time.time() - job_start
 
-        logger.info(f"[Scheduler] Opportunity scoring: {len(results)} scored across {markets}")
+        if not results:
+            logger.info(
+                "[Scheduler] Opportunity scoring completed in {:.1f}s: 0 scored across {} — "
+                "check DB for surveys (surveys table may be empty)", elapsed, markets
+            )
+            return
 
-        urgent = [r for r in results if r.score > 0.80]
-        if urgent:
-            for r in sorted(urgent, key=lambda x: x.score, reverse=True)[:10]:
-                alert_msg = (
-                    f"**{r.survey_no}** — {r.micro_market_id[:8]}\n"
-                    f"Score: **{r.score:.4f}** | IRR: {r.components.irr_score:.3f} "
-                    f"Legal: {r.components.legal_score:.3f} "
-                    f"Timing: {r.components.timing_score:.3f}\n"
-                    f"Action: {r.next_action}"
-                )
-                logger.info(f"[Scheduler] URGENT opportunity: {r.survey_no} score={r.score:.4f}")
-                try:
-                    send("bd_opportunities", f"🚀 URGENT — {r.survey_no}", alert_msg)
-                except Exception as exc:
-                    logger.warning(f"[Scheduler] Opportunity alert Discord failed: {exc}")
+        logger.info(
+            "[Scheduler] Opportunity scoring: {} scored across {} in {:.1f}s",
+            len(results), markets, elapsed,
+        )
 
-        priority = [r for r in results if 0.60 < r.score <= 0.80]
+        urgent = [r for r in results if r.score >= 0.80]
+        for r in sorted(urgent, key=lambda x: x.score, reverse=True)[:10]:
+            alert_msg = (
+                f"**{r.survey_no}**\n"
+                f"Score: **{r.score:.4f}** | IRR: {r.components.irr_score:.3f} "
+                f"Legal: {r.components.legal_score:.3f} "
+                f"Timing: {r.components.timing_score:.3f}\n"
+                f"Action: {r.next_action}"
+            )
+            logger.info("[Scheduler] URGENT opportunity: {} score={:.4f}", r.survey_no, r.score)
+            try:
+                send("bd_opportunities", f"URGENT — {r.survey_no}", alert_msg)
+            except Exception as exc:
+                logger.warning("[Scheduler] URGENT alert Discord failed: {}", exc)
+
+        priority = [r for r in results if 0.60 < r.score < 0.80]
         if priority:
             summary = "\n".join(
                 f"{r.survey_no} — score={r.score:.4f} — {r.next_action[:40]}"
@@ -555,10 +569,19 @@ def run_opportunity_scoring():
             try:
                 send("bd_opportunities", "Priority Opportunities — Review", summary)
             except Exception as exc:
-                logger.warning(f"[Scheduler] Priority alert Discord failed: {exc}")
+                logger.warning("[Scheduler] PRIORITY alert Discord failed: {}", exc)
+
+        watch = [r for r in results if 0.40 < r.score <= 0.60]
+        if watch:
+            watch_summary = "\n".join(
+                f"{r.survey_no} — score={r.score:.4f} — legal={r.legal_risk_level}"
+                for r in sorted(watch, key=lambda x: x.score, reverse=True)[:3]
+            )
+            logger.info("[Scheduler] WATCH opportunities: {} — {}", len(watch), watch_summary[:200])
 
     except Exception as exc:
-        logger.warning(f"[Scheduler] Opportunity scoring failed (non-fatal): {exc}")
+        elapsed = _time.time() - job_start
+        logger.warning("[Scheduler] Opportunity scoring failed after {:.1f}s: {}", elapsed, exc)
 
 
 if __name__ == "__main__":
