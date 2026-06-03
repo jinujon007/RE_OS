@@ -76,8 +76,9 @@ _READ_ONLY_PATHS = frozenset({
     '/api/registry',
     '/api/data/freshness',
     '/api/memory/explorer',
+    '/api/opportunity/queue',
 })
-_READ_ONLY_PREFIXES = ('/api/reports/', '/api/logs/')
+_READ_ONLY_PREFIXES = ('/api/reports/', '/api/logs/', '/api/evaluate/')
 
 
 @app.before_request
@@ -1815,6 +1816,146 @@ def _download_intel_csv(canonical: str | None):
         exc = True
         logger.error("[download_intel_csv] %s", e)
         return jsonify({"error": "failed to export intel csv"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
+
+
+# ── Evaluate API (Sprint 64 — Decision Layer) ────────────────────────────────────
+
+
+@limiter.limit("10 per minute")
+@app.route("/api/evaluate", methods=["POST"])
+def evaluate_start():
+    payload = request.get_json() or {}
+    survey_no = str(payload.get("survey_no") or "").strip()
+    market = _normalize_market(payload.get("market", ""))
+    if not survey_no:
+        return jsonify({"error": "survey_no required"}), 400
+    if not market:
+        return jsonify({"error": "valid market required (Yelahanka/Devanahalli/Hebbal)"}), 400
+
+    raw_area = payload.get("land_area_sqft", 43560)
+    try:
+        land_area_sqft = float(raw_area)
+    except (ValueError, TypeError):
+        return jsonify({"error": "land_area_sqft must be a number"}), 400
+
+    sell_psf = payload.get("sell_psf")
+    if sell_psf is not None:
+        try:
+            sell_psf = float(sell_psf)
+        except (ValueError, TypeError):
+            return jsonify({"error": "sell_psf must be a number"}), 400
+
+    valid_deal_types = {"purchase", "jd", "jv", "compare"}
+    deal_type = str(payload.get("deal_type", "compare")).strip().lower()
+    if deal_type not in valid_deal_types:
+        return jsonify({"error": f"deal_type must be one of: {', '.join(sorted(valid_deal_types))}"}), 400
+
+    pitch = str(payload.get("pitch", "")).strip()[:5000]
+
+    from crews.evaluate_pipeline import start_evaluate
+    result = start_evaluate(
+        survey_no=survey_no,
+        market=market,
+        land_area_sqft=land_area_sqft,
+        sell_psf=sell_psf,
+        deal_type=deal_type,
+        pitch=pitch or f"Evaluate survey {survey_no} in {market}",
+    )
+    return jsonify(result), 202
+
+
+@limiter.limit("30 per minute")
+@app.route("/api/evaluate/<job_id>", methods=["GET"])
+def evaluate_status(job_id):
+    from crews.evaluate_pipeline import get_evaluate_job
+    job = get_evaluate_job(job_id)
+    if job is None:
+        return jsonify({"error": "job not found"}), 404
+    return jsonify(job)
+
+
+# ── Opportunity Queue API (Sprint 64 — Decision Layer) ─────────────────────────
+
+
+@limiter.limit("30 per minute")
+@app.route("/api/opportunity/queue", methods=["GET"])
+def opportunity_queue():
+    market_filter = request.args.get("market")
+    min_score = request.args.get("min_score")
+    limit = request.args.get("limit", "50")
+
+    try:
+        limit = max(1, min(int(limit), 200))
+    except (ValueError, TypeError):
+        limit = 50
+
+    min_score_val = 0.0
+    if min_score:
+        try:
+            min_score_val = max(0.0, min(float(min_score), 1.0))
+        except (ValueError, TypeError):
+            min_score_val = 0.0
+
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        where_parts = ["os.is_active = true"]
+        params = []
+        if market_filter:
+            where_parts.append("mm.name ILIKE %s")
+            params.append(f"%{market_filter}%")
+        if min_score_val > 0:
+            where_parts.append("os.score >= %s")
+            params.append(min_score_val)
+
+        where_sql = " AND ".join(where_parts) if where_parts else "TRUE"
+        cur.execute(f"""
+            SELECT os.id, os.survey_no, mm.name AS market,
+                   os.score, os.irr_score, os.legal_score, os.timing_score,
+                   os.distress_score, os.exclusivity_score,
+                   os.best_deal_type, os.estimated_jd_irr,
+                   os.legal_risk_level, os.next_action, os.expiry_date,
+                   os.computed_at, os.components,
+                   d.name AS developer_name
+            FROM opportunity_scores os
+            JOIN micro_markets mm ON mm.id = os.micro_market_id
+            LEFT JOIN developers d ON d.id = os.developer_id
+            WHERE {where_sql}
+            ORDER BY os.score DESC
+            LIMIT %s
+        """, params + [limit])
+
+        rows = []
+        for r in cur.fetchall():
+            rows.append({
+                "id": str(r[0]),
+                "survey_no": r[1],
+                "market": r[2],
+                "score": float(r[3]) if r[3] else 0.0,
+                "irr_score": float(r[4]) if r[4] else 0.0,
+                "legal_score": float(r[5]) if r[5] else 0.0,
+                "timing_score": float(r[6]) if r[6] else 0.0,
+                "distress_score": float(r[7]) if r[7] else 0.0,
+                "exclusivity_score": float(r[8]) if r[8] else 0.0,
+                "best_deal_type": r[9],
+                "estimated_jd_irr": float(r[10]) if r[10] else None,
+                "legal_risk_level": r[11],
+                "next_action": r[12],
+                "expiry_date": r[13].isoformat() if r[13] else None,
+                "computed_at": r[14].isoformat() if r[14] else None,
+                "developer_name": r[16],
+            })
+        cur.close()
+        return jsonify({"opportunities": rows, "count": len(rows)})
+    except Exception as e:
+        exc = True
+        logger.error("[opportunity_queue] %s", e)
+        return jsonify({"error": "database query failed"}), 500
     finally:
         if conn:
             _release_db(conn, reset=exc)

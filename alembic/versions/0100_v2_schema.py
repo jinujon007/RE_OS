@@ -1,6 +1,6 @@
 """v2 Schema — create all 15 new tables + indexes + T-709 composite index paths.
 Revision ID: 0100_v2_schema
-Revises: 0014_add_osm_edges
+Revises: 0015_add_memory_fact_type
 Create Date: 2026-06-02
 """
 from typing import Sequence, Union
@@ -10,7 +10,7 @@ from sqlalchemy.dialects import postgresql
 from geoalchemy2 import Geometry
 
 revision: str = "0100_v2_schema"
-down_revision: Union[str, None] = "0014_add_osm_edges"
+down_revision: Union[str, None] = "0015_add_memory_fact_type"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

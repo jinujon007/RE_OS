@@ -396,7 +396,7 @@ class IngestEngine:
                              status, error_message, scraped_at)
                         VALUES
                             (:pid, :sid, :mkt, :etype, :eid,
-                             :data::jsonb, :hash, :conf, :verrs::jsonb,
+                             :data, :hash, :conf, :verrs,
                              :status, :err, :scraped)
                     """),
                     {

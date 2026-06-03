@@ -176,33 +176,28 @@ class IngestWriter:
     # ── SQL builders ────────────────────────────────────────────────────────────
 
     def _build_upsert(self, table: str, data: dict) -> str:
-        """Generate an UPSERT SQL statement for *table* with *data* columns.
-
-        Uses ``quote_ident`` to prevent SQL injection from column names.
-        """
-        import sqlalchemy as sa
-
-        cols = ", ".join(sa.quote_ident(c) for c in data)
+        """Generate an UPSERT SQL statement for *table* with *data* columns."""
+        cols = ", ".join(f'"{c}"' for c in data)
         placeholders = ", ".join(f":{c}" for c in data)
-        base = f"INSERT INTO {sa.quote_ident(table)} ({cols}) VALUES ({placeholders})"
+        base = f'INSERT INTO "{table}" ({cols}) VALUES ({placeholders})'
 
         conflict = self._conflict_target(table)
         if conflict is None:
             return base
 
-        updates = ", ".join(f"{sa.quote_ident(c)} = EXCLUDED.{sa.quote_ident(c)}" for c in data)
+        updates = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in data)
         return f"{base} ON CONFLICT {conflict} DO UPDATE SET {updates}"
 
     def _conflict_target(self, table: str) -> str | None:
         """Return the ON CONFLICT clause fragment, or ``None`` for plain INSERT."""
         composite = _COMPOSITE_CONFLICT.get(table)
         if composite:
-            cols = ", ".join(composite)
+            cols = ", ".join(f'"{c}"' for c in composite)
             return f"({cols})"
         col = _CONFLICT_COLUMNS.get(table)
         if col is None:
             return None
-        return f"({col})"
+        return f'("{col}")'
 
 
 # ── Convenience ────────────────────────────────────────────────────────────────

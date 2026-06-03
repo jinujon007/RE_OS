@@ -15,6 +15,7 @@ Discord channel map (set webhook URLs in .env):
   intel            → DISCORD_WEBHOOK_INTEL
   system           → DISCORD_WEBHOOK_SYSTEM
   health           → DISCORD_WEBHOOK_SYSTEM  (alias)
+  bd_opportunities → DISCORD_WEBHOOK_BD_OPPORTUNITIES
 """
 import json
 import os
@@ -189,6 +190,32 @@ def send_system_alert(job_name: str, error: str) -> bool:
     title   = f"Scheduler error — {job_name}"
     message = f"**Job:** `{job_name}`\n**Error:** {error[:500]}"
     return send("system", title, message, COLOR_RED)
+
+
+def send_opportunity_alert(survey_no: str, score: float, components: dict,
+                           next_action: str, channel: str = "bd_opportunities") -> bool:
+    """Send a structured opportunity alert to Discord bd-opportunities channel.
+    
+    Args:
+        survey_no: Survey number (e.g. "45/2").
+        score: Composite score in [0, 1].
+        components: Dict with keys: irr, legal, timing, distress, exclusivity.
+        next_action: Human-readable action string.
+        channel: Discord channel key (default bd_opportunities).
+    
+    Returns:
+        True if webhook POST succeeded, False otherwise.
+    """
+    title = f"URGENT — {survey_no}"
+    message = (
+        f"**{survey_no}**\n"
+        f"Score: **{score:.4f}**\n"
+        f"IRR: {components.get('irr', 0):.3f} | "
+        f"Legal: {components.get('legal', 0):.3f} | "
+        f"Timing: {components.get('timing', 0):.3f}\n"
+        f"Action: {next_action}"
+    )
+    return send(channel, title, message, COLOR_GREEN if score >= 0.8 else COLOR_AMBER)
 
 
 def send_quality_alert(market: str, errors: list, warnings: list) -> bool:

@@ -126,6 +126,13 @@ class ScoreComponents:
             f"exclusivity={self.exclusivity_score:.3f}, composite={self.composite():.4f})"
         )
 
+    def __str__(self) -> str:
+        return (
+            f"IRR={self.irr_score:.1%} Legal={self.legal_score:.1%} "
+            f"Timing={self.timing_score:.1%} Distress={self.distress_score:.1%} "
+            f"Excl={self.exclusivity_score:.1%} → {self.composite():.1%}"
+        )
+
 
 @dataclass
 class OpportunityScore:
@@ -445,7 +452,7 @@ class OpportunityEngine:
         from utils.db import get_engine
         from sqlalchemy import text
 
-        with get_engine(pool_size=2, max_overflow=1).connect() as conn:
+        with get_engine().connect() as conn:
             with timed_intel_query("opp_engine_load_surveys"):
                 rows = conn.execute(
                     text("""
@@ -657,12 +664,21 @@ class OpportunityEngine:
         return "HOLD — unfavorable conditions, revisit in 90 days"
 
     @staticmethod
-    def _expiry_for_score(composite: float) -> str | None:
-        """Compute expiry date. High scores get longer validity window."""
+    def _expiry_for_score(composite: float, now: datetime | None = None) -> str | None:
+        """Compute expiry date. High scores get longer validity window.
+
+        Args:
+            composite: Weighted composite score in [0, 1].
+            now: Optional timestamp for deterministic expiry (testing). Defaults to UTC now.
+
+        Returns:
+            ISO-8601 date string or None if score is 0.
+        """
         if composite <= 0.0:
             return None
         days = _DEFAULT_EXPIRY_DAYS if composite >= _WATCH_THRESHOLD else _LOW_SCORE_EXPIRY_DAYS
-        return (datetime.now(timezone.utc) + timedelta(days=days)).date().isoformat()
+        base = now or datetime.now(timezone.utc)
+        return (base + timedelta(days=days)).date().isoformat()
 
     # ═════════════════════════════════════════════════════════════════════════
     # Persistence
@@ -673,6 +689,10 @@ class OpportunityEngine:
 
         Uses ``ON CONFLICT (survey_id, survey_no, micro_market_id)`` which depends
         on the ``uq_opp_scores_survey`` unique constraint defined in schema_v2.sql.
+
+        Uses per-row SAVEPOINT pattern: one survey failure rolls back only that row,
+        not the entire batch. This prevents a single bad JSON serialization or
+        constraint violation from silently discarding all other scored opportunities.
 
         Args:
             results: List of scored opportunities.
@@ -725,46 +745,56 @@ class OpportunityEngine:
                         pruned_at = NULL
                 """)
 
-                for r in results:
-                    components_json = json.dumps({
-                        "irr_score": r.components.irr_score,
-                        "legal_score": r.components.legal_score,
-                        "timing_score": r.components.timing_score,
-                        "distress_score": r.components.distress_score,
-                        "exclusivity_score": r.components.exclusivity_score,
-                        "composite_score": r.score,
-                        "weights": {
-                            "irr": _IRR_WEIGHT,
-                            "legal": _LEGAL_WEIGHT,
-                            "timing": _TIMING_WEIGHT,
-                            "distress": _DISTRESS_WEIGHT,
-                            "exclusivity": _EXCLUSIVITY_WEIGHT,
-                        },
-                    })
+                for i, r in enumerate(results):
+                    conn.execute(text(f"SAVEPOINT sp_opp_{i}"))
+                    try:
+                        components_json = json.dumps({
+                            "irr_score": r.components.irr_score,
+                            "legal_score": r.components.legal_score,
+                            "timing_score": r.components.timing_score,
+                            "distress_score": r.components.distress_score,
+                            "exclusivity_score": r.components.exclusivity_score,
+                            "composite_score": r.score,
+                            "weights": {
+                                "irr": _IRR_WEIGHT,
+                                "legal": _LEGAL_WEIGHT,
+                                "timing": _TIMING_WEIGHT,
+                                "distress": _DISTRESS_WEIGHT,
+                                "exclusivity": _EXCLUSIVITY_WEIGHT,
+                            },
+                        })
 
-                    conn.execute(stmt, {
-                        "sid": r.survey_id,
-                        "sno": r.survey_no,
-                        "mmid": r.micro_market_id,
-                        "did": r.developer_id,
-                        "score": r.score,
-                        "irr": r.components.irr_score,
-                        "legal": r.components.legal_score,
-                        "timing": r.components.timing_score,
-                        "distress": r.components.distress_score,
-                        "exclusivity": r.components.exclusivity_score,
-                        "comp": components_json,
-                        "deal": r.best_deal_type,
-                        "jd_irr": r.estimated_jd_irr,
-                        "legal_risk": r.legal_risk_level,
-                        "action": r.next_action,
-                        "expiry": r.expiry_date,
-                        "computed": r.computed_at,
-                    })
-                    written += 1
+                        conn.execute(stmt, {
+                            "sid": r.survey_id,
+                            "sno": r.survey_no,
+                            "mmid": r.micro_market_id,
+                            "did": r.developer_id,
+                            "score": r.score,
+                            "irr": r.components.irr_score,
+                            "legal": r.components.legal_score,
+                            "timing": r.components.timing_score,
+                            "distress": r.components.distress_score,
+                            "exclusivity": r.components.exclusivity_score,
+                            "comp": components_json,
+                            "deal": r.best_deal_type,
+                            "jd_irr": r.estimated_jd_irr,
+                            "legal_risk": r.legal_risk_level,
+                            "action": r.next_action,
+                            "expiry": r.expiry_date,
+                            "computed": r.computed_at,
+                        })
+                        conn.execute(text(f"RELEASE SAVEPOINT sp_opp_{i}"))
+                        written += 1
+                    except Exception as row_exc:
+                        conn.execute(text(f"ROLLBACK TO SAVEPOINT sp_opp_{i}"))
+                        conn.execute(text(f"RELEASE SAVEPOINT sp_opp_{i}"))
+                        logger.warning(
+                            "[{}] persist row {}/{} (survey={}) failed: {} — rolled back individually",
+                            self._caller, i, len(results), r.survey_no, row_exc,
+                        )
 
         except Exception as exc:
-            logger.warning("[{}] persist_scores failed after {} rows: {}",
+            logger.warning("[{}] persist_scores outer transaction failed after {} rows: {}",
                            self._caller, written, exc)
 
         return written
@@ -774,6 +804,10 @@ class OpportunityEngine:
 
         Uses a 24-hour grace window (``_PRUNE_GRACE_HOURS``) before deactivating,
         to prevent flapping from transient IntelRegistry failures.
+
+        Uses ``NOT IN (SELECT ...)`` subquery rather than ``= ANY(:arr)`` to
+        handle empty sets correctly — an empty ``IN ()`` is a no-op, whereas
+        ``NOT IN ()`` is a PG syntax error.
         """
         if not active_survey_ids:
             return
@@ -781,17 +815,16 @@ class OpportunityEngine:
             from utils.db import get_engine
             from sqlalchemy import text
             with get_engine().begin() as conn:
-                ids_list = list(active_survey_ids)
                 cutoff = datetime.now(timezone.utc) - timedelta(hours=_PRUNE_GRACE_HOURS)
                 result = conn.execute(
                     text("""
                         UPDATE opportunity_scores
                         SET is_active = FALSE, pruned_at = NOW()
                         WHERE is_active = TRUE
-                          AND survey_id NOT IN :active_ids
+                          AND survey_id != ALL(:active_ids)
                           AND computed_at < :cutoff
                     """),
-                    {"active_ids": tuple(ids_list), "cutoff": cutoff.isoformat()},
+                    {"active_ids": list(active_survey_ids), "cutoff": cutoff.isoformat()},
                 )
                 count = result.rowcount
                 if count > 0:

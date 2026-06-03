@@ -34,15 +34,17 @@ class IGRPlugin(DataPlugin):
             survey_no = str(txn.get("survey_no", "")).strip()
             source_id = _stable_source_id(txn, market)
             data = {
+                "id": source_id,
+                "market": market,
+                "micro_market_id": None,  # Will be resolved later
                 "survey_no": survey_no,
-                "seller": str(txn.get("seller", ""))[:500],
-                "buyer": str(txn.get("buyer", ""))[:500],
+                "seller_name": str(txn.get("seller", ""))[:500],
+                "buyer_name": str(txn.get("buyer", ""))[:500],
                 "consideration_amount": int(txn.get("consideration_amount", 0)),
                 "area_sqft": float(txn.get("area_sqft", 0)),
                 "registration_date": str(txn.get("registration_date", "")),
                 "sro_office": str(txn.get("sro_office", ""))[:200],
                 "source": str(txn.get("source", "igr_portal")),
-                "scraped_at": str(txn.get("scraped_at", "")),
             }
             records.append(ParsedRecord(
                 entity_type="igr_transaction",
