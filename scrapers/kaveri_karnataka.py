@@ -531,7 +531,7 @@ class KaveriScraper:
                 records = self._parse_gv_html(html, meta)
                 if records:
                     for r in records:
-                        r["source"] = "scrapling_tls"
+                        r["source"] = "kaveri_portal"  # T-797: standardized live source
                     logger.info(
                         f"[KaveriScraper][Scrapling TLS] {len(records)} GV records "
                         f"({len(html)} chars)"
@@ -559,7 +559,7 @@ class KaveriScraper:
                 records = self._parse_gv_html(resp.text, meta)
                 if records:
                     for r in records:
-                        r["source"] = "mirror"
+                        r["source"] = "kaveri_portal"  # T-797: standardized live source
                     logger.info(
                         f"[KaveriScraper][Mirror] {len(records)} GV records from "
                         f"kaveri2"
@@ -593,7 +593,7 @@ class KaveriScraper:
                                     item.get("guidanceValuePsf", 0)
                                 ),
                                 "effective_from": item.get("effectiveFrom", "2024-04-01"),
-                                "source": "igr_api",
+                                "source": "kaveri_portal",  # T-797: standardized live source
                             })
                         records = [r for r in records if r["guidance_value_psf"] > 0]
                         if records:
@@ -1033,11 +1033,14 @@ class KaveriScraper:
     def _fallback_guidance_values(self, market_name: str) -> list[dict]:
         records = [dict(r) for r in _FALLBACK_GV.get(market_name, [])]
         for r in records:
-            r.setdefault("source", "fallback_sample")
+            r.setdefault("source", "fallback")  # T-797: standardized fallback source
         return records
 
     def _fallback_registrations(self, market_name: str) -> list[dict]:
-        return [dict(r) for r in _FALLBACK_REG.get(market_name, [])]
+        records = [dict(r) for r in _FALLBACK_REG.get(market_name, [])]
+        for r in records:
+            r.setdefault("source", "fallback")  # T-797: standardized fallback source
+        return records
 
 
 # ── Standalone run ─────────────────────────────────────────────────────────────

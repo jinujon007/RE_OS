@@ -45,7 +45,11 @@ from config.settings import (
     CEREBRAS_BASE_URL,
     CEREBRAS_MODEL,
     GEMINI_API_KEY,
+    GEMINI_CEO_MODEL,
     GEMINI_LIGHT_MODEL,
+    HF_API_KEY,
+    JINA_API_KEY,
+    JINA_READER_BASE,
 )
 from config.metrics import scraper_runs_total
 from scrapers.scout_memory import ScoutMemory

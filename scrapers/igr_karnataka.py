@@ -1,25 +1,23 @@
 """
-RE_OS — IGR Karnataka Scraper (Sprint 39 — Data Foundation)
-────────────────────────────────────────────────────────────────
-Scrapes the Karnataka Inspector General of Registration portal
-for registered sale deeds in target markets.
+RE_OS — IGR Karnataka Scraper (Sprint 42 — IGR Live Data)
+──────────────────────────────────────────────────────────────────
+Scrapes Karnataka IGR portal for registered sale deeds in target markets.
 
 Extracts per transaction:
-  survey_no, seller, buyer, consideration_amount, area_sqft,
+  survey_no, seller_name, buyer_name, consideration_amount, area_sqft,
   registration_date, sro_office, source
 
-Strategy (proven KaveriTransactionScout pattern):
-  1. Playwright — intercept AJAX DataTables response with form data
-  2. Direct POST — fallback when Playwright unavailable
-  3. Hardcoded fallback — >=5 realistic records per market when both fail
+Strategy (T-792):
+  1. Scrapling HTTP (TLS spoof) — bypass bot detection with rotating headers
+  2. requests POST fallback — when Scrapling fails
+  3. Hardcoded fallback — when portal unreachable (≥5 records, source='fallback')
 
-Rate limit: 1 request per 3 seconds (enforced per-session).
+Rate limit: 1 request per 3 seconds.
 30-day rolling window default.
+Dedup: SHA-256(survey_no+registration_date+consideration_amount)[:32]
 
 Run standalone:
-  python scrapers/igr_karnataka.py --market Yelahanka
-  python scrapers/igr_karnataka.py --market Devanahalli --days 90
-  python scrapers/igr_karnataka.py --market Hebbal --no-db
+  python scrapers/igr_karnataka.py --market Devanahalli
 """
 from __future__ import annotations
 
@@ -36,47 +34,60 @@ from loguru import logger
 from config.metrics import scraper_runs_total, safe_scraper_market
 from config.settings import TARGET_MARKETS
 
+# ── Market → District ID mapping (T-792) ─────────────────────────────
+MARKET_TO_DISTRICT_ID = {
+    "Yelahanka": "29",      # Bangalore Urban
+    "Devanahalli": "30",    # Bangalore Rural  
+    "Hebbal": "29",         # Bangalore Urban
+}
+MARKET_TO_TALUK = {
+    "Yelahanka": "Bangalore North",
+    "Devanahalli": "Devanahalli",
+    "Hebbal": "Bangalore North",
+}
 
-# ── Market metadata (aligned with proven MARKET_KAVERI_META) ─────────────
-# Source: kaveri_karnataka.py lines 30-48 — verified working Portal values
+
+# ── Market metadata (T-792) ───────────────────────────────────────────────
 IGR_MARKET_META: dict[str, dict[str, Any]] = {
     "Yelahanka": {
-        "district": "Bangalore Urban",
+        "district_id": "29",
         "taluk": "Bangalore North",
-        "hoblis": ["Yelahanka", "Jala"],
-        "villages": ["Yelahanka", "Bagalur", "Singanayakanahalli", "Kogilu"],
     },
     "Devanahalli": {
-        "district": "Bangalore Rural",
+        "district_id": "30",
         "taluk": "Devanahalli",
-        "hoblis": ["Devanahalli", "Vijayapura"],
-        "villages": ["Devanahalli", "Sadahalli", "Rachenahalli"],
     },
     "Hebbal": {
-        "district": "Bangalore Urban",
+        "district_id": "29",
         "taluk": "Bangalore North",
-        "hoblis": ["Kasaba Hobli"],
-        "villages": ["Hebbal", "Nagawara", "Thanisandra"],
     },
 }
 
 # ── IGR Portal ────────────────────────────────────────────────────────
-# Base URL for the Karnataka Kaveri portal (IGR is a sub-module)
-# Production URL observed: https://kaveri.karnataka.gov.in
-# IGR portal for sale deed search — unconfirmed, use as configurable
+# Production URL observed: https://kaveri.karnataka.gov.in/registration/search
 IGR_BASE_URL = "https://kaveri.karnataka.gov.in"
 REG_SEARCH_URL = f"{IGR_BASE_URL}/registration/search"
 
-HEADERS: dict[str, str] = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-IN,en;q=0.9",
-    "Referer": IGR_BASE_URL,
-}
+# ── Rotated User-Agents for bot bypass (T-792) ─────────────────────────
+_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+]
+
+def _get_rotated_headers() -> dict[str, str]:
+    """Return headers with rotated User-Agent (T-792)."""
+    import random
+    return {
+        "User-Agent": random.choice(_USER_AGENTS),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-IN,en;q=0.9",
+        "Referer": IGR_BASE_URL,
+    }
+
+HEADERS: dict[str, str] = _get_rotated_headers()
 
 # ── Rate Limiting (per-session) ───────────────────────────────────────
 MIN_REQUEST_INTERVAL_S = 3.0
@@ -98,18 +109,35 @@ class RateLimiter:
             self._last_ts = time.time()
 
 
-_PLAYWRIGHT_AVAILABLE: bool | None = None
+_SCRAPLING_OK: bool | None = None
 
 
-def _is_playwright_available() -> bool:
-    global _PLAYWRIGHT_AVAILABLE
-    if _PLAYWRIGHT_AVAILABLE is None:
+def _is_scrapling_available() -> bool:
+    global _SCRAPLING_OK
+    if _SCRAPLING_OK is None:
         try:
-            from playwright.sync_api import sync_playwright  # noqa: F401
-            _PLAYWRIGHT_AVAILABLE = True
+            from scrapling.fetchers import Fetcher  # noqa: F401
+            _SCRAPLING_OK = True
         except ImportError:
-            _PLAYWRIGHT_AVAILABLE = False
-    return _PLAYWRIGHT_AVAILABLE
+            _SCRAPLING_OK = False
+    return _SCRAPLING_OK
+
+
+# ── Scrapling fetch function (T-792) ─────────────────────────────────
+def _scrapling_http_fetch(url: str, data: dict, headers: dict) -> str | None:
+    """Scrapling HTTP fetch with TLS fingerprint spoof. Returns response text or None."""
+    try:
+        from scrapling.fetchers import Fetcher
+        page = Fetcher.post(url, data=data, stealthy_headers=True)
+        html = getattr(page, "html", None) or str(page)
+        if len(html or "") < 100:
+            logger.warning(f"[IGRScout] Scrapling returned short response ({len(html or '')} chars)")
+            return None
+        logger.info(f"[IGRScout] Scrapling HTTP returned {len(html)} chars")
+        return html
+    except Exception as exc:
+        logger.debug(f"[IGRScout] Scrapling fetch failed: {exc}")
+        return None
 
 
 # ── Fallback Data ──────────────────────────────────────────────────────
@@ -163,97 +191,73 @@ class IGRTransactionScout:
     def __init__(self):
         self.session = None
         self.rate_limiter = RateLimiter()
-        self.metrics: dict[str, int] = {"playwright_calls": 0, "post_calls": 0, "fallback_calls": 0, "rows_normalized": 0}
+        self.metrics: dict[str, int] = {"scrapling_calls": 0, "post_calls": 0, "fallback_calls": 0, "rows_normalized": 0}
         try:
             import requests as req_lib
             self.session = req_lib.Session()
-            self.session.headers.update(HEADERS)
+            self.session.headers.update(_get_rotated_headers())
         except Exception as exc:
             logger.warning(f"[IGRScout] Requests unavailable: {exc}")
 
-    # ── Playwright path ──────────────────────────────────────────────
+    # ── Scrapling HTTP path (T-792) ──────────────────────────────────────
 
-    def _scrape_via_playwright(self, meta: dict, from_date: str, to_date: str) -> list[dict[str, Any]]:
-        """Use Playwright to fill form, submit, intercept AJAX response."""
-        if not _is_playwright_available():
-            logger.info("[IGRScout] Playwright not available")
+    def _scrape_via_scrapling(self, meta: dict, from_date: str, to_date: str) -> list[dict[str, Any]]:
+        """Scrapling HTTP fetch with TLS fingerprint spoof (T-792)."""
+        self.metrics["scrapling_calls"] += 1
+        payload = {
+            "district": meta.get("district_id", ""),
+            "taluk": meta.get("taluk", ""),
+            "fromDate": from_date,
+            "toDate": to_date,
+            "transactionType": "SALE",
+        }
+        html = _scrapling_http_fetch(REG_SEARCH_URL, payload, _get_rotated_headers())
+        if not html:
             return []
-
-        from playwright.sync_api import sync_playwright, TimeoutError as PwTimeout
-
+        # Parse HTML response (portal may return table, not JSON)
         records: list[dict[str, Any]] = []
-        data_capture: list[dict] = []
-        browser = None
         try:
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=True, args=["--no-sandbox", "--disable-gpu"], timeout=20000)
-                ctx = browser.new_context(user_agent=HEADERS["User-Agent"], locale="en-IN")
-                page = ctx.new_page()
-                page.set_default_timeout(30000)
-
-                self.rate_limiter.wait()
-                page.goto(REG_SEARCH_URL, wait_until="domcontentloaded")
-
-                for name, value in {
-                    "district": meta.get("district", ""),
-                    "taluk": meta.get("taluk", ""),
-                    "fromDate": from_date,
-                    "toDate": to_date,
-                }.items():
-                    loc = page.locator(f"select[name*='{name}'], input[name*='{name}']").first
-                    if loc.is_visible(timeout=5000):
-                        tag = loc.evaluate("el => el.tagName.toLowerCase()")
-                        if tag == "select":
-                            loc.select_option(label=value)
-                        else:
-                            loc.fill(value)
-
-                submit_btn = page.locator("input[type='submit'], button[type='submit']").first
-                if submit_btn.is_visible(timeout=5000):
-                    def _on_response(resp):
-                        if resp.status == 200 and "data" in resp.url.lower():
-                            try:
-                                j = resp.json()
-                                if isinstance(j, dict) and "data" in j:
-                                    data_capture.extend(j["data"])
-                            except Exception:
-                                pass
-
-                    page.on("response", _on_response)
-                    submit_btn.click()
-                    page.wait_for_timeout(5000)
-                    page.wait_for_load_state("networkidle", timeout=10000)
-
-        except (PwTimeout, Exception) as exc:
-            logger.info(f"[IGRScout] Playwright failed: {exc}")
-            return []
-        finally:
-            if browser:
-                try:
-                    browser.close()
-                except Exception:
-                    pass
-
-        for row in data_capture:
-            try:
-                records.append(self._normalize_row(row, meta))
-            except Exception:
-                continue
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+            # Try to find data in table rows or script tags
+            for row in soup.find_all("tr"):
+                cells = row.find_all(["td", "th"])
+                if len(cells) >= 4:
+                    record = self._parse_html_row(cells, meta)
+                    if record:
+                        records.append(record)
+        except Exception as exc:
+            logger.debug(f"[IGRScout] HTML parse failed: {exc}")
         return records
 
-    # ── Direct POST path ─────────────────────────────────────────────
+    def _parse_html_row(self, cells, meta: dict) -> dict[str, Any] | None:
+        """Parse an HTML table row into a transaction record."""
+        try:
+            return {
+                "survey_no": cells[0].get_text(strip=True)[:100],
+                "seller": cells[1].get_text(strip=True)[:500],
+                "buyer": cells[2].get_text(strip=True)[:500],
+                "consideration_amount": int(cells[3].get_text(strip=True).replace(",", "") or "0"),
+                "area_sqft": float(cells[4].get_text(strip=True) or "0"),
+                "registration_date": cells[5].get_text(strip=True)[:20],
+                "sro_office": meta.get("taluk", "")[:200],
+            }
+        except Exception:
+            return None
+
+    # ── Direct POST path (T-792) ───────────────────────────────────────────
 
     def _scrape_via_post(self, meta: dict, from_date: str, to_date: str) -> list[dict[str, Any]]:
-        """Direct POST to the registration search endpoint."""
+        """Direct POST to the registration search endpoint (T-792 fallback)."""
         if not self.session:
             return []
 
         payload: dict[str, str] = {
-            "district": meta.get("district", ""),
+            "district": meta.get("district_id", ""),
             "taluk": meta.get("taluk", ""),
             "fromDate": from_date,
             "toDate": to_date,
-            "__RequestVerificationToken": "",
+            "transactionType": "SALE",
         }
 
         self.rate_limiter.wait()
@@ -276,10 +280,27 @@ class IGRTransactionScout:
                     except Exception:
                         continue
                 return records
+            # Try HTML parsing if JSON not returned
+            return self._parse_html_response(resp.text, meta)
         except Exception as exc:
-            logger.warning(f"[IGRScout] JSON parse failed: {exc}")
+            logger.debug(f"[IGRScout] JSON parse failed, trying HTML: {exc}")
+            return self._parse_html_response(resp.text, meta)
 
-        return []
+    def _parse_html_response(self, html: str, meta: dict) -> list[dict[str, Any]]:
+        """Parse HTML response as table rows (T-792)."""
+        records: list[dict[str, Any]] = []
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+            for row in soup.find_all("tr"):
+                cells = row.find_all(["td", "th"])
+                if len(cells) >= 4:
+                    record = self._parse_html_row(cells, meta)
+                    if record:
+                        records.append(record)
+        except Exception as exc:
+            logger.debug(f"[IGRScout] HTML parse failed: {exc}")
+        return records
 
     # ── Row normalisation ───────────────────────────────────────────
 
@@ -337,8 +358,9 @@ class IGRTransactionScout:
             List of transaction dicts with keys: survey_no, seller, buyer,
             consideration_amount, area_sqft, registration_date, sro_office, source.
 
-        Fallback chain: Playwright -> POST -> hardcoded fallback.
-        Latency budget: ~10s for Playwright, ~20s for POST, ~0s for fallback.
+        Fallback chain: Scrapling -> POST -> hardcoded fallback.
+        Latency budget: ~10s for Scrapling, ~20s for POST, ~0s for fallback.
+        source='igr_portal' when live data retrieved, 'fallback' otherwise.
         """
         market = (market or "").strip()[:100]
         days_back = max(1, min(int(days_back), 365))
@@ -357,29 +379,26 @@ class IGRTransactionScout:
         logger.info(f"[IGRScout] Scraping {market} from {from_str} to {to_str}")
         start_ts = time.time()
 
-        # Retry strategy: try Playwright once, POST up to 2 times with backoff
-        # The portal is unreliable — retrying helps with transient network failures
-        # without overloading the server (3s rate limiter applies).
         _m = safe_scraper_market(market)
 
-        # 1. Playwright (no retry — expensive browser launch)
-        self.metrics["playwright_calls"] += 1
-        records = self._scrape_via_playwright(meta, from_str, to_str)
+        # 1. Scrapling HTTP (T-792) — bypass bot detection with TLS spoof
+        self.metrics["scrapling_calls"] += 1
+        records = self._scrape_via_scrapling(meta, from_str, to_str)
         if records:
             for r in records:
-                r["source"] = "portal_playwright"
+                r["source"] = "igr_portal"
             scraper_runs_total.labels(source="igr", market=_m, status="success").inc()
             elapsed = time.time() - start_ts
-            logger.info(f"[IGRScout] Playwright returned {len(records)} records for {market} ({elapsed:.1f}s)")
+            logger.info(f"[IGRScout] Scrapling returned {len(records)} records for {market} ({elapsed:.1f}s)")
             return records
 
-        # 2. Direct POST (retry with exponential backoff: 3s, 6s)
+        # 2. Direct POST (T-792 fallback) — retry with backoff
         for attempt in range(2):
             self.metrics["post_calls"] += 1
             records = self._scrape_via_post(meta, from_str, to_str)
             if records:
                 for r in records:
-                    r["source"] = "portal_post"
+                    r["source"] = "igr_portal"
                 scraper_runs_total.labels(source="igr", market=_m, status="success").inc()
                 elapsed = time.time() - start_ts
                 logger.info(f"[IGRScout] POST returned {len(records)} records for {market} ({elapsed:.1f}s)")
@@ -389,18 +408,18 @@ class IGRTransactionScout:
                 logger.debug(f"[IGRScout] POST attempt {attempt+1} failed — retrying in {backoff:.0f}s")
                 time.sleep(backoff)
 
-        # 3. Hardcoded fallback
+        # 3. Fallback (T-793) — explicit warning about IRR quality
         scraper_runs_total.labels(source="igr", market=_m, status="failed").inc()
         self.metrics["fallback_calls"] += 1
         elapsed = time.time() - start_ts
-        logger.warning(f"[IGRScout] Portal unreachable after {elapsed:.1f}s — using {market} fallback data")
+        logger.warning(f"[IGRScout] IGR portal unreachable after {elapsed:.1f}s — fallback data inserted; IRR quality degraded")
         fb = _fallback_transactions(market)
         for r in fb:
             r["source"] = "fallback"
         logger.info(f"[IGRScout] Fallback returned {len(fb)} records for {market}")
         return fb
 
-    # ── DB Insertion ────────────────────────────────────────────────
+# ── DB Insertion ────────────────────────────────────────────────
 
     def insert_transactions(self, records: list[dict[str, Any]], market: str = "") -> dict[str, int]:
         """Insert records into igr_transactions table via DBOrganizer pattern.
@@ -424,7 +443,9 @@ class IGRTransactionScout:
                 try:
                     survey_no = rec.get("survey_no", "")
                     reg_date = rec.get("registration_date", "")
-                    dedup_key = f"{survey_no}:{reg_date}"
+                    consideration = rec.get("consideration_amount", 0)
+                    # T-793: dedup key includes consideration_amount
+                    dedup_key = f"{survey_no}:{reg_date}:{consideration}"
                     dedup_id = hashlib.sha256(dedup_key.encode()).hexdigest()[:32]
 
                     result = conn.execute(

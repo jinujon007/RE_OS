@@ -75,6 +75,7 @@ _READ_ONLY_PATHS = frozenset({
     '/api/alerts',
     '/api/registry',
     '/api/data/freshness',
+    '/api/memory/explorer',
 })
 _READ_ONLY_PREFIXES = ('/api/reports/', '/api/logs/')
 
@@ -672,6 +673,100 @@ def data_freshness():
     except Exception as e:
         logger.error("[data_freshness] %s", e)
         return jsonify({"error": "freshness query failed"}), 500
+
+
+@limiter.limit("30 per minute")
+@app.route("/api/memory/explorer", methods=["GET"])
+def memory_explorer():
+    """Memory Explorer API — query agent_memories with filters."""
+    # Input validation with whitelisting
+    agent_id = (request.args.get("agent_id") or "").strip() or None
+    market = _normalize_market(request.args.get("market", ""))
+    min_confidence = request.args.get("min_confidence", "0.5")
+    fact_type = request.args.get("fact_type", "")
+    limit = request.args.get("limit", "50")
+    
+    # Validate min_confidence
+    try:
+        min_confidence_float = max(0.0, min(1.0, float(min_confidence)))
+    except (ValueError, TypeError):
+        min_confidence_float = 0.5
+    
+    # Validate limit
+    try:
+        limit_int = min(max(1, int(limit)), 200)
+    except (ValueError, TypeError):
+        limit_int = 50
+    
+    # Validate fact_type with whitelist
+    _FACT_TYPE_ALLOWLIST = {"fact", "conflict", "digest", "insight"}
+    fact_type_clean = None
+    if fact_type:
+        ft = fact_type.strip()[:20]
+        if ft in _FACT_TYPE_ALLOWLIST:
+            fact_type_clean = ft
+    
+    conn = None
+    exc = False
+    try:
+        conn = _get_db()
+        cur = conn.cursor()
+        
+        where_clauses = ["confidence >= %s"]
+        params = [min_confidence_float]
+        
+        if agent_id:
+            where_clauses.append("agent_id = %s")
+            params.append(agent_id)
+        
+        if market and market != "all":
+            where_clauses.append("market ILIKE %s")
+            params.append(f"%{market}%")
+        
+        if fact_type_clean:
+            where_clauses.append("COALESCE(fact_type, 'fact') = %s")
+            params.append(fact_type_clean)
+        
+        where_sql = " AND ".join(where_clauses)
+        params.append(limit_int)
+        
+        cur.execute(
+            f"""
+            SELECT agent_id, market, fact, confidence, 
+                   COALESCE(fact_type, 'fact') as fact_type,
+                   metadata, created_at
+            FROM agent_memories
+            WHERE {where_sql}
+            ORDER BY confidence DESC, created_at DESC
+            LIMIT %s
+            """,
+            params,
+        )
+        
+        rows = [
+            {
+                "agent_id": r[0],
+                "market": r[1],
+                "fact": r[2],
+                "confidence": round(r[3], 3),
+                "fact_type": r[4],
+                "metadata": r[5],
+                "created_at": r[6].isoformat() if r[6] else None,
+            }
+            for r in cur.fetchall()
+        ]
+        
+        cur.close()
+        logger.info("[memory_explorer] returned %d rows (agent=%s, market=%s, min_conf=%.2f, fact_type=%s)",
+                    len(rows), agent_id or "all", market or "all", min_confidence_float, fact_type_clean or "all")
+        return jsonify({"memories": rows, "count": len(rows)})
+    except Exception as e:
+        exc = True
+        logger.error("[memory_explorer] %s", e)
+        return jsonify({"error": "memory query failed"}), 500
+    finally:
+        if conn:
+            _release_db(conn, reset=exc)
 
 
 # ── Finance Brief ───────────────────────────────────────────────────────────────

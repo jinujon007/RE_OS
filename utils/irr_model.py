@@ -90,6 +90,8 @@ class IRRResult:
     best_case_irr_pct: float = 0.0   # p75 (bull scenario)
     worst_case_irr_pct: float = 0.0  # p25 (bear scenario)
     risk_free_return_pct: float = 7.0  # Indian Gsec benchmark %
+    # ── Data provenance (T-794 — Sprint 42) ──────────────────────────────────────
+    psf_source_quality: str = "unknown"  # 'live_igr' | 'fallback_igr' | 'listing_only' | 'unknown'
 
 @dataclass
 class ScenarioResult:
@@ -116,6 +118,33 @@ def calc_land_cost(
         raw_land_cost=round(raw),
         negotiated_land_cost=round(negotiated),
     )
+
+
+def compute_psf_source_quality(igr_source: str | None, igr_record_count: int) -> str:
+    """Compute PSF source quality label from IGR data availability.
+    
+    Args:
+        igr_source: Source label from GDVEstimator ('igr_portal', 'insufficient_igr_records', etc.)
+        igr_record_count: Number of IGR records used
+    
+    Returns:
+        'live_igr': ≥5 live IGR portal records (high confidence)
+        'fallback_igr': <5 live IGR records or insufficient data
+        'listing_only': No IGR data, using listing PSF only
+        'unknown': No source information available
+    """
+    if igr_source == "igr_portal" and igr_record_count >= 5:
+        return "live_igr"
+    elif igr_source == "igr_portal":  # count < 5, fallback due to insufficient records
+        return "fallback_igr"
+    elif igr_source in ("insufficient_igr_records", "insufficient_records", "sanity_rejected"):
+        return "fallback_igr"
+    elif igr_source in ("listing_psf", "no_data", "table_unavailable"):
+        return "listing_only"
+    elif igr_source is None:
+        return "listing_only"
+    else:
+        return "unknown"
 
 
 def calc_gdv(sellable_area_sqft: float, sell_psf: float) -> GDVResult:
@@ -176,7 +205,21 @@ def compare_scenarios(
     land_cost: float,
     sellable_area_sqft: float,
     base_psf: float,
+    igr_source: str | None = None,
+    igr_record_count: int = 0,
 ) -> ScenarioResult:
+    """Compare base/bull/bear IRR scenarios.
+    
+    Args:
+        land_cost: Negotiated land acquisition cost
+        sellable_area_sqft: Total sellable area
+        base_psf: Base case selling price per sqft
+        igr_source: IGR data source label (optional, for psf_source_quality)
+        igr_record_count: Number of IGR records used (optional, for psf_source_quality)
+    
+    Returns:
+        ScenarioResult with base/bull/bear IRRResults and recommendation
+    """
     bull_psf  = base_psf * 1.10   # +10% optimistic
     bear_psf  = base_psf * 0.80   # -20% downside (industry standard for 54mo timeline)
 
@@ -194,11 +237,21 @@ def compare_scenarios(
         bull_irr_pct=bull.simple_irr_pct,
         bear_irr_pct=bear.simple_irr_pct,
     )
+    # Set psf_source_quality (T-794) ───────────────────────────────────────────
+    psf_quality = compute_psf_source_quality(igr_source, igr_record_count)
+    if psf_quality != "live_igr":
+        from loguru import logger as _log
+        _log.warning(
+            f"[IRR] PSF source quality: {psf_quality} (not live_igr) — "
+            f"IRR is estimate based on {'fallback' if psf_quality == 'fallback_igr' else 'listing'} data, "
+            f"not confirmed market transactions"
+        )
     for r in (base, bull, bear):
         r.sharpe_ratio = risk["sharpe_ratio"]
         r.max_drawdown_pct = risk["max_drawdown_pct"]
         r.best_case_irr_pct = risk["best_case_irr_pct"]
         r.worst_case_irr_pct = risk["worst_case_irr_pct"]
+        r.psf_source_quality = psf_quality
 
     if base.verdict == "GO" and bear.verdict != "NO-GO":
         rec = "PROCEED — base and bear cases both viable."

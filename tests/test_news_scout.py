@@ -171,7 +171,8 @@ class TestSourceField:
         assert results[0]["source"] == "google_news_rss"
 
     def test_et_realty_source_label(self):
-        md = "[Title](https://realty.economictimes.indiatimes.com/article)"
+        # Title must be >=20 chars to pass the parser's minimum length guard
+        md = "[Bengaluru real estate market sees record registrations in May 2026](https://realty.economictimes.indiatimes.com/news/bengaluru-market-2026)"
         from scrapers.news_scout import _parse_et_realty_markdown
         results = _parse_et_realty_markdown(md)
         assert results[0]["source"] == "et_realty"
@@ -181,14 +182,17 @@ class TestSourceField:
 
 class TestNewsUpsertIdempotent:
     def test_re_run_does_not_duplicate(self):
+        import uuid
         from scrapers.scout_memory import ScoutMemory
 
+        # Use a unique URL so ScoutMemory's on-disk cache from prior runs never matches
+        test_url = f"https://x.com/test-dedup-{uuid.uuid4()}"
         mem = ScoutMemory("Yelahanka")
         findings = [
             {
-                "cid": mem.cid_news("https://x.com/1"),
+                "cid": mem.cid_news(test_url),
                 "headline": "Same article",
-                "source_url": "https://x.com/1",
+                "source_url": test_url,
                 "signal_type": "other",
                 "scraped_at": "2026-06-02T10:00:00",
             }

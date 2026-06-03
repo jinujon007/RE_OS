@@ -395,6 +395,32 @@ def run_kaveri_scrape():
             logger.warning(f"[Scheduler] Kaveri scrape failed for {market}: {exc}")
 
 
+def run_conflict_detection():
+    """Weekly memory conflict detection — Monday 03:30 UTC (after memory decay).
+    Detects contradictory facts in agent_memories and alerts via Discord."""
+    try:
+        from utils.agent_memory import detect_conflicts
+        from utils.discord_notifier import send
+        
+        for market in ["Yelahanka", "Devanahalli", "Hebbal"]:
+            conflicts = detect_conflicts(market)
+            if conflicts:
+                for conflict in conflicts:
+                    alert_msg = (
+                        f"CONFLICT {conflict['market']}/{conflict['fact_prefix'][:30]}: "
+                        f"{conflict['agent_a']}:₹{conflict['value_a']:,.0f} vs "
+                        f"{conflict['agent_b']}:₹{conflict['value_b']:,.0f} "
+                        f"({conflict['pct_gap']:.0f}% gap) — verify source"
+                    )
+                    logger.info(f"[ConflictDetection] {alert_msg}")
+                    try:
+                        send("re_os_health", "Memory Conflict Detected", alert_msg)
+                    except Exception as exc:
+                        logger.warning(f"[ConflictDetection] Discord send failed: {exc}")
+    except Exception as exc:
+        logger.warning(f"[Scheduler] Conflict detection failed: {exc}")
+
+
 if __name__ == "__main__":
     logger.add("logs/scheduler.log", rotation="50 MB")
     os.makedirs("logs", exist_ok=True)
@@ -520,6 +546,15 @@ if __name__ == "__main__":
         misfire_grace_time=3600,
     )
 
+    # Weekly memory conflict detection — Monday 03:30 UTC (after memory decay at 03:00)
+    scheduler.add_job(
+        lambda: _safe_job(run_conflict_detection, "conflict_detection"),
+        CronTrigger(day_of_week="mon", hour=3, minute=30, timezone="UTC"),
+        id="conflict_detection",
+        name="Weekly Memory Conflict Detection",
+        misfire_grace_time=3600,
+    )
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
     logger.info("  2:30 AM IST — RERA Yelahanka")
@@ -532,6 +567,7 @@ if __name__ == "__main__":
     logger.info("  Every 6 hrs — Listings scan")
     logger.info("  Every 1 hr  — Board session recovery (T-315)")
     logger.info("  Monday 03:00 UTC — Agent memory decay")
+    logger.info("  Monday 03:30 UTC — Memory conflict detection")
     logger.info("  Monday 04:00 IST — BERTScore quality evaluation")
     logger.info(f"Active jobs: {[j.id for j in scheduler.get_jobs()]}")
 

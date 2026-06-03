@@ -186,7 +186,16 @@ def _fetch_with_fallbacks(
     return best_text, best_url
 
 
-def _fetch_detail_page_playwright(detail_url: str) -> str:
+def _fetch_detail_page_playwright(detail_url: str, cookies: list | None = None) -> str:
+    """Fetch RERA detail page using Playwright with optional session cookies.
+    
+    Args:
+        detail_url: URL to fetch
+        cookies: Optional cookies from requests.Session for session sharing (T-800)
+    
+    Returns:
+        Cleaned HTML text or empty string on failure
+    """
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -198,6 +207,18 @@ def _fetch_detail_page_playwright(detail_url: str) -> str:
                 args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
             )
             ctx = browser.new_context(user_agent=HEADERS["User-Agent"], locale="en-IN")
+            # T-800: Share session cookies with Playwright context (R1-03: error handling)
+            if cookies:
+                try:
+                    pw_cookies = [
+                        {"name": c.name, "value": c.value, "domain": c.domain or ".karnataka.gov.in", "path": c.path or "/"}
+                        for c in cookies
+                        if hasattr(c, 'name') and hasattr(c, 'value')  # Validate cookie object
+                    ]
+                    if pw_cookies:
+                        ctx.add_cookies(pw_cookies)
+                except Exception as exc:
+                    logger.debug(f"[RERADetailScout][Playwright] Cookie conversion failed (non-fatal): {exc}")
             page = ctx.new_page()
             page.set_default_timeout(30_000)
             page.goto(detail_url, wait_until="domcontentloaded", timeout=30_000)
@@ -306,7 +327,7 @@ class RERADetailScout:
             detail_url = used_url
         if len(text) < 200:
             for url in candidate_urls:
-                ptext = _fetch_detail_page_playwright(url)
+                ptext = _fetch_detail_page_playwright(url, self.session.cookies)  # T-800: pass cookies for session sharing
                 if len(ptext) > len(text):
                     text = ptext
                     detail_url = url

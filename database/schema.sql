@@ -560,6 +560,8 @@ CREATE TABLE IF NOT EXISTS agent_memories (
     market TEXT,
     fact TEXT NOT NULL,
     confidence FLOAT DEFAULT 0.6 CHECK (confidence BETWEEN 0.0 AND 1.0),
+    fact_type VARCHAR(20) NOT NULL DEFAULT 'fact',  -- 'fact' | 'conflict' | 'digest'
+    metadata JSONB,                                  -- conflict: {source_a, value_a, source_b, value_b, pct_gap}
     source_count INT DEFAULT 1,
     last_confirmed DATE DEFAULT CURRENT_DATE,
     created_at TIMESTAMPTZ DEFAULT NOW()

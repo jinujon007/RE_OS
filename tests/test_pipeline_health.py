@@ -8,11 +8,27 @@ import time
 
 import pytest
 
-pytestmark = pytest.mark.unit
+# Tests 1-4 hit the live DB; test 5 hits Docker — skip when infrastructure is absent.
+pytestmark = pytest.mark.integration
+
+
+def _db_available() -> bool:
+    try:
+        from utils.db import get_engine
+        from sqlalchemy import text
+        with get_engine().connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
+
+
+_skip_no_db = pytest.mark.skipif(not _db_available(), reason="PostgreSQL not reachable")
 
 
 # ── Test 1: All 3 markets appear in agent_runs with stage_2_end completed ──────
 
+@_skip_no_db
 class TestStageEventsComplete:
     def test_stage_2_end_present_for_all_markets(self):
         from utils.db import get_engine
@@ -31,6 +47,7 @@ class TestStageEventsComplete:
 
 # ── Test 2: No stage event stays in_progress >10 min ───────────────────────────
 
+@_skip_no_db
 class TestNoZombieStages:
     def test_no_stale_in_progress_events(self):
         from utils.db import get_engine
@@ -47,6 +64,7 @@ class TestNoZombieStages:
 
 # ── Test 3: v_market_brief returns rows for all 3 markets ─────────────────────
 
+@_skip_no_db
 class TestMarketBriefPopulated:
     def test_all_markets_have_brief(self):
         from utils.db import get_engine
@@ -64,6 +82,7 @@ class TestMarketBriefPopulated:
 
 # ── Test 4: avg_psf in v_market_brief between 1,500 and 25,000 ────────────────
 
+@_skip_no_db
 class TestPSFBounds:
     def test_avg_listing_psf_within_bounds(self):
         from utils.db import get_engine
@@ -85,6 +104,19 @@ class TestPSFBounds:
 
 # ── Test 5: Scheduler healthcheck command exits 0 ─────────────────────────────
 
+def _docker_running() -> bool:
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", "re_os_scheduler",
+             "--format", "{{.State.Status}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.returncode == 0 and "running" in result.stdout.lower()
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(not _docker_running(), reason="re_os_scheduler container not running")
 class TestSchedulerHealthcheck:
     def test_scheduler_healthcheck_exits_zero(self):
         result = subprocess.run(

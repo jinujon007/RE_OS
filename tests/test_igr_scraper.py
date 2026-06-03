@@ -1,5 +1,5 @@
 """
-Tests for IGR Karnataka scraper (Sprint 39 — T-475, T-478).
+Tests for IGR Karnataka scraper (Sprint 42 — T-792, T-793).
 Uses mocking for portal interactions; tests all fallback paths.
 """
 import pytest
@@ -27,7 +27,7 @@ class TestIGRTransactionScout:
 
     def test_run_uses_fallback_when_portal_unreachable(self):
         scout = self._make_scout()
-        with patch.object(scout, '_scrape_via_playwright', return_value=[]):
+        with patch.object(scout, '_scrape_via_scrapling', return_value=[]):
             with patch.object(scout, '_scrape_via_post', return_value=[]):
                 results = scout.run(market="Yelahanka", days_back=30)
         assert len(results) >= 5
@@ -39,14 +39,14 @@ class TestIGRTransactionScout:
             {"survey_no": "100/1", "seller": "A", "buyer": "B",
              "consideration_amount": 1000000, "area_sqft": 1000,
              "registration_date": "2026-05-01", "sro_office": "Test",
-             "source": "portal_post"},
+             "source": "igr_portal"},
         ]
         scout = self._make_scout()
-        with patch.object(scout, '_scrape_via_playwright', return_value=[]):
+        with patch.object(scout, '_scrape_via_scrapling', return_value=[]):
             with patch.object(scout, '_scrape_via_post', return_value=fake_records):
                 results = scout.run(market="Devanahalli")
         assert len(results) == 1
-        assert results[0]["source"] == "portal_post"
+        assert results[0]["source"] == "igr_portal"
 
     def test_output_schema_has_required_keys(self):
         from scrapers.igr_karnataka import _fallback_transactions
@@ -100,8 +100,8 @@ class TestIGRTransactionScout:
     def test_insert_transactions_dedup_on_second_call(self):
         scout = self._make_scout()
         records = [{"survey_no": "100/1", "seller": "A", "buyer": "B",
-                     "consideration_amount": 1000000, "area_sqft": 1000,
-                     "registration_date": "2026-05-01", "sro_office": "Test"}]
+                    "consideration_amount": 1000000, "area_sqft": 1000,
+                    "registration_date": "2026-05-01", "sro_office": "Test"}]
         from unittest.mock import patch
         with patch("utils.db.get_engine") as mock_ge:
             mock_conn = MagicMock()
@@ -120,14 +120,14 @@ class TestIGRTransactionScout:
             assert stats2["skipped"] == 1
 
 
-class TestIGRPlaywrightPath:
-    """Tests for Playwright-based scraping path."""
+class TestIGRScraplingPath:
+    """Tests for Scrapling-based scraping path."""
 
-    def test_playwright_unavailable_graceful(self):
+    def test_scrapling_unavailable_graceful(self):
         from scrapers.igr_karnataka import IGRTransactionScout
         scout = IGRTransactionScout()
-        with patch("scrapers.igr_karnataka._is_playwright_available", return_value=False):
-            results = scout._scrape_via_playwright({}, "2026-04-01", "2026-05-01")
+        with patch("scrapers.igr_karnataka._is_scrapling_available", return_value=False):
+            results = scout._scrape_via_scrapling({}, "2026-04-01", "2026-05-01")
             assert results == []
 
 
