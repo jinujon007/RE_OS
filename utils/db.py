@@ -10,7 +10,7 @@ _engine = None
 _lock = threading.Lock()
 
 
-def get_engine(pool_size: int = 5, max_overflow: int = 2):
+def get_engine(pool_size: int = 10, max_overflow: int = 5):
     """Return the shared SQLAlchemy engine. Thread-safe singleton."""
     global _engine
     if _engine is None:

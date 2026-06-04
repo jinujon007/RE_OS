@@ -450,6 +450,26 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
 
         if key == "finance":
             irr_context = ""
+            market_safe = (market or "").strip()
+            if market_safe:
+                try:
+                    from utils.psf_forecaster import PSFForecaster
+                    fc = PSFForecaster()
+                    forecast = fc.predict(market_safe)
+                    if forecast and len(forecast) >= 3:
+                        psf_now = forecast[0].predicted_psf
+                        psf_1m = forecast[1].predicted_psf if len(forecast) > 1 else psf_now
+                        psf_3m = forecast[2].predicted_psf if len(forecast) > 2 else psf_now
+                        direction = "up" if psf_3m > psf_now else ("down" if psf_3m < psf_now else "stable")
+                        irr_context += (
+                            f"\n\n[PSF FORECAST — {market_safe}]\n"
+                            f"Current PSF: ₹{psf_now:,.0f} | "
+                            f"1-month: ₹{psf_1m:,.0f} | "
+                            f"3-month: ₹{psf_3m:,.0f} | "
+                            f"Direction: {direction}\n"
+                        )
+                except Exception:
+                    logger.debug("[board_room] PSF forecast lookup failed for %s", market_safe)
             params = _extract_pitch_params(pitch)
             if params["area_sqft"] is not None and params["psf"] is not None:
                 try:

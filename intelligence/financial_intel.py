@@ -34,6 +34,27 @@ _RERA_TO_POSSESSION_MONTHS: int = 36
 
 _CACHE_NS = "financial_intel"
 
+_DEFAULT_SELL_PSF: float = 5000.0
+
+
+def _get_market_psf_fallback(market: str) -> float:
+    try:
+        from utils.db import get_engine
+        from sqlalchemy import text
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text("SELECT avg_listing_psf FROM v_market_brief WHERE micro_market ILIKE :m LIMIT 1"),
+                {"m": "%%{}%%".format(market)},
+            ).fetchone()
+        if row and row[0] and float(row[0]) > 500:
+            psf = float(row[0])
+            logger.debug("[FinancialIntel] Market PSF fallback for {}: {}", market, psf)
+            return psf
+    except Exception as exc:
+        logger.debug("[FinancialIntel] PSF fallback query failed for {}: {}", market, exc)
+    logger.info("[FinancialIntel] Using DEFAULT PSF fallback for {}: {}", market, _DEFAULT_SELL_PSF)
+    return _DEFAULT_SELL_PSF
+
 
 @dataclass
 class DealScenario:

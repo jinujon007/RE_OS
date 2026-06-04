@@ -53,4 +53,41 @@ class DeveloperPlugin(DataPlugin):
                 data=data,
             ))
         logger.info("[DeveloperPlugin] {} developers for {}", len(records), market)
+        import threading
+        threading.Thread(
+            target=self._check_and_alert_new_grade_a_launches,
+            args=(market,),
+            daemon=True,
+        ).start()
         return records
+
+    def _check_and_alert_new_grade_a_launches(self, market: str) -> None:
+        from utils.discord_notifier import send
+        from utils.db import get_engine
+        from sqlalchemy import text
+
+        try:
+            with get_engine().connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT r.project_name, d.name, r.rera_number,
+                           r.price_min_psf, r.price_max_psf, r.total_units
+                    FROM rera_projects r
+                    JOIN developers d ON d.id = r.developer_id
+                    JOIN micro_markets m ON m.id = r.micro_market_id
+                    WHERE d.grade = 'A'
+                      AND m.name ILIKE :market
+                      AND r.created_at >= NOW() - INTERVAL '25 hours'
+                    ORDER BY r.created_at DESC
+                    LIMIT 5
+                """), {"market": f"%{market}%"}).fetchall()
+
+            for row in rows:
+                project_name, dev_name, rera_no, psf_min, psf_max, units = row
+                psf_str = f"\u20b9{psf_min:,.0f}\u2013\u20b9{psf_max:,.0f} PSF" if psf_min else "PSF unknown"
+                alert = (
+                    f"**[{dev_name}]** launched **{project_name}** in {market}\n"
+                    f"{units or '?'} units \u00b7 {psf_str} \u00b7 RERA: {rera_no or 'pending'}"
+                )
+                send("competitor", f"Grade A Launch \u2014 {market}", alert)
+        except Exception as exc:
+            logger.warning("[DeveloperPlugin] Competitor alert failed for {}: {}", market, exc)

@@ -115,5 +115,34 @@ except ImportError:
     sys.modules["psycopg2"] = _pg2
     sys.modules["psycopg2.pool"] = _pg2_pool
 
+# ── slowapi stub (for FastAPI tests) ──────────────────────────────────────
+try:
+    import slowapi as _slowapi_check  # noqa: F401
+except ImportError:
+    _slowapi = types.ModuleType("slowapi")
+    _slowapi_util = types.ModuleType("slowapi.util")
+    _slowapi_util.get_remote_address = MagicMock(return_value="127.0.0.1")
+    _slowapi_errors = types.ModuleType("slowapi.errors")
+    _slowapi_errors.RateLimitExceeded = Exception
+
+    class _FakeLimiter:
+        def __init__(self, *a, **kw):
+            pass
+        def init_app(self, *a, **kw):
+            pass
+        def limit(self, *a, **kw):
+            def decorator(f):
+                return f
+            return decorator
+        def exempt(self, f):
+            return f
+
+    _slowapi.Limiter = _FakeLimiter
+    _slowapi.util = _slowapi_util
+    _slowapi.errors = _slowapi_errors
+    sys.modules["slowapi"] = _slowapi
+    sys.modules["slowapi.util"] = _slowapi_util
+    sys.modules["slowapi.errors"] = _slowapi_errors
+
 
 

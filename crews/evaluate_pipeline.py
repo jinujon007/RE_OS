@@ -105,8 +105,8 @@ def _get_market_id(market: str) -> str | None:
             row = conn.execute(
                 text("SELECT id FROM micro_markets WHERE name ILIKE :m LIMIT 1"),
                 {"m": f"%{market}%"},
-            ).mapping().fetchone()
-            return str(row["id"]) if row else None
+            ).fetchone()
+            return str(row[0]) if row else None
     except Exception:
         return None
 
@@ -146,7 +146,7 @@ def _create_deal_entry(
                 ) VALUES (
                     :name, :survey_no, :market_id, :deal_type,
                     :area_acres, :ask_psf, :irr_base, :irr_bull, :irr_bear,
-                    :verdict, :metadata::jsonb
+                    :verdict, CAST(:metadata AS jsonb)
                 )
                 RETURNING id
                 """),
@@ -174,7 +174,7 @@ def _create_deal_entry(
             conn.execute(
                 text("""
                 INSERT INTO deal_memos (deal_id, title, memo_type, sections, recommendation, created_at)
-                VALUES (:deal_id, :title, 'full', :sections::jsonb, :recommendation, NOW())
+                VALUES (:deal_id, :title, 'full', CAST(:sections AS jsonb), :recommendation, NOW())
                 """),
                 {
                     "deal_id": deal_id,
@@ -185,7 +185,7 @@ def _create_deal_entry(
             )
             return deal_id
     except Exception as exc:
-        logger.warning("[Evaluate] deal entry failed: %s", exc)
+        logger.warning("[Evaluate] deal entry failed: {}", exc)
         return None
 
 

@@ -3,18 +3,21 @@ RE_OS — Scheduler
 ──────────────────
 Runs the agent crew on schedule. Runs inside Docker as a separate service.
 
-Schedule (post-Sprint-63):
+Schedule (post-Sprint-66):
+- 01:00 AM IST — Daily pg_dump backup (T-904)
 - 02:00 AM IST — Unified Ingest Engine (all scrapers via DataPlugin adapters)
 - 03:00 AM IST — Opportunity scoring (GATE-47 — survey scoring + Discord alert)
 - 04:30 AM IST — Intel embedding index (ChromaDB via Ollama nomic-embed-text)
 - 05:00 AM IST — News sentiment scoring (FinBERT via HF Inference API)
 - 06:00 AM IST — Market snapshots (daily RERA + listing aggregates)
 - 06:15 AM IST — Distressed developer scan (JD/JV targeting via Discord alert)
+- 08:00 AM IST — LLS Compliance Calendar check (Discord #legal-flags if <30 days)
 - Every 1 hr   — Stuck board session recovery
 - Monday 03:00 UTC — Agent memory decay
 - Monday 03:30 UTC — Memory conflict detection (Discord alert)
 - Monday 03:45 IST — BERTScore quality evaluation
 - Monday 04:00 IST — Weekly memory digest (top-5 facts per market → Discord)
+- Sunday 07:00 IST — PSF Forecast (LGBM walk-forward validation)
 """
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -94,7 +97,8 @@ def run_single_market_rera(market: str):
 
 
 def run_listings_scan():
-    """Listings scan — 6-hourly."""
+    """DEPRECATED — superseded by IngestEngine (T-671). No longer registered as a scheduler job."""
+    logger.warning("[Scheduler] run_listings_scan() called directly — use IngestEngine instead")
     from scrapers.listings_scraper import ListingsScraper
     from config.checkpointer import Checkpointer
 
@@ -231,14 +235,8 @@ def run_news_sentiment_scoring():
 
 
 def run_yelahanka_refresh():
-    """
-    REMOVED — Yelahanka runs as its own independent job (rera_yelahanka at 2:30 AM IST).
-    This function is kept as a no-op stub so any existing cron references don't crash.
-    """
-    logger.info(
-        "Scheduler: run_yelahanka_refresh is a no-op — "
-        "Yelahanka handled by independent cron job rera_yelahanka at 2:30 AM IST"
-    )
+    """DEPRECATED — superseded by IngestEngine (T-671). No longer registered as a scheduler job."""
+    logger.warning("[Scheduler] run_yelahanka_refresh() called directly — use IngestEngine instead")
 
 
 def run_market_snapshot():
@@ -371,7 +369,8 @@ def run_distressed_developer_scan():
 
 
 def run_igr_transaction_scrape():
-    """Weekly IGR transaction scrape for all markets — Sunday 05:30 IST."""
+    """DEPRECATED — superseded by IngestEngine (T-671). No longer registered as a scheduler job."""
+    logger.warning("[Scheduler] run_igr_transaction_scrape() called directly — use IngestEngine instead")
     from scrapers.igr_karnataka import IGRTransactionScout
     for market in ["Yelahanka", "Devanahalli", "Hebbal"]:
         try:
@@ -390,7 +389,8 @@ def run_igr_transaction_scrape():
 
 
 def run_kaveri_scrape():
-    """Weekly Kaveri guidance value scrape for all markets — Sunday 05:00 IST."""
+    """DEPRECATED — superseded by IngestEngine (T-671). No longer registered as a scheduler job."""
+    logger.warning("[Scheduler] run_kaveri_scrape() called directly — use IngestEngine instead")
     from scrapers.kaveri_karnataka import KaveriScraper
     for market in ["Yelahanka", "Devanahalli", "Hebbal"]:
         try:
@@ -584,6 +584,145 @@ def run_opportunity_scoring():
         logger.warning("[Scheduler] Opportunity scoring failed after {:.1f}s: {}", elapsed, exc)
 
 
+def run_psf_forecast():
+    """Weekly PSF forecast for all markets. Discord alert if MAPE >15%.
+    Runs Sunday 07:00 IST."""
+    from utils.psf_forecaster import PSFForecaster
+    from utils.discord_notifier import send
+
+    for market in TARGET_MARKETS:
+        try:
+            forecaster = PSFForecaster()
+            result = forecaster.train(market)
+            if result.error:
+                logger.info("[Scheduler] PSF forecast skipped for %s: %s", market, result.error)
+                continue
+
+            logger.info("[Scheduler] PSF forecast for %s: direction=%s, next_3mo=%.0f, MAPE=%s",
+                       market, result.direction, result.next_3mo_avg or 0,
+                       f"{result.mape:.1f}%" if result.mape else "N/A")
+
+            # Discord alert if MAPE > 15%
+            if result.mape is not None and result.mape > 15.0:
+                send("system", f"PSF Forecast Warning — {market}",
+                     f"MAPE of {result.mape:.1f}% exceeds 15% threshold. "
+                     f"Direction: {result.direction}. "
+                     f"Next 3mo avg: ₹{result.next_3mo_avg:,.0f}")
+        except Exception as exc:
+            logger.warning("[Scheduler] PSF forecast failed for %s: %s", market, exc)
+
+
+def run_compliance_check():
+    """Daily LLS Compliance Calendar check — 08:00 IST (T-704).
+    check_upcoming_deadlines() handles Discord internally; this wrapper logs outcome."""
+    try:
+        from utils.lls_compliance_calendar import check_upcoming_deadlines
+        alerts = check_upcoming_deadlines()
+        logger.info(
+            "[ComplianceCalendar] Daily check done — {} deadline(s) within 30 days",
+            len(alerts),
+        )
+    except Exception as exc:
+        logger.warning("[Scheduler] Compliance check failed (non-fatal): {}", exc)
+
+
+_backup_lock = False
+
+def run_db_backup():
+    """Daily pg_dump backup at 01:00 IST. 7-day retention.
+    
+    Uses PGPASSWORD env var for auth (never passes password on command line).
+    Guarded by module-level lock to prevent concurrent backup runs.
+    Logs to agent_runs table with status 'success' or 'failed'.
+    """
+    global _backup_lock
+    if _backup_lock:
+        logger.warning("[DB-Backup] Previous backup still running — skipping")
+        return
+
+    import gzip
+    import shutil
+    import subprocess as _subprocess
+    from datetime import datetime, timedelta
+    from urllib.parse import urlparse
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_dir = "/app/backups"
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_path = os.path.join(backup_dir, f"re_os_{timestamp}.sql")
+    gz_path = backup_path + ".gz"
+
+    parsed = urlparse(os.environ["DATABASE_URL"])
+    db_env = {**os.environ, "PGPASSWORD": parsed.password or ""}
+
+    try:
+        _backup_lock = True
+        _subprocess.run(
+            [
+                "pg_dump",
+                "--host", parsed.hostname or "localhost",
+                "--port", str(parsed.port or 5432),
+                "--username", parsed.username or "re_os_user",
+                f"--dbname={parsed.path.lstrip('/')}",
+                "--no-owner",
+                "--no-acl",
+                "--format", "custom",
+                "--file", backup_path,
+            ],
+            check=True, capture_output=True, timeout=600, env=db_env,
+        )
+        with open(backup_path, "rb") as f_in:
+            with gzip.open(gz_path, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        os.remove(backup_path)
+
+        size_mb = os.path.getsize(gz_path) / (1024 * 1024)
+        logger.info("[DB-Backup] Created {} ({:.1f} MB)", gz_path, size_mb)
+
+        cutoff = datetime.now() - timedelta(days=7)
+        removed = 0
+        for fname in os.listdir(backup_dir):
+            fpath = os.path.join(backup_dir, fname)
+            if not fname.endswith(".sql.gz"):
+                continue
+            mtime = datetime.fromtimestamp(os.path.getmtime(fpath))
+            if mtime < cutoff:
+                os.remove(fpath)
+                removed += 1
+        if removed:
+            logger.info("[DB-Backup] Cleaned {} old backups (>7 days)", removed)
+
+        try:
+            with get_engine().begin() as conn:
+                conn.execute(
+                    text("""
+                        INSERT INTO agent_runs
+                            (agent_name, micro_market, event_type, status, records_inserted, notes)
+                        VALUES ('backup', 'system', 'db_backup', 'success', 0, :notes)
+                    """),
+                    {"notes": "pg_dump backup {} ({:.1f} MB)".format(timestamp, size_mb)},
+                )
+        except Exception as exc:
+            logger.warning("[DB-Backup] Failed to log backup: {}", exc)
+
+    except Exception as exc:
+        logger.error("[DB-Backup] Failed: {}", exc)
+        try:
+            with get_engine().begin() as conn:
+                conn.execute(
+                    text("""
+                        INSERT INTO agent_runs
+                            (agent_name, micro_market, event_type, status, records_inserted, notes)
+                        VALUES ('backup', 'system', 'db_backup', 'failed', 0, :notes)
+                    """),
+                    {"notes": "Backup failed: {}".format(exc)},
+                )
+        except Exception as log_exc:
+            logger.warning("[DB-Backup] Failed to log failure: {}", log_exc)
+    finally:
+        _backup_lock = False
+
+
 if __name__ == "__main__":
     logger.add("logs/scheduler.log", rotation="50 MB")
     os.makedirs("logs", exist_ok=True)
@@ -698,14 +837,44 @@ if __name__ == "__main__":
         misfire_grace_time=3600,
     )
 
+    # Weekly PSF forecast — Sunday 07:00 IST (T-765)
+    scheduler.add_job(
+        lambda: _safe_job(run_psf_forecast, "psf_forecast"),
+        CronTrigger(day_of_week="sun", hour=7, minute=0),
+        id="psf_forecast",
+        name="Weekly PSF Forecast (LGBM)",
+        misfire_grace_time=3600,
+    )
+
+    # Daily DB backup — 01:00 IST (T-904)
+    scheduler.add_job(
+        lambda: _safe_job(run_db_backup, "db_backup"),
+        CronTrigger(hour=1, minute=0),
+        id="db_backup",
+        name="Daily pg_dump Backup",
+        misfire_grace_time=3600,
+    )
+
+    # Daily LLS Compliance Calendar check — 08:00 IST (T-704)
+    scheduler.add_job(
+        lambda: _safe_job(run_compliance_check, "compliance_check"),
+        CronTrigger(hour=8, minute=0),
+        id="compliance_check",
+        name="Daily LLS Compliance Calendar Check",
+        misfire_grace_time=3600,
+    )
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
+    logger.info("  01:00 AM IST — Daily pg_dump backup [T-904]")
     logger.info("  02:00 AM IST — Unified Ingest Engine (all scrapers)")
     logger.info("  03:00 AM IST — Opportunity scoring (GATE-47)")
     logger.info("  04:30 AM IST — Intel embedding index (ChromaDB)")
     logger.info("  05:00 AM IST — News sentiment scoring (FinBERT)")
     logger.info("  06:00 AM IST — Market snapshots")
     logger.info("  06:15 AM IST — Distressed developer scan (JD/JV targets)")
+    logger.info("  08:00 AM IST — LLS Compliance Calendar check [T-704]")
+    logger.info("  Sunday 07:00 IST — Weekly PSF forecast (LGBM) [T-765]")
     logger.info("  Every 1 hr  — Board session recovery (T-315)")
     logger.info("  Monday 03:00 UTC — Agent memory decay")
     logger.info("  Monday 03:30 UTC — Memory conflict detection")

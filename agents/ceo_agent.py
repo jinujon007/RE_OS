@@ -50,6 +50,8 @@ def create_ceo_agent() -> Agent:
 CEO_TASK_TEMPLATE = """
 You are synthesizing market intelligence for: {market_name}
 
+Spatial analysis context: {spatial_context}
+
 Your pipeline (already complete — data is in your context):
   Stage 1: Six scouts (RERA, RERA Detail, Portal, Developer, News, Kaveri) scraped all sources
   Stage 2: Python organizer validated and wrote everything to PostgreSQL

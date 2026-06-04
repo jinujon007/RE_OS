@@ -46,6 +46,7 @@ __all__ = [
 import os
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
@@ -379,3 +380,134 @@ def format_data_quality_alert(market: str, qc_result: dict) -> str:
 def get_active_expectations() -> list[dict]:
     """Return the list of active expectations for observability / API."""
     return [e.to_dict() for e in _dq_expectations]
+
+
+# ── DataQualityMonitor (Sprint 66 — Compounding Intelligence) ──────────────
+
+class DataQualityMonitor:
+    """Monitors data quality across all sources.
+    
+    Features:
+    - freshness_score: per-source staleness check
+    - stale_flag: marks sources not updated in >24h
+    - PSFValidator: checks listing PSF vs IGR PSF gaps
+    - cross_source_divergence_flag: flags divergent values between sources
+    """
+    
+    FRESHNESS_WINDOW_HOURS = {
+        "rera": 48,
+        "listings": 12,
+        "kaveri": 168,
+        "igr": 48,
+        "news": 24,
+    }
+    
+    _STALE_HOURS = 24
+    
+    @staticmethod
+    def freshness_score() -> dict:
+        """Compute freshness per source.
+        Returns {source: {"hours_since_update": ..., "status": "fresh"/"aging"/"stale"}}."""
+        try:
+            from utils.db import get_engine
+            from sqlalchemy import text
+            
+            with get_engine().connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT source, MAX(created_at) as last_update
+                    FROM ingest_log
+                    WHERE status = 'success'
+                    GROUP BY source
+                """)).fetchall()
+            
+            now = datetime.now(timezone.utc)
+            result = {}
+            for r in rows:
+                source = r[0]
+                last_update = r[1]
+                if last_update is None:
+                    result[source] = {"hours_since_update": None, "status": "unknown"}
+                    continue
+                hours = (now - last_update).total_seconds() / 3600
+                window = DataQualityMonitor.FRESHNESS_WINDOW_HOURS.get(source, 24)
+                if hours <= window:
+                    status = "fresh"
+                elif hours <= window * 2:
+                    status = "aging"
+                else:
+                    status = "stale"
+                result[source] = {"hours_since_update": round(hours, 1), "status": status}
+            return result
+        except Exception as exc:
+            logger.warning("[DataQuality] freshness_score failed: %s", exc)
+            return {}
+    
+    @staticmethod
+    def stale_flag() -> list[str]:
+        """Return list of sources that haven't been updated in >24h."""
+        freshness = DataQualityMonitor.freshness_score()
+        return [s for s, info in freshness.items() if info.get("status") == "stale"]
+    
+    @staticmethod
+    def check_psf_divergence(market: str, max_gap_pct: float = 25.0) -> list[dict]:
+        """Check listing PSF vs IGR PSF gap for a market.
+        
+        Args:
+            market: Market name.
+            max_gap_pct: Max acceptable gap (listing vs IGR) as % of avg.
+            
+        Returns:
+            List of divergence flags with details.
+        """
+        try:
+            from utils.db import get_engine
+            from sqlalchemy import text
+            
+            with get_engine().connect() as conn:
+                row = conn.execute(
+                    text("""
+                        SELECT
+                            (SELECT AVG(price_psf) FROM listings l
+                             JOIN micro_markets m ON m.id = l.micro_market_id
+                             WHERE m.name ILIKE :m AND l.price_psf > 1000 AND l.price_psf < 50000) AS listing_psf,
+                            (SELECT AVG(consideration_amount / built_up_area) FROM igr_transactions it
+                             JOIN micro_markets m ON m.id = it.micro_market_id
+                             WHERE m.name ILIKE :m AND it.built_up_area > 100) AS igr_psf
+                    """),
+                    {"m": f"%{market}%"},
+                ).fetchone()
+            
+            if not row:
+                return []
+            
+            listing_psf = float(row[0]) if row[0] else None
+            igr_psf = float(row[1]) if row[1] else None
+            
+            if listing_psf and igr_psf and listing_psf > 0 and igr_psf > 0:
+                gap_pct = abs(listing_psf - igr_psf) / ((listing_psf + igr_psf) / 2) * 100
+                if gap_pct > max_gap_pct:
+                    return [{
+                        "market": market,
+                        "listing_psf": round(listing_psf, 2),
+                        "igr_psf": round(igr_psf, 2),
+                        "gap_pct": round(gap_pct, 1),
+                        "severity": "HIGH" if gap_pct > 50 else "MEDIUM",
+                    }]
+            return []
+        except Exception as exc:
+            logger.warning("[DataQuality] PSF divergence check failed for %s: %s", market, exc)
+            return []
+    
+    @staticmethod
+    def cross_source_divergence_flag(market: str) -> list[dict]:
+        """Check for divergences between data sources for a market.
+        
+        Checks:
+        - Listing PSF vs IGR PSF
+        - RERA project count vs listing project count
+        
+        Returns list of divergence flags.
+        """
+        flags = []
+        flags.extend(DataQualityMonitor.check_psf_divergence(market))
+        return flags

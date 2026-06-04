@@ -42,6 +42,7 @@ geopandas>=0.14.0,<1.0.0
 osmnx>=1.9.0,<2.0.0
 pysal>=23.1.0,<25.0.0
 pandana>=0.7.0,<1.0.0
+folium>=0.16.0
 
 # Financial risk metrics (Tier 3 — deferred until T-720/T-767 sprint)
 # empyrical + pyfolio: Sharpe ratio, max drawdown, portfolio correlation
@@ -78,12 +79,8 @@ dbt-postgres>=1.7.0
 # Great Expectations — data quality checks (Tier 2)
 great-expectations>=0.18.0
 
-# Dashboard (v2 — FastAPI migration)
-flask>=3.0.0
-flask-cors>=4.0.0
-gunicorn>=21.2.0
+# Dashboard (v2 — FastAPI)
 prometheus-client>=0.21.0
-flask-limiter>=3.5
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 slowapi>=0.1.9

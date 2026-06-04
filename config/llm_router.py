@@ -112,6 +112,53 @@ def _litellm_usage_callback(kwargs, completion_response, start_time, end_time):
     except Exception:
         pass
 
+_DAILY_LIMITS = {
+    "groq": 1_000_000,
+    "cerebras": 1_000_000,
+    "gemini": 250_000,
+    "nvidia": 100_000,
+    "sambanova": 20_000_000,
+    "gemini_flash": 1_000_000,
+    "gemini_gemma": 500_000,
+    "openrouter": 500_000,
+    "cloudflare": 5_000,
+}
+
+
+_redis_client = None
+
+def _get_redis():
+    global _redis_client
+    if _redis_client is None:
+        try:
+            import redis as _redis_mod
+            from config.settings import REDIS_URL
+            _redis_client = _redis_mod.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=2)
+        except Exception as exc:
+            logger.debug("[Router] Redis unavailable: {}", exc)
+    return _redis_client
+
+
+def _track_token_usage(provider: str, prompt_tokens: int, completion_tokens: int) -> None:
+    try:
+        from datetime import date
+        r = _get_redis()
+        if r is None:
+            return
+        key = "llm:tokens:{}:{}".format(provider, date.today().isoformat())
+        total = prompt_tokens + completion_tokens
+        new_val = r.incrby(key, total)
+        r.expire(key, 86400 * 2)
+        limit = _DAILY_LIMITS.get(provider)
+        if limit and new_val > limit * 0.80:
+            from utils.discord_notifier import send
+            send("system", "LLM Quota Warning — {}".format(provider),
+                 "{} at {}% daily quota ({:,} / {:,} tokens)".format(
+                     provider, int(new_val / limit * 100), new_val, limit))
+    except Exception as exc:
+        logger.debug("[Router] Token tracking failed for {}: {}", provider, exc)
+
+
 if not isinstance(litellm.success_callback, list):
     litellm.success_callback = []
 if _litellm_usage_callback not in litellm.success_callback:
@@ -166,7 +213,9 @@ def _reset_daily_counts_if_needed() -> None:
             logger.info("[Router] Daily token counters reset for {} UTC", today)
 
 
-def record_token_usage(provider: str, tokens: int) -> None:
+def record_token_usage(provider: str, tokens: int, prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
+    if prompt_tokens or completion_tokens:
+        _track_token_usage(provider, prompt_tokens, completion_tokens)
     """Record token usage for a provider. Call after each LLM invocation."""
     _reset_daily_counts_if_needed()
     with _counts_lock:

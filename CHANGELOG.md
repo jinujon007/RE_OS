@@ -1,3 +1,20 @@
+FIX | dashboard/app_fastapi.py, config/scheduler.py, Dockerfile, tests/unit/, .gitignore | Post-audit Claude Code review: (1) TemplateResponse Starlette 1.1 API fix (unhashable dict bug); (2) deleted stale Flask test importing deleted app.py; (3) wired Sprint 66 compliance calendar job into scheduler at 08:00 IST (T-704); (4) added gdal-bin to Dockerfile runtime stage (GDAL .so missing); (5) added kilo/ to .gitignore | Claude Code | 2026-06-04
+AUDIT | kilo_output/audits/R3_review_foundation_hardening.md | 3-Round Elite Review: 25 findings (4C,6H,9M,6L) all fixed — password-safe pg_dump, Redis connection pool, SQL injection safe query, competitor alert threading, migration naming fixed, 17 new coverage tests | Kilo Code | 2026-06-04
+FEATURE | dashboard/app_fastapi.py, config/scheduler.py | T-828 (data/freshness + memory/explorer routes), T-829 (evaluate routes verified), T-904 (pg_dump backup + health/backup endpoint) | Kilo Code | 2026-06-04
+INFRA | KILO_BRIEF.md, CONTRIBUTING.md, .env.example, docker-compose*.yml, models.py, alembic/*, requirements.txt | Foundation Hardening batch: T-900 Flask deleted, T-906 Redis auth, T-907 Grafana observability compose, T-909 psycopg2→SQLAlchemy in app_fastapi.py, T-911 FastAPI tests, T-912 models.py deleted, T-913 migration naming, T-920 CONTRIBUTING.md, T-922 output_validator+8 tests, T-923 v_developer_trends view, T-924 LLM token tracker+quota endpoint, T-753 k6 run script, T-759 AccessibilityTool, T-761 spatial context in CEO, T-766 PSF forecast in board_room, T-772 Market Map in dashboard | Kilo Code | 2026-06-04
+FEATURE | dashboard/app_fastapi.py | T-905: Discord config check in /api/health | Kilo Code | 2026-06-04
+FEATURE | intelligence/financial_intel.py, intelligence/registry.py | T-908: Market-aware PSF fallback _get_market_psf_fallback | Kilo Code | 2026-06-04
+REFACTOR | config/scheduler.py | T-910: Deprecate duplicate V1 scheduler jobs (kaveri/igr/listings/yelahanka) | Kilo Code | 2026-06-04
+FEATURE | database/seed_surveys.sql, dashboard/app_fastapi.py | T-915: Survey seed data + POST /api/surveys | Kilo Code | 2026-06-04
+FEATURE | alembic/versions/0015_deal_pipeline.py, dashboard/app_fastapi.py | T-917: Deal pipeline table + 3 endpoints + Discord on loi/signed | Kilo Code | 2026-06-04
+FEATURE | ingest/plugins/developer_plugin.py | T-918: Competitor Grade-A launch alert via Discord | Kilo Code | 2026-06-04
+FEATURE | dashboard/app_fastapi.py, config/scheduler.py, docker-compose.yml | T-828: port /api/data/freshness + /api/memory/explorer to FastAPI; T-904: daily pg_dump backup + /api/health/backup + backup volume; T-693: verify test_decision_layer.py compiles | Kilo Code | 2026-06-04
+FEATURE | [Sprint65+Sprint66+TierBacklog] Bulk execute — 32 tasks (T-695–T-779) | Kilo Code | 2026-06-03
+Sprint65: interface/telegram_bot.py + formatters.py + dashboard app_v2 routes/panels + 14 tests
+Sprint66: shareholder_agent, feedback_loop, lls_compliance_calendar, rera_checker, data_quality_monitor + 15 tests
+Tier: Docker multi-stage, k6 load test, infrastructure_scorer (Pandana), spatial_intel (PySAL), psf_forecaster (LGBM+wfv), schema tables, scheduler PSF job
+Viz: folium map route, Kepler density map + data route, Chart.js panels, absorption/dev radar charts, CDN
+
 BUG-FIX | config/scheduler.py | T-826 — Fixed "re_os_health" → "system" channel in run_conflict_detection(); conflict detection alerts were silently returning False since Sprint 44 | Claude Code | 2026-06-03
 INFRA | KILO_BRIEF.md | T-827a — Replaced Flask stack ref + Flask decorator guide with FastAPI; added critical routing rule (all routes → app_fastapi.py); updated key paths; added FastAPI route + TestClient code patterns | Claude Code | 2026-06-03
 INFRA | AGENTS.md | T-827b — Added Dashboard Routing Rule; corrected container count to 7; updated re_os_agents to FastAPI | Claude Code | 2026-06-03

@@ -408,6 +408,46 @@ class IntelSearchTool(BaseTool):
             return json.dumps({"error": f"intel_search failed: {e}", "results": []})
 
 
+class AccessibilityTool(BaseTool):
+    name: str = "accessibility_scores"
+    description: str = (
+        "Get accessibility scores for a market: metro proximity, school proximity, "
+        "hospital proximity, CBD proximity, walkability. "
+        "Input: market name (e.g. 'Yelahanka'). "
+        "Returns: scores as JSON."
+    )
+
+    def _run(self, market_name: str) -> str:
+        try:
+            from utils.db import get_engine
+            from sqlalchemy import text
+            with get_engine().connect() as conn:
+                row = conn.execute(
+                    text("""
+                        SELECT overall_score, metro_proximity, school_proximity,
+                               hospital_proximity, cbd_proximity, walkability
+                        FROM accessibility_scores a
+                        JOIN micro_markets m ON m.id = a.micro_market_id
+                        WHERE m.name ILIKE :m
+                        ORDER BY a.computed_at DESC LIMIT 1
+                    """),
+                    {"m": f"%{market_name}%"},
+                ).fetchone()
+            if not row:
+                return json.dumps({"error": "no accessibility data for this market"})
+            return json.dumps({
+                "market": market_name,
+                "overall_score": float(row[0]) if row[0] else None,
+                "metro_proximity": float(row[1]) if row[1] else None,
+                "school_proximity": float(row[2]) if row[2] else None,
+                "hospital_proximity": float(row[3]) if row[3] else None,
+                "cbd_proximity": float(row[4]) if row[4] else None,
+                "walkability": float(row[5]) if row[5] else None,
+            })
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+
+
 class FeasibilityAnalystTool(BaseTool):
     name: str = "full_feasibility"
     description: str = (
@@ -529,6 +569,7 @@ def create_analyst_agent() -> Agent:
             GreenCoverageTool(),
             FeasibilityAnalystTool(),
             IntelSearchTool(),
+            AccessibilityTool(),
         ],
         llm=get_analysis_llm(),
         verbose=True,

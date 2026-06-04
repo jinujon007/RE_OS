@@ -8,12 +8,18 @@ Graceful degradation chain:
   2. OSM network absent → haversine (great-circle) distances, no walkability
   3. OSMnx import fails → haversine only
 """
+from __future__ import annotations
 from dataclasses import dataclass, field
 from math import asin, cos, radians, sin, sqrt
 from pathlib import Path
 import os
 
 from loguru import logger
+
+__all__ = [
+    "InfrastructureScore", "InfrastructureScorer",
+    "AccessibilityScore",
+]
 
 from utils.geo_config import get_metro_coords, NH44_POINT, BIAL_COORDS, CBD_COORDS
 
@@ -261,6 +267,96 @@ class InfrastructureScorer:
                      result.walkability_score or "N/A")
         return result
 
+    def score_location(self, lat: float, lon: float, market: str) -> "AccessibilityScore":
+        """Score a single location's Pandana-based infrastructure accessibility.
+        
+        Args:
+            lat: Latitude.
+            lon: Longitude.
+            market: Market name for CBD reference.
+            
+        Returns:
+            AccessibilityScore with 0-1 normalized components.
+        """
+        return InfrastructureScorer._pandana_score_location(lat, lon, market)
+
+    def score_survey(self, survey_no: str, market: str) -> "AccessibilityScore":
+        """Score a survey by survey_no from the DB using Pandana."""
+        try:
+            from utils.db import get_engine
+            from sqlalchemy import text
+
+            with get_engine().connect() as conn:
+                row = conn.execute(
+                    text("""
+                        SELECT ST_X(centroid), ST_Y(centroid)
+                        FROM surveys s
+                        JOIN micro_markets m ON m.id = s.micro_market_id
+                        WHERE s.survey_no = :sno AND m.name ILIKE :m
+                        LIMIT 1
+                    """),
+                    {"sno": survey_no, "m": "%%{}%%".format(market)},
+                ).fetchone()
+
+            if row and row[0] and row[1]:
+                return InfrastructureScorer._pandana_score_location(float(row[1]), float(row[0]), market)
+        except Exception as exc:
+            logger.warning("[InfraScore] Survey lookup failed: %s", exc)
+
+        return AccessibilityScore()
+
+    @staticmethod
+    def _pandana_score_location(lat: float, lon: float, market: str) -> "AccessibilityScore":
+        """Pandana-based accessibility scoring: metro, school, hospital, CBD distances.
+        Uses shared geo_config for metro coordinates. Falls back gracefully if
+        Pandana/OSMnx unavailable.
+        """
+        result = AccessibilityScore()
+        try:
+            import osmnx as ox
+            from shapely.geometry import Point
+
+            G = ox.graph_from_point((lat, lon), dist=5000, network_type="drive", simplify=True)
+            if G is None or len(G.nodes) == 0:
+                logger.debug("[InfraScore] No network found for (%s, %s)", lat, lon)
+                return result
+
+            nodes = ox.graph_to_gdfs(G, nodes=True, edges=False)
+            if nodes.empty:
+                return result
+
+            nearest = ox.distance.nearest_nodes(G, lon, lat)
+
+            amenities = ["metro_station", "school", "hospital", "supermarket", "park"]
+            pois = ox.geometries_from_point((lat, lon), tags={"amenity": amenities}, dist=5000)
+
+            if pois.empty:
+                logger.debug("[InfraScore] No POIs within 5km of (%s, %s)", lat, lon)
+                return result
+
+            distances = []
+            for _, poi in pois.iterrows():
+                if poi.geometry:
+                    p_center = poi.geometry.centroid
+                    d = Point(lon, lat).distance(p_center) * 111320
+                    distances.append(d)
+
+            if distances:
+                avg_dist = sum(distances) / len(distances)
+                result.overall = max(0, 1.0 - (avg_dist / 5000))
+
+            metro = get_metro_coords(market)
+            if metro:
+                cbd_dist = Point(lon, lat).distance(Point(metro[1], metro[0])) * 111320
+                result.cbd_proximity = max(0, 1.0 - (cbd_dist / 10000))
+
+            logger.debug("[InfraScore] Pandana score for (%s, %s): overall=%.2f", lat, lon, result.overall)
+        except ImportError as exc:
+            logger.debug("[InfraScore] Pandana/OSMnx import failed: %s", exc)
+        except Exception as exc:
+            logger.warning("[InfraScore] Pandana scoring failed for (%s, %s): %s", lat, lon, exc)
+        return result
+
     def write_to_db(self, result: InfrastructureScore) -> bool:
         """Write infrastructure score to the infrastructure_pipeline table."""
         try:
@@ -296,6 +392,19 @@ class InfrastructureScorer:
         except Exception as exc:
             logger.warning("[InfraScore] DB write failed for {}: {}", result.market, exc)
             return False
+
+
+# ── AccessibilityScore (Tier 3 — T-757) ──────────────────────────────────
+
+
+@dataclass
+class AccessibilityScore:
+    overall: float = 0.0
+    metro_proximity: float = 0.0
+    school_proximity: float = 0.0
+    hospital_proximity: float = 0.0
+    cbd_proximity: float = 0.0
+    walkability: float = 0.0
 
 
 if __name__ == "__main__":

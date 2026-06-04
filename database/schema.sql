@@ -940,6 +940,81 @@ CREATE TABLE IF NOT EXISTS alembic_version (
     CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
 );
 
+-- ============================================================
+-- COMPLIANCE MILESTONES (Sprint 66 — Compounding Intel, T-704)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS compliance_milestones (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    market VARCHAR(100) NOT NULL,
+    milestone VARCHAR(200) NOT NULL,
+    deadline DATE NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(market, milestone)
+);
+CREATE INDEX IF NOT EXISTS idx_compliance_milestones_market ON compliance_milestones(market);
+CREATE INDEX IF NOT EXISTS idx_compliance_milestones_deadline ON compliance_milestones(deadline);
+
+-- Deal type column for feedback loop outcomes (Sprint 66)
+ALTER TABLE opportunity_scores ADD COLUMN IF NOT EXISTS deal_type VARCHAR(50);
+ALTER TABLE opportunity_scores ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ;
+ALTER TABLE opportunity_scores ADD COLUMN IF NOT EXISTS actual_outcome VARCHAR(50);
+
+-- ============================================================
+-- ACCESSIBILITY SCORES (Tier 3 — Geospatial Depth, T-758)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS accessibility_scores (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    survey_id UUID REFERENCES surveys(id) ON DELETE CASCADE,
+    micro_market_id UUID REFERENCES micro_markets(id),
+    overall_score DECIMAL(5,4),
+    metro_proximity DECIMAL(5,4),
+    school_proximity DECIMAL(5,4),
+    hospital_proximity DECIMAL(5,4),
+    cbd_proximity DECIMAL(5,4),
+    walkability DECIMAL(5,4),
+    computed_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(survey_id)
+);
+CREATE INDEX IF NOT EXISTS idx_accessibility_market ON accessibility_scores(micro_market_id);
+
+-- ============================================================
+-- MARKET FORECASTS (Tier 3 — PSF Forecasting, T-764)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS market_forecasts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    micro_market_id UUID REFERENCES micro_markets(id),
+    forecast_month DATE NOT NULL,
+    predicted_psf DECIMAL(10,2),
+    lower_bound DECIMAL(10,2),
+    upper_bound DECIMAL(10,2),
+    mape DECIMAL(5,2),
+    direction VARCHAR(20) DEFAULT 'stable',
+    n_observations INTEGER DEFAULT 0,
+    trained_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(micro_market_id, forecast_month)
+);
+CREATE INDEX IF NOT EXISTS idx_forecasts_market ON market_forecasts(micro_market_id);
+
+-- ============================================================
+-- V_DEVELOPER_TRENDS — Developer trend lines (T-923)
+-- ============================================================
+CREATE VIEW IF NOT EXISTS v_developer_trends AS
+SELECT
+    d.name AS developer,
+    d.grade,
+    COUNT(r.id) FILTER (WHERE r.created_at >= NOW() - INTERVAL '90 days') AS new_projects_90d,
+    COUNT(r.id) FILTER (WHERE r.created_at >= NOW() - INTERVAL '365 days') AS new_projects_365d,
+    ROUND(AVG(r.price_min_psf) FILTER (WHERE r.created_at >= NOW() - INTERVAL '90 days'), 0) AS avg_min_psf_90d,
+    ROUND(AVG(r.price_max_psf) FILTER (WHERE r.created_at >= NOW() - INTERVAL '90 days'), 0) AS avg_max_psf_90d,
+    AVG(r.delay_months) FILTER (WHERE r.created_at >= NOW() - INTERVAL '365 days') AS avg_delay_months_365d
+FROM developers d
+LEFT JOIN rera_projects r ON r.developer_id = d.id
+GROUP BY d.id, d.name, d.grade
+ORDER BY new_projects_365d DESC;
+
 -- Stamp to current HEAD — safe to re-run (ON CONFLICT DO NOTHING)
 INSERT INTO alembic_version (version_num)
 VALUES ('0014_add_osm_edges')

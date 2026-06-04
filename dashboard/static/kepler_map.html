@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kepler.gl Density Map — RE_OS</title>
+<script src="https://cdn.jsdelivr.net/npm/kepler.gl@2.5.5/dist/kepler.gl.min.js"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<link href="https://cdn.jsdelivr.net/npm/kepler.gl@2.5.5/dist/kepler.gl.min.css" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0e1a; color: #c9d1d9; font-family: 'Courier New', monospace; }
+.header { background: #0f1520; border-bottom: 2px solid #2a3a55; padding: 12px 20px; display: flex; align-items: center; gap: 12px; }
+.header h1 { color: #f0a020; font-size: 14px; font-family: 'Courier New', monospace; }
+.header select { background: #0f1520; color: #8b949e; border: 1px solid #2a3a55; padding: 4px 8px; font-size: 10px; border-radius: 4px; }
+#map-container { width: 100%; height: calc(100vh - 50px); }
+</style>
+</head>
+<body>
+<div class="header">
+    <h1>DENSITY MAP</h1>
+    <select id="market-select" onchange="loadMarket()">
+        <option value="Yelahanka">Yelahanka</option>
+        <option value="Devanahalli">Devanahalli</option>
+        <option value="Hebbal">Hebbal</option>
+    </select>
+    <span id="status" style="color:#484f58;font-size:10px;"></span>
+</div>
+<div id="map-container"></div>
+<script>
+async function loadMarket() {
+    const market = document.getElementById('market-select').value;
+    document.getElementById('status').textContent = 'Loading ' + market + '\u2026';
+    try {
+        const resp = await fetch('/api/market/kepler-data/' + encodeURIComponent(market));
+        const data = await resp.json();
+        document.getElementById('status').textContent = data.features.length + ' projects loaded';
+        renderMap(data);
+    } catch (e) {
+        document.getElementById('status').textContent = 'Error: ' + e.message;
+    }
+}
+
+function renderMap(data) {
+    const container = document.getElementById('map-container');
+    container.innerHTML = '<div style="color:#484f58;text-align:center;padding:40px;">Kepler.gl requires React \u2014 loading map data ' + data.features.length + ' features</div>';
+}
+
+loadMarket();
+</script>
+</body>
+</html>

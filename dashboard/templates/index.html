@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -901,6 +902,7 @@ body {
     <div class="health-item"><span class="health-dot checking" id="health-agents"></span><span>AGENTS</span></div>
   </div>
 <span class="last-updated" id="last-updated">UPDATED —</span>
+   <button onclick="window.open('/static/kepler_map.html','_blank')" style="background:#1a2235;border:1px solid #2a3a55;color:#58a6ff;padding:4px 8px;font-size:8px;cursor:pointer;border-radius:4px;font-family:'Press Start 2P',cursive;">MAP</button>
    <span class="clock" id="clock"></span>
    <span class="conflict-badge no-conflicts" id="conflict-badge" onclick="openConflictPanel()">⚠ <span id="conflict-count">0</span> CONFLICTS</span>
   </div>
@@ -1140,6 +1142,38 @@ body {
         </table>
       </div>
       <div id="db-explorer-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
+    </div>
+
+    <!-- ── Absorption Rate Chart (T-775) ── -->
+    <div class="infra-section" id="absorption-chart-section" style="display:none;">
+        <div class="infra-title">ABSORPTION RATE<span style="color:#484f58;font-size:7px;margin-left:6px;">by market</span></div>
+        <div style="padding:4px 0;">
+            <canvas id="absorption-chart-canvas" height="120" style="max-height:150px;"></canvas>
+        </div>
+        <div id="absorption-chart-status" style="color:#484f58;font-size:8px;margin-top:2px;"></div>
+    </div>
+
+    <!-- ── Market Map Section (T-772) ── -->
+    <div class="infra-section" id="market-map-section">
+        <div class="infra-title">MARKET MAP<span style="color:#484f58;font-size:7px;margin-left:6px;">Folium</span></div>
+        <div style="margin-top:4px;">
+            <select id="market-map-select" onchange="loadMarketMap()" style="background:#0f1520;color:#8b949e;border:1px solid #2a3a55;padding:4px 8px;font-size:10px;border-radius:4px;margin-bottom:4px;">
+                <option value="Yelahanka">Yelahanka</option>
+                <option value="Devanahalli">Devanahalli</option>
+                <option value="Hebbal">Hebbal</option>
+            </select>
+        </div>
+        <div id="market-map-container" style="width:100%;height:300px;border:1px solid #2a3a55;border-radius:4px;overflow:hidden;"></div>
+        <div id="market-map-status" style="color:#484f58;font-size:8px;margin-top:2px;"></div>
+    </div>
+
+    <!-- ── Developer Scorecard Radar (T-776) ── -->
+    <div class="infra-section" id="dev-scorecard-radar-section" style="display:none;">
+        <div class="infra-title">DEVELOPER SCORECARD<span style="color:#484f58;font-size:7px;margin-left:6px;">radar</span></div>
+        <div style="padding:4px 0;">
+            <canvas id="dev-radar-canvas" height="150" style="max-height:180px;"></canvas>
+        </div>
+        <div id="dev-radar-status" style="color:#484f58;font-size:8px;margin-top:2px;"></div>
     </div>
 
     <div class="infra-section">
@@ -1640,6 +1674,23 @@ function clearIntelSearch() {
   document.getElementById('intel-search-results').innerHTML = '';
   document.getElementById('intel-search-status').textContent = '';
   document.getElementById('intel-search-spinner').style.display = 'none';
+}
+
+async function loadMarketMap() {
+    const market = document.getElementById('market-map-select').value;
+    const container = document.getElementById('market-map-container');
+    const status = document.getElementById('market-map-status');
+    status.textContent = 'Loading map for ' + market + '…';
+    try {
+        const resp = await fetch('/api/market/map/' + encodeURIComponent(market));
+        if (!resp.ok) { status.textContent = 'Map unavailable'; return; }
+        const html = await resp.text();
+        container.innerHTML = html;
+        status.textContent = 'Map loaded — ' + market;
+        markUpdated('market-map');
+    } catch (e) {
+        status.textContent = 'Map error: ' + e.message;
+    }
 }
 
 function escapeHtml(value) {
@@ -2698,6 +2749,148 @@ function _dbSort(col) {
 
 pollDbTables();
 setInterval(pollDbTables, 60000);
+
+// ── Absorption Rate Bar Chart (T-775) ──
+let _absorptionChart = null;
+
+function renderAbsorptionChart() {
+    const section = document.getElementById('absorption-chart-section');
+    const statusEl = document.getElementById('absorption-chart-status');
+    const canvas = document.getElementById('absorption-chart-canvas');
+    if (!_dbTablesCache || !_dbTablesCache.market_inventory) {
+        section.style.display = 'none';
+        return;
+    }
+    const data = _dbTablesCache.market_inventory;
+    const labels = data.map(r => r.micro_market || r.market || '?');
+    const moSupply = data.map(r => {
+        const v = r.months_of_supply;
+        return v != null ? Number(v) : 0;
+    });
+    const hasData = moSupply.some(v => v > 0);
+    if (!hasData) {
+        section.style.display = 'none';
+        statusEl.textContent = 'No absorption data';
+        return;
+    }
+    section.style.display = 'block';
+    if (_absorptionChart) _absorptionChart.destroy();
+    _absorptionChart = new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [{
+                label: 'Months of Supply',
+                data: moSupply,
+                backgroundColor: '#f0a020',
+                borderColor: '#f0a020',
+                borderWidth: 1,
+            }],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#8b949e', font: { size: 8 } },
+                    grid: { color: '#1a2235' },
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: { color: '#8b949e', font: { size: 8 } },
+                    grid: { color: '#1a2235' },
+                },
+            },
+        },
+    });
+    statusEl.textContent = data.length + ' markets';
+}
+
+// ── Developer Scorecard Radar (T-776) ──
+let _devRadarChart = null;
+
+function renderDevRadarChart() {
+    const section = document.getElementById('dev-scorecard-radar-section');
+    const statusEl = document.getElementById('dev-radar-status');
+    const canvas = document.getElementById('dev-radar-canvas');
+    if (!_dbTablesCache || !_dbTablesCache.developer_scorecard) {
+        section.style.display = 'none';
+        return;
+    }
+    const rows = _dbTablesCache.developer_scorecard;
+    if (!rows.length) {
+        section.style.display = 'none';
+        statusEl.textContent = 'No developer data';
+        return;
+    }
+    // Pick top 3 developers by total_projects
+    const top = [...rows].sort((a, b) => (b.total_projects || 0) - (a.total_projects || 0)).slice(0, 3);
+    if (!top.length) { section.style.display = 'none'; return; }
+
+    section.style.display = 'block';
+    const maxProjects = Math.max(...top.map(r => r.total_projects || 0), 1);
+    const datasets = top.map((r, i) => {
+        const colors = ['#58a6ff', '#3fb950', '#f0a020'];
+        const color = colors[i % colors.length];
+        return {
+            label: r.developer || 'Dev ' + (i + 1),
+            data: [
+                (r.total_projects || 0) / maxProjects * 100,
+                (r.total_units || 0) / Math.max(...top.map(x => x.total_units || 0), 1) * 100,
+                (r.avg_absorption_pct || 0),
+                (r.completed || 0) / Math.max(...top.map(x => x.completed || 0), 1) * 100,
+                top.length > 1 ? (r.markets_active_in || 0) / Math.max(...top.map(x => x.markets_active_in || 0), 1) * 100 : 0,
+            ],
+            borderColor: color,
+            backgroundColor: color + '33',
+            borderWidth: 1,
+            pointRadius: 2,
+        };
+    });
+
+    if (_devRadarChart) _devRadarChart.destroy();
+    _devRadarChart = new Chart(canvas, {
+        type: 'radar',
+        data: {
+            labels: ['Projects', 'Units', 'Absorption %', 'Completed', 'Markets'],
+            datasets,
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: { color: '#8b949e', font: { size: 7 }, boxWidth: 10, padding: 4 },
+                },
+            },
+            scales: {
+                r: {
+                    angleLines: { color: '#2a3a55' },
+                    grid: { color: '#2a3a55' },
+                    pointLabels: { color: '#8b949e', font: { size: 7 } },
+                    ticks: { display: false },
+                    suggestedMin: 0,
+                    suggestedMax: 100,
+                },
+            },
+        },
+    });
+    statusEl.textContent = top.length + ' developers';
+}
+
+// Extend pollDbTables to render charts
+const _origPollDbTables = pollDbTables;
+pollDbTables = function() {
+    _origPollDbTables();
+    Promise.resolve().then(() => {
+        renderAbsorptionChart();
+        renderDevRadarChart();
+    });
+};
 
 // ── Task Board ──
 const _TASK_STATUSES = ['queued', 'active', 'done', 'failed'];

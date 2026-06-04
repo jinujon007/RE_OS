@@ -113,7 +113,7 @@ def _risk_matrix(pkg: IntelPackage, ctx: dict) -> str:
         f"Execution risk | {lp['development_readiness']} | BDA/BBMP compliance check",
         f"Liquidity risk | {f['best_structure']} | Equity/debt per scenario",
     ]
-    if pkg.module_errors:
+    if pkg.errors:
         lines.append(
             f"Data risk | DEGRADED | {len(pkg.errors)} module(s) failed: "
             f"{'; '.join(pkg.errors[:3])}"

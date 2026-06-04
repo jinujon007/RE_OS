@@ -547,8 +547,8 @@ def _compute_risk_metrics(
     # empyrical max_drawdown from monthly returns (optional — degrades gracefully)
     try:
         import empyrical as _ep
-    except ImportError:
-        _log.debug("[IRR] empyrical not installed — skipping max_drawdown computation")
+    except Exception:
+        _log.debug("[IRR] empyrical not available — skipping max_drawdown computation")
         return result
 
     import time as _time

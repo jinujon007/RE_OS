@@ -1,16 +1,17 @@
 """
 RE_OS Dashboard — FastAPI web server (v2)
 
-Flask → FastAPI migration (T-727–T-730). All 27 routes ported with exact API
+Flask → FastAPI migration (T-727–T-730, T-828–T-829, T-900). 50+ routes with exact API
 contract: same paths, same response shapes, same auth/rate-limit/security-headers
 behavior. Auto-generated OpenAPI docs at /docs and /redoc.
+Foundation Hardening (T-904–T-924): backup, deals, surveys, LLM quota, data freshness.
 
 Architecture:
   - FastAPI app with CORS middleware, rate limiting (slowapi/Redis), Prometheus
     /metrics endpoint, SSE log streaming, and security headers.
   - Auth: middleware-based API key gate (X-API-Key header or ?api_key= query),
     with read-only path exemptions and DASHBOARD_API_KEY_PREV rotation support.
-  - DB: psycopg2 thread-safe connection pool (min=1, max=10).
+   - DB: SQLAlchemy engine from utils.db.get_engine() (pool_size=10, max_overflow=5).
   - Pipeline: subprocess-based market intelligence crew with running-state
     tracking via _running dict + threading.Lock singleton.
   - Embedder: lazy-initialized singleton IntelEmbedder with LRU search cache.
@@ -26,7 +27,7 @@ Risk Mitigation:
   | JSONDecodeError on POST     | Every `await request.json()` wrapped in     |
   | body                        | try/except -> defaults to {}                |
   +-----------------------------+--------------------------------------------+
-  | DB pool exhaustion          | maxconn=10, _release_db always in finally   |
+  | DB pool exhaustion          | SQLAlchemy pool_size=10, max_overflow=5     |
   +-----------------------------+--------------------------------------------+
   | _running state corruption   | threading.Lock on all mutations, --workers 1|
   | (uvicorn workers > 1)       |                                            |
@@ -67,8 +68,6 @@ from datetime import datetime
 
 # ── Third-party ──────────────────────────────────────────────────────────────
 
-import psycopg2
-import psycopg2.pool
 from fastapi import FastAPI, Request, Response, Query
 from fastapi.responses import JSONResponse, HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -78,6 +77,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from prometheus_client import generate_latest
+from sqlalchemy import text as _sa_text
 
 # ── Project ──────────────────────────────────────────────────────────────────
 
@@ -94,6 +94,7 @@ from config.metrics import (  # noqa: F401
     pipeline_stage_duration_seconds,
     db_query_duration_seconds,
 )
+from utils.discord_notifier import _CHANNEL_ENV_MAP
 
 # ── FastAPI App ──────────────────────────────────────────────────────────────
 
@@ -103,14 +104,18 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
-templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
+templates = Jinja2Templates(
+    directory=os.path.join(os.path.dirname(__file__), "templates")
+)
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
 
 _ALLOWED_ORIGINS = [
-    o.strip() for o in os.environ.get(
-        "DASHBOARD_ALLOWED_ORIGINS", "http://localhost:8050"
-    ).split(",") if o.strip()
+    o.strip()
+    for o in os.environ.get("DASHBOARD_ALLOWED_ORIGINS", "http://localhost:8050").split(
+        ","
+    )
+    if o.strip()
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -153,18 +158,36 @@ async def _add_security_headers(request: Request, call_next):
 
 # ── Auth Middleware ───────────────────────────────────────────────────────────
 
-_READ_ONLY_PATHS = frozenset({
-    '/api/health', '/api/status', '/api/agents',
-    '/api/intel/cards', '/api/intel/download', '/api/intel/search', '/api/db/state', '/api/sentinel/status',
-    '/api/board/sessions', '/api/db/tables',
-    '/api/tasks',
-    '/api/engineering/brief',
-    '/api/finance/brief',
-    '/api/legal/brief',
-    '/api/alerts',
-    '/api/registry',
-})
-_READ_ONLY_PREFIXES = ('/api/reports/', '/api/logs/')
+_READ_ONLY_PATHS = frozenset(
+    {
+        "/api/health",
+        "/api/status",
+        "/api/agents",
+        "/api/intel/cards",
+        "/api/intel/download",
+        "/api/intel/search",
+        "/api/db/state",
+        "/api/sentinel/status",
+        "/api/board/sessions",
+        "/api/db/tables",
+        "/api/tasks",
+        "/api/engineering/brief",
+        "/api/finance/brief",
+        "/api/legal/brief",
+        "/api/alerts",
+        "/api/registry",
+        "/api/opportunity/queue",
+        "/api/health/backup",
+    }
+)
+_READ_ONLY_PREFIXES = (
+    "/api/reports/",
+    "/api/logs/",
+    "/api/market/",
+    "/api/evaluate/",
+    "/api/data/",
+    "/api/memory/",
+)
 
 
 def _is_run_api_authorized(req: Request) -> bool:
@@ -185,10 +208,10 @@ async def _require_api_key(request: Request, call_next):
         return await call_next(request)
 
     path = request.url.path
-    if not path.startswith('/api') and path != '/metrics':
+    if not path.startswith("/api") and path != "/metrics":
         return await call_next(request)
 
-    if path == '/metrics':
+    if path == "/metrics":
         return await call_next(request)
 
     if path in _READ_ONLY_PATHS and request.method in ("GET", "HEAD", "OPTIONS"):
@@ -321,49 +344,7 @@ AGENT_ACTIONS: dict[str, list[dict]] = {
     "sentinel": [],
 }
 
-_db_pool: psycopg2.pool.ThreadedConnectionPool | None = None
-_db_pool_lock = threading.Lock()
-
-
-def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
-    global _db_pool
-    if _db_pool is None:
-        with _db_pool_lock:
-            if _db_pool is None:
-                url = os.environ.get("DATABASE_URL")
-                if not url:
-                    raise RuntimeError("DATABASE_URL environment variable is not set")
-                dsn = url if "connect_timeout" in url else (
-                    url + ("&" if "?" in url else "?") + "connect_timeout=5"
-                )
-                _db_pool = psycopg2.pool.ThreadedConnectionPool(
-                    minconn=1, maxconn=10, dsn=dsn
-                )
-    return _db_pool
-
-
-def _get_db():
-    return _get_pool().getconn()
-
-
-def _release_db(conn, reset: bool = False):
-    try:
-        if reset:
-            _get_pool().putconn(conn, close=True)
-            return
-        if conn.closed:
-            _get_pool().putconn(conn, close=True)
-            return
-        if not conn.autocommit:
-            try:
-                conn.rollback()
-            except Exception:
-                _get_pool().putconn(conn, close=True)
-                return
-        _get_pool().putconn(conn)
-    except Exception as exc:
-        logger.warning("[_release_db] connection release failed: %s", exc)
-
+from utils.db import get_engine as _get_sa_engine
 
 # ── API Key check ────────────────────────────────────────────────────────────
 
@@ -459,7 +440,12 @@ def _start_pipeline_for_market(market: str) -> tuple[dict, int]:
         _log_fh.close()
         started = datetime.now().isoformat()
         _running[market] = {"proc": proc, "started": started}
-        logger.info("[DIAG running] started market=%s pid=%s started=%s", market, proc.pid, started)
+        logger.info(
+            "[DIAG running] started market=%s pid=%s started=%s",
+            market,
+            proc.pid,
+            started,
+        )
         for aid in ["scraper", "analyst", "ceo"]:
             _agent_states[aid]["started"] = started
     return {"status": "started", "market": market}, 200
@@ -474,7 +460,11 @@ def _stop_pipeline_for_market(market: str) -> tuple[dict, int]:
                 entry["proc"].wait(timeout=2)
             except subprocess.TimeoutExpired:
                 entry["proc"].kill()
-            logger.info("[DIAG running] terminate requested market=%s pid=%s", market, entry["proc"].pid)
+            logger.info(
+                "[DIAG running] terminate requested market=%s pid=%s",
+                market,
+                entry["proc"].pid,
+            )
             return {"status": "stopped", "market": market}, 200
     return {"status": "not_running"}, 200
 
@@ -487,7 +477,9 @@ def _running_snapshot() -> dict:
                 rc = entry["proc"].poll()
                 snapshot[market] = {
                     "started": entry.get("started"),
-                    "state": "running" if rc is None else ("done" if rc == 0 else "failed"),
+                    "state": "running"
+                    if rc is None
+                    else ("done" if rc == 0 else "failed"),
                     "returncode": rc,
                     "pid": entry["proc"].pid,
                 }
@@ -512,7 +504,10 @@ def _validate_registry_payload(payload: dict) -> tuple[dict | None, str | None]:
             return None, f"field '{field}' must be a string, got {type(val).__name__}"
     spec_id = str(payload["id"]).strip()
     if not re.match(r"^[a-z][a-z0-9_-]*$", spec_id):
-        return None, "invalid id - must start with lowercase letter, contain only [a-z0-9_-]"
+        return (
+            None,
+            "invalid id - must start with lowercase letter, contain only [a-z0-9_-]",
+        )
     if len(spec_id) > 100:
         return None, f"id too long ({len(spec_id)} chars) - max 100"
     tier = payload["llm_tier"]
@@ -529,7 +524,10 @@ def _validate_registry_payload(payload: dict) -> tuple[dict | None, str | None]:
         return None, f"field 'markets' must be a list, got {type(markets_val).__name__}"
     max_iter = payload.get("max_iter")
     if max_iter is not None and not isinstance(max_iter, int):
-        return None, f"field 'max_iter' must be an integer, got {type(max_iter).__name__}"
+        return (
+            None,
+            f"field 'max_iter' must be an integer, got {type(max_iter).__name__}",
+        )
     active = payload.get("active")
     if active is not None and not isinstance(active, bool):
         return None, f"field 'active' must be a boolean, got {type(active).__name__}"
@@ -639,33 +637,67 @@ class RegistryResponse(BaseModel):
     agents: list[RegistryAgentItem]
 
 
+class FreshnessItem(BaseModel):
+    source: str
+    market: str
+    last_scraped_at: str | None = None
+    record_count: int = 0
+    freshness_score: float = 0.0
+    label: str = "STALE"
+    is_stale: bool = True
+
+
+class FreshnessResponse(BaseModel):
+    freshness: list[FreshnessItem]
+
+
+class MemoryItem(BaseModel):
+    agent_id: str
+    market: str
+    fact: str
+    confidence: float = 0.0
+    fact_type: str = "fact"
+    metadata: dict | None = None
+    created_at: str | None = None
+
+
+class MemoryExplorerResponse(BaseModel):
+    memories: list[MemoryItem]
+    count: int
+
+
+class BackupHealthResponse(BaseModel):
+    last_backup: str | None = None
+    status: str
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 
 @app.get("/", response_class=HTMLResponse, tags=["Pages"], summary="Dashboard UI")
 def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
-@app.get("/api/health", response_model=HealthResponse, tags=["Health"],
-         summary="Full health check", responses={503: {"model": ErrorResponse}})
+@app.get(
+    "/api/health",
+    response_model=HealthResponse,
+    tags=["Health"],
+    summary="Full health check",
+    responses={503: {"model": ErrorResponse}},
+)
 @limiter.limit("60/minute")
 async def health(request: Request):
     services = {"agents": "ok"}
-    conn = None
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT 1")
-        cur.close()
-        _release_db(conn)
+        with _get_sa_engine().connect() as conn:
+            conn.execute(_sa_text("SELECT 1"))
         services["postgres"] = "ok"
     except Exception:
-        if conn:
-            _release_db(conn, reset=True)
         services["postgres"] = "error"
     try:
         import redis as redis_lib
+
         r = redis_lib.from_url(os.environ.get("REDIS_URL", "redis://redis:6379"))
         r.ping()
         r.close()
@@ -674,12 +706,14 @@ async def health(request: Request):
         services["redis"] = "error"
     try:
         import httpx
+
         resp = httpx.get("http://ollama:11434/api/tags", timeout=3.0)
         services["ollama"] = "ok" if resp.status_code == 200 else "warn"
     except Exception:
         services["ollama"] = "warn"
     try:
         from chromadb import PersistentClient
+
         _chroma_path = os.environ.get("CHROMA_DB_PATH", "/app/data/chroma")
         _test_client = PersistentClient(path=_chroma_path)
         _test_client.heartbeat()
@@ -687,15 +721,13 @@ async def health(request: Request):
     except Exception:
         services["chroma"] = "error"
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT micro_market, status, started_at, duration_seconds
-            FROM agent_runs ORDER BY started_at DESC LIMIT 1
-        """)
-        row = cur.fetchone()
-        cur.close()
-        _release_db(conn)
+        with _get_sa_engine().connect() as conn:
+            row = conn.execute(
+                _sa_text("""
+                SELECT micro_market, status, started_at, duration_seconds
+                FROM agent_runs ORDER BY started_at DESC LIMIT 1
+            """)
+            ).fetchone()
         if row:
             services["last_run"] = {
                 "market": row[0],
@@ -707,11 +739,29 @@ async def health(request: Request):
             services["last_run"] = None
     except Exception:
         services["last_run"] = None
+    discord_status = {}
+    for channel, env_key in _CHANNEL_ENV_MAP.items():
+        discord_status[channel] = bool(os.environ.get(env_key, "").strip())
+    general_webhook = bool(os.environ.get("DISCORD_WEBHOOK_URL", "").strip())
+    channels_missing = [
+        ch
+        for ch, configured in discord_status.items()
+        if not configured and not general_webhook
+    ]
+    services["discord"] = {
+        "configured": general_webhook or any(discord_status.values()),
+        "general_webhook": general_webhook,
+        "channels_missing": channels_missing,
+    }
     return services
 
 
-@app.get("/api/health/live", tags=["Health"], summary="Lightweight liveness probe (no deps)",
-         response_model=HealthServiceStatus)
+@app.get(
+    "/api/health/live",
+    tags=["Health"],
+    summary="Lightweight liveness probe (no deps)",
+    response_model=HealthServiceStatus,
+)
 def health_liveness():
     return HealthServiceStatus()
 
@@ -720,6 +770,7 @@ def health_liveness():
 @limiter.limit("5/hour")
 async def test_alert(request: Request):
     from utils.notifier import send_alert
+
     sent = send_alert("Test from RE_OS", "INFO")
     return {"sent": sent}
 
@@ -729,11 +780,16 @@ async def test_alert(request: Request):
 _VALID_BOARD_MARKETS = {"Yelahanka", "Devanahalli", "Hebbal", ""}
 
 
-@app.post("/api/board/session", tags=["Board Room"], summary="Create board session",
-          responses={400: {"model": ErrorResponse}})
+@app.post(
+    "/api/board/session",
+    tags=["Board Room"],
+    summary="Create board session",
+    responses={400: {"model": ErrorResponse}},
+)
 @limiter.limit("20/hour")
 async def board_session_create(request: Request):
     from crews.board_room import run_board_session
+
     try:
         payload = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -742,7 +798,8 @@ async def board_session_create(request: Request):
     market = str(payload.get("market") or "").strip()
     if not pitch or len(pitch) > 2000:
         return JSONResponse(
-            {"error": "pitch required and must be under 2000 characters"}, status_code=400
+            {"error": "pitch required and must be under 2000 characters"},
+            status_code=400,
         )
     if market not in _VALID_BOARD_MARKETS:
         return JSONResponse(
@@ -753,245 +810,278 @@ async def board_session_create(request: Request):
     return result
 
 
-@app.get("/api/board/session/{session_id}", tags=["Board Room"],
-         summary="Get board session by ID", responses={404: {"model": ErrorResponse}})
+@app.get(
+    "/api/board/session/{session_id}",
+    tags=["Board Room"],
+    summary="Get board session by ID",
+    responses={404: {"model": ErrorResponse}},
+)
 @limiter.limit("120/minute")
 async def board_session_get(request: Request, session_id: str):
     from crews.board_room import get_board_session
+
     session = get_board_session(session_id)
     if not session:
         return JSONResponse({"error": "not found"}, status_code=404)
     return session
 
 
-@app.get("/api/board/sessions", response_model=BoardSessionsResponse,
-         tags=["Board Room"], summary="List recent board sessions")
+@app.get(
+    "/api/board/sessions",
+    response_model=BoardSessionsResponse,
+    tags=["Board Room"],
+    summary="List recent board sessions",
+)
 @limiter.limit("60/minute")
 async def board_sessions(request: Request):
-    conn = None
-    exc = False
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT session_id, market, status, created_at, pitch_text
-            FROM board_sessions ORDER BY created_at DESC LIMIT 20
-        """)
-        rows = []
-        for r in cur.fetchall():
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text("""
+                SELECT session_id, market, status, created_at, pitch_text
+                FROM board_sessions ORDER BY created_at DESC LIMIT 20
+            """)
+            ).fetchall()
+        result = []
+        for r in rows:
             pitch = r[4] or ""
-            rows.append({
-                "session_id": str(r[0]),
-                "market": r[1],
-                "status": r[2],
-                "created_at": r[3].isoformat() if r[3] else None,
-                "pitch_excerpt": pitch[:120] + ("\u2026" if len(pitch) > 120 else ""),
-            })
-        cur.close()
-        return {"sessions": rows}
+            result.append(
+                {
+                    "session_id": str(r[0]),
+                    "market": r[1],
+                    "status": r[2],
+                    "created_at": r[3].isoformat() if r[3] else None,
+                    "pitch_excerpt": pitch[:120]
+                    + ("\u2026" if len(pitch) > 120 else ""),
+                }
+            )
+        return {"sessions": result}
     except Exception as e:
-        exc = True
         logger.error("[board_sessions] %s", e)
         return JSONResponse({"sessions": [], "error": "database query failed"})
-    finally:
-        if conn:
-            _release_db(conn, reset=exc)
 
 
-@app.get("/api/engineering/brief", response_model=BriefResponse,
-         tags=["Briefs"], summary="Latest Engineering Head response")
+@app.get(
+    "/api/engineering/brief",
+    response_model=BriefResponse,
+    tags=["Briefs"],
+    summary="Latest Engineering Head response",
+)
 @limiter.limit("30/minute")
 async def engineering_brief(request: Request):
-    conn = None
-    exc = False
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT session_id, market, engineering_response, created_at
-            FROM board_sessions
-            WHERE engineering_response IS NOT NULL
-            ORDER BY created_at DESC LIMIT 1
-        """)
-        row = cur.fetchone()
-        cur.close()
+        with _get_sa_engine().connect() as conn:
+            row = conn.execute(
+                _sa_text("""
+                SELECT session_id, market, engineering_response, created_at
+                FROM board_sessions
+                WHERE engineering_response IS NOT NULL
+                ORDER BY created_at DESC LIMIT 1
+            """)
+            ).fetchone()
         if not row:
-            logger.info("[engineering_brief] No board sessions with engineering_response found")
+            logger.info(
+                "[engineering_brief] No board sessions with engineering_response found"
+            )
             return {"brief": None}
         created = row[3].isoformat() if row[3] else None
-        logger.info("[engineering_brief] session=%s market=%s created=%s", row[0][:8], row[1], created)
-        return {"brief": {
-            "session_id": str(row[0]),
-            "market": row[1],
-            "response": row[2],
-            "created_at": created,
-        }}
+        logger.info(
+            "[engineering_brief] session=%s market=%s created=%s",
+            row[0][:8],
+            row[1],
+            created,
+        )
+        return {
+            "brief": {
+                "session_id": str(row[0]),
+                "market": row[1],
+                "response": row[2],
+                "created_at": created,
+            }
+        }
     except Exception as e:
-        exc = True
         logger.error("[engineering_brief] %s", e)
         return JSONResponse({"error": "database query failed"}, status_code=500)
-    finally:
-        if conn:
-            _release_db(conn, reset=exc)
 
 
-@app.get("/api/alerts", response_model=AlertsResponse,
-         tags=["Alerts"], summary="List recent alerts")
+@app.get(
+    "/api/alerts",
+    response_model=AlertsResponse,
+    tags=["Alerts"],
+    summary="List recent alerts",
+)
 @limiter.limit("30/minute")
 async def list_alerts(request: Request, channel: str = Query(None)):
-    conn = None
-    exc = False
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        where = "WHERE channel = %s" if channel else ""
-        params = [channel] if channel else []
-        cur.execute(
-            f"SELECT id, channel, title, status, created_at FROM alerts "
-            f"{where} ORDER BY created_at DESC LIMIT 50",
-            params,
-        )
-        rows = [
-            {"id": str(r[0]), "channel": r[1], "title": r[2],
-             "status": r[3], "created_at": r[4].isoformat() if r[4] else None}
-            for r in cur.fetchall()
+        with _get_sa_engine().connect() as conn:
+            where = "WHERE channel = :ch" if channel else ""
+            params = {"ch": channel} if channel else {}
+            rows = conn.execute(
+                _sa_text(
+                    f"SELECT id, channel, title, status, created_at FROM alerts "
+                    f"{where} ORDER BY created_at DESC LIMIT 50"
+                ),
+                params,
+            ).fetchall()
+        result = [
+            {
+                "id": str(r[0]),
+                "channel": r[1],
+                "title": r[2],
+                "status": r[3],
+                "created_at": r[4].isoformat() if r[4] else None,
+            }
+            for r in rows
         ]
-        cur.close()
-        logger.info("[list_alerts] channel=%s count=%d", channel or "all", len(rows))
-        return {"alerts": rows}
+        logger.info("[list_alerts] channel=%s count=%d", channel or "all", len(result))
+        return {"alerts": result}
     except Exception as e:
-        exc = True
         logger.error("[list_alerts] %s", e)
         return JSONResponse({"error": "database query failed"}, status_code=500)
-    finally:
-        if conn:
-            _release_db(conn, reset=exc)
 
 
-@app.get("/api/finance/brief", response_model=BriefResponse,
-         tags=["Briefs"], summary="Latest Finance Head response")
+@app.get(
+    "/api/finance/brief",
+    response_model=BriefResponse,
+    tags=["Briefs"],
+    summary="Latest Finance Head response",
+)
 @limiter.limit("30/minute")
 async def finance_brief(request: Request):
-    conn = None
-    exc = False
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT session_id, market, finance_response, created_at
-            FROM board_sessions
-            WHERE finance_response IS NOT NULL
-            ORDER BY created_at DESC LIMIT 1
-        """)
-        row = cur.fetchone()
-        cur.close()
+        with _get_sa_engine().connect() as conn:
+            row = conn.execute(
+                _sa_text("""
+                SELECT session_id, market, finance_response, created_at
+                FROM board_sessions
+                WHERE finance_response IS NOT NULL
+                ORDER BY created_at DESC LIMIT 1
+            """)
+            ).fetchone()
         if not row:
             logger.info("[finance_brief] No board sessions with finance_response found")
             return {"brief": None}
         created = row[3].isoformat() if row[3] else None
-        logger.info("[finance_brief] session=%s market=%s created=%s", row[0][:8], row[1], created)
-        return {"brief": {
-            "session_id": str(row[0]),
-            "market": row[1],
-            "response": row[2],
-            "created_at": created,
-        }}
+        logger.info(
+            "[finance_brief] session=%s market=%s created=%s",
+            row[0][:8],
+            row[1],
+            created,
+        )
+        return {
+            "brief": {
+                "session_id": str(row[0]),
+                "market": row[1],
+                "response": row[2],
+                "created_at": created,
+            }
+        }
     except Exception as e:
-        exc = True
         logger.error("[finance_brief] %s", e)
         return JSONResponse({"error": "database query failed"}, status_code=500)
-    finally:
-        if conn:
-            _release_db(conn, reset=exc)
 
 
-@app.get("/api/legal/brief", response_model=BriefResponse,
-         tags=["Briefs"], summary="Latest Legal Head response")
+@app.get(
+    "/api/legal/brief",
+    response_model=BriefResponse,
+    tags=["Briefs"],
+    summary="Latest Legal Head response",
+)
 @limiter.limit("30/minute")
 async def legal_brief(request: Request, market: str = Query(None)):
     canonical = _normalize_market(market)
-    conn = None
-    exc = False
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        where = "WHERE legal_response IS NOT NULL"
-        params = []
-        if canonical and canonical != "all":
-            where += " AND market = %s"
-            params.append(canonical)
-        cur.execute(f"""
-            SELECT session_id, market, legal_response, created_at
-            FROM board_sessions {where}
-            ORDER BY created_at DESC LIMIT 1
-        """, params)
-        row = cur.fetchone()
-        cur.close()
+        with _get_sa_engine().connect() as conn:
+            where = "WHERE legal_response IS NOT NULL"
+            params = {}
+            if canonical and canonical != "all":
+                where += " AND market = :m"
+                params["m"] = canonical
+            row = conn.execute(
+                _sa_text(f"""
+                SELECT session_id, market, legal_response, created_at
+                FROM board_sessions {where}
+                ORDER BY created_at DESC LIMIT 1
+            """),
+                params,
+            ).fetchone()
         if not row:
             logger.info("[legal_brief] No board sessions with legal_response found")
             return {"brief": None}
         created = row[3].isoformat() if row[3] else None
-        logger.info("[legal_brief] session=%s market=%s created=%s", row[0][:8], row[1], created)
-        return {"brief": {
-            "session_id": str(row[0]),
-            "market": row[1],
-            "response": row[2],
-            "created_at": created,
-        }}
+        logger.info(
+            "[legal_brief] session=%s market=%s created=%s", row[0][:8], row[1], created
+        )
+        return {
+            "brief": {
+                "session_id": str(row[0]),
+                "market": row[1],
+                "response": row[2],
+                "created_at": created,
+            }
+        }
     except Exception as e:
-        exc = True
         logger.error("[legal_brief] %s", e)
         return JSONResponse({"error": "database query failed"}, status_code=500)
-    finally:
-        if conn:
-            _release_db(conn, reset=exc)
 
 
 # ── Tasks ────────────────────────────────────────────────────────────────────
 
 
-@app.get("/api/tasks", response_model=TasksResponse,
-         tags=["Tasks"], summary="List tasks with optional status/owner filter")
+@app.get(
+    "/api/tasks",
+    response_model=TasksResponse,
+    tags=["Tasks"],
+    summary="List tasks with optional status/owner filter",
+)
 @limiter.limit("60/minute")
-async def list_tasks(request: Request, status: str = Query(None), owner: str = Query(None)):
-    conn = None
-    exc = False
+async def list_tasks(
+    request: Request, status: str = Query(None), owner: str = Query(None)
+):
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        where_clauses, params = [], []
-        if status:
-            where_clauses.append("status = %s")
-            params.append(status)
-        if owner:
-            where_clauses.append("owner = %s")
-            params.append(owner)
-        where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-        cur.execute(
-            f"SELECT id, title, owner, status, priority, source_type, source_id, created_at "
-            f"FROM tasks {where_sql} ORDER BY created_at DESC LIMIT 200",
-            params,
-        )
-        rows = [
-            {"id": str(r[0]), "title": r[1], "owner": r[2], "status": r[3],
-             "priority": r[4], "source_type": r[5],
-             "source_id": str(r[6]) if r[6] else None,
-             "created_at": r[7].isoformat() if r[7] else None}
-            for r in cur.fetchall()
+        with _get_sa_engine().connect() as conn:
+            where_clauses, params = [], {}
+            if status:
+                where_clauses.append("status = :st")
+                params["st"] = status
+            if owner:
+                where_clauses.append("owner = :ow")
+                params["ow"] = owner
+            where_sql = (
+                ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+            )
+            rows = conn.execute(
+                _sa_text(
+                    f"SELECT id, title, owner, status, priority, source_type, source_id, created_at "
+                    f"FROM tasks {where_sql} ORDER BY created_at DESC LIMIT 200"
+                ),
+                params,
+            ).fetchall()
+        result = [
+            {
+                "id": str(r[0]),
+                "title": r[1],
+                "owner": r[2],
+                "status": r[3],
+                "priority": r[4],
+                "source_type": r[5],
+                "source_id": str(r[6]) if r[6] else None,
+                "created_at": r[7].isoformat() if r[7] else None,
+            }
+            for r in rows
         ]
-        cur.close()
-        return {"tasks": rows}
+        return {"tasks": result}
     except Exception as e:
-        exc = True
         logger.error("[list_tasks] %s", e)
         return JSONResponse({"error": "database query failed"}, status_code=500)
-    finally:
-        if conn:
-            _release_db(conn, reset=exc)
 
 
-@app.post("/api/tasks", tags=["Tasks"], summary="Create a new task",
-          responses={400: {"model": ErrorResponse}, 201: {"description": "Task created"}})
+@app.post(
+    "/api/tasks",
+    tags=["Tasks"],
+    summary="Create a new task",
+    responses={400: {"model": ErrorResponse}, 201: {"description": "Task created"}},
+)
 @limiter.limit("30/minute")
 async def create_task(request: Request):
     try:
@@ -1013,31 +1103,32 @@ async def create_task(request: Request):
             source_id = str(uuid.UUID(str(source_id_raw)))
         except (ValueError, AttributeError):
             source_id = None
-    conn = None
-    exc = False
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        cur.execute(
-            """INSERT INTO tasks (title, owner, priority, source_type, source_id)
-               VALUES (%s, %s, %s, %s, %s) RETURNING id""",
-            (title, owner or None, priority, source_type or None, str(source_id) if source_id else None),
-        )
-        task_id = str(cur.fetchone()[0])
-        conn.commit()
-        cur.close()
+        with _get_sa_engine().begin() as conn:
+            result = conn.execute(
+                _sa_text("""INSERT INTO tasks (title, owner, priority, source_type, source_id)
+                   VALUES (:t, :o, :p, :st, :si) RETURNING id"""),
+                {
+                    "t": title,
+                    "o": owner or None,
+                    "p": priority,
+                    "st": source_type or None,
+                    "si": str(source_id) if source_id else None,
+                },
+            )
+            task_id = str(result.fetchone()[0])
         return JSONResponse({"task_id": task_id, "status": "queued"}, status_code=201)
     except Exception as e:
-        exc = True
         logger.error("[create_task] %s", e)
         return JSONResponse({"error": "database query failed"}, status_code=500)
-    finally:
-        if conn:
-            _release_db(conn, reset=exc)
 
 
-@app.patch("/api/tasks/{task_id}", tags=["Tasks"], summary="Update task status",
-           responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}})
+@app.patch(
+    "/api/tasks/{task_id}",
+    tags=["Tasks"],
+    summary="Update task status",
+    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
 @limiter.limit("60/minute")
 async def update_task(request: Request, task_id: str):
     try:
@@ -1051,27 +1142,20 @@ async def update_task(request: Request, task_id: str):
         tid = str(uuid.UUID(task_id))
     except ValueError:
         return JSONResponse({"error": "invalid task_id"}, status_code=400)
-    conn = None
-    exc = False
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE tasks SET status = %s, updated_at = NOW() WHERE id = %s RETURNING id",
-            (new_status, tid),
-        )
-        if cur.fetchone() is None:
-            return JSONResponse({"error": "not found"}, status_code=404)
-        conn.commit()
-        cur.close()
+        with _get_sa_engine().begin() as conn:
+            result = conn.execute(
+                _sa_text(
+                    "UPDATE tasks SET status = :s, updated_at = NOW() WHERE id = :tid RETURNING id"
+                ),
+                {"s": new_status, "tid": tid},
+            )
+            if result.fetchone() is None:
+                return JSONResponse({"error": "not found"}, status_code=404)
         return {"status": new_status}
     except Exception as e:
-        exc = True
         logger.error("[update_task] %s", e)
         return JSONResponse({"error": "database query failed"}, status_code=500)
-    finally:
-        if conn:
-            _release_db(conn, reset=exc)
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -1080,8 +1164,12 @@ _registry_cache: dict[str, tuple[list[dict], float]] = {}
 _REGISTRY_CACHE_TTL = 15
 
 
-@app.get("/api/registry", response_model=RegistryResponse, tags=["Registry"],
-         summary="List registered agents")
+@app.get(
+    "/api/registry",
+    response_model=RegistryResponse,
+    tags=["Registry"],
+    summary="List registered agents",
+)
 @limiter.limit("30/minute")
 async def list_registry(request: Request):
     now = time.time()
@@ -1089,37 +1177,41 @@ async def list_registry(request: Request):
     if cached and cached[1] > now:
         logger.debug("[list_registry] cache hit (%d agents)", len(cached[0]))
         return {"agents": cached[0], "cached": True}
-    conn = None
-    exc = False
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT id, name, role, department, llm_tier, active, hired_on
-            FROM agent_registry ORDER BY department, name
-        """)
-        rows = [
-            {"id": r[0], "name": r[1], "role": r[2], "department": r[3],
-             "llm_tier": r[4], "active": r[5],
-             "hired_on": r[6].isoformat() if r[6] else None}
-            for r in cur.fetchall()
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text("""
+                SELECT id, name, role, department, llm_tier, active, hired_on
+                FROM agent_registry ORDER BY department, name
+            """)
+            ).fetchall()
+        result = [
+            {
+                "id": r[0],
+                "name": r[1],
+                "role": r[2],
+                "department": r[3],
+                "llm_tier": r[4],
+                "active": r[5],
+                "hired_on": r[6].isoformat() if r[6] else None,
+            }
+            for r in rows
         ]
-        cur.close()
-        _registry_cache["all"] = (rows, now + _REGISTRY_CACHE_TTL)
-        return {"agents": rows}
+        _registry_cache["all"] = (result, now + _REGISTRY_CACHE_TTL)
+        return {"agents": result}
     except Exception as e:
-        exc = True
         logger.warning("[list_registry] DB query failed: %s", e)
         if cached:
             return {"agents": cached[0], "cached": True, "stale": True}
         return JSONResponse({"error": "database query failed"}, status_code=500)
-    finally:
-        if conn:
-            _release_db(conn, reset=exc)
 
 
-@app.post("/api/registry", tags=["Registry"], summary="Hire a new agent from JSON spec",
-          responses={400: {"model": ErrorResponse}, 409: {"model": ErrorResponse}})
+@app.post(
+    "/api/registry",
+    tags=["Registry"],
+    summary="Hire a new agent from JSON spec",
+    responses={400: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+)
 async def hire_agent(request: Request):
     try:
         payload = await request.json()
@@ -1129,26 +1221,40 @@ async def hire_agent(request: Request):
     if err:
         return JSONResponse({"error": err}, status_code=400)
     import yaml
+
     spec_id = str(validated["id"]).strip()
     from agents.agent_factory import _REGISTRY_DIR
+
     spec_path = str(_REGISTRY_DIR / f"{spec_id}.yaml")
     if os.path.exists(spec_path):
-        return JSONResponse({"error": f"agent '{spec_id}' already exists"}, status_code=409)
+        return JSONResponse(
+            {"error": f"agent '{spec_id}' already exists"}, status_code=409
+        )
     try:
         os.makedirs(os.path.dirname(spec_path), exist_ok=True)
         with open(spec_path, "w", encoding="utf-8") as f:
-            yaml.dump(validated, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+            yaml.dump(
+                validated,
+                f,
+                default_flow_style=False,
+                sort_keys=False,
+                allow_unicode=True,
+            )
     except Exception as e:
         logger.error("[hire_agent] write failed: %s", e)
         return JSONResponse({"error": "failed to write spec file"}, status_code=500)
     try:
         from agents.agent_factory import sync_registry_to_db
+
         synced = sync_registry_to_db()
-        logger.info("[hire_agent] synced %d agents (including new '%s')", synced, spec_id)
+        logger.info(
+            "[hire_agent] synced %d agents (including new '%s')", synced, spec_id
+        )
     except Exception as e:
         logger.error("[hire_agent] db sync failed: %s", e)
         return JSONResponse(
-            {"warning": "spec written but DB sync failed", "spec_id": spec_id}, status_code=201
+            {"warning": "spec written but DB sync failed", "spec_id": spec_id},
+            status_code=201,
         )
     _registry_cache.pop("all", None)
     return JSONResponse({"status": "hired", "spec_id": spec_id}, status_code=201)
@@ -1157,118 +1263,140 @@ async def hire_agent(request: Request):
 # ── Metrics ───────────────────────────────────────────────────────────────────
 
 
-@app.get('/metrics', tags=["Metrics"], summary="Prometheus metrics endpoint",
-         include_in_schema=False)
+@app.get(
+    "/metrics",
+    tags=["Metrics"],
+    summary="Prometheus metrics endpoint",
+    include_in_schema=False,
+)
 def metrics():
     return Response(
         content=generate_latest(),
-        media_type='text/plain; version=0.0.4',
+        media_type="text/plain; version=0.0.4",
     )
 
 
 # ── DB State ─────────────────────────────────────────────────────────────────
 
 
-@app.get("/api/db/state", tags=["DB State"], summary="Database record counts and market summary")
+@app.get(
+    "/api/db/state",
+    tags=["DB State"],
+    summary="Database record counts and market summary",
+)
 @limiter.limit("60/minute")
 async def db_state(request: Request):
-    conn = None
-    exc = False
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        state = {}
-        cur.execute("SELECT COUNT(*) FROM rera_projects")
-        state["rera_projects"] = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM listings")
-        state["listings"] = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM kaveri_registrations")
-        state["kaveri_registrations"] = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM guidance_values")
-        state["guidance_values"] = cur.fetchone()[0]
-        cur.execute("""
-            SELECT mm.name,
-                   COUNT(DISTINCT rp.id)              AS projects,
-                   ROUND(AVG(l.price_psf)::numeric, 0) AS avg_psf
-            FROM micro_markets mm
-            LEFT JOIN rera_projects rp ON rp.micro_market_id = mm.id
-            LEFT JOIN listings l ON l.micro_market_id = mm.id
-                                AND l.price_psf IS NOT NULL
-                                AND l.price_psf > 1000
-                                AND l.price_psf < 50000
-            GROUP BY mm.name ORDER BY mm.name
-        """)
-        state["markets"] = [
-            {"name": r[0], "projects": r[1], "avg_psf": int(r[2]) if r[2] else None}
-            for r in cur.fetchall()
-        ]
-        cur.execute("""
-            SELECT micro_market, started_at, status, duration_seconds
-            FROM agent_runs ORDER BY started_at DESC LIMIT 5
-        """)
-        state["recent_runs"] = [
-            {"market": r[0], "start_time": r[1].isoformat() if r[1] else None,
-             "status": r[2], "duration": r[3]}
-            for r in cur.fetchall()
-        ]
+        with _get_sa_engine().connect() as conn:
+            state = {}
+            state["rera_projects"] = conn.execute(
+                _sa_text("SELECT COUNT(*) FROM rera_projects")
+            ).fetchone()[0]
+            state["listings"] = conn.execute(
+                _sa_text("SELECT COUNT(*) FROM listings")
+            ).fetchone()[0]
+            state["kaveri_registrations"] = conn.execute(
+                _sa_text("SELECT COUNT(*) FROM kaveri_registrations")
+            ).fetchone()[0]
+            state["guidance_values"] = conn.execute(
+                _sa_text("SELECT COUNT(*) FROM guidance_values")
+            ).fetchone()[0]
+            markets = conn.execute(
+                _sa_text("""
+                SELECT mm.name,
+                       COUNT(DISTINCT rp.id)              AS projects,
+                       ROUND(AVG(l.price_psf)::numeric, 0) AS avg_psf
+                FROM micro_markets mm
+                LEFT JOIN rera_projects rp ON rp.micro_market_id = mm.id
+                LEFT JOIN listings l ON l.micro_market_id = mm.id
+                                    AND l.price_psf IS NOT NULL
+                                    AND l.price_psf > 1000
+                                    AND l.price_psf < 50000
+                GROUP BY mm.name ORDER BY mm.name
+            """)
+            ).fetchall()
+            state["markets"] = [
+                {"name": r[0], "projects": r[1], "avg_psf": int(r[2]) if r[2] else None}
+                for r in markets
+            ]
+            recent = conn.execute(
+                _sa_text("""
+                SELECT micro_market, started_at, status, duration_seconds
+                FROM agent_runs ORDER BY started_at DESC LIMIT 5
+            """)
+            ).fetchall()
+            state["recent_runs"] = [
+                {
+                    "market": r[0],
+                    "start_time": r[1].isoformat() if r[1] else None,
+                    "status": r[2],
+                    "duration": r[3],
+                }
+                for r in recent
+            ]
         return state
     except Exception as e:
-        exc = True
         logger.error("[db_state] %s", e)
         return JSONResponse({"error": "database query failed"}, status_code=500)
-    finally:
-        if conn:
-            _release_db(conn, reset=exc)
 
 
 @app.get("/api/db/tables", tags=["DB State"], summary="View contents of key DB views")
 @limiter.limit("30/minute")
 async def db_tables(request: Request):
-    conn = None
-    exc = False
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        with db_query_duration_seconds.labels(query_name="v_market_inventory").time():
-            cur.execute("SELECT * FROM v_market_inventory")
-            columns = [desc[0] for desc in cur.description]
-            market_inventory = [dict(zip(columns, row)) for row in cur.fetchall()]
-        with db_query_duration_seconds.labels(query_name="v_developer_scorecard").time():
-            cur.execute("""
-                SELECT developer, grade, total_projects, total_units,
-                       avg_absorption_pct, completed, delayed, markets_active_in
-                FROM v_developer_scorecard LIMIT 50
-            """)
-            columns = [desc[0] for desc in cur.description]
-            developer_scorecard = [dict(zip(columns, row)) for row in cur.fetchall()]
-        with db_query_duration_seconds.labels(query_name="v_active_projects").time():
-            cur.execute("""
-                SELECT project_name, developer_name, micro_market, project_status,
-                       total_units, unsold_units, absorption_pct
-                FROM v_active_projects LIMIT 100
-            """)
-            columns = [desc[0] for desc in cur.description]
-            active_projects = [dict(zip(columns, row)) for row in cur.fetchall()]
+        with _get_sa_engine().connect() as conn:
+            with db_query_duration_seconds.labels(
+                query_name="v_market_inventory"
+            ).time():
+                mi_rows = conn.execute(
+                    _sa_text("SELECT * FROM v_market_inventory")
+                ).fetchall()
+                mi_cols = mi_rows[0]._mapping.keys() if mi_rows else []
+                market_inventory = [dict(zip(mi_cols, r)) for r in mi_rows]
+            with db_query_duration_seconds.labels(
+                query_name="v_developer_scorecard"
+            ).time():
+                ds_rows = conn.execute(
+                    _sa_text("""
+                    SELECT developer, grade, total_projects, total_units,
+                           avg_absorption_pct, completed, delayed, markets_active_in
+                    FROM v_developer_scorecard LIMIT 50
+                """)
+                ).fetchall()
+                ds_cols = ds_rows[0]._mapping.keys() if ds_rows else []
+                developer_scorecard = [dict(zip(ds_cols, r)) for r in ds_rows]
+            with db_query_duration_seconds.labels(
+                query_name="v_active_projects"
+            ).time():
+                ap_rows = conn.execute(
+                    _sa_text("""
+                    SELECT project_name, developer_name, micro_market, project_status,
+                           total_units, unsold_units, absorption_pct
+                    FROM v_active_projects LIMIT 100
+                """)
+                ).fetchall()
+                ap_cols = ap_rows[0]._mapping.keys() if ap_rows else []
+                active_projects = [dict(zip(ap_cols, r)) for r in ap_rows]
         return {
             "market_inventory": market_inventory,
             "developer_scorecard": developer_scorecard,
             "active_projects": active_projects,
         }
     except Exception as e:
-        exc = True
         logger.error("[db_tables] %s", e)
         return JSONResponse({"error": "database query failed"}, status_code=500)
-    finally:
-        if conn:
-            _release_db(conn, reset=exc)
 
 
 # ── Pipeline Control ─────────────────────────────────────────────────────────
 
 
-@app.post("/api/run/{market}", response_model=RunResponse,
-          tags=["Pipeline"], summary="Start pipeline for a market",
-          responses={400: {"model": ErrorResponse}})
+@app.post(
+    "/api/run/{market}",
+    response_model=RunResponse,
+    tags=["Pipeline"],
+    summary="Start pipeline for a market",
+    responses={400: {"model": ErrorResponse}},
+)
 @limiter.limit("10/hour")
 async def run_pipeline(request: Request, market: str):
     canonical = _normalize_market(market)
@@ -1278,8 +1406,12 @@ async def run_pipeline(request: Request, market: str):
     return JSONResponse(payload, status_code=status_code)
 
 
-@app.delete("/api/run/{market}", tags=["Pipeline"], summary="Stop running pipeline",
-           responses={400: {"model": ErrorResponse}})
+@app.delete(
+    "/api/run/{market}",
+    tags=["Pipeline"],
+    summary="Stop running pipeline",
+    responses={400: {"model": ErrorResponse}},
+)
 async def stop_pipeline(market: str):
     canonical = _normalize_market(market)
     if not canonical:
@@ -1296,81 +1428,93 @@ def run_status():
 # ── Agents ───────────────────────────────────────────────────────────────────
 
 
-@app.get("/api/agents", tags=["Agents"], summary="Full agent state — DB agents + registry + running")
+@app.get(
+    "/api/agents",
+    tags=["Agents"],
+    summary="Full agent state — DB agents + registry + running",
+)
 def agents_state():
     global _diag_agents_contract_logged
-    conn = None
-    _conn_exc = False
+    db_agents = {}
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT agent_name, status, MAX(started_at) as last_run, COUNT(*) as total_runs
-            FROM agent_runs GROUP BY agent_name, status ORDER BY last_run DESC
-        """)
-        db_agents = {}
-        for row in cur.fetchall():
-            agent_name, status, last_run, total_runs = row
-            if agent_name not in db_agents:
-                db_agents[agent_name] = {
-                    "id": agent_name,
-                    "name": agent_name.replace("_", " ").title(),
-                    "role": agent_name.replace("_", " ").title(),
-                    "label": status.upper() if status else "IDLE",
-                    "state": status if status else "idle",
-                    "last_action": f"Last run: {last_run}" if last_run else "No recent activity",
-                    "started": last_run.isoformat() if hasattr(last_run, "isoformat") else str(last_run) if last_run else None,
-                }
-        try:
-            cur.execute("""
-                SELECT id, name, role, department, llm_tier, active, hired_on
-                FROM agent_registry ORDER BY department, name
+        with _get_sa_engine().connect() as conn:
+            runs = conn.execute(
+                _sa_text("""
+                SELECT agent_name, status, MAX(started_at) as last_run, COUNT(*) as total_runs
+                FROM agent_runs GROUP BY agent_name, status ORDER BY last_run DESC
             """)
-            for row in cur.fetchall():
-                aid = row[0]
-                if aid not in db_agents:
-                    db_agents[aid] = {
-                        "id": aid,
-                        "name": row[1],
-                        "role": row[2],
-                        "department": row[3],
-                        "label": "REGISTERED",
-                        "state": "idle",
-                        "last_action": f"Registered: {row[2]} in {row[3] or '-'}",
-                        "started": row[6].isoformat() if row[6] else None,
-                        "llm_tier": row[4],
+            ).fetchall()
+            for row in runs:
+                agent_name, status, last_run, total_runs = row
+                if agent_name not in db_agents:
+                    db_agents[agent_name] = {
+                        "id": agent_name,
+                        "name": agent_name.replace("_", " ").title(),
+                        "role": agent_name.replace("_", " ").title(),
+                        "label": status.upper() if status else "IDLE",
+                        "state": status if status else "idle",
+                        "last_action": f"Last run: {last_run}"
+                        if last_run
+                        else "No recent activity",
+                        "started": last_run.isoformat()
+                        if hasattr(last_run, "isoformat")
+                        else str(last_run)
+                        if last_run
+                        else None,
                     }
-        except Exception as reg_e:
-            logger.warning("[DIAG agents] registry merge failed: %s", reg_e)
-        cur.close()
+            try:
+                reg = conn.execute(
+                    _sa_text("""
+                    SELECT id, name, role, department, llm_tier, active, hired_on
+                    FROM agent_registry ORDER BY department, name
+                """)
+                ).fetchall()
+                for row in reg:
+                    aid = row[0]
+                    if aid not in db_agents:
+                        db_agents[aid] = {
+                            "id": aid,
+                            "name": row[1],
+                            "role": row[2],
+                            "department": row[3],
+                            "label": "REGISTERED",
+                            "state": "idle",
+                            "last_action": f"Registered: {row[2]} in {row[3] or '-'}",
+                            "started": row[6].isoformat() if row[6] else None,
+                            "llm_tier": row[4],
+                        }
+            except Exception as reg_e:
+                logger.warning("[DIAG agents] registry merge failed: %s", reg_e)
+    except Exception as e:
+        logger.warning(
+            "[DIAG agents] DB query failed, falling back to in-memory: %s", e
+        )
+    if not db_agents:
         with _lock:
-            states_copy = copy.deepcopy(db_agents or _agent_states)
+            states_copy = copy.deepcopy(_agent_states)
             running_copy = {}
             for market, entry in _running.items():
                 rc = entry["proc"].poll()
                 running_copy[market] = {
                     "started": entry.get("started"),
-                    "state": "running" if rc is None else ("done" if rc == 0 else "failed"),
+                    "state": "running"
+                    if rc is None
+                    else ("done" if rc == 0 else "failed"),
                     "returncode": rc,
                     "pid": entry["proc"].pid,
                 }
         response = {"agents": states_copy, "running_markets": running_copy}
         response.update(states_copy)
         if not _diag_agents_contract_logged:
-            source_label = "DB + registry" if db_agents else "in-memory + registry"
-            logger.info("[DIAG agents] /api/agents keys=%s nested_agents=%s (from %s)",
-                        sorted(response.keys()), sorted(states_copy.keys()), source_label)
+            logger.info(
+                "[DIAG agents] /api/agents keys=%s nested_agents=%s (fallback)",
+                sorted(response.keys()),
+                sorted(states_copy.keys()),
+            )
             _diag_agents_contract_logged = True
-        _release_db(conn)
         return response
-    except Exception as e:
-        _conn_exc = True
-        logger.warning("[DIAG agents] DB query failed, falling back to in-memory: %s", e)
-    finally:
-        if conn and _conn_exc:
-            _release_db(conn, reset=True)
     with _lock:
-        states_copy = copy.deepcopy(_agent_states)
+        states_copy = copy.deepcopy(db_agents)
         running_copy = {}
         for market, entry in _running.items():
             rc = entry["proc"].poll()
@@ -1383,15 +1527,23 @@ def agents_state():
     response = {"agents": states_copy, "running_markets": running_copy}
     response.update(states_copy)
     if not _diag_agents_contract_logged:
-        logger.info("[DIAG agents] /api/agents keys=%s nested_agents=%s (fallback)",
-                    sorted(response.keys()), sorted(states_copy.keys()))
+        source_label = "DB" if db_agents else "in-memory"
+        logger.info(
+            "[DIAG agents] /api/agents keys=%s nested_agents=%s (from %s)",
+            sorted(response.keys()),
+            sorted(states_copy.keys()),
+            source_label,
+        )
         _diag_agents_contract_logged = True
     return response
 
 
-@app.post("/api/agents/{agent_id}/command", tags=["Agents"],
-          summary="Send command to an agent (run/stop/status)",
-          responses={404: {"model": ErrorResponse}})
+@app.post(
+    "/api/agents/{agent_id}/command",
+    tags=["Agents"],
+    summary="Send command to an agent (run/stop/status)",
+    responses={404: {"model": ErrorResponse}},
+)
 @limiter.limit("30/hour")
 async def agent_command(request: Request, agent_id: str):
     try:
@@ -1402,39 +1554,65 @@ async def agent_command(request: Request, agent_id: str):
     market_from_body = _normalize_market(str(body.get("market") or ""))
     market_from_prompt = _detect_market_from_prompt(prompt)
     chosen_market = market_from_body or market_from_prompt
-    if not chosen_market and any(k in prompt.lower() for k in
-                                 ["run", "start", "scrape", "scan", "analyse", "analyze", "stop", "cancel"]):
+    if not chosen_market and any(
+        k in prompt.lower()
+        for k in [
+            "run",
+            "start",
+            "scrape",
+            "scan",
+            "analyse",
+            "analyze",
+            "stop",
+            "cancel",
+        ]
+    ):
         chosen_market = "Yelahanka"
     text = prompt.lower()
     if agent_id not in _agent_states:
-        return JSONResponse({
-            "status": "unknown_command",
-            "action": "invalid_agent",
-            "details": f"Unknown agent_id '{agent_id}'",
-            "hint": "Try: run [market], stop [market], status",
-        }, status_code=404)
+        return JSONResponse(
+            {
+                "status": "unknown_command",
+                "action": "invalid_agent",
+                "details": f"Unknown agent_id '{agent_id}'",
+                "hint": "Try: run [market], stop [market], status",
+            },
+            status_code=404,
+        )
     if any(k in text for k in ["run", "start", "scrape", "scan", "analyse", "analyze"]):
         market = chosen_market or "Yelahanka"
         payload, status_code = _start_pipeline_for_market(market)
-        return JSONResponse({
-            "status": "accepted" if payload.get("status") in {"started", "already_running"} else "unknown_command",
-            "action": "run_pipeline",
-            "details": f"{payload.get('status')} for {market}",
-            "market": market,
-            "pipeline": payload,
-        }, status_code=status_code)
+        return JSONResponse(
+            {
+                "status": "accepted"
+                if payload.get("status") in {"started", "already_running"}
+                else "unknown_command",
+                "action": "run_pipeline",
+                "details": f"{payload.get('status')} for {market}",
+                "market": market,
+                "pipeline": payload,
+            },
+            status_code=status_code,
+        )
     if any(k in text for k in ["stop", "cancel"]):
         market = chosen_market or "Yelahanka"
         payload, status_code = _stop_pipeline_for_market(market)
-        return JSONResponse({
-            "status": "accepted" if payload.get("status") in {"stopped", "not_running"} else "unknown_command",
-            "action": "stop_pipeline",
-            "details": f"{payload.get('status')} for {market}",
-            "market": market,
-            "pipeline": payload,
-        }, status_code=status_code)
+        return JSONResponse(
+            {
+                "status": "accepted"
+                if payload.get("status") in {"stopped", "not_running"}
+                else "unknown_command",
+                "action": "stop_pipeline",
+                "details": f"{payload.get('status')} for {market}",
+                "market": market,
+                "pipeline": payload,
+            },
+            status_code=status_code,
+        )
     if any(k in text for k in ["status", "report", "show"]):
-        report_market = chosen_market if chosen_market and chosen_market != "all" else None
+        report_market = (
+            chosen_market if chosen_market and chosen_market != "all" else None
+        )
         report_path = _latest_report_path(report_market)
         return {
             "status": "accepted",
@@ -1445,26 +1623,34 @@ async def agent_command(request: Request, agent_id: str):
             "agents": copy.deepcopy(_agent_states),
             "running_markets": _running_snapshot(),
         }
-    return JSONResponse({
-        "status": "unknown_command",
-        "action": "none",
-        "details": "No action matched prompt",
-        "hint": "Try: run [market], stop [market], status",
-    })
+    return JSONResponse(
+        {
+            "status": "unknown_command",
+            "action": "none",
+            "details": "No action matched prompt",
+            "hint": "Try: run [market], stop [market], status",
+        }
+    )
 
 
-@app.get("/api/agents/{agent_id}/actions", tags=["Agents"],
-         summary="List available actions for an agent")
+@app.get(
+    "/api/agents/{agent_id}/actions",
+    tags=["Agents"],
+    summary="List available actions for an agent",
+)
 def agent_actions(agent_id: str):
     if agent_id not in _agent_states and agent_id not in AGENT_ACTIONS:
         return JSONResponse({"error": f"Unknown agent '{agent_id}'"}, status_code=404)
     return {"agent_id": agent_id, "actions": AGENT_ACTIONS.get(agent_id, [])}
 
 
-@app.get("/api/sentinel/status", tags=["Sentinel"], summary="Current sentinel run status")
+@app.get(
+    "/api/sentinel/status", tags=["Sentinel"], summary="Current sentinel run status"
+)
 def sentinel_status():
     try:
         from agents.sentinel_agent import get_last_scheduled_run, get_next_scheduled_run
+
         last = get_last_scheduled_run()
         nxt = get_next_scheduled_run()
         with _lock:
@@ -1483,16 +1669,25 @@ def sentinel_status():
         with _lock:
             if "sentinel" in _agent_states:
                 _agent_states["sentinel"]["last_action"] = "Sentinel error: check logs"
-        return JSONResponse({
-            "last_run": {"error": str(e)},
-            "next_run": {"next_run_utc": None, "in_hours": None, "in_minutes": None, "label": "unavailable"},
-        })
+        return JSONResponse(
+            {
+                "last_run": {"error": str(e)},
+                "next_run": {
+                    "next_run_utc": None,
+                    "in_hours": None,
+                    "in_minutes": None,
+                    "label": "unavailable",
+                },
+            }
+        )
 
 
 # ── Log Streaming (SSE) ──────────────────────────────────────────────────────
 
 
-@app.get("/api/logs/stream", tags=["Logs"], summary="SSE log stream for a market pipeline")
+@app.get(
+    "/api/logs/stream", tags=["Logs"], summary="SSE log stream for a market pipeline"
+)
 def stream_logs(market: str = Query(None)):
     market_raw = (market or "").strip().lower()
     canonical = MARKET_CANONICAL.get(market_raw)
@@ -1542,8 +1737,12 @@ def stream_logs(market: str = Query(None)):
 # ── Reports ──────────────────────────────────────────────────────────────────
 
 
-@app.get("/api/reports/{market}", tags=["Reports"], summary="Latest intel report text for a market",
-          responses={400: {"model": ErrorResponse}})
+@app.get(
+    "/api/reports/{market}",
+    tags=["Reports"],
+    summary="Latest intel report text for a market",
+    responses={400: {"model": ErrorResponse}},
+)
 @limiter.limit("30/minute")
 async def get_report(request: Request, market: str):
     canonical = _normalize_market(market)
@@ -1562,37 +1761,42 @@ async def get_report(request: Request, market: str):
     return {"content": content, "file": os.path.basename(latest)}
 
 
-@app.get("/api/intel/cards", response_model=CardsResponse, tags=["Reports"],
-         summary="Market summary cards for dashboard UI")
+@app.get(
+    "/api/intel/cards",
+    response_model=CardsResponse,
+    tags=["Reports"],
+    summary="Market summary cards for dashboard UI",
+)
 @limiter.limit("60/minute")
 async def intel_cards(request: Request):
-    conn = None
-    exc = False
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        cards = []
-        cur.execute("""
-            SELECT mm.name,
-                   COUNT(DISTINCT rp.id)              AS projects,
-                   ROUND(AVG(l.price_psf)::numeric, 0) AS avg_psf
-            FROM micro_markets mm
-            LEFT JOIN rera_projects rp ON rp.micro_market_id = mm.id
-            LEFT JOIN listings l ON l.micro_market_id = mm.id
-                                AND l.price_psf IS NOT NULL
-                                AND l.price_psf > 1000
-                                AND l.price_psf < 50000
-            GROUP BY mm.name ORDER BY mm.name
-        """)
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text("""
+                SELECT mm.name,
+                       COUNT(DISTINCT rp.id)              AS projects,
+                       ROUND(AVG(l.price_psf)::numeric, 0) AS avg_psf
+                FROM micro_markets mm
+                LEFT JOIN rera_projects rp ON rp.micro_market_id = mm.id
+                LEFT JOIN listings l ON l.micro_market_id = mm.id
+                                    AND l.price_psf IS NOT NULL
+                                    AND l.price_psf > 1000
+                                    AND l.price_psf < 50000
+                GROUP BY mm.name ORDER BY mm.name
+            """)
+            ).fetchall()
         now = time.time()
-        for row in cur.fetchall():
+        cards = []
+        for row in rows:
             market_name = row[0]
             slug = MARKET_SLUG.get(market_name, market_name.lower())
             cached = _estimated_cache.get(market_name)
             if cached and cached[1] > now:
                 is_estimated = cached[0]
             else:
-                report_files = sorted(glob.glob(f"/app/outputs/{slug}/intel_report_*.txt"))
+                report_files = sorted(
+                    glob.glob(f"/app/outputs/{slug}/intel_report_*.txt")
+                )
                 is_estimated = False
                 if report_files:
                     try:
@@ -1600,35 +1804,48 @@ async def intel_cards(request: Request):
                             is_estimated = "[ESTIMATED DATA" in rf.read(4096)
                     except Exception:
                         pass
-                _estimated_cache[market_name] = (is_estimated, now + _ESTIMATED_CACHE_TTL)
-            cards.append({
-                "market": market_name,
-                "active_projects": int(row[1] or 0),
-                "projects": int(row[1] or 0),
-                "avg_psf": int(row[2]) if row[2] else None,
-                "go_no_go": _market_go_no_go(int(row[1] or 0), int(row[2]) if row[2] else None, is_estimated),
-                "download_url": f"/api/intel/download?market={slug}" if slug else None,
-                "estimated": is_estimated,
-            })
+                _estimated_cache[market_name] = (
+                    is_estimated,
+                    now + _ESTIMATED_CACHE_TTL,
+                )
+            cards.append(
+                {
+                    "market": market_name,
+                    "active_projects": int(row[1] or 0),
+                    "projects": int(row[1] or 0),
+                    "avg_psf": int(row[2]) if row[2] else None,
+                    "go_no_go": _market_go_no_go(
+                        int(row[1] or 0), int(row[2]) if row[2] else None, is_estimated
+                    ),
+                    "download_url": f"/api/intel/download?market={slug}"
+                    if slug
+                    else None,
+                    "estimated": is_estimated,
+                }
+            )
         return {"cards": cards}
     except Exception as e:
-        exc = True
         logger.error("[intel_cards] %s", e)
         return JSONResponse({"error": "failed to load market cards"}, status_code=500)
-    finally:
-        if conn:
-            _release_db(conn, reset=exc)
 
 
-@app.get("/api/intel/search", tags=["Reports"], summary="Semantic search over past intel reports",
-          responses={400: {"model": ErrorResponse}})
+@app.get(
+    "/api/intel/search",
+    tags=["Reports"],
+    summary="Semantic search over past intel reports",
+    responses={400: {"model": ErrorResponse}},
+)
 @limiter.limit("20/minute")
 async def intel_search(request: Request, q: str = Query(""), market: str = Query("")):
     query_text = (q or "").strip()[:200]
     market_param = _normalize_market(market)
     if any(ord(c) < 32 and c not in "\t\n\r" for c in query_text):
         return JSONResponse(
-            {"results": [], "query": query_text[:50], "error": "invalid characters in query"},
+            {
+                "results": [],
+                "query": query_text[:50],
+                "error": "invalid characters in query",
+            },
             status_code=400,
         )
     if not query_text:
@@ -1638,8 +1855,17 @@ async def intel_search(request: Request, q: str = Query(""), market: str = Query
     now = time.time()
     cached = _cache_get(cache_key)
     if cached and cached[1] > now:
-        logger.debug("[intel_search] cache hit for q=%s market=%s", query_text[:40], market_filter)
-        return {"results": cached[0], "query": query_text, "market": market, "cached": True}
+        logger.debug(
+            "[intel_search] cache hit for q=%s market=%s",
+            query_text[:40],
+            market_filter,
+        )
+        return {
+            "results": cached[0],
+            "query": query_text,
+            "market": market,
+            "cached": True,
+        }
     logger.debug("[intel_search] q=%s market=%s", query_text[:60], market_filter)
     try:
         global _embedder_instance, _embedder_lock
@@ -1647,17 +1873,31 @@ async def intel_search(request: Request, q: str = Query(""), market: str = Query
             with _embedder_lock:
                 if _embedder_instance is None:
                     from utils.embedder import IntelEmbedder
+
                     _embedder_instance = IntelEmbedder()
         results = _embedder_instance.search(query_text, market=market_filter, n=5)
         _cache_put(cache_key, (results, now + _SEARCH_CACHE_TTL))
         return {"results": results, "query": query_text, "market": market}
     except Exception as e:
-        logger.warning("[intel_search] search failed: q=%s market=%s: %s", query_text[:40], market_filter, e)
-        return {"results": [], "query": query_text, "error": "search unavailable - index not built yet"}
+        logger.warning(
+            "[intel_search] search failed: q=%s market=%s: %s",
+            query_text[:40],
+            market_filter,
+            e,
+        )
+        return {
+            "results": [],
+            "query": query_text,
+            "error": "search unavailable - index not built yet",
+        }
 
 
-@app.get("/api/intel/download", tags=["Reports"], summary="Download intel report as txt or csv",
-          responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}})
+@app.get(
+    "/api/intel/download",
+    tags=["Reports"],
+    summary="Download intel report as txt or csv",
+    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
 def download_intel(market: str = Query(""), format: str = Query("txt")):
     canonical = _normalize_market(market)
     fmt = format.lower()
@@ -1678,40 +1918,44 @@ def download_intel(market: str = Query(""), format: str = Query("txt")):
 def _download_intel_csv(canonical: str | None):
     if not canonical:
         return JSONResponse({"error": "invalid market"}, status_code=400)
-    conn = None
-    exc = False
     try:
-        conn = _get_db()
-        cur = conn.cursor()
-        params = []
-        where = ""
-        if canonical != "all":
-            where = "WHERE mm.name = %s"
-            params.append(canonical)
-        cur.execute(f"""
-            SELECT mm.name,
-                   COUNT(DISTINCT rp.id)               AS active_projects,
-                   ROUND(AVG(l.price_psf)::numeric, 0) AS avg_psf
-            FROM micro_markets mm
-            LEFT JOIN rera_projects rp ON rp.micro_market_id = mm.id
-            LEFT JOIN listings l ON l.micro_market_id = mm.id
-                                AND l.price_psf IS NOT NULL
-                                AND l.price_psf > 1000
-                                AND l.price_psf < 50000
-            {where}
-            GROUP BY mm.name ORDER BY mm.name
-        """, params)
+        with _get_sa_engine().connect() as conn:
+            params = {}
+            where = ""
+            if canonical != "all":
+                where = "WHERE mm.name = :m"
+                params["m"] = canonical
+            db_rows = conn.execute(
+                _sa_text(f"""
+                SELECT mm.name,
+                       COUNT(DISTINCT rp.id)               AS active_projects,
+                       ROUND(AVG(l.price_psf)::numeric, 0) AS avg_psf
+                FROM micro_markets mm
+                LEFT JOIN rera_projects rp ON rp.micro_market_id = mm.id
+                LEFT JOIN listings l ON l.micro_market_id = mm.id
+                                    AND l.price_psf IS NOT NULL
+                                    AND l.price_psf > 1000
+                                    AND l.price_psf < 50000
+                {where}
+                GROUP BY mm.name ORDER BY mm.name
+            """),
+                params,
+            ).fetchall()
         out = io.StringIO()
         writer = csv.writer(out)
-        writer.writerow(["market", "active_projects", "avg_psf", "go_no_go", "estimated"])
+        writer.writerow(
+            ["market", "active_projects", "avg_psf", "go_no_go", "estimated"]
+        )
         now = time.time()
-        for market_name, active_projects, avg_psf in cur.fetchall():
+        for market_name, active_projects, avg_psf in db_rows:
             slug = MARKET_SLUG.get(market_name, market_name.lower())
             cached = _estimated_cache.get(market_name)
             if cached and cached[1] > now:
                 estimated = cached[0]
             else:
-                report_files = sorted(glob.glob(f"/app/outputs/{slug}/intel_report_*.txt"))
+                report_files = sorted(
+                    glob.glob(f"/app/outputs/{slug}/intel_report_*.txt")
+                )
                 estimated = False
                 if report_files:
                     try:
@@ -1722,23 +1966,901 @@ def _download_intel_csv(canonical: str | None):
                 _estimated_cache[market_name] = (estimated, now + _ESTIMATED_CACHE_TTL)
             projects = int(active_projects or 0)
             psf = int(avg_psf) if avg_psf else None
-            writer.writerow([market_name, projects, psf or "", _market_go_no_go(projects, psf, estimated), estimated])
-        filename = "intel_cards.csv" if canonical == "all" else f"intel_{MARKET_SLUG.get(canonical, canonical.lower())}.csv"
-        return Response(content=out.getvalue(), media_type="text/csv",
-                        headers={"Content-Disposition": f"attachment; filename={filename}"})
+            writer.writerow(
+                [
+                    market_name,
+                    projects,
+                    psf or "",
+                    _market_go_no_go(projects, psf, estimated),
+                    estimated,
+                ]
+            )
+        filename = (
+            "intel_cards.csv"
+            if canonical == "all"
+            else f"intel_{MARKET_SLUG.get(canonical, canonical.lower())}.csv"
+        )
+        return Response(
+            content=out.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
     except Exception as e:
-        exc = True
         logger.error("[download_intel_csv] %s", e)
         return JSONResponse({"error": "failed to export intel csv"}, status_code=500)
-    finally:
-        if conn:
-            _release_db(conn, reset=exc)
+
+
+# ── Market Map (Visualization Layer — T-771/T-774/T-778) ─────────────────────
+
+
+@app.get(
+    "/api/market/map/{market}",
+    tags=["Market"],
+    summary="Folium map HTML with project markers and PSF color gradient",
+)
+async def market_map(market: str):
+    try:
+        import folium
+        from folium.plugins import MarkerCluster
+        from utils.db import get_engine
+        from sqlalchemy import text
+
+        canonical = _normalize_market(market)
+        if not canonical:
+            return JSONResponse({"error": "invalid market"}, status_code=400)
+
+        with get_engine().connect() as conn:
+            center = conn.execute(
+                text(
+                    "SELECT ST_X(centroid), ST_Y(centroid) FROM micro_markets WHERE name ILIKE :m LIMIT 1"
+                ),
+                {"m": f"%{canonical}%"},
+            ).fetchone()
+
+        if not center:
+            return JSONResponse({"error": "market not found"}, status_code=404)
+
+        m = folium.Map(
+            location=[center[1], center[0]], zoom_start=13, tiles="CartoDB dark_matter"
+        )
+
+        with get_engine().connect() as conn:
+            projects = conn.execute(
+                text("""
+                    SELECT rp.project_name, d.name, ST_X(rp.geom), ST_Y(rp.geom),
+                           rp.price_min_psf, rp.price_max_psf
+                    FROM rera_projects rp
+                    JOIN developers d ON d.id = rp.developer_id
+                    JOIN micro_markets m ON m.id = rp.micro_market_id
+                    WHERE m.name ILIKE :m AND rp.geom IS NOT NULL
+                    LIMIT 200
+                """),
+                {"m": f"%{canonical}%"},
+            ).fetchall()
+
+        marker_cluster = MarkerCluster().add_to(m)
+        for proj in projects:
+            name, dev, lon, lat, psf_min, psf_max = proj
+            if lon and lat:
+                avg_psf = (
+                    (float(psf_min or 0) + float(psf_max or 0)) / 2
+                    if psf_min or psf_max
+                    else 0
+                )
+                if avg_psf < 4000:
+                    color = "#3fb950"
+                elif avg_psf < 6000:
+                    color = "#f0a020"
+                elif avg_psf < 10000:
+                    color = "#f85149"
+                else:
+                    color = "#9b7ec7"
+                psf_str = f"\u20b9{avg_psf:,.0f} PSF" if avg_psf else "PSF unknown"
+                folium.CircleMarker(
+                    location=[lat, lon],
+                    radius=8,
+                    color=color,
+                    fill=True,
+                    fill_opacity=0.7,
+                    popup=f"<b>{name}</b><br>{dev}<br>{psf_str}",
+                ).add_to(marker_cluster)
+
+        legend_html = """
+        <div style="position:fixed;bottom:20px;left:20px;z-index:1000;background:#0f1520;border:1px solid #2a3a55;border-radius:4px;padding:8px;font-family:'Courier New',monospace;font-size:10px;">
+            <div style="color:#c9d1d9;margin-bottom:4px;">PSF Range</div>
+            <div><span style="color:#3fb950;">\u25cf</span> &lt; \u20b94,000</div>
+            <div><span style="color:#f0a020;">\u25cf</span> \u20b94,000\u20136,000</div>
+            <div><span style="color:#f85149;">\u25cf</span> \u20b96,000\u201310,000</div>
+            <div><span style="color:#9b7ec7;">\u25cf</span> &gt; \u20b910,000</div>
+        </div>
+        """
+        m.get_root().html.add_child(folium.Element(legend_html))
+
+        return HTMLResponse(content=m._repr_html_())
+    except ImportError as exc:
+        logger.warning("[market_map] folium not installed: %s", exc)
+        return JSONResponse({"error": "folium not installed"}, status_code=500)
+    except Exception as exc:
+        logger.warning("[market_map] Failed for %s: %s", market, exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get(
+    "/api/market/psf-trend/{market}",
+    tags=["Market"],
+    summary="Monthly PSF trend data for Chart.js line chart",
+)
+async def psf_trend(market: str):
+    try:
+        from utils.db import get_engine
+        from sqlalchemy import text
+
+        canonical = _normalize_market(market)
+        if not canonical:
+            return JSONResponse({"error": "invalid market"}, status_code=400)
+
+        with get_engine().connect() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT DATE_TRUNC('month', snapshot_date) AS month,
+                           ROUND(AVG(avg_psf)::numeric, 0) AS avg_psf
+                    FROM project_snapshots ps
+                    JOIN micro_markets m ON m.id = ps.micro_market_id
+                    WHERE m.name ILIKE :m AND ps.avg_psf IS NOT NULL
+                    GROUP BY DATE_TRUNC('month', snapshot_date)
+                    ORDER BY month
+                """),
+                {"m": f"%{canonical}%"},
+            ).fetchall()
+
+        data = [
+            {
+                "month": r[0].strftime("%Y-%m")
+                if hasattr(r[0], "strftime")
+                else str(r[0])[:7],
+                "psf": float(r[1]),
+            }
+            for r in rows
+        ]
+        return {"market": canonical, "trend": data}
+    except Exception as exc:
+        logger.warning("[psf_trend] Failed: %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get(
+    "/api/market/kepler-data/{market}",
+    tags=["Market"],
+    summary="GeoJSON FeatureCollection for Kepler.gl density map",
+)
+async def kepler_data(market: str):
+    try:
+        from utils.db import get_engine
+        from sqlalchemy import text
+
+        canonical = _normalize_market(market)
+        if not canonical:
+            return JSONResponse({"error": "invalid market"}, status_code=400)
+
+        with get_engine().connect() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT rp.project_name, d.name, rp.price_min_psf, rp.price_max_psf,
+                           rp.total_units, rp.project_status,
+                           ST_AsGeoJSON(rp.geom) AS geojson
+                    FROM rera_projects rp
+                    JOIN developers d ON d.id = rp.developer_id
+                    JOIN micro_markets m ON m.id = rp.micro_market_id
+                    WHERE m.name ILIKE :m AND rp.geom IS NOT NULL
+                    LIMIT 1000
+                """),
+                {"m": f"%{canonical}%"},
+            ).fetchall()
+
+        features = []
+        for r in rows:
+            geom = json.loads(r[6]) if r[6] else None
+            if geom:
+                features.append(
+                    {
+                        "type": "Feature",
+                        "geometry": geom,
+                        "properties": {
+                            "project": r[0],
+                            "developer": r[1],
+                            "price_min_psf": float(r[2]) if r[2] else None,
+                            "price_max_psf": float(r[3]) if r[3] else None,
+                            "total_units": r[4],
+                            "status": r[5],
+                        },
+                    }
+                )
+
+        return {
+            "type": "FeatureCollection",
+            "features": features,
+        }
+    except Exception as exc:
+        logger.warning("[kepler_data] Failed: %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+# ── Surveys ────────────────────────────────────────────────────────────────
+
+
+class SurveyCreate(BaseModel):
+    survey_no: str
+    market: str
+    total_area_acres: float
+    land_type: str = "agricultural"
+    encumbrance_clear: bool = False
+    is_aggregated: bool = False
+
+
+@app.post(
+    "/api/surveys",
+    tags=["Surveys"],
+    summary="Add a new survey for opportunity scoring",
+    status_code=201,
+)
+async def create_survey(body: SurveyCreate, request: Request):
+    try:
+        with _get_sa_engine().begin() as conn:
+            market_row = conn.execute(
+                _sa_text("SELECT id FROM micro_markets WHERE name ILIKE :m LIMIT 1"),
+                {"m": f"%{body.market}%"},
+            ).fetchone()
+            if not market_row:
+                return JSONResponse(
+                    {"error": f"market '{body.market}' not found"}, status_code=404
+                )
+            market_id = market_row[0]
+            total_sqft = body.total_area_acres * 43560.0
+            result = conn.execute(
+                _sa_text("""INSERT INTO surveys (survey_no, micro_market_id, total_area_acres, total_area_sqft,
+                                        land_type, encumbrance_clear, is_aggregated, dc_conversion_status)
+                   VALUES (:sn, :mm, :ta, :ts, :lt, :ec, :ia, 'pending')
+                   RETURNING id, survey_no, total_area_acres, total_area_sqft, land_type,
+                             encumbrance_clear, is_aggregated, dc_conversion_status, created_at"""),
+                {
+                    "sn": body.survey_no,
+                    "mm": market_id,
+                    "ta": body.total_area_acres,
+                    "ts": total_sqft,
+                    "lt": body.land_type,
+                    "ec": body.encumbrance_clear,
+                    "ia": body.is_aggregated,
+                },
+            )
+            row = result.fetchone()
+        return {
+            "id": str(row[0]),
+            "survey_no": row[1],
+            "total_area_acres": float(row[2]),
+            "total_area_sqft": float(row[3]),
+            "land_type": row[4],
+            "encumbrance_clear": row[5],
+            "is_aggregated": row[6],
+            "dc_conversion_status": row[7],
+            "created_at": row[8].isoformat() if row[8] else None,
+        }
+    except Exception as exc:
+        logger.error("[create_survey] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+# ── Evaluate API (Sprint 64 — Decision Layer) ────────────────────────────────────
+
+
+class EvaluateRequest(BaseModel):
+    survey_no: str
+    market: str
+    land_area_sqft: float = 43560.0
+    sell_psf: float | None = None
+    deal_type: str = "compare"
+    pitch: str = ""
+
+
+class EvaluateStartResponse(BaseModel):
+    job_id: str
+    status: str
+    survey_no: str | None = None
+    market: str | None = None
+    message: str | None = None
+
+
+@app.post(
+    "/api/evaluate",
+    response_model=EvaluateStartResponse,
+    tags=["Evaluate"],
+    summary="Start async deal evaluation pipeline",
+    responses={400: {"model": ErrorResponse}},
+)
+@limiter.limit("10/minute")
+async def evaluate_start(request: Request):
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        payload = {}
+
+    survey_no = str(payload.get("survey_no") or "").strip()
+    market_raw = payload.get("market", "")
+    market = _normalize_market(market_raw)
+    if not survey_no:
+        return JSONResponse({"error": "survey_no required"}, status_code=400)
+    if not market:
+        return JSONResponse(
+            {"error": "valid market required (Yelahanka/Devanahalli/Hebbal)"},
+            status_code=400,
+        )
+
+    raw_area = payload.get("land_area_sqft", 43560)
+    try:
+        land_area_sqft = float(raw_area)
+    except (ValueError, TypeError):
+        return JSONResponse(
+            {"error": "land_area_sqft must be a number"}, status_code=400
+        )
+
+    sell_psf = payload.get("sell_psf")
+    if sell_psf is not None:
+        try:
+            sell_psf = float(sell_psf)
+        except (ValueError, TypeError):
+            return JSONResponse({"error": "sell_psf must be a number"}, status_code=400)
+
+    valid_deal_types = {"purchase", "jd", "jv", "compare"}
+    deal_type = str(payload.get("deal_type", "compare")).strip().lower()
+    if deal_type not in valid_deal_types:
+        return JSONResponse(
+            {
+                "error": f"deal_type must be one of: {', '.join(sorted(valid_deal_types))}"
+            },
+            status_code=400,
+        )
+
+    pitch = str(payload.get("pitch", "")).strip()[:5000]
+
+    from crews.evaluate_pipeline import start_evaluate
+
+    result = start_evaluate(
+        survey_no=survey_no,
+        market=market,
+        land_area_sqft=land_area_sqft,
+        sell_psf=sell_psf,
+        deal_type=deal_type,
+        pitch=pitch or f"Evaluate survey {survey_no} in {market}",
+    )
+    return result
+
+
+class EvaluateJobResponse(BaseModel):
+    job_id: str
+    status: str
+    progress_msg: str | None = None
+    survey_no: str | None = None
+    market: str | None = None
+    land_area_sqft: float | None = None
+    sell_psf: float | None = None
+    deal_type: str | None = None
+    pitch: str | None = None
+    created_at: str | None = None
+    completed_at: str | None = None
+    board_session: dict | None = None
+    deal_memo: dict | None = None
+    investor_brief: dict | None = None
+    deal_id: str | None = None
+    error: str | None = None
+
+
+@app.get(
+    "/api/evaluate/{job_id}",
+    response_model=EvaluateJobResponse,
+    tags=["Evaluate"],
+    summary="Poll async evaluation job status",
+    responses={404: {"model": ErrorResponse}},
+)
+@limiter.limit("30/minute")
+async def evaluate_status(request: Request, job_id: str):
+    from crews.evaluate_pipeline import get_evaluate_job
+
+    job = get_evaluate_job(job_id)
+    if job is None:
+        return JSONResponse({"error": "job not found"}, status_code=404)
+    return job
+
+
+class OpportunityItem(BaseModel):
+    id: str | None = None
+    survey_no: str | None = None
+    market: str | None = None
+    score: float = 0.0
+    irr_score: float = 0.0
+    legal_score: float = 0.0
+    timing_score: float = 0.0
+    distress_score: float = 0.0
+    exclusivity_score: float = 0.0
+    best_deal_type: str | None = None
+    estimated_jd_irr: float | None = None
+    legal_risk_level: str | None = None
+    next_action: str | None = None
+    expiry_date: str | None = None
+    computed_at: str | None = None
+    developer_name: str | None = None
+
+
+class OpportunityQueueResponse(BaseModel):
+    opportunities: list[OpportunityItem]
+    count: int
+
+
+@app.get(
+    "/api/opportunity/queue",
+    response_model=OpportunityQueueResponse,
+    tags=["Opportunity"],
+    summary="Ranked opportunity queue",
+)
+@limiter.limit("30/minute")
+async def opportunity_queue(
+    request: Request,
+    market: str = Query(None),
+    min_score: float = Query(None),
+    limit: int = Query(default=50),
+):
+    market_filter = market
+    min_score_val = 0.0
+    if min_score:
+        try:
+            min_score_val = max(0.0, min(float(min_score), 1.0))
+        except (ValueError, TypeError):
+            min_score_val = 0.0
+
+    try:
+        limit = max(1, min(int(limit), 200))
+    except (ValueError, TypeError):
+        limit = 50
+
+    try:
+        with _get_sa_engine().connect() as conn:
+            where_parts = ["os.is_active = true"]
+            params = {}
+            if market_filter:
+                where_parts.append("mm.name ILIKE :m")
+                params["m"] = f"%{market_filter}%"
+            if min_score_val > 0:
+                where_parts.append("os.score >= :ms")
+                params["ms"] = min_score_val
+            where_sql = " AND ".join(where_parts) if where_parts else "TRUE"
+            params["lim"] = limit
+            db_rows = conn.execute(
+                _sa_text(f"""
+                SELECT os.id, os.survey_no, mm.name AS market,
+                       os.score, os.irr_score, os.legal_score, os.timing_score,
+                       os.distress_score, os.exclusivity_score,
+                       os.best_deal_type, os.estimated_jd_irr,
+                       os.legal_risk_level, os.next_action, os.expiry_date,
+                       os.computed_at,
+                       d.name AS developer_name
+                FROM opportunity_scores os
+                JOIN micro_markets mm ON mm.id = os.micro_market_id
+                LEFT JOIN developers d ON d.id = os.developer_id
+                WHERE {where_sql}
+                ORDER BY os.score DESC
+                LIMIT :lim
+            """),
+                params,
+            ).fetchall()
+
+        rows = []
+        for r in db_rows:
+            rows.append(
+                {
+                    "id": str(r[0]),
+                    "survey_no": r[1],
+                    "market": r[2],
+                    "score": float(r[3]) if r[3] else 0.0,
+                    "irr_score": float(r[4]) if r[4] else 0.0,
+                    "legal_score": float(r[5]) if r[5] else 0.0,
+                    "timing_score": float(r[6]) if r[6] else 0.0,
+                    "distress_score": float(r[7]) if r[7] else 0.0,
+                    "exclusivity_score": float(r[8]) if r[8] else 0.0,
+                    "best_deal_type": r[9],
+                    "estimated_jd_irr": float(r[10]) if r[10] else None,
+                    "legal_risk_level": r[11],
+                    "next_action": r[12],
+                    "expiry_date": r[13].isoformat() if r[13] else None,
+                    "computed_at": r[14].isoformat() if r[14] else None,
+                    "developer_name": r[15],
+                }
+            )
+        return {"opportunities": rows, "count": len(rows)}
+    except Exception as e:
+        logger.error("[opportunity_queue] %s", e)
+        return JSONResponse({"error": "database query failed"}, status_code=500)
+
+
+# ── Data Freshness (Sprint 41) ──────────────────────────────────────────────
+
+
+@app.get(
+    "/api/data/freshness",
+    response_model=FreshnessResponse,
+    tags=["Data"],
+    summary="Data freshness per source per market",
+)
+@limiter.limit("30/minute")
+async def data_freshness(request: Request, market: str = Query(None)):
+    from utils.data_freshness import get_source_status
+
+    market_filter = market.strip() if market else None
+    rows = get_source_status(market=market_filter)
+    return {"freshness": rows}
+
+
+# ── Memory Explorer (Sprint 44) ─────────────────────────────────────────────
+
+
+_FACT_TYPE_ALLOWLIST = {"fact", "conflict", "digest", "insight"}
+
+
+@app.get(
+    "/api/memory/explorer",
+    response_model=MemoryExplorerResponse,
+    tags=["Memory"],
+    summary="Query agent memories with filters",
+)
+@limiter.limit("30/minute")
+async def memory_explorer(
+    request: Request,
+    agent_id: str = Query(None),
+    market: str = Query(None),
+    min_confidence: float = Query(default=0.5, ge=0.0, le=1.0),
+    fact_type: str = Query(None),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    market_filter = _normalize_market(market) if market else None
+    fact_type_clean = None
+    if fact_type:
+        ft = fact_type.strip()[:20]
+        if ft in _FACT_TYPE_ALLOWLIST:
+            fact_type_clean = ft
+
+    try:
+        with _get_sa_engine().connect() as conn:
+            where_clauses = ["confidence >= :mc"]
+            params = {"mc": min_confidence}
+
+            if agent_id:
+                where_clauses.append("agent_id = :aid")
+                params["aid"] = agent_id
+
+            if market_filter and market_filter != "all":
+                where_clauses.append("market ILIKE :m")
+                params["m"] = f"%{market_filter}%"
+
+            if fact_type_clean:
+                where_clauses.append("COALESCE(fact_type, 'fact') = :ft")
+                params["ft"] = fact_type_clean
+
+            where_sql = " AND ".join(where_clauses)
+            params["lim"] = limit
+
+            clauses = ["confidence >= :mc"]
+            if agent_id:
+                clauses.append("agent_id = :aid")
+            if market_filter and market_filter != "all":
+                clauses.append("market ILIKE :m")
+            if fact_type_clean:
+                clauses.append("COALESCE(fact_type, 'fact') = :ft")
+            where_sql = " AND ".join(clauses)
+
+            rows = conn.execute(
+                _sa_text("""
+                SELECT agent_id, market, fact, confidence,
+                       COALESCE(fact_type, 'fact') as fact_type,
+                       metadata, created_at
+                FROM agent_memories
+                WHERE """ + where_sql + """
+                ORDER BY confidence DESC, created_at DESC
+                LIMIT :lim
+            """),
+                params,
+            ).fetchall()
+
+        result = [
+            {
+                "agent_id": r[0],
+                "market": r[1],
+                "fact": r[2],
+                "confidence": round(r[3], 3),
+                "fact_type": r[4],
+                "metadata": r[5],
+                "created_at": r[6].isoformat() if r[6] else None,
+            }
+            for r in rows
+        ]
+        return {"memories": result, "count": len(result)}
+    except Exception as e:
+        logger.error("[memory_explorer] %s", e)
+        return JSONResponse({"error": "database query failed"}, status_code=500)
+
+
+# ── Backup Health (T-904) ──────────────────────────────────────────────────
+
+
+@app.get(
+    "/api/health/backup",
+    response_model=BackupHealthResponse,
+    tags=["Health"],
+    summary="Last DB backup timestamp",
+)
+@limiter.limit("30/minute")
+async def health_backup(request: Request):
+    try:
+        with _get_sa_engine().connect() as conn:
+            row = conn.execute(
+                _sa_text("""
+                SELECT created_at FROM agent_runs
+                WHERE agent_id = 'backup' AND event_type = 'db_backup'
+                ORDER BY created_at DESC LIMIT 1
+            """)
+            ).fetchone()
+        if row:
+            return {
+                "last_backup": row[0].isoformat() if row[0] else None,
+                "status": "ok",
+            }
+        return {"last_backup": None, "status": "never_run"}
+    except Exception as e:
+        logger.error("[health_backup] %s", e)
+        return {"last_backup": None, "status": "never_run"}
+
+
+# ── Deal Pipeline (T-917) ────────────────────────────────────────────────
+
+
+class DealCreate(BaseModel):
+    survey_no: str
+    market: str
+    opportunity_score: float | None = None
+
+
+class DealUpdate(BaseModel):
+    stage: str | None = None
+    next_step: str | None = None
+    next_step_due: str | None = None
+    notes: str | None = None
+    assigned_to: str | None = None
+
+
+_VALID_DEAL_STAGES = {
+    "prospecting",
+    "diligence",
+    "negotiation",
+    "loi",
+    "signed",
+    "dropped",
+}
+
+
+@app.post(
+    "/api/deals",
+    tags=["Deals"],
+    status_code=201,
+    summary="Promote an opportunity to the deal pipeline",
+)
+async def create_deal(body: DealCreate, request: Request):
+    try:
+        with _get_sa_engine().begin() as conn:
+            market_row = conn.execute(
+                _sa_text("SELECT id FROM micro_markets WHERE name ILIKE :m LIMIT 1"),
+                {"m": f"%{body.market}%"},
+            ).fetchone()
+            if not market_row:
+                return JSONResponse(
+                    {"error": f"market '{body.market}' not found"}, status_code=404
+                )
+            market_id = market_row[0]
+            result = conn.execute(
+                _sa_text("""INSERT INTO deal_pipeline (survey_no, micro_market_id, opportunity_score)
+                   VALUES (:sn, :mm, :os)
+                   RETURNING id, survey_no, stage, opportunity_score, assigned_to,
+                             next_step, next_step_due, notes, created_at, updated_at"""),
+                {"sn": body.survey_no, "mm": market_id, "os": body.opportunity_score},
+            )
+            row = result.fetchone()
+        return {
+            "id": str(row[0]),
+            "survey_no": row[1],
+            "stage": row[2],
+            "opportunity_score": float(row[3]) if row[3] else None,
+            "assigned_to": row[4],
+            "next_step": row[5],
+            "next_step_due": row[6].isoformat() if row[6] else None,
+            "notes": row[7],
+            "created_at": row[8].isoformat() if row[8] else None,
+            "updated_at": row[9].isoformat() if row[9] else None,
+        }
+    except Exception as exc:
+        logger.error("[create_deal] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/deals", tags=["Deals"], summary="List all deals in pipeline")
+async def list_deals(
+    request: Request,
+    stage: str = Query(default=None),
+    market: str = Query(default=None),
+):
+    try:
+        with _get_sa_engine().connect() as conn:
+            where_parts = []
+            params = {}
+            if stage:
+                where_parts.append("dp.stage = :st")
+                params["st"] = stage
+            if market:
+                where_parts.append("mm.name ILIKE :m")
+                params["m"] = f"%{market}%"
+            where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+            rows = conn.execute(
+                _sa_text(f"""
+                SELECT dp.id, dp.survey_no, mm.name, dp.stage, dp.opportunity_score,
+                       dp.assigned_to, dp.next_step, dp.next_step_due, dp.notes,
+                       dp.created_at, dp.updated_at
+                FROM deal_pipeline dp
+                LEFT JOIN micro_markets mm ON mm.id = dp.micro_market_id
+                {where_sql}
+                ORDER BY dp.created_at DESC
+            """),
+                params,
+            ).fetchall()
+        result = []
+        for r in rows:
+            result.append(
+                {
+                    "id": str(r[0]),
+                    "survey_no": r[1],
+                    "market": r[2],
+                    "stage": r[3],
+                    "opportunity_score": float(r[4]) if r[4] else None,
+                    "assigned_to": r[5],
+                    "next_step": r[6],
+                    "next_step_due": r[7].isoformat() if r[7] else None,
+                    "notes": r[8],
+                    "created_at": r[9].isoformat() if r[9] else None,
+                    "updated_at": r[10].isoformat() if r[10] else None,
+                }
+            )
+        return result
+    except Exception as exc:
+        logger.error("[list_deals] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.patch("/api/deals/{deal_id}", tags=["Deals"], summary="Update deal stage or notes")
+async def update_deal(deal_id: str, body: DealUpdate, request: Request):
+    try:
+        tid = str(uuid.UUID(deal_id))
+    except ValueError:
+        return JSONResponse({"error": "invalid deal_id"}, status_code=400)
+    try:
+        with _get_sa_engine().begin() as conn:
+            existing = conn.execute(
+                _sa_text(
+                    "SELECT id, survey_no, stage, opportunity_score FROM deal_pipeline WHERE id = :tid"
+                ),
+                {"tid": tid},
+            ).fetchone()
+            if not existing:
+                return JSONResponse({"error": "deal not found"}, status_code=404)
+
+            updates = []
+            params = {}
+            if body.stage is not None:
+                if body.stage not in _VALID_DEAL_STAGES:
+                    return JSONResponse(
+                        {"error": f"invalid stage: {body.stage}"}, status_code=400
+                    )
+                updates.append("stage = :st")
+                params["st"] = body.stage
+            if body.next_step is not None:
+                updates.append("next_step = :ns")
+                params["ns"] = body.next_step
+            if body.next_step_due is not None:
+                updates.append("next_step_due = :nsd")
+                params["nsd"] = body.next_step_due
+            if body.notes is not None:
+                updates.append("notes = :nt")
+                params["nt"] = body.notes
+            if body.assigned_to is not None:
+                updates.append("assigned_to = :at")
+                params["at"] = body.assigned_to
+
+            if not updates:
+                return JSONResponse({"error": "no fields to update"}, status_code=400)
+
+            updates.append("updated_at = NOW()")
+            set_clause = ", ".join(updates)
+            params["tid"] = tid
+            row = conn.execute(
+                _sa_text(
+                    f"UPDATE deal_pipeline SET {set_clause} WHERE id = :tid RETURNING id, survey_no, stage, opportunity_score, assigned_to, next_step, next_step_due, notes, created_at, updated_at"
+                ),
+                params,
+            ).fetchone()
+
+        new_stage = body.stage
+        if new_stage and new_stage in ("loi", "signed"):
+            try:
+                from utils.discord_notifier import send
+
+                send(
+                    "bd_opportunities",
+                    f"Deal {new_stage.upper()}: {row[1]}",
+                    f"Stage: {new_stage}\nSurvey: {row[1]}",
+                )
+            except Exception as exc:
+                logger.warning("[update_deal] Discord alert failed: %s", exc)
+
+        return {
+            "id": str(row[0]),
+            "survey_no": row[1],
+            "stage": row[2],
+            "opportunity_score": float(row[3]) if row[3] else None,
+            "assigned_to": row[4],
+            "next_step": row[5],
+            "next_step_due": row[6].isoformat() if row[6] else None,
+            "notes": row[7],
+            "created_at": row[8].isoformat() if row[8] else None,
+            "updated_at": row[9].isoformat() if row[9] else None,
+        }
+    except Exception as exc:
+        logger.error("[update_deal] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+# ── LLM Quota (T-924) ──────────────────────────────────────────────────────
+
+
+@app.get(
+    "/api/llm/quota",
+    tags=["Observability"],
+    summary="LLM daily token usage per provider",
+)
+@limiter.limit("30/minute")
+async def llm_quota(request: Request):
+    from datetime import date
+
+    today = date.today().isoformat()
+    providers = [
+        "groq",
+        "cerebras",
+        "gemini",
+        "nvidia",
+        "sambanova",
+        "cloudflare",
+        "openrouter",
+    ]
+    usage = {}
+    try:
+        import redis as _redis
+        from config.settings import REDIS_URL
+
+        r = _redis.from_url(REDIS_URL, decode_responses=True)
+        for p in providers:
+            val = r.get(f"llm:tokens:{p}:{today}")
+            usage[p] = int(val) if val else 0
+    except Exception:
+        usage = {p: 0 for p in providers}
+    return {"date": today, "usage": usage}
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn
+
     os.makedirs("/app/logs", exist_ok=True)
     logging.basicConfig(
         level=os.environ.get("DASHBOARD_LOG_LEVEL", "INFO"),
