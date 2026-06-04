@@ -275,6 +275,7 @@ class TestRunDataQualityCheckpoint:
 
     def test_collects_failed_expectations_on_violation(self):
         import pandas as pd
+        from sqlalchemy.engine import Result
         exp = ExpectationDef(
             column="price_avg_psf", table="rera_projects",
             expectation_type="expect_column_values_to_be_between",
@@ -283,19 +284,15 @@ class TestRunDataQualityCheckpoint:
         )
         df = pd.DataFrame({"price_avg_psf": [50, 200, 75, 300, 25]})
 
-        mock_result = MagicMock()
-        mock_result.get.return_value = False
-        mock_gdf = MagicMock()
-        mock_gdf.expect_column_values_to_be_between.return_value = mock_result
-        mock_ge_mod = MagicMock()
-        mock_ge_mod.from_pandas.return_value = mock_gdf
         mock_conn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = list(df.itertuples(index=False, name=None))
+        mock_result.keys.return_value = list(df.columns)
+        mock_conn.execute.return_value = mock_result
         mock_engine = MagicMock()
         mock_engine.connect.return_value.__enter__.return_value = mock_conn
 
-        with patch("utils.data_quality._lazy_import_ge", return_value=mock_ge_mod), \
-             patch("utils.data_quality.get_engine", return_value=mock_engine), \
-             patch("utils.data_quality.pd.read_sql", return_value=df), \
+        with patch("utils.data_quality.get_engine", return_value=mock_engine), \
              patch("utils.data_quality._dq_expectations", [exp]):
             result = run_data_quality_checkpoint("Yelahanka")
 
@@ -304,22 +301,37 @@ class TestRunDataQualityCheckpoint:
 
     def test_reuses_market_filter_in_sql(self):
         import pandas as pd
-        mock_gdf = MagicMock()
-        mock_ge_mod = MagicMock()
-        mock_ge_mod.from_pandas.return_value = mock_gdf
         mock_conn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [(5000,)]
+        mock_result.keys.return_value = ["price_avg_psf"]
+        mock_conn.execute.return_value = mock_result
         mock_engine = MagicMock()
         mock_engine.connect.return_value.__enter__.return_value = mock_conn
 
-        with patch("utils.data_quality._lazy_import_ge", return_value=mock_ge_mod), \
-             patch("utils.data_quality.get_engine", return_value=mock_engine), \
-             patch("utils.data_quality.pd.read_sql") as mock_read:
-            mock_read.return_value = pd.DataFrame({"price_avg_psf": [5000]})
+        with patch("utils.data_quality.get_engine", return_value=mock_engine):
             run_data_quality_checkpoint("Yelahanka")
 
-        sql_calls = [c[0][0] for c in mock_read.call_args_list]
+        sql_calls = [str(c[0][0]) for c in mock_conn.execute.call_args_list]
         market_filtered = any("mm.name ILIKE" in s for s in sql_calls)
         assert market_filtered, "Expected at least one market-filtered SQL query"
+
+    def test_checkpoint_no_cursor_error(self):
+        import pandas as pd
+        mock_gdf = MagicMock()
+        mock_gdf.expect_column_values_to_be_between.return_value = {"success": True}
+        mock_ge_mod = MagicMock()
+        mock_ge_mod.from_pandas.return_value = mock_gdf
+        mock_engine = MagicMock()
+        df = pd.DataFrame({"price_avg_psf": [5000]})
+
+        with patch("utils.data_quality._lazy_import_ge", return_value=mock_ge_mod), \
+             patch("utils.data_quality.get_engine", return_value=mock_engine), \
+             patch("utils.data_quality.pd.read_sql", return_value=df):
+            result = run_data_quality_checkpoint("Yelahanka")
+
+        assert result["success"] is True
+        assert "error" not in result or result.get("error") is None
 
     def test_handles_empty_market_gracefully(self):
         result = run_data_quality_checkpoint("")

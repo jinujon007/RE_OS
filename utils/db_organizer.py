@@ -891,7 +891,7 @@ class DBOrganizer:
             raise ValueError("news article missing cid — skipping to prevent blank-key insertion")
         params = {
             "cid": cid,
-            "title": rec.get("title", ""),
+            "title": rec.get("title") or rec.get("headline", ""),
             "source": rec.get("source", "unknown"),
             "url": rec.get("url", ""),
             "published_at": _safe_date(rec.get("published_at") or rec.get("date")),

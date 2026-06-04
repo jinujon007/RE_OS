@@ -67,6 +67,8 @@ desktop.ini
 
 # Kilo Code extension workspace (local dev tool state — not source)
 .kilo/
+# Kilo temp/debug scripts (never commit these)
+_tmp_*.py
 
 # Runtime crew output files (these are logs, not source)
 crew_error.txt

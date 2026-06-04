@@ -52,6 +52,7 @@ from typing import Any
 import pandas as pd
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError, DatabaseError
 from utils.db import get_engine
 
@@ -230,79 +231,70 @@ def run_data_quality_checkpoint(market: str) -> dict:
         return {"success": True, "failed_expectations": [], "warnings": [],
                 "note": "empty market"}
 
-    ge = _lazy_import_ge()
-    if ge is None:
-        logger.warning("[DataQuality] Great Expectations not installed — skipping check")
-        _increment_check_counter(market_clean, "skipped")
-        return {"success": True, "failed_expectations": [], "warnings": []}
-
     market = market_clean
     failed: list[FailedExpectation] = []
     projected_columns = _derive_projected_columns()
 
     try:
         engine = get_engine()
-        with engine.connect() as conn:
-            for table_name, columns in projected_columns.items():
-                col_list = ", ".join(columns)
-                join_clause = _TABLE_MARKET_JOIN.get(table_name, f"FROM {table_name}")
-                if table_name in _TABLE_MARKET_JOIN:
-                    sql = f"SELECT {col_list} {join_clause} WHERE mm.name ILIKE :market LIMIT 5000"
-                else:
-                    sql = f"SELECT {col_list} {join_clause} LIMIT 5000"
+        for table_name, columns in projected_columns.items():
+            col_list = ", ".join(columns)
+            join_clause = _TABLE_MARKET_JOIN.get(table_name, f"FROM {table_name}")
+            if table_name in _TABLE_MARKET_JOIN:
+                sql = f"SELECT {col_list} {join_clause} WHERE mm.name ILIKE :market LIMIT 5000"
+                with engine.connect() as conn:
+                    result = conn.execute(text(sql), {"market": market})
+            else:
+                sql = f"SELECT {col_list} {join_clause} LIMIT 5000"
+                with engine.connect() as conn:
+                    result = conn.execute(text(sql))
+            
+            # Convert SQLAlchemy result to pandas DataFrame
+            df = pd.DataFrame(result.fetchall(), columns=result.keys())
+            if df.empty:
+                logger.info(f"[DataQuality] {table_name}: empty — skipping")
+                continue
 
-                df = pd.read_sql(sql, conn, params={"market": market} if table_name in _TABLE_MARKET_JOIN else {})
-                if df.empty:
-                    logger.info(f"[DataQuality] {table_name}: empty — skipping")
-                    continue
+            relevant = [e for e in _dq_expectations if e.table == table_name and e.column in df.columns]
+            if not relevant:
+                continue
 
-                relevant = [e for e in _dq_expectations if e.table == table_name and e.column in df.columns]
-                if not relevant:
-                    continue
-
-                gdf = ge.from_pandas(df)
-
-                for exp in relevant:
-                    method = getattr(gdf, exp.expectation_type, None)
-                    if method is None:
-                        logger.warning(f"[DataQuality] Unknown expectation: {exp.expectation_type}")
+            for exp in relevant:
+                try:
+                    series = df[exp.column]
+                    if exp.expectation_type == "expect_column_values_to_be_between":
+                        lo = exp.kwargs.get("min_value", 0)
+                        hi = exp.kwargs.get("max_value", float("inf"))
+                        numeric = pd.to_numeric(series, errors="coerce")
+                        mask = numeric.notna() & ~numeric.between(lo, hi)
+                        bad = numeric[mask].head(5).tolist()
+                        success = len(bad) == 0
+                    elif exp.expectation_type == "expect_column_values_to_not_be_null":
+                        bad = series[series.isna()].head(5).tolist()
+                        success = len(bad) == 0
+                    elif exp.expectation_type == "expect_column_values_to_match_regex":
+                        pattern = exp.kwargs.get("regex", "")
+                        mask = ~series.astype(str).str.match(pattern, na=False)
+                        bad = series[mask].head(5).tolist()
+                        success = len(bad) == 0
+                    else:
+                        logger.warning(f"[DataQuality] Unknown expectation type: {exp.expectation_type}")
                         continue
 
-                    try:
-                        result = method(exp.column, **exp.kwargs)
-                    except Exception as exc:
-                        logger.warning(f"[DataQuality] Check failed for {exp.column}: {exc}")
-                        failed.append(FailedExpectation(
-                            expectation=exp,
-                            message=str(exc),
-                            bad_values=[],
-                        ))
-                        continue
-
-                    if not result.get("success", True):
-                        bad_series = df[exp.column]
-                        if exp.expectation_type == "expect_column_values_to_be_between":
-                            bad = bad_series[
-                                ~bad_series.between(
-                                    exp.kwargs.get("min_value", 0),
-                                    exp.kwargs.get("max_value", 0),
-                                )
-                            ].dropna().head(5).tolist()
-                        elif exp.expectation_type == "expect_column_values_to_match_regex":
-                            bad = bad_series[
-                                ~bad_series.astype(str).str.match(
-                                    exp.kwargs.get("regex", ""), na=False
-                                )
-                            ].head(5).tolist()
-                        else:
-                            bad = bad_series.head(5).tolist()
-
+                    if not success:
                         failed.append(FailedExpectation(
                             expectation=exp,
                             message=f"{len(bad)} unexpected value(s)",
                             bad_values=bad,
                             unexpected_count=len(bad),
                         ))
+                except Exception as exc:
+                    logger.warning(f"[DataQuality] Check failed for {exp.column}: {exc}")
+                    failed.append(FailedExpectation(
+                        expectation=exp,
+                        message=str(exc),
+                        bad_values=[],
+                    ))
     except OperationalError as exc:
         logger.error(f"[DataQuality] DB connection failed for {market}: {exc}")
         _increment_check_counter(market, "db_error")
