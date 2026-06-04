@@ -131,7 +131,10 @@ def send(channel: str, title: str, message: str = "", color: int = COLOR_BLUE) -
         req = urllib.request.Request(
             url,
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "DiscordBot (RE_OS/1.0, LLS Intelligence)",
+            },
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
