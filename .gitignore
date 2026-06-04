@@ -27,6 +27,7 @@ outputs/references/*.txt
 kilo_output/
 kilo_logs/
 kilo/
+prefect_flows/
 
 # Docker volumes
 postgres_data/
