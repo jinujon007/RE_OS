@@ -45,6 +45,14 @@ class DemandSignals:
     supply_label: str = "INSUFFICIENT_DATA"
     monthly_absorption_rate_units: float | None = None
 
+    # Kaveri 2.0 official registration velocity — SRO-level counts via
+    # kaveri.karnataka.gov.in/api/GetCitizenDashboard (ApplicationTypeid=13)
+    # All document types at SRO (sale deeds + mortgages + GPA + gifts etc.)
+    # State avg ~3,580/SRO/month across 262 SROs — above that = active market
+    kaveri_monthly_approvals: float | None = None    # official approvals/month (6-month avg)
+    kaveri_registrations_180d: int = 0
+    kaveri_velocity_ratio: float | None = None        # vs state avg SRO baseline
+
     avg_news_sentiment: float | None = None
     news_volume_30d: int = 0
     positive_news_pct: float | None = None
@@ -64,11 +72,20 @@ class DemandSignals:
     signals: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
+        trend = f"{(self.listing_trend_30d_pct or 0.0):+.1f}%"
+        score = f"{(self.demand_score or 0.0):.1f}"
+        # Prefer official Kaveri MoS when available
+        mos = self.months_of_supply
+        mos_str = f"{mos:.1f}" if mos is not None else "N/A"
+        kav = (
+            f" | Kaveri {self.kaveri_monthly_approvals:.0f}/mo"
+            if self.kaveri_monthly_approvals
+            else ""
+        )
+        signal = self.demand_signal or "UNKNOWN"
         return (
-            f"[DemandSignals:{self.market}] "
-            f"{self.demand_signal} (score={self.demand_score:.1f}) | "
-            f"PSF momentum {self.listing_trend_30d_pct:+.1f}% | "
-            f"{self.months_of_supply} MoS"
+            f"[DemandSignals:{self.market}] {signal} (score={score}) | "
+            f"PSF momentum {trend} | {mos_str} MoS{kav}"
         )
 
 
@@ -121,6 +138,7 @@ class DemandIntel:
                 self._load_rera_launches(conn, ds, mi)
                 self._load_developer_activity(conn, ds, mi)
                 self._load_absorption_velocity(conn, ds, mi)
+                self._load_kaveri_registration_velocity(conn, ds, mi)
 
             self._compute_price_momentum(ds)
             self._compute_demand_signal(ds)
@@ -283,6 +301,66 @@ class DemandIntel:
         if row and row[0]:
             ds.monthly_absorption_rate_units = round(float(row[0]), 1)
 
+    # Karnataka state avg SRO monthly approvals (2,064,277 approved / 262 SROs / 2.2 months)
+    # Derived from unfiltered Kaveri API, FY2025-26 Apr–Jun 2026.
+    _KAVERI_STATE_AVG_MONTHLY = 3_580.0
+
+    def _load_kaveri_registration_velocity(self, conn, ds: DemandSignals, mi: dict):
+        """
+        Fetch 6-month registration approval count from Kaveri 2.0 API.
+
+        Source: kaveri.karnataka.gov.in/api/GetCitizenDashboard (ApplicationTypeid=13)
+        SRO codes: Yelahanka→Jala(224), Devanahalli(118), Hebbal(208)
+
+        Counts ALL document types at the SRO (sale deeds, mortgages, GPA, gifts, etc.).
+        We express it as a ratio vs the Karnataka state average SRO (~3,580/month)
+        to give a market-relative activity signal — not an absolute MoS.
+
+        Signals:
+          ratio ≥ 1.5x state avg → market highly active (+0.5 bullish)
+          ratio ≤ 0.4x state avg → market quiet (-0.5 bearish)
+          otherwise              → neutral data point
+        """
+        from datetime import date, timedelta
+
+        to_date = date.today().isoformat()
+        from_date = (date.today() - timedelta(days=180)).isoformat()
+
+        try:
+            from scrapers.kaveri_gazette_parser import GazetteParser
+            vol = GazetteParser().scrape_registration_velocity_signal(mi["name"], from_date, to_date)
+            if not vol:
+                return
+
+            approved = int(vol.get("applications_approved", 0))
+            if approved <= 0:
+                return
+
+            ds.kaveri_registrations_180d = approved
+            monthly = round(approved / 6.0, 1)
+            ds.kaveri_monthly_approvals = monthly
+            ratio = round(monthly / self._KAVERI_STATE_AVG_MONTHLY, 2)
+            ds.kaveri_velocity_ratio = ratio
+
+            if ratio >= 1.5:
+                ds.signals.append(
+                    f"Kaveri SRO: {monthly:,.0f} registrations/month "
+                    f"({ratio:.1f}x state avg) — high market activity"
+                )
+            elif ratio <= 0.4:
+                ds.signals.append(
+                    f"Kaveri SRO: {monthly:,.0f} registrations/month "
+                    f"({ratio:.1f}x state avg) — below-average activity"
+                )
+            else:
+                logger.debug(
+                    "[DemandIntel] Kaveri velocity {}: {}/month ({:.2f}x state avg)",
+                    mi["name"], monthly, ratio,
+                )
+
+        except Exception as exc:
+            logger.debug("[DemandIntel] Kaveri registration velocity failed for {}: {}", mi["name"], exc)
+
     def _compute_price_momentum(self, ds: DemandSignals):
         if ds.listing_trend_30d_pct is not None:
             if ds.listing_trend_30d_pct > 3.0:
@@ -300,7 +378,7 @@ class DemandIntel:
 
     def _compute_demand_signal(self, ds: DemandSignals):
         """Weighted composite scoring:
-          - months_of_supply: 2x weight
+          - months_of_supply: 2x weight (Kaveri official preferred over listing-derived)
           - price_momentum: 1.5x
           - absorption_rate: 1.5x
           - news_sentiment: 1x
@@ -309,10 +387,11 @@ class DemandIntel:
         bullish = 0.0
         bearish = 0.0
 
-        if ds.months_of_supply is not None:
-            if ds.months_of_supply < 9:
+        mos = ds.months_of_supply
+        if mos is not None:
+            if mos < 9:
                 bullish += 2.0
-            elif ds.months_of_supply > 18:
+            elif mos > 18:
                 bearish += 2.0
 
         if ds.price_momentum_signal == "BULLISH":
@@ -338,6 +417,13 @@ class DemandIntel:
             bullish += 0.5
         else:
             bearish += 0.5
+
+        # Kaveri official registration velocity (0.5x weight — confirmatory)
+        if ds.kaveri_velocity_ratio is not None:
+            if ds.kaveri_velocity_ratio >= 1.5:
+                bullish += 0.5
+            elif ds.kaveri_velocity_ratio <= 0.4:
+                bearish += 0.5
 
         ds.demand_score = round(bullish - bearish, 1)
 

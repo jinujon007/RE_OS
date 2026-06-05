@@ -27,7 +27,7 @@ from utils.intel_context import build_intel_context
 
 __all__ = ["run_board_session_v2", "BoardSessionV2Result"]
 
-_DEPT_TIMEOUT_S = 120
+_DEPT_TIMEOUT_S = 240
 
 
 @dataclass

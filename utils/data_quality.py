@@ -1,12 +1,12 @@
 """
-RE_OS — Data Quality (Great Expectations Integration)
-Runs configurable data quality checks after batch upsert, before Stage 3 LLM
-synthesis. Bad data is caught here — never silently reaches the Board Room.
+RE_OS — Data Quality
+Runs configurable pandas-based data quality expectations after batch upsert,
+before Stage 3 LLM synthesis. Bad data is caught here — never silently reaches
+the Board Room.
 
 Risk matrix:
-  - GE not installed: Skipped gracefully (logger.warning). Pipeline continues.
   - DB connection failure: Caught by retry (2 attempts), then caught by
-    except OperationalError → error key set, success=True (non-blocking).
+    except OperationalError → status='db_error', success=True (non-blocking).
   - Market not in DB: No rows returned for that market → all expectations
     against market-filtered tables skipped. Developers table unfiltered.
   - Unexpected exception in expectation method: Caught individually at the
@@ -16,7 +16,7 @@ Risk matrix:
   - Metrics counter failure: logger.debug only — never blocks.
 
 Design decisions:
-  - Single DB round-trip, then one GE validation (not N queries).
+  - Pure pandas expectations (no Great Expectations API dependency).
   - Severity per expectation: ERROR blocks Stage 3, WARN logs only.
   - Expectations configurable via settings or env vars.
   - Samples bad values (LIMIT 5) to avoid OOM on large tables.
@@ -25,8 +25,8 @@ Design decisions:
   - get_engine() called inside try/except to avoid retry-bypass on engine error.
 
 Returns:
-    Dict with keys: success, failed_expectations, warnings, total_checked,
-    elapsed_seconds, error (on failure).
+    Dict with keys: success, status, failed_expectations, warnings,
+    total_checked, elapsed_seconds, error (on failure).
     Empty string from format_data_quality_alert means no issues.
 
 Exports:
@@ -55,22 +55,6 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError, DatabaseError
 from utils.db import get_engine
-
-_GE_IMPORTED = False
-_ge = None
-
-
-def _lazy_import_ge():
-    global _ge, _GE_IMPORTED
-    if not _GE_IMPORTED:
-        try:
-            import great_expectations as _ge_mod
-            _ge = _ge_mod
-        except ImportError:
-            _ge = None
-        _GE_IMPORTED = True
-    return _ge
-
 
 @dataclass
 class ExpectationDef:
@@ -228,12 +212,16 @@ def run_data_quality_checkpoint(market: str) -> dict:
     if not market_clean:
         logger.warning("[DataQuality] Empty market — skipping check")
         _increment_check_counter("unknown", "skipped")
-        return {"success": True, "failed_expectations": [], "warnings": [],
+        return {"success": True, "status": "skipped", "failed_expectations": [], "warnings": [],
                 "note": "empty market"}
 
     market = market_clean
     failed: list[FailedExpectation] = []
     projected_columns = _derive_projected_columns()
+    if not projected_columns:
+        logger.warning("[DataQuality] No expectations configured — skipping check")
+        return {"success": True, "status": "skipped", "failed_expectations": [], "warnings": [],
+                "note": "no expectations configured"}
 
     try:
         engine = get_engine()
@@ -262,10 +250,16 @@ def run_data_quality_checkpoint(market: str) -> dict:
             for exp in relevant:
                 try:
                     series = df[exp.column]
+                    if series.empty:
+                        logger.info(f"[DataQuality] {exp.table}.{exp.column}: empty series — skipping")
+                        continue
                     if exp.expectation_type == "expect_column_values_to_be_between":
                         lo = exp.kwargs.get("min_value", 0)
                         hi = exp.kwargs.get("max_value", float("inf"))
                         numeric = pd.to_numeric(series, errors="coerce")
+                        if numeric.notna().sum() == 0:
+                            logger.warning(f"[DataQuality] {exp.table}.{exp.column}: all NaN — skipping")
+                            continue
                         mask = numeric.notna() & ~numeric.between(lo, hi)
                         bad = numeric[mask].head(5).tolist()
                         success = len(bad) == 0
@@ -298,12 +292,14 @@ def run_data_quality_checkpoint(market: str) -> dict:
     except OperationalError as exc:
         logger.error(f"[DataQuality] DB connection failed for {market}: {exc}")
         _increment_check_counter(market, "db_error")
-        return {"success": True, "failed_expectations": [], "warnings": [],
+        return {"success": True, "status": "db_error",
+                "failed_expectations": [], "warnings": [],
                 "error": f"DB connection failed: {exc}"}
     except Exception as exc:
         logger.error(f"[DataQuality] Unexpected error for {market}: {exc}")
         _increment_check_counter(market, "error")
-        return {"success": True, "failed_expectations": [], "warnings": [],
+        return {"success": False, "status": "error",
+                "failed_expectations": [], "warnings": [],
                 "error": str(exc)}
 
     elapsed = time.time() - started
@@ -325,6 +321,7 @@ def run_data_quality_checkpoint(market: str) -> dict:
 
     return {
         "success": success,
+        "status": "completed",
         "failed_expectations": [f.to_dict() for f in errors],
         "warnings": [f.to_dict() for f in warnings_list],
         "total_checked": sum(len(f.bad_values) for f in failed),
@@ -406,10 +403,10 @@ class DataQualityMonitor:
             
             with get_engine().connect() as conn:
                 rows = conn.execute(text("""
-                    SELECT source, MAX(created_at) as last_update
+                    SELECT plugin_id AS source, MAX(created_at) AS last_update
                     FROM ingest_log
                     WHERE status = 'success'
-                    GROUP BY source
+                    GROUP BY plugin_id
                 """)).fetchall()
             
             now = datetime.now(timezone.utc)

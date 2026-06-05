@@ -93,17 +93,22 @@ class KaveriBhoomiPlugin(DataPlugin):
         gv_records = scraper.scrape_guidance_values(market)
         parsed: list[ParsedRecord] = []
         for gv in gv_records:
+            locality = str(gv.get("locality", ""))
+            prop_type = str(gv.get("property_type", "Residential"))
+            road_type = str(gv.get("road_type", "Main Road"))
+            data_source = str(gv.get("source") or gv.get("data_source") or "kaveri_portal")
             data = {
-                "locality": str(gv.get("locality", "")),
-                "property_type": str(gv.get("property_type", "")),
-                "road_type": str(gv.get("road_type", "")),
+                "locality": locality,
+                "property_type": prop_type,
+                "road_type": road_type,
                 "guidance_value_psf": float(gv.get("guidance_value_psf", 0)),
+                "guidance_value_per_sqm": float(gv.get("guidance_value_per_sqm", 0) or 0),
                 "effective_from": str(gv.get("effective_from", "")),
-                "source": str(gv.get("source", "kaveri_portal")),
+                "source_document": str(gv.get("source_document", "")),
+                "data_source": data_source,
             }
             sid = _content_hash(
-                "gv", market,
-                data["locality"], data["property_type"], data["road_type"],
+                "gv", market, locality, prop_type, road_type, data_source,
             )
             parsed.append(ParsedRecord(
                 entity_type="guidance_value",

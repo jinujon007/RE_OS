@@ -118,7 +118,7 @@ CHROMA_DB_PATH = os.environ.get("CHROMA_DB_PATH", "/app/data/chroma")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 # ── MARKETS ──────────────────────────────────────────────────────────────────
-TARGET_MARKETS = os.getenv("TARGET_MARKETS", "Yelahanka,Devanahalli,Hebbal").split(",")
+TARGET_MARKETS = [m.strip() for m in os.getenv("TARGET_MARKETS", "Yelahanka,Devanahalli,Hebbal").split(",") if m.strip()]
 
 # RERA Karnataka portal — confirmed live via browser inspection 2026-05-14
 # Form: POST https://rera.karnataka.gov.in/projectViewDetails

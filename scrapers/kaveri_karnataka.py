@@ -404,48 +404,57 @@ class KaveriScraper:
         Returns list of GV records: locality, property_type, road_type, psf.
 
         Sources tried in order (each logged):
-          1. Scrapling TLS spoof (kaveri.karnataka.gov.in)
-          2. kaveri2.karnataka.gov.in mirror (requests)
-          3. IGR guidance value API (kaveri.karnataka.gov.in/api/gv/search)
-          4. Playwright AJAX interception (legacy)
-          5. Direct POST form submit (legacy)
-          6. Hardcoded verified fallback (logged as warning — never silent)
+          1. IGR official gazette PDFs (authoritative — Karnataka Gazette 2023-24)
+          2. Scrapling TLS spoof (kaveri.karnataka.gov.in)
+          3. kaveri2.karnataka.gov.in mirror (requests)
+          4. IGR guidance value API (kaveri.karnataka.gov.in/api/gv/search)
+          5. Playwright AJAX interception (legacy)
+          6. Direct POST form submit (legacy)
+          7. Hardcoded verified fallback (logged as warning — never silent)
         """
         logger.info(f"[KaveriScraper] Guidance values scrape: {market_name}")
         meta = MARKET_KAVERI_META.get(market_name, {})
         taluk = meta.get("taluk", market_name)
 
-        # 1. Scrapling TLS spoof
+        # 1. Official IGR gazette PDFs — authoritative source
+        records = self._scrape_gv_from_igr_gazette(market_name)
+        if records:
+            logger.info(
+                f"[KaveriScraper][IGR Gazette][{market_name}] {len(records)} GV records"
+            )
+            return records
+
+        # 2. Scrapling TLS spoof
         records = self._scrape_gv_with_scrapling(taluk, meta)
         if records:
             logger.info(f"[KaveriScraper][Scrapling TLS][{market_name}] {len(records)} GV records")
             return records
 
-        # 2. kaveri2 mirror
+        # 3. kaveri2 mirror
         records = self._scrape_gv_from_mirror(taluk, meta)
         if records:
             logger.info(f"[KaveriScraper][Mirror][{market_name}] {len(records)} GV records")
             return records
 
-        # 3. IGR GV API
+        # 4. IGR GV API
         records = self._scrape_gv_from_igr_api(taluk, meta)
         if records:
             logger.info(f"[KaveriScraper][IGR API][{market_name}] {len(records)} GV records")
             return records
 
-        # 4. Playwright (legacy)
+        # 5. Playwright (legacy)
         records = self._scrape_gv_with_playwright(taluk, meta)
         if records:
             logger.info(f"[KaveriScraper][Playwright][{market_name}] {len(records)} GV records")
             return records
 
-        # 5. Direct POST (legacy)
+        # 6. Direct POST (legacy)
         records = self._scrape_gv_via_post(taluk, meta)
         if records:
             logger.info(f"[KaveriScraper][POST][{market_name}] {len(records)} GV records")
             return records
 
-        # 6. Hardcoded fallback — always logged as warning, never silent
+        # 7. Hardcoded fallback — always logged as warning, never silent
         logger.warning(
             f"[KaveriScraper] All GV sources failed for {market_name} — using fallback data"
         )
@@ -511,6 +520,47 @@ class KaveriScraper:
             f"[KaveriScraper][Fallback][{market_name}] {len(records)} registration records"
         )
         return records
+
+    # ── Guidance Values — IGR Gazette PDFs (new Tier 1 — authoritative) ────────
+
+    def _scrape_gv_from_igr_gazette(self, market_name: str) -> list[dict]:
+        """
+        Download and parse official Karnataka gazette PDFs from igr.karnataka.gov.in.
+        Returns records with source='igr_gazette'. This is the most authoritative source.
+        """
+        try:
+            from scrapers.kaveri_gazette_parser import GazetteParser
+            parser = GazetteParser()
+            records = parser.scrape_guidance_values(market_name)
+            for r in records:
+                r["data_source"] = "igr_gazette"
+            return records
+        except Exception as exc:
+            logger.warning(f"[KaveriScraper][IGR Gazette] Failed for {market_name}: {exc}")
+            return []
+
+    # ── Registration Volume — Kaveri 2.0 API (SRO-level counts) ─────────────
+
+    def scrape_registration_volume(
+        self, market_name: str, from_date: str | None = None, to_date: str | None = None
+    ) -> dict:
+        """
+        Fetch daily registration application counts from Kaveri 2.0 API.
+        Returns dict with counts; empty dict on failure.
+        Uses SRO codes: Yelahanka=224 (Jala), Devanahalli=118, Hebbal=208.
+        """
+        from datetime import date as _date, timedelta
+        if not to_date:
+            to_date = _date.today().isoformat()
+        if not from_date:
+            from_date = (_date.today() - timedelta(days=180)).isoformat()
+        try:
+            from scrapers.kaveri_gazette_parser import GazetteParser
+            parser = GazetteParser()
+            return parser.scrape_registration_volume(market_name, from_date, to_date)
+        except Exception as exc:
+            logger.debug(f"[KaveriScraper] Registration volume API failed: {exc}")
+            return {}
 
     # ── Guidance Values — Scrapling TLS spoof (new primary) ───────────────────
 

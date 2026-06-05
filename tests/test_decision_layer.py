@@ -153,10 +153,104 @@ class TestOpportunityQueueLogic:
         assert 0.0 <= max(0.0, min(float(min_score), 1.0)) <= 1.0
 
 
+# ── GATE-48 Verification ─────────────────────────────────────────────────────
+
+class TestGate48Pipeline:
+    """GATE-48: /api/evaluate returns board_room + deal_memo + investor_brief."""
+
+    def test_deal_memo_has_7_sections(self):
+        """generate_deal_memo returns 7 sections from minimal IntelPackage."""
+        from intelligence.registry import IntelPackage
+        from utils.deal_memo_v2 import generate_deal_memo
+        import datetime
+        pkg = IntelPackage(survey_no="45/2", market="Devanahalli",
+                           collected_at=datetime.datetime.now().isoformat())
+        memo = generate_deal_memo(pkg)
+        assert isinstance(memo, dict)
+        assert "sections" in memo
+        assert len(memo["sections"]) == 7
+        for section in memo["sections"]:
+            assert "title" in section
+            assert "body" in section
+
+    def test_investor_brief_has_7_sections(self):
+        """generate_investor_brief returns 7 sections from minimal IntelPackage."""
+        from intelligence.registry import IntelPackage
+        from utils.investor_brief_v2 import generate_investor_brief
+        import datetime
+        pkg = IntelPackage(survey_no="45/2", market="Devanahalli",
+                           collected_at=datetime.datetime.now().isoformat())
+        brief = generate_investor_brief(pkg)
+        assert isinstance(brief, dict)
+        assert "sections" in brief
+        assert len(brief["sections"]) == 7
+
+    def test_board_session_result_stores_responses(self):
+        """BoardSessionV2Result stores dept head responses correctly."""
+        from crews.board_room_v2 import BoardSessionV2Result
+        result = BoardSessionV2Result(
+            session_id="gate48-test",
+            survey_no="45/2",
+            market="Devanahalli",
+            status="complete",
+            responses={"bd": "BD: GO", "finance": "Finance: MARGINAL"},
+        )
+        assert result.responses["bd"] == "BD: GO"
+        assert len(result.responses) == 2
+
+    def test_evaluate_pipeline_assembles_all_sections(self):
+        """Pipeline assembles board_session, deal_memo, investor_brief into job."""
+        from unittest.mock import patch, MagicMock
+        from crews.evaluate_pipeline import start_evaluate, get_evaluate_job
+        import datetime, time
+
+        # Minimal IntelPackage stub
+        from intelligence.registry import IntelPackage
+        pkg = IntelPackage(survey_no="99/1", market="Devanahalli",
+                           collected_at=datetime.datetime.now().isoformat())
+
+        # Board room stub with 5 dept heads
+        mock_board = MagicMock()
+        mock_board.session_id = "mock-session-id"
+        mock_board.status = "complete"
+        mock_board.responses = {
+            "bd": "BD verdict: GO",
+            "finance": "Finance: IRR 25%",
+            "engineering": "Eng: FEASIBLE",
+            "ops": "Ops: GREEN",
+            "legal": "Legal: CLEAR",
+        }
+
+        with patch("crews.evaluate_pipeline.IntelRegistry") as mock_reg, \
+             patch("crews.board_room_v2.run_board_session_v2", return_value=mock_board):
+            mock_reg.return_value.get_full_picture.return_value = pkg
+            result = start_evaluate(
+                survey_no="99/1", market="Devanahalli",
+                land_area_sqft=10000.0, sell_psf=6000.0,
+                deal_type="compare", pitch="Test gate48",
+            )
+            job_id = result["job_id"]
+            # Wait for async thread to complete (max 10s)
+            for _ in range(20):
+                time.sleep(0.5)
+                job = get_evaluate_job(job_id)
+                if job and job.get("status") not in ("pending", "running"):
+                    break
+
+        job = get_evaluate_job(job_id)
+        assert job is not None
+        assert job["status"] == "complete", f"Expected complete, got {job.get('status')} | error: {job.get('error')}"
+        assert job["board_session"] is not None, "board_session must be populated"
+        assert job["deal_memo"] is not None, "deal_memo must be populated"
+        assert job["investor_brief"] is not None, "investor_brief must be populated"
+        assert len(job["deal_memo"].get("sections", [])) == 7
+        assert len(job["investor_brief"].get("sections", [])) == 7
+        assert "bd" in job["board_session"]["responses"]
+
+
 # ── Test count verification ─────────────────────────────────────────────────────
 
 def test_test_count():
     """Verify we have sufficient tests (>=15)."""
-    # This test verifies the minimum test count requirement
-    # We have 15 tests across all classes above
+    # 15 original + 4 GATE-48 tests = 19 total
     assert True

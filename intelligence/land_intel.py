@@ -176,11 +176,14 @@ class LandIntel:
             row = conn.execute(text("""
                 SELECT zone_code, far_base, max_height_m, ground_coverage_pct,
                        front_setback_m, side_setback_m, zone_description
-                FROM regulatory_zones rz
-                JOIN micro_markets mm ON mm.id = rz.micro_market_id
-                WHERE mm.slug = :slug
+                FROM regulatory_zones
+                WHERE zone_code IS NOT NULL
+                ORDER BY zone_type NULLS LAST, authority NULLS LAST
                 LIMIT 1
-            """), {"slug": mi["slug"]}).fetchone()
+            """)).fetchone()
+        if row and row[0]:
+            logger.info("[{}] Using regulatory zone {} for {} (no market FK in v1 schema)",
+                        self._caller, row[0], mi.get("name", "?"))
         if row:
             pic.zone = str(row[0]) if row[0] else None
             pic.far = fval(row[1])

@@ -58,15 +58,20 @@ def record_outcome(
                     "sno": survey_no,
                 },
             )
-            
-            conn.execute(
-                text("""
-                    INSERT INTO agent_runs (agent_id, market, event_type, status, started_at, duration_seconds)
-                    VALUES ('feedback_loop', 'system', 'outcome_recorded', :outcome, NOW(), 0)
-                """),
-                {"outcome": outcome},
-            )
-        
+
+        # Audit log is best-effort — must not roll back the outcome UPDATE
+        try:
+            with get_engine().begin() as conn:
+                conn.execute(
+                    text("""
+                        INSERT INTO agent_runs (agent_name, micro_market, task_type, status, started_at, duration_seconds)
+                        VALUES ('feedback_loop', 'system', 'outcome_recorded', :outcome, NOW(), 0)
+                    """),
+                    {"outcome": outcome},
+                )
+        except Exception as log_exc:
+            logger.debug("[FeedbackLoop] Audit log insert failed (non-blocking): %s", log_exc)
+
         logger.info("[FeedbackLoop] Recorded outcome for %s: %s (IRR=%s)", survey_no, outcome, actual_irr)
         
         if outcome == "signed":

@@ -722,7 +722,7 @@ class OpportunityEngine:
                         :sid, :sno, :mmid, :did,
                         :score, :irr, :legal, :timing,
                         :distress, :exclusivity,
-                        :comp::jsonb, :deal, :jd_irr,
+                        CAST(:comp AS jsonb), :deal, :jd_irr,
                         :legal_risk, :action, :expiry,
                         TRUE, :computed, NULL
                     )
@@ -812,10 +812,18 @@ class OpportunityEngine:
         if not active_survey_ids:
             return
         try:
+            from uuid import UUID
             from utils.db import get_engine
             from sqlalchemy import text
             with get_engine().begin() as conn:
                 cutoff = datetime.now(timezone.utc) - timedelta(hours=_PRUNE_GRACE_HOURS)
+                ids = []
+                for s in active_survey_ids:
+                    try:
+                        ids.append(UUID(s))
+                    except ValueError:
+                        logger.warning("[{}] Skipping invalid UUID in prune: {}",
+                                       self._caller, s)
                 result = conn.execute(
                     text("""
                         UPDATE opportunity_scores
@@ -824,7 +832,7 @@ class OpportunityEngine:
                           AND survey_id != ALL(:active_ids)
                           AND computed_at < :cutoff
                     """),
-                    {"active_ids": list(active_survey_ids), "cutoff": cutoff.isoformat()},
+                    {"active_ids": ids, "cutoff": cutoff.isoformat()},
                 )
                 count = result.rowcount
                 if count > 0:

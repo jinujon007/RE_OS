@@ -97,7 +97,8 @@ class TestDeveloperChecker:
 class TestDataQualityMonitor:
     def test_freshness_score_empty(self):
         from utils.data_quality import DataQualityMonitor
-        with patch("utils.data_quality.get_engine") as mock_eng:
+        # freshness_score does a local 'from utils.db import get_engine' — patch at source
+        with patch("utils.db.get_engine") as mock_eng:
             mock_conn = MagicMock()
             mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
             mock_conn.execute.return_value.fetchall.return_value = []

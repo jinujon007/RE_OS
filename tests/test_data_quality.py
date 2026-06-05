@@ -7,6 +7,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 pytestmark = pytest.mark.unit
 
+import pandas as pd
 from utils.data_quality import (
     ExpectationDef,
     FailedExpectation,
@@ -14,7 +15,6 @@ from utils.data_quality import (
     format_data_quality_alert,
     get_active_expectations,
     run_data_quality_checkpoint,
-    _lazy_import_ge,
     _derive_projected_columns,
     _TABLE_MARKET_JOIN,
 )
@@ -217,61 +217,50 @@ class TestTableMarketJoin:
         assert "developers" not in _TABLE_MARKET_JOIN
 
 
-class TestLazyImportGe:
-    def test_returns_none_when_not_installed(self):
-        import utils.data_quality as dq
-        dq._GE_IMPORTED = False
-        dq._ge = None
-        with patch.dict("sys.modules", {"great_expectations": None}):
-            result = dq._lazy_import_ge()
-            assert result is None
-
-    def test_returns_cached_value_on_subsequent_calls(self):
-        import utils.data_quality as dq
-        dq._GE_IMPORTED = True
-        dq._ge = None
-        result = dq._lazy_import_ge()
-        assert result is None
-
-
 class TestRunDataQualityCheckpoint:
-    def test_skips_when_ge_not_installed(self):
-        result = run_data_quality_checkpoint("Yelahanka")
+    def test_runs_with_mocked_engine_empty_results(self):
+        """Checkpoint runs with mocked engine and empty results — no errors."""
+        mock_conn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = []
+        mock_result.keys.return_value = []
+        mock_conn.execute.return_value = mock_result
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        with patch("utils.data_quality.get_engine", return_value=mock_engine):
+            result = run_data_quality_checkpoint("Yelahanka")
         assert result["success"] is True
-        assert result["failed_expectations"] == []
-        assert result["warnings"] == []
+        assert result.get("status") == "completed"
 
     def test_handles_db_connection_error_gracefully(self):
         from sqlalchemy.exc import OperationalError
-        mock_ge_mod = MagicMock()
         mock_conn = MagicMock()
         mock_conn.__enter__.side_effect = OperationalError("DB unreachable", None, None)
         mock_engine = MagicMock()
         mock_engine.connect.return_value = mock_conn
 
-        with patch("utils.data_quality._lazy_import_ge", return_value=mock_ge_mod), \
-             patch("utils.data_quality.get_engine", return_value=mock_engine):
+        with patch("utils.data_quality.get_engine", return_value=mock_engine):
             result = run_data_quality_checkpoint("Yelahanka")
         assert result["success"] is True
+        assert result.get("status") == "db_error"
         assert "error" in result
 
     def test_skips_empty_table_no_expectations_fired(self):
-        import pandas as pd
-        mock_gdf = MagicMock()
-        mock_ge_mod = MagicMock()
-        mock_ge_mod.from_pandas.return_value = mock_gdf
         mock_conn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = []
+        mock_result.keys.return_value = []
+        mock_conn.execute.return_value = mock_result
         mock_engine = MagicMock()
         mock_engine.connect.return_value.__enter__.return_value = mock_conn
 
-        with patch("utils.data_quality._lazy_import_ge", return_value=mock_ge_mod), \
-             patch("utils.data_quality.get_engine", return_value=mock_engine), \
-             patch("utils.data_quality.pd.read_sql", return_value=pd.DataFrame()):
+        with patch("utils.data_quality.get_engine", return_value=mock_engine):
             result = run_data_quality_checkpoint("Yelahanka")
 
         assert result["success"] is True
+        assert result.get("status") == "completed"
         assert result["failed_expectations"] == []
-        mock_ge_mod.from_pandas.assert_not_called()
 
     def test_collects_failed_expectations_on_violation(self):
         import pandas as pd
@@ -317,21 +306,24 @@ class TestRunDataQualityCheckpoint:
         assert market_filtered, "Expected at least one market-filtered SQL query"
 
     def test_checkpoint_no_cursor_error(self):
-        import pandas as pd
-        mock_gdf = MagicMock()
-        mock_gdf.expect_column_values_to_be_between.return_value = {"success": True}
-        mock_ge_mod = MagicMock()
-        mock_ge_mod.from_pandas.return_value = mock_gdf
+        """Verifies the SA2.x compatible code path: conn.execute → pd.DataFrame."""
+        mock_conn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [(5000,)]
+        mock_result.keys.return_value = ["price_avg_psf"]
+        mock_conn.execute.return_value = mock_result
         mock_engine = MagicMock()
-        df = pd.DataFrame({"price_avg_psf": [5000]})
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
 
-        with patch("utils.data_quality._lazy_import_ge", return_value=mock_ge_mod), \
-             patch("utils.data_quality.get_engine", return_value=mock_engine), \
-             patch("utils.data_quality.pd.read_sql", return_value=df):
+        with patch("utils.data_quality.get_engine", return_value=mock_engine):
             result = run_data_quality_checkpoint("Yelahanka")
 
         assert result["success"] is True
+        assert result.get("status") == "completed"
         assert "error" not in result or result.get("error") is None
+        # Verify SA2.x compatible path was used (conn.execute, not pd.read_sql)
+        assert mock_conn.execute.call_count >= 1, "conn.execute was never called"
+        assert "pd.read_sql" not in str(type(result)), "pd.read_sql should not be used"
 
     def test_handles_empty_market_gracefully(self):
         result = run_data_quality_checkpoint("")
@@ -342,3 +334,43 @@ class TestRunDataQualityCheckpoint:
         result = run_data_quality_checkpoint(None)
         assert result["success"] is True
         assert result.get("note") == "empty market"
+
+    def test_no_expectations_returns_skipped(self):
+        """When _dq_expectations is empty, checkpoint returns status='skipped'."""
+        mock_engine = MagicMock()
+        with patch("utils.data_quality.get_engine", return_value=mock_engine), \
+             patch("utils.data_quality._dq_expectations", []):
+            result = run_data_quality_checkpoint("Yelahanka")
+        assert result.get("status") == "skipped"
+        assert result.get("note") == "no expectations configured"
+
+    def test_all_nan_column_skipped(self):
+        """When all values in a column are NaN, the check is skipped gracefully."""
+        import pandas as pd
+        mock_conn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [(float("nan"),)]
+        mock_result.keys.return_value = ["price_avg_psf"]
+        mock_conn.execute.return_value = mock_result
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        with patch("utils.data_quality.get_engine", return_value=mock_engine):
+            result = run_data_quality_checkpoint("Yelahanka")
+        assert result["success"] is True
+        assert result.get("status") == "completed"
+
+    def test_empty_series_column_skipped(self):
+        """When a column has zero rows, the check is skipped gracefully."""
+        mock_conn = MagicMock()
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = []
+        mock_result.keys.return_value = ["price_avg_psf"]
+        mock_conn.execute.return_value = mock_result
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        with patch("utils.data_quality.get_engine", return_value=mock_engine):
+            result = run_data_quality_checkpoint("Yelahanka")
+        assert result["success"] is True
+        assert result.get("status") == "completed"

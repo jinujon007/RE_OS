@@ -233,7 +233,8 @@ class LegalIntel:
         from sqlalchemy import text
         with timed_intel_query("legal_guidance_value"):
             row = conn.execute(text("""
-                SELECT AVG(kr.guidance_value) AS avg_gv, AVG(kr.guidance_market_gap_pct) AS avg_gap
+                SELECT AVG(kr.guidance_value) AS avg_gv,
+                       AVG(kr.transaction_amount / NULLIF(kr.area_sqft, 0)) AS avg_market_psf
                 FROM kaveri_registrations kr
                 JOIN micro_markets mm ON mm.id = kr.micro_market_id
                 WHERE mm.slug = :slug
@@ -241,8 +242,14 @@ class LegalIntel:
             """), {"slug": mi["slug"]}).fetchone()
         if row and row[0]:
             pic.guidance_value_psf = fval(row[0])
-            pic.guidance_market_gap_pct = fval(row[1])
-            gap = pic.guidance_market_gap_pct or 0
+            # Compute market gap in Python from transaction_amount/area vs guidance_value
+            market_psf = fval(row[1])
+            if market_psf and market_psf > 0:
+                gap = round((market_psf - pic.guidance_value_psf) / pic.guidance_value_psf * 100, 1)
+                pic.guidance_market_gap_pct = gap
+            else:
+                gap = 0
+                pic.guidance_market_gap_pct = None
             status = "WARNING" if abs(gap) > 30 else "CLEAR"
             pic.title_risk_flags.append(TitleRiskFlag(
                 flag="guidance_value_gap", status=status,

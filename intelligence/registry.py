@@ -272,7 +272,8 @@ class IntelRegistry:
             ):
                 actual_psf = pkg.market_pulse.avg_listing_psf
             else:
-                actual_psf = _get_market_psf_fallback(m_raw)
+                from intelligence.financial_intel import _get_market_psf_fallback
+                actual_psf = _get_market_psf_fallback(m)
         self._run_module(
             pkg, "financial_evaluation", self._get_financial_evaluation,
             m, land, actual_psf, gv, construction_cost_psf,
@@ -330,7 +331,7 @@ class IntelRegistry:
         guidance_value_psf: float,
         construction_cost_psf: float,
     ):
-        from intelligence.financial_intel import FinancialIntel, _get_market_psf_fallback
+        from intelligence.financial_intel import FinancialIntel
         return FinancialIntel(caller="IntelRegistry").evaluate(
             market=market,
             land_area_sqft=land_area_sqft,
