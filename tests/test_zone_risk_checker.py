@@ -43,6 +43,9 @@ class TestCheckZoneRisk:
         assert r.far is None
 
     def test_overlay_risk_triggers_medium_level(self):
+        # Patch _load_zones_gdf to return (None, None) — forces SQL fallback path.
+        # Without this, GeoPandas path runs first and consumes the side_effect entries
+        # before _fallback_sql_query can use them.
         mock_conn = MagicMock()
         mock_conn.__enter__.return_value = mock_conn
         mock_conn.execute.side_effect = [
@@ -51,7 +54,8 @@ class TestCheckZoneRisk:
             MagicMock(fetchall=lambda: [("airport_funnel", "Airport funnel zone")]),
             MagicMock(),
         ]
-        with patch("utils.db.get_engine") as mock_eng:
+        with patch("utils.db.get_engine") as mock_eng, \
+             patch("utils.zone_risk_checker._load_zones_gdf", return_value=(None, None)):
             mock_eng.return_value.connect.return_value = mock_conn
             r = self._make_result("Devanahalli", "R2")
         assert r.risk_level == "MEDIUM"
@@ -69,7 +73,8 @@ class TestCheckZoneRisk:
             ]),
             MagicMock(),
         ]
-        with patch("utils.db.get_engine") as mock_eng:
+        with patch("utils.db.get_engine") as mock_eng, \
+             patch("utils.zone_risk_checker._load_zones_gdf", return_value=(None, None)):
             mock_eng.return_value.connect.return_value = mock_conn
             r = self._make_result("Devanahalli", "R2")
         assert r.risk_level == "HIGH"
@@ -93,6 +98,9 @@ class TestCheckZoneRisk:
         assert "DB query failed" in r.overlay_risks[0]
 
     def test_overlay_spatial_fallback_global_scan(self):
+        # First SQL execute (zone query) succeeds; all subsequent fail (simulating
+        # ST_Intersects unavailable). _load_zones_gdf patched to (None, None) so
+        # the side_effect counter starts at 0 for the SQL fallback path.
         mock_conn = MagicMock()
         mock_conn.__enter__.return_value = mock_conn
         call_count = [0]
@@ -102,7 +110,8 @@ class TestCheckZoneRisk:
                 return MagicMock(fetchone=lambda: _SAMPLE_ROW)
             raise Exception("ST_Intersects failed")
         mock_conn.execute.side_effect = side_effect
-        with patch("utils.db.get_engine") as mock_eng:
+        with patch("utils.db.get_engine") as mock_eng, \
+             patch("utils.zone_risk_checker._load_zones_gdf", return_value=(None, None)):
             mock_eng.return_value.connect.return_value = mock_conn
             r = self._make_result("Devanahalli", "R2")
         assert r.far == 3.0
