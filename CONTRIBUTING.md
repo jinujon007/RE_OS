@@ -39,6 +39,13 @@ docker compose exec agents pytest tests/ -q -m unit
 
 Expected: all tests pass, no failures.
 
+### 4b. Run integration tests (optional, requires Docker stack up)
+
+docker compose exec agents pytest tests/ -m integration -v --tb=short
+
+Integration tests verify DB schema, live endpoints, and end-to-end flows.
+They are excluded from CI (which runs `pytest -m "not integration"`).
+
 ### 5. Verify the dashboard
 
 curl http://localhost:8050/api/health
@@ -73,3 +80,37 @@ pip install ruff pytest pytest-cov
 ruff check .
 ruff format --check .
 pytest tests/ -q -m unit --cov=agents --cov=config --cov=crews --cov=scrapers --cov=utils --cov=dashboard
+
+## RERA Fine-Tuning (optional, requires GPU)
+
+The QLoRA RERA extractor fine-tune requires a GPU with ≥4GB VRAM (RTX 3050 or better).
+
+### Generate training data
+
+python scripts/generate_rera_training_data.py --market Devanahalli
+
+### Run fine-tune
+
+pip install torch transformers accelerate peft trl bitsandbytes datasets
+python scripts/finetune_rera_qwen.py
+
+Output: `models/rera_qwen_adapter/` — LoRA adapter weights.
+After fine-tuning, create the Ollama model:
+
+ollama create rera-qwen -f models/Modelfile.rera
+python scripts/load_rera_ollama.py
+
+The `RERAExtractor` in `utils/rera_extractor.py` will auto-detect the Ollama model
+and prefer it over the regex fallback.
+
+### Telegram webhook setup
+
+Register a bot with `t.me/BotFather`, get the token, add to `.env`:
+
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_WEBHOOK_SECRET=your_secret
+
+For local testing with ngrok:
+
+ngrok http 8050
+python scripts/register_telegram_webhook.py --url https://your-ngrok-url.ngrok.io

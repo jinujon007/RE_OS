@@ -17,12 +17,21 @@ Tone functions (Sprint 35):
   score_headline_tone(text, api_key) → {bullish, bearish, neutral} or None
   aggregate_market_sentiment_tone(headlines, api_key) → aggregate dict
 
+6-label tone functions (Sprint 35 deferred — Sprint 50):
+  score_tone(text, api_key) → {Risk, Uncertainty, Litigious, Constraining, Positive, Negative}
+  dominant_tone(text, api_key) → highest-probability tone label (str)
+
 Usage:
   from utils.sentiment import score_headline, score_batch, score_headline_tone
+  from utils.sentiment import score_tone, dominant_tone
   score = score_headline("Prestige launches 500-unit project in Yelahanka at ₹7,500 PSF")
   # → 0.82
   tone = score_headline_tone("Property market surges")
   # → {"bullish": 0.9, "bearish": 0.05, "neutral": 0.05}
+  tones = score_tone("RERA project stalled, builder facing insolvency")
+  # → {"Risk": 0.82, "Negative": 0.12, ...}
+  dominant = dominant_tone("Market uncertainty looms")
+  # → "Uncertainty"
   aggregate = aggregate_market_sentiment_tone(["headline 1", "headline 2"])
   # → {"bullish_pct": 65.0, "bearish_pct": 20.0, "neutral_pct": 15.0,
   #     "dominant": "bullish", "confidence": 65.0}
@@ -33,7 +42,7 @@ import time
 import requests
 from loguru import logger
 
-from config.settings import HF_API_KEY, FINBERT_MODEL_ID, FINBERT_TONE_MODEL_ID
+from config.settings import HF_API_KEY, FINBERT_MODEL_ID, FINBERT_TONE_MODEL_ID, FINBERT_TONE_6LABEL_MODEL_ID
 
 # HuggingFace migrated from api-inference.huggingface.co to router.huggingface.co
 # in 2025 as part of the Inference Providers rollout.
@@ -47,40 +56,48 @@ _RETRY_BASE_DELAY = 2  # seconds, doubles each attempt
 _SENTINEL = object()
 
 
+def _retry_delay(attempt: int) -> float:
+    """Exponential backoff with jitter (±25%) to prevent thundering herd."""
+    import random
+    base = _RETRY_BASE_DELAY * (2 ** attempt)
+    jitter = base * random.uniform(-0.25, 0.25)
+    return base + jitter
+
+
 def _call_hf_api(headline: str, model_id: str, api_key: str) -> list | None:
     """Shared HF Inference API call with retry logic.
+    Retries on 503 (model loading), 429 (rate limit), and network errors with jittered backoff.
     Returns parsed JSON list or None on failure."""
-    try:
-        resp = requests.post(
-            f"{_FINBERT_BASE_URL}{model_id}",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={"inputs": headline[:512]},
-            timeout=_REQUEST_TIMEOUT,
-        )
-        for attempt in range(_RETRY_ATTEMPTS):
-            if resp.status_code == 503:
-                delay = _RETRY_BASE_DELAY * (2 ** attempt)
-                logger.debug(f"[Sentiment] Model loading (attempt {attempt+1}/{_RETRY_ATTEMPTS}), retrying in {delay}s...")
+    url = f"{_FINBERT_BASE_URL}{model_id}"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    payload = {"inputs": headline[:512]}
+
+    for attempt in range(_RETRY_ATTEMPTS):
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=_REQUEST_TIMEOUT)
+            if resp.status_code in (503, 429) and attempt < _RETRY_ATTEMPTS - 1:
+                delay = _retry_delay(attempt)
+                logger.debug("[Sentiment] HF API {} (attempt {}/{}), retrying in {:.1f}s...",
+                             resp.status_code, attempt + 1, _RETRY_ATTEMPTS, delay)
                 time.sleep(delay)
-                resp = requests.post(
-                    f"{_FINBERT_BASE_URL}{model_id}",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json={"inputs": headline[:512]},
-                    timeout=_REQUEST_TIMEOUT,
-                )
-            else:
-                break
-        if resp.status_code != 200:
-            logger.warning(f"[Sentiment] HF API {resp.status_code}: {resp.text[:100]}")
+                continue
+            if resp.status_code != 200:
+                logger.warning("[Sentiment] HF API {}: {}", resp.status_code, resp.text[:100])
+                return None
+            data = resp.json()
+            if not data or not isinstance(data, list):
+                return None
+            return data[0] if isinstance(data[0], list) else data
+        except Exception as exc:
+            if attempt < _RETRY_ATTEMPTS - 1:
+                delay = _retry_delay(attempt)
+                logger.debug("[Sentiment] HF API error (attempt {}/{}), retrying in {:.1f}s: {}",
+                             attempt + 1, _RETRY_ATTEMPTS, delay, exc)
+                time.sleep(delay)
+                continue
+            logger.debug("[Sentiment] HF API call failed after {} attempts: {}", _RETRY_ATTEMPTS, exc)
             return None
-        data = resp.json()
-        if not data or not isinstance(data, list):
-            return None
-        candidates = data[0] if isinstance(data[0], list) else data
-        return candidates
-    except Exception as exc:
-        logger.debug(f"[Sentiment] HF API call error: {exc}")
-        return None
+    return None
 
 
 def score_headline(headline: str, api_key: str | object = _SENTINEL, model_id: str = FINBERT_MODEL_ID) -> float | None:
@@ -258,6 +275,45 @@ def aggregate_market_sentiment(scores: list[float | None]) -> dict:
         "positive_pct": positive_pct,
         "negative_pct": negative_pct,
     }
+
+
+def score_tone(text: str, api_key: str | object = _SENTINEL) -> dict[str, float] | None:
+    """
+    Score text with yiyanghkust/finbert-tone (6-label: Risk, Uncertainty,
+    Litigious, Constraining, Positive, Negative).
+    Returns dict with one key per tone (0.0-1.0) or None if API unavailable.
+    """
+    key: str = HF_API_KEY if api_key is _SENTINEL else api_key
+    if not key or not text:
+        return None
+
+    candidates = _call_hf_api(text, FINBERT_TONE_6LABEL_MODEL_ID, key)
+    if not candidates:
+        return None
+
+    try:
+        tones = {"Risk": 0.0, "Uncertainty": 0.0, "Litigious": 0.0,
+                 "Constraining": 0.0, "Positive": 0.0, "Negative": 0.0}
+        for candidate in candidates:
+            label = candidate.get("label", "")
+            score = candidate.get("score", 0.0)
+            if label in tones:
+                tones[label] = score
+        return tones
+    except Exception as exc:
+        logger.debug("[Sentiment] score_tone parse error: {}", exc)
+        return None
+
+
+def dominant_tone(text: str, api_key: str | object = _SENTINEL) -> str | None:
+    """
+    Return the highest-probability tone label from yiyanghkust/finbert-tone.
+    Returns None if API unavailable.
+    """
+    tones = score_tone(text, api_key=api_key)
+    if not tones:
+        return None
+    return max(tones, key=tones.get)
 
 
 if __name__ == "__main__":

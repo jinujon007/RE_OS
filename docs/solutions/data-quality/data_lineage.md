@@ -1,54 +1,67 @@
 # Data Lineage — PSF, MoS, and Conflict Detection
 
-## PSF Data Flow
+## PSF Data Flow — Unified (Migration 0023)
 
 ```
-Portal (99acres/magicbricks)              IGR Portal (govt)              Kaveri Gazette
-        │                                      │                             │
-        ▼                                      ▼                             ▼
-  portal_scout.py                         igr_karnataka.py             kaveri_gazette_parser.py
-        │                                      │                             │
-        │  + locality filter                  │  + 90-day window            │  + SRO code mapping
-        │  (config/locality_aliases.py)        │                             │
-        ▼                                      ▼                             ▼
-  ┌──────────────┐                    ┌────────────────┐            ┌──────────────────┐
-  │ listings     │                    │ igr_transactions│            │ guidance_values   │
-  │ (portal_     │                    │ (live_igr /     │            │ (guidance_value / │
-  │  scraped /   │                    │  fallback_igr)  │            │  portal_scraped)  │
-  │  seed_       │                    └────────────────┘            └──────────────────┘
-  │  estimated)  │                           │                             │
-  └──────┬───────┘                           ▼                             │
-         │                           ┌────────────────┐                    │
-         │                           │ FinancialIntel  │◄───────────────────┘
-         │                           │ _load_igr_data()│
-         │                           │                 │
-         │                           │ Tier selection: │
-         │                           │ 1. live_igr     │
-         │                           │    (≥5 igr_     │
-         │                           │     trans.)     │
-         │                           │ 2. guidance_    │
-         │                           │    value         │
-         │                           │    (≥3 GV rec.) │
-         │                           │ 3. listing_only  │
-         ▼                           └────────┬────────┘
-  ┌──────────────┐                            │
-  │ v_market_    │                            │
-  │ brief        │                            │  psf_source_quality
-  │              │                            │
-  │ avg_listing_ │◄─── listings.price_psf     │
-  │ psf (Tier 1) │    (no fallback chain)     │
-  └──────────────┘                            ▼
-                                       ┌──────────────────┐
-                                       │ Board Room       │
-                                       │ Deal Memo        │
-                                       │ Investor Brief   │
-                                       └──────────────────┘
-                                       
-Legend:
-  Solid line = live data path
-  Dashed = fallback
-  ⚠ = GAP: v_market_brief and FinancialIntel diverge
+  ┌──────────────────────────┐     ┌─────────────────────────┐     ┌──────────────────┐
+  │ kaveri_registrations     │     │ guidance_values         │     │ listings         │
+  │ (actual sale deeds)      │     │ (govt circle rates)     │     │ (portal_scraped  │
+  │ transaction_amount /     │     │ guidance_value_psf      │     │  / seed_         │
+  │  area_sqft = trans PSF   │     │                         │     │  estimated)      │
+  └───────────┬──────────────┘     └───────────┬─────────────┘     └────────┬─────────┘
+              │                               │                            │
+              ▼                               ▼                            ▼
+      Tier 1: ≥5 rows                  Tier 2: ≥3 rows               Tier 3: ≥5 live rows
+      median(trans_psf)                median(gv_psf)                AVG(price_psf) excl seed
+              │                               │                            │
+              └───────────┬───────────────────┘────────────────────────────┘
+                          │                        Tier 4: AVG(price_psf) all rows (≥1)
+                          ▼
+              ┌──────────────────────────────────────────────────────┐
+              │           v_market_brief (migration 0023)            │
+              │                                                      │
+              │  psf_source_tier  │  psf_source_label                │
+              │  ────────────────┼────────────────────────────────   │
+              │  1               │  kaveri_registration              │
+              │  2               │  guidance_value                   │
+              │  3               │  live_listing                     │
+              │  4               │  seed_listing                     │
+              │                                                      │
+              │  avg_listing_psf = COALESCE(tier1, tier2, tier3,     │
+              │                     tier4) across 4-tier cascade     │
+              └──────────────────────────────────────────────────────┘
+                          │
+                          ▼
+              ┌─────────────────────────────────────────┐
+              │ FinancialIntel._load_igr_data()          │
+              │ (separate 3-tier cascade for IRR):      │
+              │   1. live_igr (igr_transactions, ≥5)    │
+              │   2. guidance_value (gv, ≥3)            │
+              │   3. listing_only (sell_psf)             │
+              │ psf_source_quality field                │
+              └─────────────────────────────────────────┘
+                          │
+                          ▼
+              ┌─────────────────────────────────────────┐
+              │ Board Room  │  Deal Memo  │  Investor   │
+              │ cites       │  cites      │  Brief      │
+              │ psf_source  │  psf_source │  cites      │
+              │ tier+label  │  tier+label │  source     │
+              └─────────────────────────────────────────┘
 ```
+
+### PSF Tier Selection Rules (v_market_brief)
+
+| Tier | Source Table | Min Rows | Statistic | Label |
+|------|-------------|----------|-----------|-------|
+| 1    | kaveri_registrations | ≥5 | PERCENTILE_CONT(0.5) transaction PSF | kaveri_registration |
+| 2    | guidance_values (data_source IN igr_gazette,portal_scraped) | ≥3 | PERCENTILE_CONT(0.5) guidance_value_psf | guidance_value |
+| 3    | listings (data_source != seed_estimated) | ≥5 | AVG(price_psf) | live_listing |
+| 4    | listings (all, including seed) | ≥1 | AVG(price_psf) | seed_listing |
+
+The cascade uses SQL `COALESCE`: the first tier meeting its minimum row count wins.
+This ensures v_market_brief.avg_listing_psf always agrees with FinancialIntel's
+_igr_source_for hierarchy (best available data wins).
 
 ## MoS Data Flow
 

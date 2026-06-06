@@ -218,6 +218,9 @@ async def _require_api_key(request: Request, call_next):
         return await call_next(request)
     if any(path.startswith(p) for p in _READ_ONLY_PREFIXES):
         return await call_next(request)
+    # Telegram webhook uses its own secret-token validation — exempt from API key
+    if path == "/api/telegram/webhook":
+        return await call_next(request)
     if not _is_run_api_authorized(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     return await call_next(request)
@@ -770,28 +773,38 @@ async def health(request: Request):
         freshness = DataQualityMonitor.freshness_score()
         slo_result = all_slo_status(freshness)
         seed_stale = DataQualityMonitor.check_seed_staleness()
+        locality_scores = {}
+        try:
+            from config.locality_aliases import KNOWN_ALIEN_LOCALITIES
+            from config.settings import TARGET_MARKETS
+            for m in TARGET_MARKETS:
+                locality_scores[m] = DataQualityMonitor.locality_validation_score(m.strip())
+        except Exception as exc:
+            logger.warning("[health] locality_score check failed: {}", exc)
         services["data_quality"] = {
             "slo_pass": slo_result["slo_pass"],
             "slo_fail": slo_result["slo_fail"],
             "freshness": freshness if freshness else None,
             "seed_stale_warnings": seed_stale[:5],
+            "locality_scores": locality_scores,
         }
     except Exception as exc:
         logger.warning("[health] data_quality check failed: {}", exc)
-        services["data_quality"] = {"slo_pass": 0, "slo_fail": 0, "freshness": None, "seed_stale_warnings": []}
+        services["data_quality"] = {"slo_pass": 0, "slo_fail": 0, "freshness": None, "seed_stale_warnings": [], "locality_scores": {}}
 
     try:
-        from utils.llm_router import LLMRouter
-        router = LLMRouter()
-        heavy_providers = list(getattr(router, "tiers", {}).get("heavy", []))
+        from config.llm_router import get_router_status, get_circuit_states
+        router_status = get_router_status()
+        circuit_states = get_circuit_states()
         services["llm"] = {
-            "configured": len(heavy_providers) > 0,
-            "heavy_providers": len(heavy_providers),
-            "providers": heavy_providers[:5],
+            "configured": any(router_status.get("providers", {}).values()),
+            "heavy_providers": sum(1 for p in ["groq", "gemini", "nvidia", "sambanova", "openrouter", "cloudflare"]
+                                   if router_status.get("providers", {}).get(p)),
+            "circuit_states": circuit_states,
         }
     except Exception as exc:
         logger.warning("[health] llm check failed: {}", exc)
-        services["llm"] = {"configured": False, "heavy_providers": 0, "providers": []}
+        services["llm"] = {"configured": False, "heavy_providers": 0, "circuit_states": {}}
 
     return services
 
@@ -2647,6 +2660,7 @@ class LLMHealthResponse(BaseModel):
     configured: bool
     providers_available: list[str]
     providers_failed: list[str]
+    circuit_state: dict[str, dict] = {}
     recommended_model: str | None = None
 
 
@@ -2654,27 +2668,22 @@ class LLMHealthResponse(BaseModel):
     "/api/health/llm",
     response_model=LLMHealthResponse,
     tags=["Health"],
-    summary="LLM provider health — validates at least 1 HEAVY-tier provider is configured",
+    summary="LLM provider health — circuit breaker states + provider availability",
 )
 @limiter.limit("30/minute")
 async def health_llm(request: Request):
     try:
-        from utils.llm_router import LLMRouter
-        available = []
-        failed = []
-        router = LLMRouter()
-        if hasattr(router, "tiers") and "heavy" in router.tiers:
-            for provider in router.tiers["heavy"]:
-                try:
-                    model_name = getattr(router, "_get_model_name", lambda p: str(p))(provider)
-                    available.append(str(provider))
-                except Exception:
-                    failed.append(str(provider))
-        configured = len(available) > 0
+        from config.llm_router import get_router_status, get_circuit_states
+        status = get_router_status()
+        circuits = get_circuit_states()
+        providers = status.get("providers", {})
+        available = [p for p, cfg in providers.items() if cfg]
+        failed = [p for p, cfg in providers.items() if not cfg]
         return LLMHealthResponse(
-            configured=configured,
+            configured=len(available) > 0,
             providers_available=available,
             providers_failed=failed,
+            circuit_state=circuits,
             recommended_model=available[0] if available else None,
         )
     except Exception as exc:
@@ -2719,6 +2728,10 @@ async def health_backup(request: Request):
 class DealCreate(BaseModel):
     survey_no: str
     market: str
+    stage: str | None = None
+    ask_psf: float | None = None
+    area_acres: float | None = None
+    notes: str | None = None
     opportunity_score: float | None = None
 
 
@@ -2728,6 +2741,8 @@ class DealUpdate(BaseModel):
     next_step_due: str | None = None
     notes: str | None = None
     assigned_to: str | None = None
+    ask_psf: float | None = None
+    area_acres: float | None = None
 
 
 _VALID_DEAL_STAGES = {
@@ -2747,6 +2762,8 @@ _VALID_DEAL_STAGES = {
     summary="Promote an opportunity to the deal pipeline",
 )
 async def create_deal(body: DealCreate, request: Request):
+    if body.stage is not None and body.stage not in _VALID_DEAL_STAGES:
+        return JSONResponse({"error": f"invalid stage: {body.stage}"}, status_code=400)
     try:
         with _get_sa_engine().begin() as conn:
             market_row = conn.execute(
@@ -2759,13 +2776,22 @@ async def create_deal(body: DealCreate, request: Request):
                 )
             market_id = market_row[0]
             result = conn.execute(
-                _sa_text("""INSERT INTO deal_pipeline (survey_no, micro_market_id, opportunity_score)
-                   VALUES (:sn, :mm, :os)
+                _sa_text("""INSERT INTO deal_pipeline (survey_no, micro_market_id, stage, opportunity_score, notes)
+                   VALUES (:sn, :mm, :st, :os, :nt)
                    RETURNING id, survey_no, stage, opportunity_score, assigned_to,
                              next_step, next_step_due, notes, created_at, updated_at"""),
-                {"sn": body.survey_no, "mm": market_id, "os": body.opportunity_score},
+                {"sn": body.survey_no, "mm": market_id, "st": body.stage or "prospecting",
+                 "os": body.opportunity_score, "nt": body.notes},
             )
             row = result.fetchone()
+            new_stage = row[2] or ""
+        if new_stage in ("loi", "signed"):
+            try:
+                from utils.discord_notifier import format_deal_alert, send
+                msg = format_deal_alert(new_stage, body.market, body.survey_no, body.ask_psf, body.area_acres)
+                send("bd_opportunities", f"Deal {new_stage.upper()}: {body.survey_no}", msg)
+            except Exception as exc:
+                logger.warning("[create_deal] Discord alert failed: {}", exc)
         return {
             "id": str(row[0]),
             "survey_no": row[1],
@@ -2845,7 +2871,7 @@ async def update_deal(deal_id: str, body: DealUpdate, request: Request):
         with _get_sa_engine().begin() as conn:
             existing = conn.execute(
                 _sa_text(
-                    "SELECT id, survey_no, stage, opportunity_score FROM deal_pipeline WHERE id = :tid"
+                    "SELECT dp.id, dp.survey_no, dp.stage, dp.opportunity_score, mm.name FROM deal_pipeline dp LEFT JOIN micro_markets mm ON mm.id = dp.micro_market_id WHERE dp.id = :tid"
                 ),
                 {"tid": tid},
             ).fetchone()
@@ -2890,15 +2916,13 @@ async def update_deal(deal_id: str, body: DealUpdate, request: Request):
         new_stage = body.stage
         if new_stage and new_stage in ("loi", "signed"):
             try:
-                from utils.discord_notifier import send
+                from utils.discord_notifier import format_deal_alert, send
 
-                send(
-                    "bd_opportunities",
-                    f"Deal {new_stage.upper()}: {row[1]}",
-                    f"Stage: {new_stage}\nSurvey: {row[1]}",
-                )
+                market_name = existing[4] or ""
+                msg = format_deal_alert(new_stage, market_name, existing[1], body.ask_psf, body.area_acres)
+                send("bd_opportunities", f"Deal {new_stage.upper()}: {existing[1]}", msg)
             except Exception as exc:
-                logger.warning("[update_deal] Discord alert failed: %s", exc)
+                logger.warning("[update_deal] Discord alert failed: {}", exc)
 
         return {
             "id": str(row[0]),
@@ -2951,6 +2975,80 @@ async def llm_quota(request: Request):
     except Exception:
         usage = {p: 0 for p in providers}
     return {"date": today, "usage": usage}
+
+
+# ── Telegram Webhook ──────────────────────────────────────────────────────────
+
+
+def _send_telegram_message(chat_id: int | str, text: str) -> None:
+    from config.settings import TELEGRAM_BOT_TOKEN as _tg_token
+    if not _tg_token:
+        logger.warning("[Telegram] TELEGRAM_BOT_TOKEN not set — cannot send reply")
+        return
+    try:
+        import requests as _req
+        _req.post(
+            f"https://api.telegram.org/bot{_tg_token}/sendMessage",
+            json={"chat_id": chat_id, "text": text},
+            timeout=10,
+        )
+    except Exception as exc:
+        logger.error("[Telegram] sendMessage failed: {}", exc)
+
+
+@app.post("/api/telegram/webhook", tags=["Telegram"], summary="Telegram bot webhook")
+async def telegram_webhook(request: Request):
+    """Receive Telegram updates. Validated by X-Telegram-Bot-Api-Secret-Token header."""
+    import asyncio
+    from config.settings import TELEGRAM_WEBHOOK_SECRET as _tg_secret
+    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if _tg_secret and secret != _tg_secret:
+        return JSONResponse({"error": "unauthorized"}, status_code=403)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": True})
+
+    message = body.get("message") or body.get("edited_message") or {}
+    text = (message.get("text") or "").strip()
+    chat_id = (message.get("chat") or {}).get("id")
+
+    if not text or not chat_id:
+        return JSONResponse({"ok": True})
+
+    from interface.telegram_bot import parse_message, dispatch_evaluation
+    parsed = parse_message(text)
+
+    if parsed.confidence > 0.6:
+        # Run blocking httpx.post in a thread — must not block the event loop.
+        result = await asyncio.to_thread(dispatch_evaluation, parsed)
+        status = result.get("status", "unknown")
+        job_id = result.get("job_id", "")
+        if status in ("running", "completed"):
+            reply = (
+                f"Evaluating {parsed.market} "
+                f"({parsed.area_acres:.1f}ac @ ₹{parsed.ask_psf:.0f} PSF, {parsed.deal_type}). "
+                f"Job: {job_id or 'queued'}."
+            )
+        else:
+            reply = (
+                f"Evaluation queued for {parsed.market}. "
+                f"Error: {result.get('error', 'unknown')[:100]}"
+            )
+    else:
+        reply = (
+            f"Confidence {parsed.confidence:.0%} — too low to evaluate.\n"
+            f"Include: market (Yelahanka/Devanahalli/Hebbal), area (acres or sqft), "
+            f"ask PSF or crore price, deal type (JD/JV/purchase)."
+        )
+
+    # Run blocking requests.post in a thread — must not block the event loop.
+    await asyncio.to_thread(_send_telegram_message, chat_id, reply)
+    logger.info(
+        "[Telegram] webhook: market=%s conf=%.2f", parsed.market, parsed.confidence
+    )
+    return JSONResponse({"ok": True})
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────

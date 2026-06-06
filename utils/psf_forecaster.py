@@ -9,7 +9,25 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from loguru import logger
 
-__all__ = ["ForecastResult", "PSFForecaster"]
+__all__ = ["ForecastResult", "PSFForecaster", "_send_mape_alert", "_MAPE_THRESHOLD"]
+
+
+_MAPE_THRESHOLD = 15.0
+
+
+def _send_mape_alert(market: str, mape: float, direction: str, next_3mo_avg: float | None) -> None:
+    if mape > _MAPE_THRESHOLD:
+        try:
+            from utils.discord_notifier import send
+            next_str = f"₹{next_3mo_avg:,.0f}" if next_3mo_avg is not None else "N/A"
+            send("bd_opportunities",
+                 f"PSF Forecast Warning — {market}",
+                 f"MAPE of {mape:.1f}% exceeds 15% threshold. "
+                 f"Direction: {direction}. "
+                 f"Next 3mo avg: {next_str}. "
+                 f"Recommendation: review forecast inputs, check data quality.")
+        except Exception as exc:
+            logger.warning("[PSFForecaster] MAPE alert failed: {}", exc)
 
 
 @dataclass
@@ -19,10 +37,12 @@ class ForecastResult:
     mape: Optional[float] = None
     last_observed_psf: Optional[float] = None
     next_3mo_avg: Optional[float] = None
-    direction: str = "stable"  # up, down, stable
+    direction: str = "stable"
     n_observations: int = 0
     error: Optional[str] = None
     trained_at: str = ""
+    status: str = "ok"
+    months_available: int = 0
     
     def __post_init__(self):
         if self.forecast_months is None:
@@ -56,6 +76,27 @@ class PSFForecaster:
             from sqlalchemy import text
             
             with get_engine().connect() as conn:
+                months_row = conn.execute(
+                    text("""
+                        SELECT COUNT(DISTINCT DATE_TRUNC('month', snapshot_date))
+                        FROM project_snapshots ps
+                        JOIN micro_markets m ON m.id = ps.micro_market_id
+                        WHERE m.name ILIKE :m
+                    """),
+                    {"m": f"%{market}%"},
+                ).scalar() or 0
+            result.months_available = months_row
+            
+            if months_row < self._MIN_OBSERVATIONS and not force:
+                result.status = "skipped"
+                result.error = f"insufficient_data: {months_row}/{self._MIN_OBSERVATIONS} months"
+                logger.warning(
+                    "[PSFForecaster] Skipped for {} — only {}/{} months of snapshots available",
+                    market, months_row, self._MIN_OBSERVATIONS,
+                )
+                return result
+            
+            with get_engine().connect() as conn:
                 rows = conn.execute(
                     text("""
                         SELECT DATE_TRUNC('month', snapshot_date) AS month,
@@ -68,11 +109,6 @@ class PSFForecaster:
                     """),
                     {"m": f"%{market}%"},
                 ).fetchall()
-            
-            if len(rows) < self._MIN_OBSERVATIONS and not force:
-                result.error = f"Need ≥{self._MIN_OBSERVATIONS} months data, got {len(rows)}"
-                logger.info("[PSFForecaster] %s: %s", market, result.error)
-                return result
             
             import pandas as pd
             import numpy as np
@@ -97,7 +133,7 @@ class PSFForecaster:
                     for i in range(1, self._FORECAST_HORIZON + 1)
                 ]
                 result.direction = "stable"
-                logger.info("[PSFForecaster] %s: using MA fallback (n=%d)", market, len(df))
+                logger.info("[PSFForecaster] {}: using MA fallback (n={})", market, len(df))
                 return result
             
             try:
@@ -144,12 +180,9 @@ class PSFForecaster:
                     result.next_3mo_avg = round(
                         sum(m["predicted_psf"] for m in result.forecast_months) / len(result.forecast_months), 2
                     )
-                
-                logger.info("[PSFForecaster] %s: trained (n=%d, MAPE=%s%%, direction=%s)",
-                           market, len(df), f"{result.mape:.1f}" if result.mape else "N/A", result.direction)
-                
+
             except ImportError:
-                logger.debug("[PSFForecaster] mlforecast/LightGBM unavailable — using MA fallback")
+                logger.debug("[PSFForecaster] mlforecast/LightGBM unavailable — using MA fallback (n={})", len(df))
                 ma = df["y"].rolling(window=3).mean().iloc[-1] if len(df) >= 3 else df["y"].mean()
                 result.forecast_months = [
                     {"month": (datetime.now() + timedelta(days=30 * i)).strftime("%Y-%m"),
@@ -157,9 +190,15 @@ class PSFForecaster:
                     for i in range(1, self._FORECAST_HORIZON + 1)
                 ]
                 result.direction = "stable"
+
+            if result.mape is not None:
+                _send_mape_alert(market, result.mape, result.direction, result.next_3mo_avg)
+
+            logger.info("[PSFForecaster] {}: trained (n={}, MAPE={}, direction={})",
+                       market, len(df), f"{result.mape:.1f}%" if result.mape else "N/A", result.direction)
             
         except Exception as exc:
-            logger.warning("[PSFForecaster] Failed for %s: %s", market, exc)
+            logger.warning("[PSFForecaster] Failed for {}: {}", market, exc)
             result.error = str(exc)
         
         return result
@@ -207,5 +246,5 @@ class PSFForecaster:
                 return {"mape": round(float(np.mean(errors)), 2), "n_windows": len(errors)}
             return {"mape": None, "n_windows": 0}
         except Exception as exc:
-            logger.debug("[PSFForecaster] Walk-forward failed: %s", exc)
+            logger.debug("[PSFForecaster] Walk-forward failed: {}", exc)
             return {"mape": None, "n_windows": 0, "error": str(exc)}

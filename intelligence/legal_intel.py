@@ -58,6 +58,7 @@ class LegalPicture:
 
     title_risk_flags: list[TitleRiskFlag] = field(default_factory=list)
     risk_level: str = "UNKNOWN"
+    pdf_qa_results: dict | None = None
 
     def __str__(self) -> str:
         flag_summary = ", ".join(f"{f.flag}={f.status}" for f in self.title_risk_flags)
@@ -76,7 +77,7 @@ class LegalIntel:
         self._caller = caller or "LegalIntel"
         self._cache = MarketCache()
 
-    def get_survey_picture(self, survey_no: str, market: str) -> LegalPicture:
+    def get_survey_picture(self, survey_no: str, market: str, **kwargs) -> LegalPicture:
         s = sanitize_survey(survey_no)
         m_raw = sanitize_market(market)
         if not s or not m_raw:
@@ -115,6 +116,16 @@ class LegalIntel:
                 self._check_inheritance(conn, pic, mi)
 
             self._compute_risk_level(pic)
+
+            pdf_path = kwargs.get("pdf_path")
+            if pdf_path:
+                try:
+                    from utils.legal_doc_qa import LegalDocQATool
+                    qa_tool = LegalDocQATool()
+                    pic.pdf_qa_results = qa_tool.run_title_checklist(s, pdf_path)
+                except Exception as qa_exc:
+                    logger.warning("[{}] PDF QA failed for {}: {}",
+                                   self._caller, pdf_path, qa_exc)
 
         except Exception as exc:
             logger.warning("[{}] get_survey_picture({}, {}) failed: {}",

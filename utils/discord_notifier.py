@@ -165,6 +165,7 @@ def send_intel_alert(market: str, run_id: str, synopsis: str, avg_psf: int | Non
     # 4-hour cooldown: one intel digest per market per half-day, suppresses dev-run spam
     try:
         from utils.db import get_engine
+        from sqlalchemy import text
         with get_engine().connect() as _conn:
             _row = _conn.execute(
                 text("""
@@ -237,6 +238,15 @@ def send_opportunity_alert(survey_no: str, score: float, components: dict,
         f"Action: {next_action}"
     )
     return send(channel, title, message, COLOR_GREEN if score >= 0.8 else COLOR_AMBER)
+
+
+def format_deal_alert(stage: str, market: str, survey_no: str, ask_psf: float | None = None, area_acres: float | None = None) -> str:
+    psf_str = f"₹{ask_psf:,.0f}/sqft" if ask_psf else "PSF TBD"
+    area_str = f"{area_acres:.2f} acres" if area_acres else "Area TBD"
+    return (
+        f"**{stage.upper()}** — {market} | Survey {survey_no}\n"
+        f"{area_str} | {psf_str}"
+    )[:500]
 
 
 def send_quality_alert(market: str, errors: list, warnings: list) -> bool:

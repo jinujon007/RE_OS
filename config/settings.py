@@ -109,6 +109,7 @@ JINA_READER_BASE = "https://r.jina.ai"
 HF_API_KEY = os.getenv("HF_API_KEY", "")
 FINBERT_MODEL_ID = "ProsusAI/finbert"
 FINBERT_TONE_MODEL_ID = "ProsusAI/finbert-tone"
+FINBERT_TONE_6LABEL_MODEL_ID = "yiyanghkust/finbert-tone"
 
 # ── INTELLIGENCE LAYER (Phase 8.5) ────────────────────────────────────────────
 # ChromaDB persistent path for intel report embeddings (maps to chroma_data volume)
@@ -161,6 +162,7 @@ OBSIDIAN_VAULT_PATH = os.getenv(
 # ── TELEGRAM ALERTS ─────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 
 # Scraping intervals (seconds)
 RERA_SCRAPE_INTERVAL = int(os.getenv("RERA_SCRAPE_INTERVAL", "24")) * 3600
@@ -185,8 +187,14 @@ GRADE_A_DEVELOPERS = [
     "embassy",
     "mantri",
     "salarpuria",
+    "sattva",
     "total environment",
     "adarsh",
+    "tata realty",
+    "tata housing",
+    "assetz",
+    "century real estate",
+    "century",
 ]
 GRADE_A_MIN_UNITS = 500
 
@@ -224,7 +232,7 @@ PLUGIN_SCHEDULES: dict[str, dict | None] = {
     "igr_karnataka": {"day_of_week": "sun", "hour": 5, "minute": 30},
     "kaveri_bhoomi": {"day_of_week": "sun", "hour": 5, "minute": 0},
     "portal_scout": None,            # daily at 02:00 IST
-    "developer_scout": {"day_of_week": "mon,thu", "hour": 4, "minute": 0},
+    "developer_scout": None,  # daily at 02:00 IST — vigorous monitoring for all 15 developers
     "news_scout": None,              # daily at 02:00 IST
     "distressed_scan": None,         # daily at 02:00 IST
     "bbmp_khata": {"day_of_week": "wed", "hour": 4, "minute": 0},

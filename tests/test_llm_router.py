@@ -20,10 +20,12 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 def reset_excluded():
-    """Ensure _EXCLUDED is empty before and after every test."""
+    """Ensure _EXCLUDED + _CIRCUIT_STATE are clean before and after every test."""
     r._clear_excluded()
+    r._reset_circuit_state()
     yield
     r._clear_excluded()
+    r._reset_circuit_state()
 
 
 @pytest.fixture

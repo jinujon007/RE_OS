@@ -292,6 +292,94 @@ def run_market_snapshot():
         except Exception as e:
             logger.error(f"  Snapshot failed for {market}: {e}")
 
+    # Locality validation check after snapshots
+    for market in TARGET_MARKETS:
+        market = market.strip()
+        try:
+            from utils.data_quality import DataQualityMonitor
+            result = DataQualityMonitor.locality_validation_score(market)
+            if result["score"] < 0.80:
+                logger.warning(
+                    "[Scheduler] Locality validation for %s: score=%.4f, suspect=%d, action=%s",
+                    market, result["score"], result["suspect"], result["action"],
+                )
+            else:
+                logger.info(
+                    "[Scheduler] Locality validation for %s: score=%.4f (%d/%d valid)",
+                    market, result["score"], result["valid"], result["valid"] + result["suspect"],
+                )
+        except Exception as e:
+            logger.warning(f"  Locality validation failed for {market}: {e}")
+
+
+def _ops_already_alerted(title: str, cooldown_hours: int = 23) -> bool:
+    """Return True if an alert with this exact title was already sent to ops
+    within cooldown_hours. Prevents daily re-fire of the same signal.
+    """
+    try:
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT id FROM alerts
+                    WHERE channel = 'ops'
+                      AND title = :title
+                      AND created_at > NOW() - (:hrs || ' hours')::interval
+                    LIMIT 1
+                """),
+                {"title": title, "hrs": cooldown_hours},
+            ).fetchone()
+        return row is not None
+    except Exception as exc:
+        logger.debug("[Ops-Dedup] Check failed — allowing send: {}", exc)
+        return False
+
+
+def run_seed_staleness_check():
+    """Check seed data staleness and remove stale seeds where live data sufficient.
+    Runs at 06:05 IST, 5 min after market snapshot.
+    """
+    logger.info("Scheduler: Checking seed staleness")
+    try:
+        from utils.data_quality import DataQualityMonitor
+        from utils.discord_notifier import send
+        from config.gate_criteria import SLO_SEED_MIN_LIVE_LISTINGS
+
+        flags = DataQualityMonitor.check_seed_staleness(min_live_listings=SLO_SEED_MIN_LIVE_LISTINGS)
+        engine = get_engine()
+
+        for flag in flags:
+            market = flag["market"]
+            if flag["action"] != "remove_seed_and_use_live":
+                continue
+
+            live_count = flag["live_listing_count"]
+            logger.info(f"  {market}: removing seed data ({live_count} live listings available)")
+
+            with engine.begin() as conn:
+                conn.execute(
+                    text("""
+                        DELETE FROM listings l
+                        USING micro_markets mm
+                        WHERE l.micro_market_id = mm.id
+                          AND mm.name ILIKE :market
+                          AND l.data_source = 'seed_estimated'
+                    """),
+                    {"market": f"%{market}%"},
+                )
+
+            title = f"Seed data removed for {market}"
+            if _ops_already_alerted(title):
+                logger.info(f"  {market}: alert already sent in last 24h — skipping")
+                continue
+
+            try:
+                send("ops", title, f"Seed data removed for {market} — {live_count} live listings available")
+            except Exception as exc:
+                logger.warning(f"  {market}: Discord alert failed: {exc}")
+
+    except Exception as exc:
+        logger.warning(f"[Scheduler] Seed staleness check failed: {exc}")
+
 
 def run_bertscore_evaluation():
     """Weekly BERTScore evaluation — Monday 04:00 IST.
@@ -625,28 +713,21 @@ def run_psf_forecast():
     """Weekly PSF forecast for all markets. Discord alert if MAPE >15%.
     Runs Sunday 07:00 IST."""
     from utils.psf_forecaster import PSFForecaster
-    from utils.discord_notifier import send
 
     for market in TARGET_MARKETS:
         try:
             forecaster = PSFForecaster()
             result = forecaster.train(market)
-            if result.error:
-                logger.info("[Scheduler] PSF forecast skipped for %s: %s", market, result.error)
+            if result.status == "skipped":
+                logger.info("[Scheduler] PSF forecast skipped for {}: {}",
+                           market, result.error or "insufficient data")
                 continue
 
-            logger.info("[Scheduler] PSF forecast for %s: direction=%s, next_3mo=%.0f, MAPE=%s",
+            logger.info("[Scheduler] PSF forecast for {}: direction={}, next_3mo={:.0f}, MAPE={}",
                        market, result.direction, result.next_3mo_avg or 0,
                        f"{result.mape:.1f}%" if result.mape else "N/A")
-
-            # Discord alert if MAPE > 15%
-            if result.mape is not None and result.mape > 15.0:
-                send("system", f"PSF Forecast Warning — {market}",
-                     f"MAPE of {result.mape:.1f}% exceeds 15% threshold. "
-                     f"Direction: {result.direction}. "
-                     f"Next 3mo avg: ₹{result.next_3mo_avg:,.0f}")
         except Exception as exc:
-            logger.warning("[Scheduler] PSF forecast failed for %s: %s", market, exc)
+            logger.warning("[Scheduler] PSF forecast failed for {}: {}", market, exc)
 
 
 def run_compliance_check():
@@ -760,6 +841,30 @@ def run_db_backup():
         _backup_lock = False
 
 
+def run_locality_validation():
+    """Daily locality alias validation — 06:10 IST (after market snapshot at 06:00).
+    Checks listings for known alien locality aliases and logs WARNING if >20% suspect."""
+    try:
+        from utils.data_quality import DataQualityMonitor
+        for market in TARGET_MARKETS:
+            market = market.strip()
+            result = DataQualityMonitor.locality_validation_score(market)
+            if result["score"] < 0.80:
+                logger.warning(
+                    "[Scheduler] Locality validation WARNING for %s: score=%.4f (%d suspect)",
+                    market, result["score"], result["suspect"],
+                )
+            logger.info(
+                "[Scheduler] Locality validation for %s: score=%.4f, action=%s",
+                market, result["score"], result["action"],
+            )
+    except Exception as exc:
+        logger.warning(f"[Scheduler] Locality validation failed: {exc}")
+
+
+_backup_lock = False
+
+
 if __name__ == "__main__":
     logger.add("logs/scheduler.log", rotation="50 MB")
     os.makedirs("logs", exist_ok=True)
@@ -798,6 +903,15 @@ if __name__ == "__main__":
         CronTrigger(hour=6, minute=0),
         id="market_snapshot",
         name="Daily Market Snapshot",
+        misfire_grace_time=3600,
+    )
+
+    # Seed staleness check at 6:05 AM IST (5 min after market snapshot) — T-953
+    scheduler.add_job(
+        lambda: _safe_job(run_seed_staleness_check, "seed_staleness_check"),
+        CronTrigger(hour=6, minute=5),
+        id="seed_staleness_check",
+        name="Daily Seed Staleness Check",
         misfire_grace_time=3600,
     )
 
@@ -901,6 +1015,15 @@ if __name__ == "__main__":
         misfire_grace_time=3600,
     )
 
+    # Daily locality validation — 06:10 IST (after market snapshot at 06:00)
+    scheduler.add_job(
+        lambda: _safe_job(run_locality_validation, "locality_validation"),
+        CronTrigger(hour=6, minute=10),
+        id="locality_validation",
+        name="Daily Locality Alias Validation (R06/R15)",
+        misfire_grace_time=3600,
+    )
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
     logger.info("  01:00 AM IST — Daily pg_dump backup [T-904]")
@@ -909,6 +1032,8 @@ if __name__ == "__main__":
     logger.info("  04:30 AM IST — Intel embedding index (ChromaDB)")
     logger.info("  05:00 AM IST — News sentiment scoring (FinBERT)")
     logger.info("  06:00 AM IST — Market snapshots")
+    logger.info("  06:05 AM IST — Seed staleness check (T-953)")
+    logger.info("  06:10 AM IST — Locality alias validation (R06/R15)")
     logger.info("  06:15 AM IST — Distressed developer scan (JD/JV targets)")
     logger.info("  08:00 AM IST — LLS Compliance Calendar check [T-704]")
     logger.info("  Sunday 07:00 IST — Weekly PSF forecast (LGBM) [T-765]")

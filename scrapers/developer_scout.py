@@ -10,7 +10,9 @@ This is the "street intelligence" layer. Developer sites often carry:
 
 Covered developers (North Bengaluru focus):
   Brigade Enterprises, Prestige Group, Sobha Limited, Godrej Properties,
-  Adarsh Developers, Salarpuria Sattva, Shriram Properties, Mantri Developers
+  Adarsh Developers, Sattva Group (fka Salarpuria Sattva), Shriram Properties,
+  Mantri Developers, Puravankara, Total Environment, Embassy Group, Tata Realty,
+  Mahindra Lifespaces, Assetz Property Group, Century Real Estate
 
 Fetch strategy (tiered per developer):
   use_playwright=True  → Scrapling DynamicFetcher (stealth Playwright) → raw Playwright fallback
@@ -137,12 +139,94 @@ DEVELOPER_SITES: dict[str, dict] = {
         "use_playwright": False,
         "north_blr_keywords": ["yelahanka", "satellite town", "north bangalore"],
     },
-    "Salarpuria": {
-        "name": "Salarpuria Sattva Group",
-        "projects_url": "https://www.salarpuriasattva.com/residential-projects/",
-        "alt_url": "https://www.salarpuriasattva.com/ongoing-projects/",
+    "Sattva": {
+        "name": "Sattva Group",
+        # sattvagroup.in redirects → sattvagroup.com
+        "projects_url": "https://sattvagroup.com/residential/",
+        "alt_url": "https://sattvagroup.com/residential/",
+        "use_playwright": True,  # JS-heavy SPA; times out on plain fetch
+        "north_blr_keywords": [
+            "yelahanka", "hebbal", "north bangalore", "thanisandra", "jakkur",
+            "devanahalli", "bagalur", "aeropolis",
+        ],
+    },
+    "Puravankara": {
+        "name": "Puravankara Limited",
+        "listing_url": "https://www.puravankara.com/residential/bengaluru",
+        "projects_url": "https://www.puravankara.com/residential/bengaluru",
+        "alt_url": "https://www.puravankara.com/residential/bengaluru",
+        "use_playwright": True,  # React SPA with lazy-loaded project cards
+        "north_blr_keywords": [
+            "yelahanka", "hebbal", "devanahalli", "north bangalore",
+            "thanisandra", "jakkur", "bagalur", "airport road",
+        ],
+    },
+    "TotalEnvironment": {
+        "name": "Total Environment",
+        # /homes is the live listing; /projects/ does not exist
+        "projects_url": "https://www.total-environment.com/homes",
+        "alt_url": "https://www.total-environment.com/homes",
+        "use_playwright": True,  # React app; content not in static HTML
+        "north_blr_keywords": [
+            "jakkur", "hennur", "north bangalore", "north bengaluru",
+            "down by the water", "in that quiet earth",
+        ],
+    },
+    "Embassy": {
+        "name": "Embassy Group",
+        # Verified URL: returns all residential projects incl. North BLR
+        "projects_url": "https://embassyindia.com/projects?property-type=residential",
+        "alt_url": "https://embassyindia.com/projects/",
         "use_playwright": False,
-        "north_blr_keywords": ["yelahanka", "hebbal", "north bangalore", "thanisandra"],
+        "north_blr_keywords": [
+            "hebbal", "north bangalore", "north bengaluru",
+            "embassy springs", "embassy lake terraces", "mekhri",
+        ],
+    },
+    "TataRealty": {
+        "name": "Tata Realty",
+        # No current Bengaluru residential projects — monitoring for market entry
+        "projects_url": "https://tatarealty.in/projects",
+        "alt_url": "https://tatarealty.in/",
+        "use_playwright": True,  # JS SPA; Residential section rendered client-side
+        "entry_watch": True,     # alert when Bengaluru appears in city dropdown
+        "north_blr_keywords": [
+            "bengaluru", "bangalore", "yelahanka", "devanahalli", "north bangalore",
+        ],
+    },
+    "Mahindra": {
+        "name": "Mahindra Lifespaces",
+        # Verified URL: city filter returns all Bengaluru properties
+        "projects_url": "https://www.mahindralifespaces.com/real-estate-properties/?city=bangalore",
+        "alt_url": "https://www.mahindralifespaces.com/real-estate-properties/",
+        "use_playwright": False,
+        "north_blr_keywords": [
+            "yelahanka", "devanahalli", "north bangalore", "hebbal", "jakkur",
+            "airport road",
+        ],
+    },
+    "Assetz": {
+        "name": "Assetz Property Group",
+        # Verified URL; confirmed Yelahanka (Zen & Sato) + Bagalur (Sora & Saki)
+        "projects_url": "https://www.assetzproperty.com/projects",
+        "alt_url": "https://www.assetzproperty.com/projects",
+        "use_playwright": False,
+        "north_blr_keywords": [
+            "yelahanka", "devanahalli", "north bangalore", "hebbal", "kogilu",
+            "jakkur", "thanisandra", "bagalur", "kiadb aerospace",
+            "zen and sato", "sora and saki",
+        ],
+    },
+    "Century": {
+        "name": "Century Real Estate",
+        # Verified URL; confirmed multiple North BLR projects on Doddaballapura Road + Jakkur
+        "projects_url": "https://www.centuryrealestate.in/residential/projects",
+        "alt_url": "https://www.centuryrealestate.in/projects",
+        "use_playwright": False,
+        "north_blr_keywords": [
+            "yelahanka", "doddaballapura", "jakkur", "airport road",
+            "north bangalore", "north bengaluru", "yelahanka new town",
+        ],
     },
     "Shriram": {
         "name": "Shriram Properties",
@@ -607,6 +691,12 @@ class DeveloperScout:
 
         text = _clean_html(raw_html)
         dom_snippets = _extract_dom_snippets(raw_html)
+        # Entry-watch: alert when a "no BLR presence" developer shows Bengaluru content
+        if dev_info.get("entry_watch"):
+            blr_terms = ["bengaluru", "bangalore", "karnataka"]
+            if any(t in text.lower() for t in blr_terms):
+                self._send_entry_watch_alert(developer_name, fetch_url, text[:400])
+
         raw_items = _ai_extract_developer(
             text, developer_name, dom_snippets=dom_snippets
         )
@@ -615,6 +705,22 @@ class DeveloperScout:
             for r in raw_items
         ]
         return [r for r in results if r is not None]
+
+    def _send_entry_watch_alert(
+        self, developer_name: str, url: str, snippet: str
+    ) -> None:
+        """Fire a Discord BD alert when an entry-watch developer shows Bengaluru content."""
+        try:
+            from utils.discord_notifier import send
+            msg = (
+                f"**{developer_name}** website now mentions Bengaluru/Bangalore.\n"
+                f"Source: {url}\n"
+                f"Snippet: {snippet.strip()[:300]}"
+            )
+            send("bd_opportunities", f"Market Entry Signal — {developer_name}", msg)
+            logger.info(f"[DeveloperScout] Entry-watch alert sent for {developer_name}")
+        except Exception as exc:
+            logger.warning(f"[DeveloperScout] Entry-watch alert failed: {exc}")
 
     # ── Unified fetch dispatcher ──────────────────────────────────────────────
 

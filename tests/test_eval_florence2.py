@@ -2,6 +2,9 @@
 
 Tests the utility functions of eval_florence2.py without loading the model.
 """
+import pytest
+pytestmark = pytest.mark.unit
+
 from unittest.mock import MagicMock, patch
 
 import pytest

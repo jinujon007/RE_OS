@@ -5,6 +5,7 @@ Validates PDF parsing logic, data quality, and registration volume API
 without hitting the live portal.
 """
 import pytest
+pytestmark = pytest.mark.unit
 from unittest.mock import patch, MagicMock
 import io
 

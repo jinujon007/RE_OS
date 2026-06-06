@@ -108,6 +108,7 @@ def _litellm_usage_callback(kwargs, completion_response, start_time, end_time):
             provider = provider_map.get(provider_part, provider_part)
         tokens = completion_response.usage.total_tokens if completion_response.usage else 0
         record_token_usage(provider, tokens)
+        _record_success(provider)
         logger.debug(f"[Router] Token usage recorded: {provider} {tokens}")
     except Exception:
         pass
@@ -169,6 +170,94 @@ if _litellm_usage_callback not in litellm.success_callback:
 _EXCLUDED: set = set()
 _EXCLUDED_LOCK = threading.Lock()
 
+# Circuit breaker state machine — per-provider health tracking.
+# States: CLOSED (normal) → OPEN (after 3 failures in 5 min) → HALF_OPEN (after 60s)
+# On HALF_OPEN: 1 trial call allowed. Success → CLOSED. Failure → OPEN again.
+_CIRCUIT_STATE: dict[str, dict] = {}
+_CIRCUIT_LOCK = threading.Lock()
+
+_CIRCUIT_FAIL_THRESHOLD = 3
+_CIRCUIT_WINDOW_SECONDS = 300
+_CIRCUIT_HALF_OPEN_SECONDS = 60
+# If a trial call never resolves (litellm callback never fires), re-open after this many seconds.
+_CIRCUIT_HALF_OPEN_STALE_SECONDS = 120
+
+import time as _time
+
+
+def _get_circuit_state(provider: str) -> dict:
+    now = _time.time()
+    with _CIRCUIT_LOCK:
+        if provider not in _CIRCUIT_STATE:
+            return {"circuit": "CLOSED", "failures": [], "open_since": None, "half_open_since": None}
+        state = _CIRCUIT_STATE[provider]
+        if state["circuit"] == "OPEN":
+            if state["open_since"] and (now - state["open_since"]) >= _CIRCUIT_HALF_OPEN_SECONDS:
+                state["circuit"] = "HALF_OPEN"
+                state["open_since"] = None
+                state["half_open_since"] = now
+        elif state["circuit"] == "HALF_OPEN":
+            # Trial call never resolved — litellm success_callback never fired.
+            # Re-open to prevent permanent HALF_OPEN on connection errors.
+            ho_since = state.get("half_open_since")
+            if ho_since and (now - ho_since) >= _CIRCUIT_HALF_OPEN_STALE_SECONDS:
+                state["circuit"] = "OPEN"
+                state["open_since"] = now
+                state["half_open_since"] = None
+                logger.warning("[CircuitBreaker] {} stale HALF_OPEN → OPEN (trial timed out after {}s)",
+                               provider, _CIRCUIT_HALF_OPEN_STALE_SECONDS)
+    return state
+
+
+def _record_failure(provider: str) -> None:
+    now = _time.time()
+    with _CIRCUIT_LOCK:
+        state = _CIRCUIT_STATE.setdefault(provider, {"circuit": "CLOSED", "failures": [], "open_since": None, "half_open_since": None})
+        state["failures"] = [t for t in state["failures"] if now - t < _CIRCUIT_WINDOW_SECONDS]
+        state["failures"].append(now)
+        if len(state["failures"]) >= _CIRCUIT_FAIL_THRESHOLD and state["circuit"] != "OPEN":
+            state["circuit"] = "OPEN"
+            state["open_since"] = now
+            logger.warning("[CircuitBreaker] {} → OPEN after {} failures in {}s",
+                           provider, _CIRCUIT_FAIL_THRESHOLD, _CIRCUIT_WINDOW_SECONDS)
+            try:
+                from utils.discord_notifier import send
+                send("ops", "LLM Circuit OPEN — {}".format(provider),
+                     "{} circuit opened after {} failures in {}s. "
+                     "Half-open in {}s. Auto-recovery enabled.".format(
+                         provider, _CIRCUIT_FAIL_THRESHOLD, _CIRCUIT_WINDOW_SECONDS, _CIRCUIT_HALF_OPEN_SECONDS))
+            except Exception:
+                pass
+
+
+def _record_success(provider: str) -> None:
+    with _CIRCUIT_LOCK:
+        state = _CIRCUIT_STATE.setdefault(provider, {"circuit": "CLOSED", "failures": [], "open_since": None, "half_open_since": None})
+        prev = state["circuit"]
+        state["circuit"] = "CLOSED"
+        state["failures"] = []
+        state["open_since"] = None
+        state["half_open_since"] = None
+        if prev != "CLOSED":
+            logger.info("[CircuitBreaker] {} → CLOSED (was {})", provider, prev)
+
+
+def get_circuit_states() -> dict[str, dict]:
+    """Return per-provider circuit breaker state for health endpoint."""
+    result = {}
+    now = _time.time()
+    with _CIRCUIT_LOCK:
+        for provider, state in _CIRCUIT_STATE.items():
+            result[provider] = {
+                "circuit_state": state["circuit"],
+                "failure_count": len([t for t in state["failures"] if now - t < _CIRCUIT_WINDOW_SECONDS]),
+                "open_since": state.get("open_since"),
+            }
+    for p in ["groq", "cerebras", "gemini", "nvidia", "sambanova", "openrouter", "cloudflare"]:
+        if p not in result:
+            result[p] = {"circuit_state": "CLOSED", "failure_count": 0, "open_since": None}
+    return result
+
 # DAILY_LIMITS config — limits are per calendar day UTC, reset at midnight
 DAILY_LIMITS = {
     "cerebras": 1_000_000,
@@ -189,17 +278,29 @@ _counts_lock = threading.Lock()
 
 def _is_excluded(provider: str) -> bool:
     with _EXCLUDED_LOCK:
-        return provider in _EXCLUDED
+        if provider in _EXCLUDED:
+            return True
+    state = _get_circuit_state(provider)
+    if state["circuit"] == "OPEN":
+        return True
+    return False
 
 
 def _exclude(provider: str) -> None:
     with _EXCLUDED_LOCK:
         _EXCLUDED.add(provider)
+    _record_failure(provider)
 
 
 def _clear_excluded() -> None:
     with _EXCLUDED_LOCK:
         _EXCLUDED.clear()
+
+
+def _reset_circuit_state():
+    """Reset ALL circuit breaker state (test helper, not production use)."""
+    with _CIRCUIT_LOCK:
+        _CIRCUIT_STATE.clear()
 
 
 def _reset_daily_counts_if_needed() -> None:
@@ -214,9 +315,9 @@ def _reset_daily_counts_if_needed() -> None:
 
 
 def record_token_usage(provider: str, tokens: int, prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
+    """Record token usage for a provider. Call after each LLM invocation."""
     if prompt_tokens or completion_tokens:
         _track_token_usage(provider, prompt_tokens, completion_tokens)
-    """Record token usage for a provider. Call after each LLM invocation."""
     _reset_daily_counts_if_needed()
     with _counts_lock:
         _daily_counts[provider] = _daily_counts.get(provider, 0) + tokens

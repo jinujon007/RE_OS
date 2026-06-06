@@ -62,7 +62,6 @@ jobs:
           pip install \
             pytest>=7.0 pytest-mock>=3.0 pytest-cov>=4.0 \
             loguru python-dotenv \
-            flask flask-cors flask-limiter \
             psycopg2-binary sqlalchemy \
             "prometheus-client>=0.21.0" \
             redis requests
@@ -70,7 +69,12 @@ jobs:
       - name: Run unit tests
         env:
           DB_PASSWORD: test_password_for_ci
-        run: pytest tests/ -v -m unit --tb=short --cov=agents --cov=config --cov=crews --cov=scrapers --cov=utils --cov=dashboard --cov-report=term-missing --cov-report=xml --cov-fail-under=60
+        run: pytest tests/ -v -m "not integration" --tb=short --cov=agents --cov=config --cov=crews --cov=scrapers --cov=utils --cov=dashboard --cov-report=term-missing --cov-report=xml --cov-fail-under=60
+
+      - name: Sprint 50 — HF Intelligence CI gate (finbert-tone + LegalDocQA)
+        run: |
+          echo "Running finbert-tone + LegalDocQA unit tests (mocked, no HF API)"
+          python -m pytest tests/test_finbert_tone.py tests/test_legal_doc_qa.py tests/test_gate58.py -m "not integration" -v --tb=short
 
       - name: BERTScore regression check
         continue-on-error: true

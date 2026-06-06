@@ -1,0 +1,38 @@
+EC CERTIFICATE NO: KNC/2026/12345
+SRO: Yelahanka
+District: Bangalore Urban
+Date of Issue: 15-03-2026
+
+PART A — PROPERTY DETAILS
+Survey Number: 45/2
+Area: 0.5 acres (21780 sq ft)
+Property Owner Name: Venkatesh Reddy
+Father's Name: Narayana Reddy
+Address: No. 123, 3rd Cross, Yelahanka New Town
+
+PART B — ENCUMBRANCE CERTIFICATE
+Period From: 01-01-2010 to 15-03-2026
+Total Registrations Found: 3
+
+Encumbrance Entry 1:
+Registration Date: 12-06-2019
+Document No: YLK-1-2019-4567
+Transaction Amount: Rs. 25,00,000
+
+Encumbrance Entry 2:
+Registration Date: 05-02-2022
+Document No: YLK-1-2022-8910
+Remarks: Loan from Karnataka Bank against property
+
+Encumbrance Entry 3:
+Registration Date: 10-08-2024
+Document No: YLK-1-2024-1122
+Nature of Document: Release Deed
+
+PART C — COURT ORDERS
+No court orders or injunctions found for the above property
+
+PART D — GUIDANCE VALUE
+Market Value per sqft: Rs. 4,500
+Guidance Value per sqft: Rs. 3,200
+Zone: Residential A

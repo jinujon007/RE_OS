@@ -76,6 +76,21 @@ NEWS_QUERIES: dict[str, list[str]] = {
         "Hebbal property prices 2026",
         "Hebbal Nagawara Thanisandra new project",
     ],
+    # Developer-level intelligence — catches launches, distress, land deals, JVs
+    "_developers": [
+        "Prestige Group Bangalore new launch 2026",
+        "Brigade Enterprises Bangalore residential project 2026",
+        "Sobha Limited Bangalore north project launch",
+        "Puravankara Bangalore new launch 2026",
+        "Total Environment Bangalore project 2026",
+        "Embassy Group Bangalore residential launch",
+        "Godrej Properties Bangalore north launch 2026",
+        "Sattva Group Bangalore residential project",
+        "Assetz Property Bangalore new launch 2026",
+        "Century Real Estate Bangalore Yelahanka project",
+        "Mahindra Lifespaces Bangalore launch 2026",
+        "Tata Realty Bangalore entry residential",
+    ],
 }
 
 SCRAPE_HEADERS = {
@@ -448,7 +463,9 @@ class NewsScout:
     def __init__(self, market: str, memory: ScoutMemory | None = None):
         self.market = market
         self.memory = memory or ScoutMemory(market)
-        self.queries = NEWS_QUERIES.get(market, NEWS_QUERIES["Yelahanka"])
+        market_queries = NEWS_QUERIES.get(market, NEWS_QUERIES["Yelahanka"])
+        developer_queries = NEWS_QUERIES.get("_developers", [])
+        self.queries = market_queries + developer_queries
         self.session = requests.Session()
         self.session.headers.update(SCRAPE_HEADERS)
 

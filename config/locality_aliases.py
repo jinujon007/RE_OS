@@ -66,3 +66,33 @@ def get_locality_aliases(market: str) -> list[str]:
     """
     key = market.strip().lower()
     return LOCALITY_ALIASES.get(key, [key])
+
+
+KNOWN_ALIEN_LOCALITIES: dict[str, list[str]] = {
+    "yelahanka": [
+        "electronic city", "whitefield", "koramangala", "indiranagar",
+        "mg road", "brigade road", "jayanagar", "jp nagar",
+        "banashankari", "bannerghatta", "e city",
+    ],
+    "devanahalli": [
+        "electronic city", "whitefield", "koramangala", "indiranagar",
+        "mg road", "jayanagar", "jp nagar", "banashankari",
+        "bannerghatta", "e city", "marathahalli", "sarjapur",
+    ],
+    "hebbal": [
+        "electronic city", "whitefield", "koramangala", "indiranagar",
+        "mg road", "jayanagar", "bannerghatta", "e city",
+        "banashankari", "jp nagar", "sarjapur",
+    ],
+}
+
+
+def is_alien_locality(market: str, locality_text: str) -> bool:
+    """Check if a locality string contains known alien locality aliases for a market.
+    
+    Returns True if locality_text (lowercased) contains any alien substring.
+    """
+    key = market.strip().lower()
+    aliens = KNOWN_ALIEN_LOCALITIES.get(key, [])
+    text_lower = locality_text.lower()
+    return any(alien in text_lower for alien in aliens)

@@ -1,0 +1,12 @@
+# Modelfile for RERA Qwen2.5-3B QLoRA adapter (T-965)
+# After fine-tuning: ollama create rera-qwen -f models/Modelfile.rera_qwen
+#
+# The fine-tuned adapter at /app/models/rera_qwen_adapter/ is merged with the
+# base Qwen2.5-3B-Instruct model at load time via Ollama's Modelfile support.
+# Ensure the adapter was created by scripts/finetune_rera_qwen.py first.
+
+FROM /app/models/rera_qwen_adapter
+SYSTEM "You are a RERA field extractor. Given raw Karnataka RERA text or HTML, return ONLY a JSON object with: project_name, developer_name, survey_no, units, launch_date, completion_date, status, market. No explanation. No markdown. No extra keys."
+PARAMETER temperature 0.1
+PARAMETER top_p 0.9
+PARAMETER num_ctx 2048

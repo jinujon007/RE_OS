@@ -3,7 +3,7 @@ RE_OS v2 — Schema Tests (T-658)
 >=15 tests: table existence, FK validity, view returns, seed data.
 """
 import pytest
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
 from sqlalchemy import text, inspect
 from utils.db import get_engine

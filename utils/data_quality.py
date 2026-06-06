@@ -549,6 +549,67 @@ class DataQualityMonitor:
             return []
 
     @staticmethod
+    def locality_validation_score(market: str, max_suspect_pct: float = 20.0) -> dict:
+        """Validate listings in a market against known alien locality aliases.
+        
+        Args:
+            market: Market name (e.g. 'Yelahanka').
+            max_suspect_pct: Max acceptable % of suspect listings before flagging.
+            
+        Returns:
+            Dict with keys: valid, suspect, score, suspect_listings, action.
+        """
+        try:
+            from utils.db import get_engine
+            from sqlalchemy import text
+            from config.locality_aliases import is_alien_locality
+            
+            with get_engine().connect() as conn:
+                rows = conn.execute(
+                    text("""
+                        SELECT id, source_url, property_type, locality, project_name
+                        FROM listings l
+                        JOIN micro_markets mm ON mm.id = l.micro_market_id
+                        WHERE mm.name ILIKE :m
+                          AND l.price_psf > 1000
+                        LIMIT 500
+                    """),
+                    {"m": f"%{market}%"},
+                ).fetchall()
+            
+            valid = 0
+            suspect = 0
+            suspect_listings = []
+            for r in rows:
+                listing_id = r[0]
+                locality = r[3] or ""
+                project_name = r[4] or ""
+                if is_alien_locality(market, locality):
+                    suspect += 1
+                    suspect_listings.append({
+                        "id": str(listing_id),
+                        "locality": locality,
+                        "project_name": project_name[:80],
+                    })
+                else:
+                    valid += 1
+            
+            total = valid + suspect
+            score = valid / total if total > 0 else 1.0
+            needs_action = score < (1.0 - max_suspect_pct / 100.0)
+            return {
+                "market": market,
+                "valid": valid,
+                "suspect": suspect,
+                "score": round(score, 4),
+                "suspect_listings": suspect_listings[:20],
+                "action": "WARN" if needs_action else "OK",
+            }
+        except Exception as exc:
+            logger.warning("[DataQuality] locality_validation_score failed for %s: %s", market, exc)
+            return {"market": market, "valid": 0, "suspect": 0, "score": 1.0, "suspect_listings": [], "action": "ERROR"}
+
+    @staticmethod
     def cross_source_divergence_flag(market: str) -> list[dict]:
         """Check for divergences between data sources for a market.
 

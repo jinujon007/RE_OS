@@ -11,7 +11,8 @@ Pipeline steps:
   2. BoardRoomV2.run_board_session_v2() — 5 dept heads in parallel
   3. DealMemoGenerator — 7 sections from IntelPackage
   4. InvestorBriefGenerator — 7 sections (no track record)
-  5. Deals table entry — persist opportunity record
+  5. ShareholderRound — 4 agents in ThreadPoolExecutor (60s/agent), GO/NO-GO/CONDITIONAL/ABSTAIN verdicts
+  6. Deals table entry — persist opportunity record
 
 Risk Register:
   | Risk | Mitigation |
@@ -27,6 +28,7 @@ import json
 import threading
 import time as _time_mod
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -36,7 +38,7 @@ from sqlalchemy import text
 from intelligence.registry import IntelRegistry, IntelPackage
 from utils.db import get_engine
 
-__all__ = ["start_evaluate", "get_evaluate_job"]
+__all__ = ["start_evaluate", "get_evaluate_job", "run_shareholder_round"]
 
 
 @dataclass
@@ -55,6 +57,7 @@ class EvaluateJob:
     board_session: dict | None = None
     deal_memo: dict | None = None
     investor_brief: dict | None = None
+    shareholder_round: list[dict] | None = None
     deal_id: str | None = None
     error: str | None = None
 
@@ -189,6 +192,96 @@ def _create_deal_entry(
         return None
 
 
+def run_shareholder_round(pkg: IntelPackage, deal_summary: str = "") -> list[dict]:
+    """Run all 4 shareholder agents in parallel. 60s timeout per agent.
+    
+    Each shareholder returns: name, verdict (GO|NO-GO|CONDITIONAL|ABSTAIN),
+    key_question, response.
+    """
+    try:
+        from agents.shareholder_agent import build_all_shareholders
+        shareholders = build_all_shareholders()
+        if not shareholders:
+            return [{"name": "No Shareholders", "verdict": "ABSTAIN",
+                      "key_question": "N/A", "response": "J-2 not complete"}]
+
+        context = (
+            f"Market: {pkg.market}\n"
+            f"Survey: {pkg.survey_no}\n"
+            f"Deal type: {pkg.deal_type}\n"
+            f"PSF source: {getattr(pkg.financial_evaluation, 'psf_source_quality', 'unknown')}\n"
+            f"Deal summary: {deal_summary[:300] if deal_summary else 'N/A'}"
+        )
+
+        import re as _re
+        import json as _json
+
+        results = []
+        executor = ThreadPoolExecutor(max_workers=4)
+        try:
+            future_map = {}
+            for spec, agent in shareholders:
+                prompt = (
+                    f"You are {spec.get('name', 'a shareholder')}.\n"
+                    f"Role: {spec.get('role', 'Investor')}\n"
+                    f"Investment thesis: {spec.get('investment_thesis', 'Growth')}\n"
+                    f"Your signature question: {spec.get('signature_question', 'Is this a good investment?')}\n\n"
+                    f"Context:\n{context}\n\n"
+                    f"Respond with EXACTLY this JSON format (no markdown, no extra text):\n"
+                    f'{{"verdict": "GO|NO-GO|CONDITIONAL", '
+                    f'"key_question": "your 1 question here", '
+                    f'"response": "your rationale (max 200 chars)"}}'
+                )
+                future = executor.submit(agent.execute, prompt)
+                future_map[future] = spec
+
+            for future in as_completed(future_map, timeout=90):
+                spec = future_map[future]
+                name = spec.get("name", "Shareholder")
+                try:
+                    raw = future.result(timeout=60)
+                    json_match = _re.search(r'(?:```)?(?:json)?\s*(\{.*?\})\s*(?:```)?', raw.strip(), _re.DOTALL)
+                    if not json_match:
+                        raise ValueError("No JSON found in response: {}".format(raw[:200]))
+                    parsed = _json.loads(json_match.group(1))
+                    verdict = parsed.get("verdict", "CONDITIONAL")
+                    if verdict not in ("GO", "NO-GO", "CONDITIONAL"):
+                        verdict = "CONDITIONAL"
+                    results.append({
+                        "name": name,
+                        "verdict": verdict,
+                        "key_question": parsed.get("key_question", "")[:200],
+                        "response": parsed.get("response", "")[:200],
+                    })
+                except Exception as exc:
+                    logger.warning("[ShareholderRound] {} failed/timeout: {}", name, exc)
+                    results.append({
+                        "name": name,
+                        "verdict": "ABSTAIN",
+                        "key_question": "",
+                        "response": "Unable to respond",
+                        "error": "timeout" if any(w in str(exc).lower() for w in ["timeout", "timed out"]) else str(exc)[:100],
+                    })
+        except TimeoutError:
+            # Overall 90s wall-clock exceeded — mark all pending futures as ABSTAIN
+            pending = {future_map[f] for f in future_map if not f.done()}
+            for spec in pending:
+                results.append({
+                    "name": spec.get("name", "Shareholder"),
+                    "verdict": "ABSTAIN",
+                    "key_question": "",
+                    "response": "Unable to respond",
+                    "error": "timeout",
+                })
+        finally:
+            # Do NOT wait for dangling LLM threads — they have no internal timeout.
+            executor.shutdown(wait=False, cancel_futures=True)
+        return results
+    except Exception as exc:
+        logger.warning("[ShareholderRound] round failed: {}", exc)
+        return []
+
+
 def _run_pipeline(
     job_id: str,
     survey_no: str,
@@ -228,6 +321,10 @@ def _run_pipeline(
         brief = generate_investor_brief(pkg)
         brief_section_count = len(brief.get("sections", []))
 
+        _update_job(job_id, status="running", msg="Shareholder round")
+        shareholder_round = run_shareholder_round(pkg, pitch)
+        logger.info("[Evaluate] {} | Shareholder round: {} responses", ctx, len(shareholder_round))
+
         _update_job(job_id, status="running", msg="Deals entry")
         deal_id = _create_deal_entry(pkg, memo, brief)
 
@@ -244,6 +341,7 @@ def _run_pipeline(
                 }
                 job.deal_memo = memo
                 job.investor_brief = brief
+                job.shareholder_round = shareholder_round
                 job.deal_id = deal_id
 
         elapsed = _time_mod.time() - t0
@@ -344,6 +442,7 @@ def get_evaluate_job(job_id: str) -> dict | None:
             "board_session": job.board_session,
             "deal_memo": job.deal_memo,
             "investor_brief": job.investor_brief,
+            "shareholder_round": job.shareholder_round,
             "deal_id": job.deal_id,
             "error": job.error,
         }
