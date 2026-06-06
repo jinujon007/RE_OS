@@ -162,6 +162,24 @@ def send_rera_alert(market: str, new_count: int, developers: list[str]) -> bool:
 def send_intel_alert(market: str, run_id: str, synopsis: str, avg_psf: int | None) -> bool:
     psf_str = f"₹{avg_psf:,}/sqft" if avg_psf else "PSF unavailable"
     title   = f"Intel report ready — {market}"
+    # 4-hour cooldown: one intel digest per market per half-day, suppresses dev-run spam
+    try:
+        from utils.db import get_engine
+        with get_engine().connect() as _conn:
+            _row = _conn.execute(
+                text("""
+                    SELECT id FROM alerts
+                    WHERE channel = 'intel' AND title = :title
+                      AND created_at > NOW() - INTERVAL '4 hours'
+                    LIMIT 1
+                """),
+                {"title": title},
+            ).fetchone()
+        if _row:
+            logger.debug("[Discord] Intel dedup: '{}' already sent within 4h — skip", title)
+            return False
+    except Exception as _exc:
+        logger.debug("[Discord] Intel dedup check failed (allowing send): {}", _exc)
     message = f"**Run:** `{run_id}`\n**Avg PSF:** {psf_str}\n\n{synopsis[:400]}"
     return send("intel", title, message, COLOR_BLUE)
 

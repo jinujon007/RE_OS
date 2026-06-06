@@ -3,9 +3,11 @@ RE_OS — LLS Compliance Calendar (Sprint 66 — Compounding Intelligence)
 8-milestone VEL (Vesting, Escrow, Legal) tracker.
 Daily 08:00 IST check; Discord #legal-flags when deadline <30 days.
 """
-from datetime import datetime, date, timedelta, timezone
+import time as _time_mod
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 from loguru import logger
+from utils.discord_notifier import send as _discord_send
 
 __all__ = ["get_milestones", "check_upcoming_deadlines", "seed_default_milestones"]
 
@@ -25,7 +27,10 @@ _DEFAULT_LEAD_TIME_DAYS = 90
 
 def get_milestones(market: str) -> list[dict]:
     """Query VEL milestones for a market from the DB.
-    Returns list of {milestone, deadline, status, days_remaining}."""
+    
+    Returns up-to-8 milestone dicts with deadline, days_remaining, status.
+    Returns empty list on DB error (logged).
+    """
     try:
         from utils.db import get_engine
         from sqlalchemy import text
@@ -44,7 +49,13 @@ def get_milestones(market: str) -> list[dict]:
         today = datetime.now(timezone.utc).date()
         results = []
         for r in rows:
-            deadline = r[1].date() if hasattr(r[1], 'date') else r[1]
+            deadline_val = r[1]
+            if isinstance(deadline_val, date):
+                deadline = deadline_val
+            elif hasattr(deadline_val, 'date'):
+                deadline = deadline_val.date()
+            else:
+                deadline = datetime.fromisoformat(str(deadline_val)).date() if deadline_val else None
             days_remaining = (deadline - today).days if deadline else None
             results.append({
                 "milestone": r[0],
@@ -53,25 +64,30 @@ def get_milestones(market: str) -> list[dict]:
                 "days_remaining": days_remaining,
                 "notes": r[3],
             })
+        if not results:
+            logger.info("[ComplianceCalendar] No milestones found for {}", market)
         return results
     except Exception as exc:
-        logger.warning("[ComplianceCalendar] Query failed: %s", exc)
+        logger.warning("[ComplianceCalendar] Query failed for {}: {}", market, exc)
         return []
 
 
 def check_upcoming_deadlines() -> list[dict]:
-    """Check all markets for deadlines <30 days.
-    Sends Discord #legal-flags alert for each.
+    """Check all target markets for deadlines <30 days.
+    Sends Discord #legal-flags alert per qualifying milestone.
     
     Returns:
-        List of dicts with market, milestone, deadline, days_remaining.
+        List of alert dicts with market, milestone, deadline, days_remaining.
     """
     from config.settings import TARGET_MARKETS
     
+    t0 = _time_mod.time()
     alerts = []
     for market in TARGET_MARKETS:
         try:
             milestones = get_milestones(market)
+            if not milestones:
+                logger.info("[ComplianceCalendar] No milestones tracked for {} — seed_default_milestones() may be needed", market)
             for ms in milestones:
                 days = ms.get("days_remaining")
                 if days is not None and 0 <= days <= 30 and ms.get("status", "") in ("pending", "in_progress", ""):
@@ -82,40 +98,48 @@ def check_upcoming_deadlines() -> list[dict]:
                         "days_remaining": days,
                     })
         except Exception as exc:
-            logger.warning("[ComplianceCalendar] Check failed for %s: %s", market, exc)
+            logger.warning("[ComplianceCalendar] Check failed for {}: {}", market, exc)
     
     if alerts:
         for alert in alerts:
             try:
-                from utils.discord_notifier import send
                 msg = (
                     f"**{alert['milestone']}** for **{alert['market']}**\n"
                     f"Deadline: {alert['deadline']} ({alert['days_remaining']} days remaining)"
                 )
-                send("system", f"VEL Deadline — {alert['market']}", msg)
-                logger.info("[ComplianceCalendar] Alert sent: %s %s", alert['market'], alert['milestone'])
+                _discord_send("system", f"VEL Deadline — {alert['market']}", msg)
+                logger.info("[ComplianceCalendar] Alert sent: {} | {} | {}d remaining",
+                            alert['market'], alert['milestone'], alert['days_remaining'])
             except Exception as exc:
-                logger.warning("[ComplianceCalendar] Discord send failed: %s", exc)
+                logger.warning("[ComplianceCalendar] Discord send failed for {}: {}", alert['market'], exc)
     
+    elapsed = _time_mod.time() - t0
+    logger.info("[ComplianceCalendar] check_upcoming_deadlines: {} alerts in {:.1f}s", len(alerts), elapsed)
     return alerts
 
 
 def seed_default_milestones(market: str) -> int:
-    """Seed the 8 VEL milestones for a market with default deadlines.
-    Skips existing entries. Returns count inserted."""
+    """Seed the 8 VEL milestones for a market with default 90-day-spaced deadlines.
+    Skips existing entries (ON CONFLICT DO NOTHING).
+    
+    Returns:
+        Count of new milestones inserted (0 if all already exist or market invalid).
+    """
     try:
         from utils.db import get_engine
         from sqlalchemy import text
         
         from config.settings import TARGET_MARKETS
         if market not in TARGET_MARKETS:
-            logger.warning("[ComplianceCalendar] Unknown market: %s", market)
+            logger.warning("[ComplianceCalendar] Unknown market: {} (not in TARGET_MARKETS)", market)
             return 0
         
+        t0 = _time_mod.time()
+        today = datetime.now(timezone.utc).date()
         inserted = 0
         with get_engine().begin() as conn:
             for i, milestone in enumerate(_VEL_MILESTONES):
-                deadline = datetime.now(timezone.utc).date() + timedelta(days=(i + 1) * _DEFAULT_LEAD_TIME_DAYS)
+                deadline = today + timedelta(days=(i + 1) * _DEFAULT_LEAD_TIME_DAYS)
                 result = conn.execute(
                     text("""
                         INSERT INTO compliance_milestones (market, milestone, deadline, status)
@@ -127,8 +151,9 @@ def seed_default_milestones(market: str) -> int:
                 if result.rowcount > 0:
                     inserted += 1
         
-        logger.info("[ComplianceCalendar] Seeded %d milestones for %s", inserted, market)
+        elapsed = _time_mod.time() - t0
+        logger.info("[ComplianceCalendar] Seeded {} new milestones for {} ({:.1f}s)", inserted, market, elapsed)
         return inserted
     except Exception as exc:
-        logger.error("[ComplianceCalendar] Seed failed for %s: %s", market, exc)
+        logger.error("[ComplianceCalendar] Seed failed for {}: {}", market, exc)
         return 0

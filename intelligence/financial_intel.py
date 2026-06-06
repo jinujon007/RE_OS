@@ -119,6 +119,21 @@ class FinancialEvaluation:
     psf_source_quality: str = "unknown"
     igr_median_psf: float | None = None
     igr_record_count: int = 0
+    # PSF source hierarchy (fallback chain):
+    #   1. Listing PSF (portal_scout) — highest granularity, most current
+    #   2. IGR transaction median (igr_transactions) — actual registered sale prices
+    #      → psf_source_quality = "live_igr" when >=5 records in last 90 days
+    #   3. IGR guidance value (guidance_values) — government-stamped minimum values
+    #      → psf_source_quality = "guidance_value" when >=3 records in DB
+    #   4. Market fallback (_get_market_psf_fallback) — from v_market_brief view
+    #      → psf_source_quality = "listing_only" when no IGR/guidance data
+    # A gap between listing PSF and IGR PSF of 2-3x is expected:
+    #   - Listing = ASKING price, aspirational/negotiable
+    #   - IGR transaction = DEEDED price, often under-reported for stamp duty
+    #   - IGR guidance value = government-set minimum, typically conservative
+    #   - Plots command higher PSF than apartments in same micro-market
+    #   - Airport proximity premium inflates Devanahalli listing PSF vs agricultural IGR values
+    # See docs/solutions/data-quality/devanahalli_psf_gap.md for full analysis
 
     def __str__(self) -> str:
         return (
@@ -232,6 +247,7 @@ class FinancialIntel:
             from utils.db import get_engine
             from sqlalchemy import text
             with get_engine(pool_size=2, max_overflow=1).connect() as conn:
+                # Tier 1: IGR transaction median (most reliable — actual registered sale prices)
                 with timed_intel_query("financial_igr"):
                     row = conn.execute(text("""
                         SELECT
@@ -247,17 +263,40 @@ class FinancialIntel:
                     fe.igr_median_psf = fval(row[0])
                     fe.igr_record_count = int(row[1])
                     fe.psf_source_quality = "live_igr"
-                elif row and row[1]:
+                    return
+                if row and row[1]:
                     fe.igr_record_count = int(row[1])
-                    fe.psf_source_quality = "fallback_igr"
-                else:
-                    fe.psf_source_quality = "listing_only"
+
+                # Tier 2: Guidance values (government-stamped minimums, less reliable but useful)
+                with timed_intel_query("financial_guidance"):
+                    gv_row = conn.execute(text("""
+                        SELECT
+                            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY guidance_value_psf) AS median_gv,
+                            COUNT(*) AS gv_cnt
+                        FROM guidance_values
+                        WHERE micro_market_id = :mm_id
+                          AND guidance_value_psf IS NOT NULL
+                          AND guidance_value_psf > 0
+                    """), {"mm_id": mi["id"]}).fetchone()
+                if gv_row and gv_row[1] and int(gv_row[1]) >= 3:
+                    fe.igr_median_psf = fval(gv_row[0])
+                    fe.igr_record_count = int(gv_row[1])
+                    fe.psf_source_quality = "guidance_value"
+                    return
+
+                # Tier 3: listing_only — no IGR or guidance data available
+                # The caller's sell_psf is the best estimate
+                fe.psf_source_quality = "listing_only"
         except Exception:
             fe.psf_source_quality = "listing_only"
 
     @staticmethod
     def _igr_source_for(fe: FinancialEvaluation) -> str | None:
-        mapping = {"live_igr": "igr_portal", "fallback_igr": "insufficient_igr_records", "listing_only": "listing_psf"}
+        mapping = {
+            "live_igr": "igr_portal",
+            "guidance_value": "guidance_values",
+            "listing_only": "listing_psf",
+        }
         return mapping.get(fe.psf_source_quality, None)
 
     def _scenario_to_deal(

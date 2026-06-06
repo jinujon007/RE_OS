@@ -33,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 from loguru import logger
 from sqlalchemy import text
 
-from intelligence.registry import IntelRegistry
+from intelligence.registry import IntelRegistry, IntelPackage
 from utils.db import get_engine
 
 __all__ = ["start_evaluate", "get_evaluate_job"]
@@ -96,7 +96,7 @@ def _periodic_cleanup() -> None:
         for jid in stale:
             del _jobs[jid]
         if stale:
-            logger.info("[Evaluate] cleaned %d stale jobs (retained %d)", len(stale), len(_jobs))
+            logger.info("[Evaluate] cleaned {} stale jobs (retained {})", len(stale), len(_jobs))
 
 
 def _get_market_id(market: str) -> str | None:
@@ -107,19 +107,20 @@ def _get_market_id(market: str) -> str | None:
                 {"m": f"%{market}%"},
             ).fetchone()
             return str(row[0]) if row else None
-    except Exception:
+    except Exception as exc:
+        logger.warning("[Evaluate] DB lookup failed for market '{}': {}", market, exc)
         return None
 
 
 def _create_deal_entry(
-    pkg: IntelRegistry,
+    pkg: IntelPackage,
     memo: dict,
     brief: dict,
 ) -> str | None:
     try:
         market_id = _get_market_id(pkg.market)
         if not market_id:
-            logger.warning("[Evaluate] No market_id for %s", pkg.market)
+            logger.warning("[Evaluate] No market_id for {}", pkg.market)
             return None
 
         fe = pkg.financial_evaluation
@@ -130,7 +131,6 @@ def _create_deal_entry(
         irr_bear = None
         verdict = None
         if fe:
-            scenarios_map = {"purchase": fe.purchase, "jd": fe.jd, "jv": fe.jv}
             irr_base = fe.purchase.simple_irr_pct if fe.purchase else None
             irr_bull = fe.jd.simple_irr_pct if fe.jd else None
             irr_bear = fe.jv.simple_irr_pct if fe.jv else None
@@ -198,9 +198,10 @@ def _run_pipeline(
     deal_type: str,
     pitch: str,
 ) -> None:
+    ctx = f"{market}/{survey_no}"
+    t0 = _time_mod.time()
     try:
         _update_job(job_id, status="running", msg="IntelRegistry")
-
         pkg = IntelRegistry().get_full_picture(
             survey_no=survey_no,
             market=market,
@@ -208,24 +209,26 @@ def _run_pipeline(
             sell_psf=sell_psf,
             deal_type=deal_type,
         )
+        logger.info("[Evaluate] {} | IntelRegistry {:.1f}s | all_modules={}", ctx, _time_mod.time() - t0, pkg.all_modules_success)
 
         _update_job(job_id, status="running", msg="Board Room")
-
+        t1 = _time_mod.time()
         from crews.board_room_v2 import run_board_session_v2
         board_result = run_board_session_v2(pkg, pitch=pitch)
+        dept_count = len(board_result.responses)
+        logger.info("[Evaluate] {} | BoardRoom {:.1f}s | {} depts", ctx, _time_mod.time() - t1, dept_count)
 
         _update_job(job_id, status="running", msg="Deal Memo")
-
         from utils.deal_memo_v2 import generate_deal_memo
         memo = generate_deal_memo(pkg)
+        memo_section_count = len(memo.get("sections", []))
 
         _update_job(job_id, status="running", msg="Investor Brief")
-
         from utils.investor_brief_v2 import generate_investor_brief
         brief = generate_investor_brief(pkg)
+        brief_section_count = len(brief.get("sections", []))
 
         _update_job(job_id, status="running", msg="Deals entry")
-
         deal_id = _create_deal_entry(pkg, memo, brief)
 
         with _jobs_lock:
@@ -243,16 +246,14 @@ def _run_pipeline(
                 job.investor_brief = brief
                 job.deal_id = deal_id
 
-        _log_completion(job_id, deal_id)
+        elapsed = _time_mod.time() - t0
+        logger.info("[Evaluate] {} complete | deal={} | {}memos/{}briefs | {:.1f}s",
+                    ctx, deal_id, memo_section_count, brief_section_count, elapsed)
 
     except Exception as exc:
-        logger.error("[Evaluate] %s failed: %s", job_id[:8], exc)
+        elapsed = _time_mod.time() - t0
+        logger.error("[Evaluate] {} failed at {:.1f}s: {}", ctx, elapsed, exc)
         _update_job(job_id, status="failed", error=str(exc))
-
-
-def _log_completion(job_id: str, deal_id: str | None) -> None:
-    elapsed = _elapsed_since(job_id)
-    logger.info("[Evaluate] %s complete | deal=%s | %.1fs", job_id[:8], deal_id, elapsed)
 
 
 def _update_job(job_id: str, status: str, msg: str = "", error: str | None = None) -> None:
@@ -264,7 +265,7 @@ def _update_job(job_id: str, status: str, msg: str = "", error: str | None = Non
                 job.progress_msg = msg
             if error:
                 job.error = error
-            if status == "complete":
+            if status in ("complete", "failed"):
                 job.completed_at = datetime.now(timezone.utc).isoformat()
 
 
@@ -288,14 +289,16 @@ def start_evaluate(
     deal_type: str = "compare",
     pitch: str = "",
 ) -> dict:
+    _periodic_cleanup()
     job_id = str(uuid.uuid4())
+    safe_sell_psf = sell_psf if sell_psf is not None else 0
     job = EvaluateJob(
         job_id=job_id,
         status="pending",
         survey_no=survey_no,
         market=market,
         land_area_sqft=land_area_sqft,
-        sell_psf=sell_psf or 0,
+        sell_psf=safe_sell_psf,
         deal_type=deal_type,
         pitch=pitch,
         created_at=datetime.now(timezone.utc).isoformat(),
@@ -305,7 +308,7 @@ def start_evaluate(
 
     t = threading.Thread(
         target=_run_pipeline,
-        args=(job_id, survey_no, market, land_area_sqft, sell_psf or 0, deal_type, pitch),
+        args=(job_id, survey_no, market, land_area_sqft, safe_sell_psf, deal_type, pitch),
         daemon=True,
         name=f"eval-{job_id[:8]}",
     )
@@ -321,6 +324,7 @@ def start_evaluate(
 
 
 def get_evaluate_job(job_id: str) -> dict | None:
+    _periodic_cleanup()
     with _jobs_lock:
         job = _jobs.get(job_id)
         if not job:

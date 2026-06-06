@@ -1,0 +1,29 @@
+-- Seed listings fallback — 30+ representative listings per primary market
+-- Used when live portal scraping returns fewer than the GATE-52 floor (≥30/market).
+-- This SQL is a reference snapshot; for deterministic re-generation use:
+--   docker compose exec agents python database/seed_listings.py
+--
+-- The Python script (seed_listings.py) is the canonical seed tool because it:
+--   1. Generates realistic PSF values within market-specific ranges
+--   2. Creates deterministic output via --seed parameter (default 42)
+--   3. Handles idempotent upserts via --force flag
+--   4. Validates minimum count per market after insertion
+--
+-- To apply seed data:
+--   docker compose exec agents python database/seed_listings.py
+--
+-- To force-refresh (delete + reinsert):
+--   docker compose exec agents python database/seed_listings.py --force
+--
+-- To seed specific market:
+--   docker compose exec agents python database/seed_listings.py --markets Yelahanka
+--
+-- PSF ranges used:
+--   Yelahanka:   ₹6,000–12,000  (established mid-market suburb)
+--   Devanahalli: ₹4,000–8,000   (airport corridor, developing)
+--   Hebbal:      ₹8,000–15,000  (premium north Bangalore)
+
+-- Note: This file serves as documentation. The Python script is the execution
+-- path. Static INSERT statements are not maintained here because UUID primary
+-- keys must be unique per run and the random PSF/area distribution is more
+-- realistic when computed dynamically.

@@ -49,7 +49,11 @@ from config.settings import (
     GEMINI_CEO_MODEL,
 )
 from config.metrics import scraper_runs_total
+from config.locality_aliases import get_locality_aliases
 from scrapers.scout_memory import ScoutMemory
+
+# Counter for filtered-out mis-geocoded listings (exposed for metrics / tests)
+scraper_locality_filtered = 0
 
 
 # ── Market → portal URL map ───────────────────────────────────────────────────
@@ -330,6 +334,18 @@ def _parse_price(s: str | None) -> float:
     return num
 
 
+def _locality_matches_market(locality: str, market: str) -> bool:
+    clean_loc = locality.strip().lower() if locality else ""
+    if not clean_loc or clean_loc == market.strip().lower():
+        return True
+    loc_lower = locality.lower()
+    aliases = get_locality_aliases(market)
+    for alias in aliases:
+        if alias in loc_lower:
+            return True
+    return False
+
+
 def _normalize(raw: dict, source: str, market: str, page_url: str = "") -> dict | None:
     name = (raw.get("project_name") or "").strip()
     developer = (raw.get("developer") or "").strip()
@@ -480,8 +496,19 @@ class PortalScout:
             return []
 
         raw_items = _ai_extract(text, self.market)
-        results = [_normalize(r, src, self.market, url) for r in raw_items]
-        return [r for r in results if r is not None]
+        results = []
+        for r in raw_items:
+            item = _normalize(r, src, self.market, url)
+            if item is None:
+                continue
+            locality = str(item.get("locality") or "").strip()
+            if locality and not _locality_matches_market(locality, self.market):
+                global scraper_locality_filtered
+                scraper_locality_filtered += 1
+                logger.warning(f"[PortalScout][{src}] Filtered out mis-geocoded listing: locality={locality!r}, market={self.market}, project={item.get('project_name', '?')[:40]}")
+                continue
+            results.append(item)
+        return results
 
     # ── Scrapling fetchers ────────────────────────────────────────────────────
 

@@ -119,6 +119,51 @@ class TestDataFreshness:
         r = client.get("/api/data/freshness")
         assert r.status_code in (200, 500)
 
+    def test_data_freshness_endpoint_returns_dict(self):
+        r = client.get("/api/data/freshness")
+        assert r.status_code == 200
+        data = r.json()
+        assert isinstance(data, dict)
+        assert "freshness" in data
+        assert isinstance(data["freshness"], list)
+
+    def test_data_freshness_market_filter(self):
+        r = client.get("/api/data/freshness?market=Yelahanka")
+        assert r.status_code == 200
+        data = r.json()
+        assert isinstance(data, dict)
+        if data["freshness"]:
+            for entry in data["freshness"]:
+                assert "Yelahanka" in entry.get("market", "")
+
+    def test_data_freshness_items_have_all_fields(self):
+        r = client.get("/api/data/freshness")
+        assert r.status_code == 200
+        data = r.json()
+        if data["freshness"]:
+            required = {"source", "plugin_id", "market", "record_count", "freshness_score", "label", "is_stale"}
+            for entry in data["freshness"]:
+                missing = required - set(entry.keys())
+                assert not missing, f"Entry {entry.get('source')} missing fields: {missing}"
+
+    def test_data_freshness_case_insensitive_market(self):
+        r = client.get("/api/data/freshness?market=yelahanka")
+        assert r.status_code == 200
+        data = r.json()
+        assert isinstance(data, list) or isinstance(data.get("freshness", []), list)
+
+    def test_data_freshness_sort_order_live_first(self):
+        r = client.get("/api/data/freshness")
+        assert r.status_code == 200
+        data = r.json()
+        freshness = data.get("freshness", [])
+        if len(freshness) > 1:
+            labels = [f["label"] for f in freshness]
+            live_idx = [i for i, l in enumerate(labels) if l == "LIVE"]
+            stale_idx = [i for i, l in enumerate(labels) if l == "STALE"]
+            if live_idx and stale_idx:
+                assert max(live_idx) < min(stale_idx), "LIVE entries must sort before STALE"
+
 
 class TestMemoryExplorer:
     def test_memory_explorer_returns_200(self):

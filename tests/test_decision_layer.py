@@ -202,7 +202,8 @@ class TestGate48Pipeline:
         """Pipeline assembles board_session, deal_memo, investor_brief into job."""
         from unittest.mock import patch, MagicMock
         from crews.evaluate_pipeline import start_evaluate, get_evaluate_job
-        import datetime, time
+        import datetime
+        import time
 
         # Minimal IntelPackage stub
         from intelligence.registry import IntelPackage
@@ -230,15 +231,16 @@ class TestGate48Pipeline:
                 deal_type="compare", pitch="Test gate48",
             )
             job_id = result["job_id"]
-            # Wait for async thread to complete (max 10s)
-            for _ in range(20):
-                time.sleep(0.5)
+            # Wait for async thread to complete (max 30s — generous for CI)
+            deadline = time.time() + 30
+            job = None
+            while time.time() < deadline:
+                time.sleep(0.25)
                 job = get_evaluate_job(job_id)
                 if job and job.get("status") not in ("pending", "running"):
                     break
 
-        job = get_evaluate_job(job_id)
-        assert job is not None
+        assert job is not None, "Job should exist after pipeline completes"
         assert job["status"] == "complete", f"Expected complete, got {job.get('status')} | error: {job.get('error')}"
         assert job["board_session"] is not None, "board_session must be populated"
         assert job["deal_memo"] is not None, "deal_memo must be populated"
@@ -250,7 +252,13 @@ class TestGate48Pipeline:
 
 # ── Test count verification ─────────────────────────────────────────────────────
 
-def test_test_count():
-    """Verify we have sufficient tests (>=15)."""
-    # 15 original + 4 GATE-48 tests = 19 total
-    assert True
+def test_test_count_enough():
+    """Verify test_decision_layer has >=15 test functions."""
+    import re
+    import inspect
+    import pathlib
+    src = pathlib.Path(inspect.getfile(TestGate48Pipeline)).parent / "test_decision_layer.py"
+    src_text = src.read_text()
+    test_fns = re.findall(r"^\s+def test_|^def test_", src_text, re.MULTILINE)
+    count = len(test_fns)
+    assert count >= 15, f"Expected >=15 test functions, got {count}"

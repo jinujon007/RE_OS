@@ -322,6 +322,29 @@ def run_bertscore_evaluation():
         logger.warning(f"[Scheduler] BERTScore evaluation failed (non-fatal): {exc}")
 
 
+def _bd_already_alerted(title: str, cooldown_hours: int = 23) -> bool:
+    """Return True if an alert with this exact title was already sent to bd_opportunities
+    within cooldown_hours. Prevents daily re-fire of the same signal.
+    Fails open (returns False) on any DB error so alerts are never silently dropped.
+    """
+    try:
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT id FROM alerts
+                    WHERE channel = 'bd_opportunities'
+                      AND title = :title
+                      AND created_at > NOW() - (:hrs || ' hours')::interval
+                    LIMIT 1
+                """),
+                {"title": title, "hrs": cooldown_hours},
+            ).fetchone()
+        return row is not None
+    except Exception as exc:
+        logger.debug("[BD-Dedup] Check failed — allowing send: {}", exc)
+        return False
+
+
 def recover_stuck_board_sessions():
     """Set board sessions stuck at 'active' for >30 minutes to 'failed'."""
 
@@ -344,7 +367,9 @@ def recover_stuck_board_sessions():
 
 
 def run_distressed_developer_scan():
-    """Scan for distressed developers and alert via Discord if score > 0.6."""
+    """Scan for distressed developers and alert via Discord if score > 0.6.
+    7-day cooldown per developer prevents daily re-fire of unchanged signals.
+    """
     try:
         from utils.distressed_developer import (
             scan_distressed_developers,
@@ -358,10 +383,14 @@ def run_distressed_developer_scan():
                 market, min_score=_DISTRESS_SCORE_THRESHOLD,
             )
             for dev in results:
+                title = f"Distressed Developer — {dev.developer_name} ({dev.market})"
+                if _bd_already_alerted(title, cooldown_hours=168):  # 7-day cooldown
+                    logger.info(f"[DistressedDev] Dedup skip: {dev.developer_name} ({dev.market})")
+                    continue
                 alert = format_distress_alert(dev)
                 logger.info(f"[DistressedDev] Alert: {alert}")
                 try:
-                    send("bd_opportunities", "Distressed Developer Alert", alert)
+                    send("bd_opportunities", title, alert)
                 except Exception as exc:
                     logger.warning(f"[DistressedDev] Discord send failed: {exc}")
     except Exception as exc:
@@ -547,6 +576,10 @@ def run_opportunity_scoring():
 
         urgent = [r for r in results if r.score >= 0.80]
         for r in sorted(urgent, key=lambda x: x.score, reverse=True)[:10]:
+            title = f"URGENT — {r.survey_no} ({r.micro_market_id[:8]})"
+            if _bd_already_alerted(title, cooldown_hours=23):
+                logger.info("[Scheduler] BD dedup: skipping URGENT {} (sent within 23h)", r.survey_no)
+                continue
             alert_msg = (
                 f"**{r.survey_no}**\n"
                 f"Score: **{r.score:.4f}** | IRR: {r.components.irr_score:.3f} "
@@ -556,20 +589,24 @@ def run_opportunity_scoring():
             )
             logger.info("[Scheduler] URGENT opportunity: {} score={:.4f}", r.survey_no, r.score)
             try:
-                send("bd_opportunities", f"URGENT — {r.survey_no}", alert_msg)
+                send("bd_opportunities", title, alert_msg)
             except Exception as exc:
                 logger.warning("[Scheduler] URGENT alert Discord failed: {}", exc)
 
         priority = [r for r in results if 0.60 < r.score < 0.80]
         if priority:
-            summary = "\n".join(
-                f"{r.survey_no} — score={r.score:.4f} — {r.next_action[:40]}"
-                for r in sorted(priority, key=lambda x: x.score, reverse=True)[:5]
-            )
-            try:
-                send("bd_opportunities", "Priority Opportunities — Review", summary)
-            except Exception as exc:
-                logger.warning("[Scheduler] PRIORITY alert Discord failed: {}", exc)
+            title_p = "Priority Opportunities — Review"
+            if _bd_already_alerted(title_p, cooldown_hours=23):
+                logger.info("[Scheduler] BD dedup: skipping PRIORITY summary (sent within 23h)")
+            else:
+                summary = "\n".join(
+                    f"{r.survey_no} — score={r.score:.4f} — {r.next_action[:40]}"
+                    for r in sorted(priority, key=lambda x: x.score, reverse=True)[:5]
+                )
+                try:
+                    send("bd_opportunities", title_p, summary)
+                except Exception as exc:
+                    logger.warning("[Scheduler] PRIORITY alert Discord failed: {}", exc)
 
         watch = [r for r in results if 0.40 < r.score <= 0.60]
         if watch:

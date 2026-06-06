@@ -27,6 +27,7 @@ Usage:
     digest = generate_weekly_digest("Yelahanka")
 """
 
+import atexit
 import re
 from datetime import datetime, timedelta
 
@@ -34,6 +35,13 @@ from loguru import logger
 from sqlalchemy import create_engine, text
 
 from config.settings import DATABASE_URL
+
+_ENGINE_ARGS = {
+    "pool_pre_ping": True,
+    "pool_size": 5,
+    "max_overflow": 2,
+    "connect_args": {"connect_timeout": 10},
+}
 
 __all__ = [
     "read_memories",
@@ -54,10 +62,22 @@ def _sanitize_market(market: str) -> str:
     return re.sub(r'[^a-zA-Z0-9\s]', '', market).strip()
 
 
+def _dispose_engine():
+    global _engine
+    if _engine is not None:
+        _engine.dispose()
+        _engine = None
+
+
+@atexit.register
+def _cleanup():
+    _dispose_engine()
+
+
 def _get_engine():
     global _engine
     if _engine is None:
-        _engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=5, max_overflow=2)
+        _engine = create_engine(DATABASE_URL, **_ENGINE_ARGS)
     return _engine
 
 
@@ -160,8 +180,13 @@ def write_memory(agent_id: str, market: str, fact: str, confidence: float = 0.6)
 def decay_memories(days: int = 30, decay_amount: float = 0.1) -> int:
     """Reduce confidence of facts not confirmed in the last `days` days.
 
-    Facts that decay below 0.3 are deleted.
-    Returns count of rows deleted, -1 on error.
+    Applies `decay_amount` subtraction to confidence for all facts with
+    `created_at` before the cutoff. Facts whose confidence falls below 0.3
+    are hard-deleted from the table.
+
+    Returns:
+        int: Count of rows hard-deleted (confidence decayed below 0.3).
+             Returns -1 on DB error.
     """
     cutoff = datetime.utcnow() - timedelta(days=days)
     try:
@@ -209,9 +234,6 @@ def detect_conflicts(market: str) -> list[dict]:
     if not sanitized_market:
         logger.warning(f"[Memory] detect_conflicts rejected invalid market: {market!r}")
         return []
-    if not sanitized_market:
-        logger.warning("[Memory] detect_conflicts rejected sanitized market")
-        return []
     
     try:
         with _get_engine().connect() as conn:
@@ -241,8 +263,8 @@ def detect_conflicts(market: str) -> list[dict]:
                 agent_a, agent_b, fact_a, fact_b, conf_a, conf_b, mkt = row
                 
                 # Extract numeric values from facts using robust regex
-                nums_a = re.findall(r'₹?[\d,]+\.?\d*', fact_a)
-                nums_b = re.findall(r'₹?[\d,]+\.?\d*', fact_b)
+                nums_a = re.findall(r'₹?\d[\d,]*\.?\d*', fact_a)
+                nums_b = re.findall(r'₹?\d[\d,]*\.?\d*', fact_b)
                 
                 if not nums_a or not nums_b:
                     continue
@@ -295,7 +317,7 @@ def detect_conflicts(market: str) -> list[dict]:
                                 text("""
                                 INSERT INTO agent_memories 
                                     (agent_id, market, fact, confidence, fact_type, metadata, created_at)
-                                VALUES (:agent_id, :market, :fact, 0.0, 'conflict', :metadata::jsonb, NOW())
+                                VALUES (:agent_id, :market, :fact, 0.0, 'conflict', CAST(:metadata AS jsonb), NOW())
                                 ON CONFLICT (agent_id, market, fact) 
                                 DO UPDATE SET 
                                     confidence = 0.0,

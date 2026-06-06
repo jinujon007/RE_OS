@@ -82,8 +82,8 @@ def scan_distressed_developers(market: str | None = None,
                             COUNT(CASE WHEN r.delay_months > 0 THEN 1 END) AS delayed_projects,
                             COALESCE(ROUND(AVG(r.delay_months)::numeric, 1), 0) AS avg_delay_months,
                             COUNT(CASE WHEN r.project_status NOT IN ('Completed', 'Cancelled')
-                                        AND (r.expected_completion IS NULL
-                                             OR r.expected_completion < NOW()) THEN 1 END)
+                                        AND (r.possession_date IS NULL
+                                             OR r.possession_date < NOW()) THEN 1 END)
                                 AS overdue_projects,
                             COALESCE(
                                 SUM(

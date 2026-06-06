@@ -488,13 +488,74 @@ class DataQualityMonitor:
             return []
     
     @staticmethod
+    def check_seed_staleness(max_age_days: int = 7, min_live_listings: int = 10) -> list[dict]:
+        """Check if seed listings are stale and need refresh.
+
+        Detects markets where:
+        - Seed listings (data_source='seed_estimated') are older than max_age_days
+        - Live-scraped listing count is below min_live_listings (seed still active)
+
+        Args:
+            max_age_days: Max age in days for seed data before flagging.
+            min_live_listings: If live-scraped count >= this, seed should be removed.
+
+        Returns:
+            List of dicts with market, seed_count, max_seed_age_days,
+            live_listing_count, action.
+        """
+        try:
+            from utils.db import get_engine
+            from sqlalchemy import text
+
+            with get_engine().connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT
+                        mm.name AS market,
+                        COUNT(*) FILTER (WHERE l.data_source = 'seed_estimated') AS seed_count,
+                        MAX(l.scraped_at) FILTER (WHERE l.data_source = 'seed_estimated') AS last_seed_at,
+                        COUNT(*) FILTER (WHERE l.data_source != 'seed_estimated' AND l.price_psf > 1000) AS live_count
+                    FROM listings l
+                    JOIN micro_markets mm ON mm.id = l.micro_market_id
+                    GROUP BY mm.name
+                """)).fetchall()
+
+            now = datetime.now(timezone.utc)
+            flags = []
+            for r in rows:
+                market = r[0]
+                seed_count = r[1] or 0
+                last_seed = r[2]
+                live_count = r[3] or 0
+                if seed_count == 0:
+                    continue
+                age_days = None
+                if last_seed:
+                    age_days = (now - last_seed).total_seconds() / 86400
+                needs_refresh = age_days is not None and age_days > max_age_days
+                can_drop_seed = live_count >= min_live_listings
+                if needs_refresh or can_drop_seed:
+                    action = "remove_seed_and_use_live" if can_drop_seed else "re_scrape_needed"
+                    flags.append({
+                        "market": market,
+                        "seed_count": seed_count,
+                        "max_seed_age_days": round(age_days, 1) if age_days else None,
+                        "live_listing_count": live_count,
+                        "action": action,
+                        "severity": "INFO" if can_drop_seed else "WARNING",
+                    })
+            return flags
+        except Exception as exc:
+            logger.warning("[DataQuality] seed_staleness check failed: %s", exc)
+            return []
+
+    @staticmethod
     def cross_source_divergence_flag(market: str) -> list[dict]:
         """Check for divergences between data sources for a market.
-        
+
         Checks:
         - Listing PSF vs IGR PSF
         - RERA project count vs listing project count
-        
+
         Returns list of divergence flags.
         """
         flags = []

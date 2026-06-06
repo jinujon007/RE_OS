@@ -549,8 +549,17 @@ class HealthServiceStatus(BaseModel):
     chroma: str = "error"
 
 
+class DataQualityHealth(BaseModel):
+    slo_pass: int = 0
+    slo_fail: int = 0
+    freshness: dict | None = None
+    seed_stale_warnings: list[dict] = []
+
+
 class HealthResponse(HealthServiceStatus):
     last_run: dict | None = None
+    data_quality: DataQualityHealth | None = None
+    llm: dict | None = None
 
 
 class CardItem(BaseModel):
@@ -639,6 +648,7 @@ class RegistryResponse(BaseModel):
 
 class FreshnessItem(BaseModel):
     source: str
+    plugin_id: str | None = None
     market: str
     last_scraped_at: str | None = None
     record_count: int = 0
@@ -753,6 +763,36 @@ async def health(request: Request):
         "general_webhook": general_webhook,
         "channels_missing": channels_missing,
     }
+
+    try:
+        from utils.data_quality import DataQualityMonitor
+        from config.slos import all_slo_status
+        freshness = DataQualityMonitor.freshness_score()
+        slo_result = all_slo_status(freshness)
+        seed_stale = DataQualityMonitor.check_seed_staleness()
+        services["data_quality"] = {
+            "slo_pass": slo_result["slo_pass"],
+            "slo_fail": slo_result["slo_fail"],
+            "freshness": freshness if freshness else None,
+            "seed_stale_warnings": seed_stale[:5],
+        }
+    except Exception as exc:
+        logger.warning("[health] data_quality check failed: {}", exc)
+        services["data_quality"] = {"slo_pass": 0, "slo_fail": 0, "freshness": None, "seed_stale_warnings": []}
+
+    try:
+        from utils.llm_router import LLMRouter
+        router = LLMRouter()
+        heavy_providers = list(getattr(router, "tiers", {}).get("heavy", []))
+        services["llm"] = {
+            "configured": len(heavy_providers) > 0,
+            "heavy_providers": len(heavy_providers),
+            "providers": heavy_providers[:5],
+        }
+    except Exception as exc:
+        logger.warning("[health] llm check failed: {}", exc)
+        services["llm"] = {"configured": False, "heavy_providers": 0, "providers": []}
+
     return services
 
 
@@ -2252,6 +2292,19 @@ async def create_survey(body: SurveyCreate, request: Request):
 # ── Evaluate API (Sprint 64 — Decision Layer) ────────────────────────────────────
 
 
+_SURVEY_NO_RE = re.compile(r"^\d{1,4}/\d{1,4}$")
+
+
+def _validate_survey_no(survey_no: str) -> str:
+    s = survey_no.strip()
+    if not _SURVEY_NO_RE.match(s):
+        raise ValueError(
+            f"Invalid survey_no format: '{survey_no}'. "
+            f"Expected pattern 'NNN/NNN' (e.g. '45/2', '102/45')"
+        )
+    return s
+
+
 class EvaluateRequest(BaseModel):
     survey_no: str
     market: str
@@ -2283,11 +2336,13 @@ async def evaluate_start(request: Request):
     except (json.JSONDecodeError, UnicodeDecodeError):
         payload = {}
 
-    survey_no = str(payload.get("survey_no") or "").strip()
+    survey_no_raw = str(payload.get("survey_no") or "").strip()
+    try:
+        survey_no = _validate_survey_no(survey_no_raw)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
     market_raw = payload.get("market", "")
     market = _normalize_market(market_raw)
-    if not survey_no:
-        return JSONResponse({"error": "survey_no required"}, status_code=400)
     if not market:
         return JSONResponse(
             {"error": "valid market required (Yelahanka/Devanahalli/Hebbal)"},
@@ -2583,6 +2638,48 @@ async def memory_explorer(
     except Exception as e:
         logger.error("[memory_explorer] %s", e)
         return JSONResponse({"error": "database query failed"}, status_code=500)
+
+
+# ── LLM Provider Health ───────────────────────────────────────────────────
+
+
+class LLMHealthResponse(BaseModel):
+    configured: bool
+    providers_available: list[str]
+    providers_failed: list[str]
+    recommended_model: str | None = None
+
+
+@app.get(
+    "/api/health/llm",
+    response_model=LLMHealthResponse,
+    tags=["Health"],
+    summary="LLM provider health — validates at least 1 HEAVY-tier provider is configured",
+)
+@limiter.limit("30/minute")
+async def health_llm(request: Request):
+    try:
+        from utils.llm_router import LLMRouter
+        available = []
+        failed = []
+        router = LLMRouter()
+        if hasattr(router, "tiers") and "heavy" in router.tiers:
+            for provider in router.tiers["heavy"]:
+                try:
+                    model_name = getattr(router, "_get_model_name", lambda p: str(p))(provider)
+                    available.append(str(provider))
+                except Exception:
+                    failed.append(str(provider))
+        configured = len(available) > 0
+        return LLMHealthResponse(
+            configured=configured,
+            providers_available=available,
+            providers_failed=failed,
+            recommended_model=available[0] if available else None,
+        )
+    except Exception as exc:
+        logger.warning("[health_llm] %s", exc)
+        return LLMHealthResponse(configured=False, providers_available=[], providers_failed=["router_error"])
 
 
 # ── Backup Health (T-904) ──────────────────────────────────────────────────

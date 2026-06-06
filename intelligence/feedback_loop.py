@@ -3,6 +3,7 @@ RE_OS — Feedback Loop (Sprint 66 — Compounding Intelligence)
 Records actual deal outcomes to close the intelligence loop.
 Writes actual_irr + outcome to opportunity_scores when a deal closes.
 """
+import time as _time_mod
 from datetime import datetime, timezone
 from typing import Optional
 from loguru import logger
@@ -20,27 +21,43 @@ def record_outcome(
     """Record the actual outcome of a scored opportunity.
     
     Args:
-        survey_no: The survey number (e.g. "45/2").
-        actual_irr: Actual IRR achieved (None if deal didn't close).
+        survey_no: The survey number (e.g. "45/2"). Must exist in opportunity_scores.
+        actual_irr: Actual IRR achieved (None if deal didn't close). Clamped to [-100, 1000].
         outcome: One of: "signed", "loi", "lost", "withdrawn", "dropped".
-        deal_type: Optional actual deal structure used.
+        deal_type: Optional actual deal structure used (purchase/jd/jv).
         notes: Optional free-text notes.
     
     Returns:
-        True if written, False on error.
+        True if written, False on error or if survey_no not found.
     """
+    t0 = _time_mod.time()
     valid_outcomes = {"signed", "loi", "lost", "withdrawn", "dropped"}
     outcome = outcome.lower().strip()
     if outcome not in valid_outcomes:
-        logger.warning("[FeedbackLoop] Invalid outcome '%s' — must be one of %s", outcome, valid_outcomes)
+        logger.warning("[FeedbackLoop] Invalid outcome '{}' — must be one of {}", outcome, valid_outcomes)
         return False
+    
+    if actual_irr is not None:
+        actual_irr = max(-100.0, min(float(actual_irr), 1000.0))
     
     try:
         from utils.db import get_engine
         from sqlalchemy import text
-        
+
+        already_signed = False
+        if outcome == "signed":
+            try:
+                with get_engine().connect() as conn:
+                    row = conn.execute(
+                        text("SELECT actual_outcome FROM opportunity_scores WHERE survey_no = :sno AND actual_outcome = 'signed' LIMIT 1"),
+                        {"sno": survey_no},
+                    ).fetchone()
+                already_signed = row is not None
+            except Exception as exc:
+                logger.debug("[FeedbackLoop] Pre-check failed (will alert): {}", exc)
+
         with get_engine().begin() as conn:
-            conn.execute(
+            result = conn.execute(
                 text("""
                     UPDATE opportunity_scores
                     SET actual_irr = :irr,
@@ -58,34 +75,38 @@ def record_outcome(
                     "sno": survey_no,
                 },
             )
+            if result.rowcount == 0:
+                logger.warning("[FeedbackLoop] survey_no '{}' not found in opportunity_scores — no rows updated", survey_no)
+                return False
 
-        # Audit log is best-effort — must not roll back the outcome UPDATE
         try:
             with get_engine().begin() as conn:
                 conn.execute(
                     text("""
                         INSERT INTO agent_runs (agent_name, micro_market, task_type, status, started_at, duration_seconds)
-                        VALUES ('feedback_loop', 'system', 'outcome_recorded', :outcome, NOW(), 0)
+                        VALUES ('feedback_loop', 'system', 'outcome_recorded', 'completed', NOW(), 0)
                     """),
-                    {"outcome": outcome},
                 )
-        except Exception as log_exc:
-            logger.debug("[FeedbackLoop] Audit log insert failed (non-blocking): %s", log_exc)
+        except Exception as exc:
+            logger.debug("[FeedbackLoop] Audit log insert failed (non-blocking): {}", exc)
 
-        logger.info("[FeedbackLoop] Recorded outcome for %s: %s (IRR=%s)", survey_no, outcome, actual_irr)
-        
-        if outcome == "signed":
+        elapsed = _time_mod.time() - t0
+        logger.info("[FeedbackLoop] {} | outcome={} irr={} ({:.1f}s)", survey_no, outcome, actual_irr, elapsed)
+
+        if outcome == "signed" and not already_signed:
             try:
                 from utils.discord_notifier import send
                 irr_str = f"{actual_irr:.1f}%" if actual_irr is not None else "N/A"
                 send("bd_opportunities", f"Deal SIGNED — {survey_no}",
                      f"Survey {survey_no} closed with outcome: SIGNED.\nActual IRR: {irr_str}")
             except Exception as exc:
-                logger.warning("[FeedbackLoop] Discord alert failed: %s", exc)
-        
+                logger.warning("[FeedbackLoop] Discord alert failed: {}", exc)
+        elif outcome == "signed" and already_signed:
+            logger.info("[FeedbackLoop] {} already signed — skipping repeat Discord alert", survey_no)
+
         return True
     except Exception as exc:
-        logger.error("[FeedbackLoop] Failed to record outcome for %s: %s", survey_no, exc)
+        logger.error("[FeedbackLoop] Failed to record outcome for {}: {}", survey_no, exc)
         return False
 
 
@@ -135,5 +156,5 @@ def get_outcome_history(survey_no: Optional[str] = None) -> list[dict]:
             for r in rows
         ]
     except Exception as exc:
-        logger.error("[FeedbackLoop] Failed to query outcomes: %s", exc)
+        logger.error("[FeedbackLoop] Failed to query outcomes: {}", exc)
         return []

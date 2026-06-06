@@ -4,7 +4,6 @@ T-784: ≥6 smoke tests guarding the T-780–T-783 fixes.
 """
 import re
 import subprocess
-import time
 
 import pytest
 
@@ -108,13 +107,19 @@ class TestMarketBriefPopulated:
                 assert row[0] >= 1, f"v_market_brief has no row for {market}"
 
 
-# ── Test 4: avg_psf in v_market_brief between 1,500 and 25,000 ────────────────
+# ── Test 4: avg_psf in v_market_brief within GATE-51 range [3,000–20,000] ─────
+# Bounds aligned with GATE-51 criterion (T-943). Portal market rates for
+# Bengaluru's mid-market segments consistently fall in this band. Values below
+# ₹3,000 indicate guidance-value (IGR) data mixed into listing PSF, or
+# insufficient inventory. Values above ₹20,000 suggest luxury/premium segment
+# or mis-geocoded listings from higher-price localities.
 
 @_skip_no_db
 class TestPSFBounds:
     def test_avg_listing_psf_within_bounds(self):
         from utils.db import get_engine
         from sqlalchemy import text
+        from config.gate_criteria import GATE51_PSF_MIN, GATE51_PSF_MAX
 
         with get_engine().connect() as conn:
             rows = conn.execute(text("""
@@ -129,9 +134,10 @@ class TestPSFBounds:
                 # No listing data for this market — data availability issue, not a PSF bug.
                 # avg_listing_psf is listing-derived; markets with no scraped listings will be NULL.
                 continue
-            assert 1500 <= psf <= 25000, (
-                f"{market}: avg_listing_psf={psf} outside [1500, 25000] — "
-                "catches ₹10,148-class outlier bug"
+            assert GATE51_PSF_MIN <= psf <= GATE51_PSF_MAX, (
+                f"{market}: avg_listing_psf={psf} outside "
+                f"GATE-51 range [{GATE51_PSF_MIN}, {GATE51_PSF_MAX}] — "
+                "portal market rates should fall in this band"
             )
             markets_checked += 1
 
