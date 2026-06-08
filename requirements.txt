@@ -55,7 +55,7 @@ pyfolio>=0.9.0
 
 # Time-series forecasting (Tier 3 — PSF Forecasting)
 # mlforecast: LightGBM-backed PSF forecast models per market (T-762+)
-mlforecast>=0.13.0
+mlforecast>=1.0.31
 
 # Utilities
 python-dotenv==1.2.2
