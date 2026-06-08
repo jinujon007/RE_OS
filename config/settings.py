@@ -238,5 +238,14 @@ PLUGIN_SCHEDULES: dict[str, dict | None] = {
     "bbmp_khata": {"day_of_week": "wed", "hour": 4, "minute": 0},
 }
 
+# ── AGENT TOKEN BUDGETS (Phase 9 - Sprint 60) ───────────────────────────────
+TOKEN_BUDGETS: dict[str, int] = {
+    "CEO": int(os.getenv("CEO_TOKEN_BUDGET", "4000")),
+    "ANALYST": int(os.getenv("ANALYST_TOKEN_BUDGET", "2000")),
+    "SCRAPER": int(os.getenv("SCRAPER_TOKEN_BUDGET", "1000")),
+    "PR_HEAD": int(os.getenv("PR_HEAD_TOKEN_BUDGET", "1500")),
+    "CONTENT_WRITER": int(os.getenv("CONTENT_WRITER_TOKEN_BUDGET", "1000")),
+}
+
 # ── AGENT RUN STATUSES ────────────────────────────────────────────────────────
 AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]

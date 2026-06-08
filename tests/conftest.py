@@ -13,6 +13,8 @@ os.environ.setdefault(
     "DATABASE_URL",
     "postgresql://re_os_user:test_password_for_pytest@localhost:5432/re_os",
 )
+os.environ.setdefault("REDIS_URL", "memory://")
+os.environ.setdefault("DASHBOARD_API_KEY", "test-api-key")
 
 # ── crewai stub ────────────────────────────────────────────────────────────────
 # Stubs LLM, Agent, Task, Crew, Process, and crewai.tools so every module that
@@ -114,6 +116,39 @@ except ImportError:
     _pg2_pool.ThreadedConnectionPool = MagicMock()
     sys.modules["psycopg2"] = _pg2
     sys.modules["psycopg2.pool"] = _pg2_pool
+
+# ── apscheduler stub ─────────────────────────────────────────────────────────
+try:
+    import apscheduler as _aps_check  # noqa: F401
+except ImportError:
+    _aps = types.ModuleType("apscheduler")
+    _aps_sched = types.ModuleType("apscheduler.schedulers")
+    _aps_sched_blocking = types.ModuleType("apscheduler.schedulers.blocking")
+
+    class _FakeBlockingScheduler:
+        def __init__(self, *a, **kw): pass
+        def add_job(self, *a, **kw): pass
+        def start(self): pass
+        def get_jobs(self): return []
+
+    class _FakeCronTrigger:
+        def __init__(self, *a, **kw): pass
+
+    _aps_sched_blocking.BlockingScheduler = _FakeBlockingScheduler
+    _aps.schedulers = _aps_sched
+    _aps_sched.blocking = _aps_sched_blocking
+
+    _aps_triggers = types.ModuleType("apscheduler.triggers")
+    _aps_triggers_cron = types.ModuleType("apscheduler.triggers.cron")
+    _aps_triggers_cron.CronTrigger = _FakeCronTrigger
+    _aps.triggers = _aps_triggers
+    _aps_triggers.cron = _aps_triggers_cron
+
+    sys.modules["apscheduler"] = _aps
+    sys.modules["apscheduler.schedulers"] = _aps_sched
+    sys.modules["apscheduler.schedulers.blocking"] = _aps_sched_blocking
+    sys.modules["apscheduler.triggers"] = _aps_triggers
+    sys.modules["apscheduler.triggers.cron"] = _aps_triggers_cron
 
 # ── slowapi stub (for FastAPI tests) ──────────────────────────────────────
 try:

@@ -41,6 +41,87 @@ class DistressedDeveloper:
     alert_level: str  # "HIGH_DISTRESS" | "WATCH" | "HEALTHY"
 
 
+def compute_developer_distress_score(developer_name: str, market: str) -> float:
+    """Blend latest stall, NCLT, and BDA auction signals into a [0,1] score.
+
+    Formula:
+        min(stall_ratio*0.55 + nclt_flag*0.35 + bda_flag*0.10, 1.0)
+    """
+    developer_name = " ".join((developer_name or "").split())
+    market = " ".join((market or "").split())
+    if not developer_name or not market:
+        return 0.0
+
+    try:
+        with get_engine().begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    WITH latest_stall AS (
+                        SELECT stall_ratio
+                        FROM developer_distress_signals
+                        WHERE developer_name = :developer_name
+                          AND market = :market
+                          AND signal_type = 'rera_stall'
+                        ORDER BY detected_at DESC
+                        LIMIT 1
+                    ),
+                    nclt AS (
+                        SELECT CASE WHEN COUNT(*) >= 1 THEN 1.0 ELSE 0.0 END AS nclt_flag
+                        FROM developer_distress_signals
+                        WHERE developer_name = :developer_name
+                          AND market = :market
+                          AND signal_type = 'nclt_news'
+                          AND detected_at >= NOW() - INTERVAL '180 days'
+                    ),
+                    bda AS (
+                        SELECT CASE WHEN COUNT(*) >= 1 THEN 1.0 ELSE 0.0 END AS bda_flag
+                        FROM developer_distress_signals
+                        WHERE developer_name = :developer_name
+                          AND market = :market
+                          AND signal_type = 'bda_auction'
+                    )
+                    SELECT
+                        COALESCE((SELECT stall_ratio FROM latest_stall), 0.0) AS stall_ratio,
+                        COALESCE((SELECT nclt_flag FROM nclt), 0.0) AS nclt_flag,
+                        COALESCE((SELECT bda_flag FROM bda), 0.0) AS bda_flag
+                    """
+                ),
+                {"developer_name": developer_name, "market": market},
+            ).fetchone()
+            if row is None:
+                return 0.0
+
+            score = min(
+                (float(row.stall_ratio or 0.0) * 0.55)
+                + (float(row.nclt_flag or 0.0) * 0.35)
+                + (float(row.bda_flag or 0.0) * 0.10),
+                1.0,
+            )
+            score = round(max(0.0, min(score, 1.0)), 4)
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO developer_distress_signals (
+                        developer_name, market, signal_type, distress_score
+                    )
+                    VALUES (:developer_name, :market, 'computed', :distress_score)
+                    ON CONFLICT (developer_name, market, signal_type)
+                    DO UPDATE SET distress_score = EXCLUDED.distress_score, detected_at = NOW()
+                    """
+                ),
+                {
+                    "developer_name": developer_name,
+                    "market": market,
+                        "distress_score": score,
+                    },
+            )
+            return score
+    except Exception as exc:
+        logger.warning("[DistressedDev] compute score failed for {} / {}: {}", developer_name, market, exc)
+        return 0.0
+
+
 def scan_distressed_developers(market: str | None = None,
                                min_score: float = 0.0,
                                max_results: int = 20) -> list[DistressedDeveloper]:

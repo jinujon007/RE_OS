@@ -614,3 +614,17 @@ def get_router_status() -> dict:
             f" ({sum([c, gem, n, sn, cf])}/5 cloud providers active)"
         ),
     }
+
+
+def record_agent_token_usage(agent_name: str, tokens_used: int, model: str, run_id: str) -> None:
+    """Record token usage for an agent after LLM call.
+
+    Called by agents after successful LLM invocation to track their token budget.
+    Extracts from provider-level tracking; agents should call this with their
+    agent_name and the run_id for audit correlation.
+    """
+    try:
+        from utils.token_tracker import record
+        record(agent_name, tokens_used, model, run_id)
+    except Exception as e:
+        logger.debug("[Router] Agent token recording failed: {}", e)

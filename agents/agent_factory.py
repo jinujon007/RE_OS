@@ -33,6 +33,7 @@ _VALID_MARKETS: frozenset[str] = frozenset({"Yelahanka", "Devanahalli", "Hebbal"
 _VALID_LLM_TIERS: frozenset[str] = frozenset({"heavy", "analysis", "light"})
 _VALID_DEPARTMENTS: frozenset[str] = frozenset({
     "bd", "engineering", "finance", "legal", "ops", "process", "scout", "board",
+    "operations",
 })
 _REQUIRED_SPEC_FIELDS: tuple[str, ...] = ("id", "name", "role", "persona", "llm_tier")
 

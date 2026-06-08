@@ -182,6 +182,8 @@ _READ_ONLY_PATHS = frozenset(
         "/api/portfolio",
         "/api/portfolio/summary",
         "/api/pr/mentions",
+        "/api/optimizer/report",
+        "/optimizer",
     }
 )
 _READ_ONLY_PREFIXES = (
@@ -192,6 +194,7 @@ _READ_ONLY_PREFIXES = (
     "/api/data/",
     "/api/memory/",
     "/api/demand/",
+    "/api/distress/",
 )
 
 
@@ -4335,6 +4338,53 @@ async def gcc_north_score(request: Request):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+@app.get("/api/distress/signals")
+async def distress_signals(
+    request: Request,
+    market: str = Query("Yelahanka", description="Market name"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """List developer distress signals for a market."""
+    market = (market or "").strip()
+    if not market:
+        return JSONResponse({"error": "market is required"}, status_code=400)
+    try:
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text(
+                    """
+                    SELECT developer_name, market, signal_type, stall_count, stall_ratio,
+                           mention_count, distress_score, detected_at
+                    FROM developer_distress_signals
+                    WHERE market = :market
+                    ORDER BY detected_at DESC, distress_score DESC, developer_name ASC
+                    LIMIT :limit
+                    """
+                ),
+                {"market": market, "limit": limit},
+            ).fetchall()
+        return JSONResponse({
+            "market": market,
+            "count": len(rows),
+            "signals": [
+                {
+                    "developer_name": row.developer_name,
+                    "market": row.market,
+                    "signal_type": row.signal_type,
+                    "stall_count": int(row.stall_count or 0),
+                    "stall_ratio": float(row.stall_ratio or 0.0),
+                    "mention_count": int(row.mention_count or 0),
+                    "distress_score": float(row.distress_score or 0.0),
+                    "detected_at": row.detected_at.isoformat() if row.detected_at else None,
+                }
+                for row in rows
+            ],
+        })
+    except Exception as exc:
+        logger.warning("[API] /api/distress/signals failed: {}", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 @app.post("/api/gcc/events")
 async def gcc_create_event(request: Request):
     """Manually ingest a single GCC event.
@@ -4448,7 +4498,209 @@ async def gcc_create_event(request: Request):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-# ── Entry point ──────────────────────────────────────────────────────────────
+# ── Optimizer Routes (T-1005) ─────────────────────────────────────────────────
+
+
+@app.get("/optimizer", tags=["Optimizer"], summary="Dashboard Optimizer Panel")
+@limiter.limit("20/hour")
+async def optimizer_panel(request: Request):
+    """Render optimizer dashboard panel."""
+    try:
+        return templates.TemplateResponse(request, "optimizer.html")
+    except Exception as exc:
+        logger.error("[optimizer_panel] %s", exc)
+        return JSONResponse({"error": "template not found"}, status_code=500)
+
+
+@app.get("/api/optimizer/report", tags=["Optimizer"], summary="Latest optimizer report JSON")
+@limiter.limit("20/hour")
+async def optimizer_report(request: Request):
+    """Return latest optimizer report as JSON."""
+    try:
+        from utils.optimizer_report import generate_report
+
+        report = generate_report(7)
+        return report.to_dict()
+    except Exception as exc:
+        logger.error("[optimizer_report] %s", exc)
+        return JSONResponse({
+            "report_date": "",
+            "token_summary": [],
+            "redundancy_findings": [],
+            "cache_hit_rate": 0.0,
+            "top_recommendation": "Unable to generate report - see logs",
+            "auto_tasks_created": 0,
+        })
+
+
+# ── Shareholder Board Routes (Phase 14 - Sprint 62) ───────────────────────────
+
+
+@app.post("/api/shareholders/trigger", tags=["Shareholders"],
+          summary="Trigger quarterly board review")
+@limiter.limit("5/hour")
+async def trigger_shareholder_review(request: Request):
+    """Trigger a quarterly board review. Creates session, runs shareholders, saves result."""
+    from crews.shareholder_review import ShareholderBoardCrew
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+    quarter = str(payload.get("quarter") or "").strip()
+    trigger_reason = str(payload.get("trigger_reason") or "Manual trigger").strip()
+    if not quarter:
+        return JSONResponse({"error": "quarter required (e.g. Q2-2026)"}, status_code=400)
+
+    import uuid as _uuid
+    session_id = str(_uuid.uuid4())
+
+    # Cooldown guard: prevent >1 concurrent trigger per quarter
+    try:
+        with _get_sa_engine().connect() as conn:
+            active = conn.execute(
+                _sa_text("SELECT COUNT(*) FROM shareholder_sessions "
+                         "WHERE quarter = :q AND status IN ('pending','in_progress')"),
+                {"q": quarter},
+            ).scalar() or 0
+            if active > 0:
+                return JSONResponse({
+                    "error": f"A review for {quarter} is already in progress. "
+                             "Wait for it to complete before triggering another.",
+                }, status_code=429)
+    except Exception:
+        pass
+
+    try:
+        with _get_sa_engine().begin() as conn:
+            conn.execute(
+                _sa_text("""
+                    INSERT INTO shareholder_sessions
+                    (id, session_type, quarter, trigger_reason, status, created_at)
+                    VALUES (:id, 'quarterly_board', :quarter, :reason, 'in_progress', NOW())
+                """),
+                {"id": session_id, "quarter": quarter, "reason": trigger_reason},
+            )
+    except Exception as exc:
+        logger.warning("[API] POST /api/shareholders/trigger session create failed: {}", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+    def _run_and_update():
+        try:
+            result = ShareholderBoardCrew.run_quarterly_review(quarter)
+            letter_text = result.get("ceo_letter_text", "")
+            letter_path = ShareholderBoardCrew.save_letter(session_id, letter_text)
+            with _get_sa_engine().begin() as conn:
+                conn.execute(
+                    _sa_text("""
+                        UPDATE shareholder_sessions
+                        SET status = 'complete',
+                            shareholder_responses = CAST(:responses AS jsonb),
+                            debate_transcript = :transcript,
+                            ceo_synthesis = :synthesis,
+                            verdict = :verdict,
+                            completed_at = NOW()
+                        WHERE id = :id
+                    """),
+                    {
+                        "id": session_id,
+                        "responses": json.dumps(result.get("shareholder_responses", [])),
+                        "transcript": json.dumps({
+                            "debate_triggered": result.get("debate_triggered", False),
+                            "debate_round": result.get("debate_round"),
+                        }),
+                        "synthesis": result.get("ceo_letter_text", ""),
+                        "verdict": result.get("quarter_verdict", ""),
+                    },
+                )
+            logger.info("[Shareholders] Review complete: {} | letter={}", session_id, letter_path)
+        except Exception as exc:
+            logger.warning("[Shareholders] Review failed: {} | {}", session_id, exc)
+            try:
+                with _get_sa_engine().begin() as conn:
+                    conn.execute(
+                        _sa_text("UPDATE shareholder_sessions SET status = 'failed' WHERE id = :id"),
+                        {"id": session_id},
+                    )
+            except Exception:
+                pass
+
+    import threading
+    threading.Thread(target=_run_and_update, daemon=True).start()
+
+    return JSONResponse({
+        "session_id": session_id,
+        "status": "in_progress",
+        "quarter": quarter,
+        "message": "Quarterly board review triggered. Check /shareholders for results.",
+    }, status_code=202)
+
+
+@app.get("/api/shareholders/sessions", tags=["Shareholders"],
+         summary="List all shareholder sessions")
+@limiter.limit("30/minute")
+async def list_shareholder_sessions(
+    request: Request,
+    session_type: str | None = None,
+    status: str | None = None,
+    quarter: str | None = None,
+):
+    try:
+        where_clauses = []
+        params = {}
+        if session_type:
+            where_clauses.append("session_type = :session_type")
+            params["session_type"] = session_type
+        if status:
+            where_clauses.append("status = :status")
+            params["status"] = status
+        if quarter:
+            where_clauses.append("quarter = :quarter")
+            params["quarter"] = quarter
+        where_sql = " AND ".join(where_clauses)
+        if where_sql:
+            where_sql = "WHERE " + where_sql
+
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text(f"""
+                    SELECT id, session_type, quarter, trigger_reason, status, verdict,
+                           created_at, completed_at
+                    FROM shareholder_sessions
+                    {where_sql}
+                    ORDER BY created_at DESC
+                    LIMIT 50
+                """),
+                params,
+            ).fetchall()
+        sessions = []
+        for r in rows:
+            sessions.append({
+                "id": str(r[0]),
+                "session_type": r[1],
+                "quarter": r[2],
+                "trigger_reason": r[3],
+                "status": r[4],
+                "verdict": r[5],
+                "created_at": r[6].isoformat() if r[6] else None,
+                "completed_at": r[7].isoformat() if r[7] else None,
+            })
+        return {"data": sessions}
+    except Exception as exc:
+        logger.warning("[API] GET /api/shareholders/sessions failed: {}", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/shareholders", tags=["Shareholders"], summary="Dashboard Shareholder Room Panel")
+@limiter.limit("20/hour")
+async def shareholders_panel(request: Request):
+    """Render shareholder room dashboard panel."""
+    try:
+        return templates.TemplateResponse(request, "shareholders.html")
+    except Exception as exc:
+        logger.error("[shareholders_panel] %s", exc)
+        return JSONResponse({"error": "template not found"}, status_code=500)
+
 
 if __name__ == "__main__":
     import uvicorn

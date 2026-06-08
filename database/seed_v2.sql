@@ -7,18 +7,38 @@
 -- ============================================================
 -- 1. AIZ (Airport Influence Zone) Height Limits
 -- Idempotent: INSERT WHERE NOT EXISTS to preserve manual edits.
+-- height_limit_m values verified 2026-06-08 against AAI CCZM Bengaluru
+-- and OLS tables (AAI Act 1934 s.9A / ICAO Annex 14):
+--   Yelahanka:   45m — Yelahanka IAF Defence Aerodrome IHS (≤5km from ARP)
+--   Devanahalli: 45m — KIAL outer conical; BIAAPA practical cap 4–6 floors
+--   Hebbal:     100m — HAL outer conical (~12km from HAL ARP); BDA RMP-2015 cap
 -- ============================================================
-INSERT INTO regulatory_zones (authority, zone_type, zone_code, zone_description, max_height_m, dc_rules_reference)
+INSERT INTO regulatory_zones (authority, zone_type, zone_code, zone_description, max_height_m, height_limit_m, note, dc_rules_reference)
 SELECT * FROM (VALUES
-    ('AAI', 'AIZ', 'AIZ-YEL', 'Yelahanka — AIZ height limit (5km from HAL airstrip)', 45.0, 'AAI Act 1994, Section 9A'),
-    ('AAI', 'AIZ', 'AIZ-DEV', 'Devanahalli — graduated AIZ (3km from BIAL perimeter: 15m, 3-6km: 30m, 6-10km: 45m)', 45.0, 'AAI Act 1994, Section 9A — BIAL Obstacle Limitation Surface'),
-    ('AAI', 'AIZ', 'AIZ-HEB', 'Hebbal — AIZ height limit (8km from HAL airstrip, under flight path)', 75.0, 'AAI Act 1994, Section 9A — HAL BEML approach funnel'),
-    ('AAI', 'AIZ', 'AIZ-JKK', 'Jakkur — AIZ height limit (4km from HAL airstrip)', 30.0, 'AAI Act 1994, Section 9A'),
-    ('AAI', 'AIZ', 'AIZ-TSN', 'Thanisandra — AIZ height limit (6km from HAL airstrip, under holding pattern)', 60.0, 'AAI Act 1994, Section 9A')
-) AS v (authority, zone_type, zone_code, zone_description, max_height_m, dc_rules_reference)
+    ('AAI', 'AIZ', 'AIZ-YEL', 'Yelahanka — IAF Defence Aerodrome IHS', 45.0, 45.0,
+     'Yelahanka AFS IHS cap (45m within 5km of ARP). NOC from AFS Yelahanka + AAI NOCAS. Outer conical 5–9.26km.',
+     'AAI Act 1934 s.9A; ICAO Annex 14 OLS'),
+    ('AAI', 'AIZ', 'AIZ-DEV', 'Devanahalli — KIAL outer conical (7km from ARP)', 45.0, 45.0,
+     'KIAL outer conical surface. BIAAPA restricts to 4–6 floors near approach corridors. Site-specific PTE via AAI NOCAS.',
+     'AAI Act 1934 s.9A; BIAL OLS; BIAAPA Bylaws'),
+    ('AAI', 'AIZ', 'AIZ-HEB', 'Hebbal — HAL outer conical (~12km from HAL ARP)', 100.0, 100.0,
+     'HAL Defence Aerodrome outer conical. BDA RMP-2015 caps HAL outer conical at 100m. KIAL outer transitional (22km) cap 150m — HAL is binding.',
+     'AAI Act 1934 s.9A; BDA RMP-2015; HAL NOC'),
+    ('AAI', 'AIZ', 'AIZ-JKK', 'Jakkur — GFTS IHS (within 5km of Jakkur ARP)', 30.0, 30.0,
+     'GFTS Jakkur IHS cap. NOC from GFTS Jakkur + AAI NOCAS. Multiple NOCs needed for KIAL overlap.',
+     'AAI Act 1934 s.9A; ICAO Annex 14 OLS'),
+    ('AAI', 'AIZ', 'AIZ-TSN', 'Thanisandra — HAL outer conical / holding pattern', 60.0, 60.0,
+     'Under HAL holding pattern approach. Verify exact distance from HAL ARP via NOCAS.',
+     'AAI Act 1934 s.9A')
+) AS v (authority, zone_type, zone_code, zone_description, max_height_m, height_limit_m, note, dc_rules_reference)
 WHERE NOT EXISTS (
     SELECT 1 FROM regulatory_zones rz WHERE rz.zone_code = v.zone_code
 );
+
+-- Back-fill height_limit_m for any AIZ rows inserted before migration 0026
+UPDATE regulatory_zones
+SET height_limit_m = max_height_m
+WHERE zone_type = 'AIZ' AND height_limit_m IS NULL AND max_height_m IS NOT NULL;
 
 -- ============================================================
 -- 2. Soil Risk Zones (15 known problem zones in North Bengaluru)

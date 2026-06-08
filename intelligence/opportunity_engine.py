@@ -51,9 +51,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from loguru import logger
+from sqlalchemy import text
 
 from intelligence._shared import sanitize_market, validate_market, timed_intel_query
 from intelligence.registry import IntelRegistry
+from utils.db import get_engine
 
 __all__ = ["OpportunityEngine", "OpportunityScore", "ScoreComponents"]
 
@@ -252,31 +254,75 @@ def _timing_score(pkg: Any) -> float:
 def _distress_score(pkg: Any) -> float:
     """Distress sub-score (weight 0.15).
 
-    Measures seller-motivation proxy: more development constraints = seller more
-    motivated to transact = better buying opportunity.
+    Measures seller-motivation proxy as a weighted blend of:
+      land_constraint_score (65%) + developer_distress_score (35%)
 
-    Uses LandPicture:
+    Land constraint uses LandPicture:
       CONSTRAINED or flood ALERT → 1.0
       Overlay count > 0           → 0.7
       PARTIAL readiness + flags   → 0.5
       No flags                    → 0.1
+
+    Developer distress uses `developer_distress_signals.signal_type='computed'`
+    averaged over the last 30 days for the market, optionally narrowed by
+    survey developer_id when available.
     """
     lp = getattr(pkg, "land_picture", None)
     if lp is None:
-        return 0.1
+        land_score = 0.1
+    else:
+        readiness = getattr(lp, "development_readiness", "UNKNOWN") or "UNKNOWN"
+        flood = getattr(lp, "flood_risk", "UNKNOWN") or "UNKNOWN"
+        overlay_count = getattr(lp, "overlay_count", 0) or 0
+        flags = getattr(lp, "flags", []) or []
 
-    readiness = getattr(lp, "development_readiness", "UNKNOWN") or "UNKNOWN"
-    flood = getattr(lp, "flood_risk", "UNKNOWN") or "UNKNOWN"
-    overlay_count = getattr(lp, "overlay_count", 0) or 0
-    flags = getattr(lp, "flags", []) or []
+        if readiness == "CONSTRAINED" or flood == "ALERT":
+            land_score = 1.0
+        elif overlay_count > 0:
+            land_score = 0.7
+        elif readiness == "PARTIAL" or len(flags) > 0:
+            land_score = 0.5
+        else:
+            land_score = 0.1
 
-    if readiness == "CONSTRAINED" or flood == "ALERT":
-        return 1.0
-    if overlay_count > 0:
-        return 0.7
-    if readiness == "PARTIAL" or len(flags) > 0:
-        return 0.5
-    return 0.1
+    dev_avg = 0.0
+    try:
+        market = getattr(pkg, "market", None)
+        if not market:
+            return round(land_score, 4)
+        survey_dev_id = getattr(pkg, "developer_id", None)
+        params: dict[str, Any] = {"market": market}
+        where_extra = ""
+        if survey_dev_id:
+            params["developer_id"] = survey_dev_id
+            where_extra = """
+                AND developer_name = (
+                    SELECT name FROM developers WHERE id = :developer_id LIMIT 1
+                )
+            """
+        with get_engine().connect() as conn:
+            dev_avg = float(
+                conn.execute(
+                    text(
+                        f"""
+                        SELECT COALESCE(AVG(distress_score), 0.0)
+                        FROM developer_distress_signals
+                        WHERE market = :market
+                          AND signal_type = 'computed'
+                          AND detected_at > NOW() - INTERVAL '30 days'
+                          {where_extra}
+                        """
+                    ),
+                    params,
+                ).scalar()
+                or 0.0
+            )
+            dev_avg = max(0.0, min(dev_avg, 1.0))
+    except Exception as exc:
+        logger.debug("[OpportunityEngine] developer distress blend fallback for {}: {}", getattr(pkg, "market", None), exc)
+        return round(land_score, 4)
+
+    return round((0.65 * land_score) + (0.35 * (dev_avg or 0.0)), 4)
 
 
 def _exclusivity_score(

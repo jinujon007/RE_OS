@@ -63,6 +63,7 @@ class IntelPackage:
         financial_evaluation: ``FinancialEvaluation`` or ``None`` on failure.
         land_picture:    ``LandPicture`` or ``None`` on failure.
         demand_signals:  ``DemandSignals`` or ``None`` on failure.
+        peer_benchmark:  ``PeerBenchmarkResult`` or ``None`` (non-blocking).
         module_status:   ``{module_name: "OK"|"ERROR"}`` per module.
         errors:          Human-readable error strings for failed modules.
         all_modules_success: ``True`` iff every module returned ``"OK"``.
@@ -78,6 +79,7 @@ class IntelPackage:
     financial_evaluation: Any = None
     land_picture: Any = None
     demand_signals: Any = None
+    peer_benchmark: Any = None
 
     module_status: dict[str, str] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
@@ -279,6 +281,9 @@ class IntelRegistry:
             m, land, actual_psf, gv, construction_cost_psf,
         )
 
+        peer = self._get_peer_benchmark(m, actual_psf)
+        pkg.peer_benchmark = peer
+
         pkg.all_modules_success = all(
             v == "OK" for v in pkg.module_status.values()
         )
@@ -339,6 +344,12 @@ class IntelRegistry:
             guidance_value_psf=guidance_value_psf,
             construction_cost_psf=construction_cost_psf,
         )
+
+
+    @staticmethod
+    def _get_peer_benchmark(market: str, lls_target_psf: float) -> Any:
+        from intelligence.peer_benchmark import PeerBenchmarkEngine
+        return PeerBenchmarkEngine.compute(market, lls_target_psf)
 
 
 if __name__ == "__main__":

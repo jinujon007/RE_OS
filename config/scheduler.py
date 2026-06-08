@@ -18,6 +18,7 @@ Schedule (post-Sprint-66):
 - Monday 03:45 IST — BERTScore quality evaluation
 - Monday 04:00 IST — Weekly memory digest (top-5 facts per market → Discord)
 - Sunday 07:00 IST — PSF Forecast (LGBM walk-forward validation)
+- 1st of month 04:00 UTC — Monthly CEO letter (PerformanceDigest + agent_runs analysis → CEO letter)
 """
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -962,6 +963,95 @@ def weekly_pr_brief():
         logger.warning("[Scheduler] Weekly PR brief failed (non-fatal): {}", exc)
 
 
+def monthly_ceo_letter():
+    """1st of month 04:00 UTC — Generate monthly CEO letter.
+
+    Gathers PerformanceDigest for the quarter, agent_runs summary, and
+    optimizer findings. Writes a lighter CEO letter to outputs/shareholder_letters/.
+    Sends 3-line Discord summary to #ops.
+    """
+    try:
+        from utils.performance_digest import PerformanceDigest
+        from pathlib import Path
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        month = now.strftime("%Y-%m")
+        quarter_num = (now.month - 1) // 3 + 1
+        quarter = f"Q{quarter_num}-{now.year}"
+
+        digest = PerformanceDigest.build(quarter)
+
+        total_agent_runs = 0
+        try:
+            with get_engine().connect() as conn:
+                row = conn.execute(
+                    text("SELECT COUNT(*) FROM agent_runs WHERE created_at >= DATE_TRUNC('month', NOW())")
+                ).fetchone()
+                total_agent_runs = row[0] if row else 0
+        except Exception:
+            pass
+
+        optimizer_note = ""
+        try:
+            from utils.optimizer_report import OptimizerReport
+            report = OptimizerReport.from_last_report()
+            if report and report.top_recommendation:
+                optimizer_note = report.top_recommendation[:200]
+        except Exception:
+            pass
+
+        deal_count = digest.get("deal_metrics", {}).get("deal_count", 0)
+        avg_irr = digest.get("deal_metrics", {}).get("avg_irr_pct", "N/A")
+        new_projects_total = sum(
+            p.get("project_count", 0) for p in digest.get("new_projects", [])
+        )
+        over_budget = digest.get("token_efficiency", {}).get("over_budget_count", 0)
+
+        letter = (
+            f"# Monthly CEO Letter — {month}\n\n"
+            f"**Quarter:** {quarter}\n"
+            f"**Generated:** {now.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+            f"## Month in Review\n\n"
+            f"The system evaluated {deal_count} deal(s) this month "
+            f"with an average IRR of {avg_irr}%. "
+            f"We tracked {new_projects_total} new project(s) across our markets.\n\n"
+            f"## Top Intelligence Moments\n\n"
+            f"1. {deal_count} deal(s) processed through the full evaluate pipeline.\n"
+            f"2. {new_projects_total} new project(s) detected across target markets.\n"
+            f"3. {total_agent_runs} agent run(s) completed this month.\n\n"
+            f"## System Health\n\n"
+            f"Token budget overruns: {over_budget} agent(s) exceeded budget. "
+            f"{optimizer_note if optimizer_note else 'No optimizer recommendations available.'}\n\n"
+            f"## Next Month Focus\n\n"
+            f"Continue monitoring {quarter} performance targets, "
+            f"address token budget optimization recommendations, "
+            f"and maintain pipeline throughput.\n\n"
+            f"---\n*LLS CEO • Automated monthly brief*"
+        )
+
+        output_dir = Path("outputs/shareholder_letters")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / f"{month}_Monthly_CEO_Letter.md"
+        path.write_text(letter, encoding="utf-8")
+
+        summary = (
+            f"Monthly CEO letter — {month} | "
+            f"{deal_count} deals, {new_projects_total} new projects, "
+            f"{over_budget} over-budget agents | "
+            f"Letter saved: {path.name}"
+        )
+        try:
+            from utils.discord_notifier import send
+            send(summary, channel="#ops")
+        except Exception:
+            pass
+
+        logger.info("[Scheduler] Monthly CEO letter saved to {} — {}", path, summary)
+    except Exception as exc:
+        logger.warning("[Scheduler] Monthly CEO letter failed (non-fatal): {}", exc)
+
+
 def run_gcc_daily_scan():
     """Ingest new GCC events and fire Discord alerts for Level 1–2 signals.
 
@@ -1077,6 +1167,7 @@ def run_gcc_weekly_digest():
             include_negative=False,
             limit=10,
         )
+
         events_as_dicts = []
         for evt in events:
             try:
@@ -1093,6 +1184,50 @@ def run_gcc_weekly_digest():
         )
     except Exception as exc:
         logger.error("[Scheduler] GCC weekly digest failed: {}", exc)
+
+
+def run_post_crew_optimizer_hook():
+    """Run after market_intel_crew completes — generates optimizer report and creates tasks for HIGH findings."""
+    logger.info("[Scheduler] Post-crew optimizer hook starting")
+    try:
+        from utils.optimizer_report import generate_report
+        from utils.db import get_engine
+        from sqlalchemy import text
+
+        # Generate 1-day report
+        report = generate_report(days=1)
+
+        # Check for HIGH severity findings
+        high_findings = [f for f in report.redundancy_findings if f.get("severity") == "HIGH"]
+
+        if high_findings:
+            # Create project task via API
+            for finding in high_findings[:3]:  # cap at 3 tasks per run
+                recommendation = finding.get("recommendation", "Review HIGH severity finding")
+                try:
+                    with get_engine().begin() as conn:
+                        conn.execute(
+                            text("""
+                                INSERT INTO tasks (title, owner, priority, source_type, source_id)
+                                VALUES (:t, 'optimizer', 'high', 'optimizer_finding', :sid)
+                            """),
+                            {"t": recommendation[:100], "sid": finding.get("agent", "unknown")},
+                        )
+                    report.auto_tasks_created += 1
+                except Exception as exc:
+                    logger.warning("[Scheduler] Failed to create task for findings: {}", exc)
+
+            # Write report to outputs/optimizer/ (use relative path for dev, /app for prod)
+            import os
+            output_base = "/app/outputs/optimizer" if os.path.exists("/app") else "outputs/optimizer"
+            report_path = os.path.join(output_base, f"{report.report_date}.md")
+            os.makedirs(output_base, exist_ok=True)
+            report.write(report_path)
+
+        logger.info("[Scheduler] Optimizer hook: {} high findings, {} tasks created",
+                   len(high_findings), report.auto_tasks_created)
+    except Exception as exc:
+        logger.error("[Scheduler] Post-crew optimizer hook failed: {}", exc)
 
 
 _backup_lock = False
@@ -1302,6 +1437,25 @@ if __name__ == "__main__":
         misfire_grace_time=3600,
     )
 
+    # Post-crew optimizer hook — runs after successful crew completion (T-1005)
+    # Called explicitly from Stage3 completion via subprocess callback
+    scheduler.add_job(
+        lambda: _safe_job(run_post_crew_optimizer_hook, "post_crew_optimizer_hook"),
+        CronTrigger(hour=4, minute=0),  # fallback: run daily at 4am UTC if not triggered inline
+        id="post_crew_optimizer_hook",
+        name="Post-Crew Optimizer Hook (daily fallback)",
+        misfire_grace_time=3600,
+    )
+
+    # Monthly CEO letter — 1st of month at 04:00 UTC (Sprint 62, T-1019)
+    scheduler.add_job(
+        lambda: _safe_job(monthly_ceo_letter, "monthly_ceo_letter"),
+        CronTrigger(day=1, hour=4, minute=0, timezone="UTC"),
+        id="monthly_ceo_letter",
+        name="Monthly CEO Letter (PerformanceDigest + agent_runs summary)",
+        misfire_grace_time=7200,
+    )
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
     logger.info("  01:00 AM IST — Daily pg_dump backup [T-904]")
@@ -1325,6 +1479,7 @@ if __name__ == "__main__":
     logger.info("  Sunday 08:30 IST — Process automation audit (LogAnalyst + Optimizer + Runbook) [T-1011]")
     logger.info("  Daily 08:00 IST — GCC daily scan (seed + news → L1/L2 alerts) [T-1021]")
     logger.info("  Monday 07:30 IST — GCC weekly digest (pipeline → Discord intel) [T-1022]")
+    logger.info("  1st of month 09:30 IST — Monthly CEO letter (PerformanceDigest + agent_runs) [T-1019]")
     logger.info(f"Active jobs: {[j.id for j in scheduler.get_jobs()]}")
 
     scheduler.start()

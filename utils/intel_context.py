@@ -135,4 +135,5 @@ def build_intel_context(pkg: IntelPackage) -> dict:
             "developer_confidence_pct": _v(demand.developer_confidence_pct, ".1f") if demand else "N/A",
             "signals": demand.signals if demand else [],
         },
+        "jdv_jv_targets": [],
     }

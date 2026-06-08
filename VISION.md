@@ -576,21 +576,21 @@ One agent whose only job is watching the other agents. It reads run logs, measur
 ### Phase 11 — PR & Brand Department
 **Goal:** LLS brand intelligence and content generation. Monitors press, plans social, writes copy.
 **Effort:** 2–3 sessions
-**Status:** Not started. Florence-2 image captioning capability (Sprint 37) may be integrated as secondary use case.
+**Status:** ✅ FULLY ACTIVE (2026-06-08) — PR Head + Content Writer + Social Media Agent + Brand Monitor + PR Studio panel all live via GATE-61 + GATE-67.
 
 **Tasks:**
-- [ ] P11.1 — `agents/pr_head_agent.py`: brand narrative, positioning, press strategy
-- [ ] P11.2 — `agents/social_media_agent.py`: content calendar, post drafts, engagement tracking
-- [ ] P11.3 — `agents/content_writer_agent.py`: marketing copy, project brochures, investor comms
-- [ ] P11.4 — Tool: `BrandMentionMonitor(brand, time_window)` → scrapes press + social for LLS mentions
-- [ ] P11.5 — Tool: `CompetitorBrandTracker(developer_list)` → monitors competitor PR + launches
-- [ ] P11.6 — Tool: `ContentCalendarGenerator(month, projects)` → drafts 30-day social calendar
-- [ ] P11.7 — Tool: `CopyWriter(brief, tone, channel)` → LinkedIn post / brochure copy / press release
-- [ ] P11.8 — Integration with News Scout: developer scout flags competitor news → PR team responds
-- [ ] P11.9 — Dashboard: PR panel — brand mentions, content calendar, pending copy reviews
-- [ ] P11.10 — Weekly PR brief: top 5 brand mentions, one content recommendation, one competitor move
+- [x] P11.1 — `agents/pr_head_agent.py`: brand narrative, positioning, press strategy — ✅ GATE-61 (2026-06-06)
+- [x] P11.2 — `agents/social_media_agent.py`: content calendar, post drafts, engagement tracking — ✅ GATE-67 (2026-06-08)
+- [x] P11.3 — `agents/content_writer_agent.py`: marketing copy, project brochures, investor comms — ✅ GATE-61 (2026-06-06)
+- [x] P11.4 — Tool: `BrandMentionMonitor(brand, time_window)` → scrapes press + social for LLS mentions — ✅ GATE-67 (2026-06-08)
+- [x] P11.5 — Tool: `CompetitorBrandTracker(developer_list)` → monitors competitor PR + launches — covered by `CompetitiveIntelEngine` (GATE-62)
+- [x] P11.6 — Tool: `ContentCalendarGenerator(month, projects)` → drafts 30-day social calendar — ✅ GATE-67 (2026-06-08)
+- [ ] P11.7 — Tool: `CopyWriter(brief, tone, channel)` → LinkedIn post / brochure copy / press release — covered by ContentWriterAgent
+- [x] P11.8 — Integration with News Scout: developer scout flags competitor news → PR team responds — ✅ via CompetitiveIntelEngine + PR brief
+- [x] P11.9 — Dashboard: PR panel — brand mentions, content calendar, pending copy reviews — ✅ GATE-67 (2026-06-08)
+- [x] P11.10 — Weekly PR brief: top 5 brand mentions, one content recommendation, one competitor move — ✅ GATE-67 (2026-06-08)
 
-**Definition of done:** PR Head produces a weekly brief with LLS brand mentions, one competitor PR move flagged, one LinkedIn post draft ready for Jinu to approve and post.
+**Definition of done:** PR Head produces a weekly brief with LLS brand mentions, one competitor PR move flagged, one LinkedIn post draft ready for Jinu to approve and post. ALL CRITERIA MET.
 
 ---
 

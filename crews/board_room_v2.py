@@ -20,14 +20,51 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from loguru import logger
+from sqlalchemy import text
 
 from config.llm_router import get_analysis_llm
 from intelligence.registry import IntelPackage
 from utils.intel_context import build_intel_context
+from utils.db import get_engine
 
 __all__ = ["run_board_session_v2", "BoardSessionV2Result"]
 
 _DEPT_TIMEOUT_S = 240
+
+
+def _get_jdv_jv_targets(market: str) -> list[str]:
+    """Return distressed developer names ranked for JD/JV targeting."""
+    market = " ".join((market or "").split())
+    if not market:
+        return []
+    try:
+        with get_engine().connect() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT developer_name
+                    FROM developer_distress_signals
+                    WHERE market = :market
+                      AND signal_type = 'computed'
+                      AND distress_score > 0.5
+                    ORDER BY distress_score DESC, developer_name ASC
+                    LIMIT 5
+                    """
+                ),
+                {"market": market},
+            ).fetchall()
+        seen: set[str] = set()
+        names: list[str] = []
+        for row in rows:
+            name = " ".join(str(row.developer_name).split())
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+        return names[:5]
+    except Exception as exc:
+        logger.debug("[BoardRoomV2] JD/JV target lookup failed for {}: {}", market, exc)
+        return []
 
 
 @dataclass
@@ -188,10 +225,48 @@ _AGENT_DEFS: dict[str, tuple[str, str, str]] = {
 }
 
 
+def _get_competitive_context(market: str) -> str:
+    """Fetch competitive context for BD Head. Returns formatted string or empty on failure."""
+    try:
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as _PoolTimeout
+        from intelligence.competitive_intel import CompetitiveIntelEngine
+
+        def _fetch():
+            engine = CompetitiveIntelEngine()
+            absorbers = engine.absorption_leaders(market=market, top_n=3)
+            launches = engine.new_launches(market=market, days=30)
+            abs_lines = [
+                f"  {a['project_name']} — {a['developer_name']} ({a['absorption_pct']:.0f}% sold)"
+                for a in absorbers[:3]
+            ] if absorbers else ["  (no data)"]
+            launch_lines = [
+                f"  {la['project_name']} — {la['developer_name']} ({la['total_units']} units)"
+                for la in launches[:5]
+            ] if launches else ["  (no data)"]
+            return (
+                "Current competitive context:\n"
+                f"Top absorbers in {market}:\n" + "\n".join(abs_lines) + "\n"
+                f"Recent launches in {market}:\n" + "\n".join(launch_lines)
+            )
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(_fetch)
+            try:
+                return fut.result(timeout=3.0)
+            except _PoolTimeout:
+                logger.warning("[BoardRoomV2] competitive context timed out for {}", market)
+                fut.cancel()
+                return ""
+    except Exception as exc:
+        logger.warning("[BoardRoomV2] competitive context failed for {}: {}", market, exc)
+        return ""
+
+
 def _run_dept_heads(pkg: IntelPackage, pitch: str) -> dict[str, str]:
     from crewai import Task, Crew, Process
 
     context = build_intel_context(pkg)
+    context["jdv_jv_targets"] = _get_jdv_jv_targets(pkg.market)
     ctx_json = json.dumps(context, indent=2, default=str)
     pitch_stripped = (pitch or "").strip()[:2000]
 
@@ -200,14 +275,26 @@ def _run_dept_heads(pkg: IntelPackage, pitch: str) -> dict[str, str]:
         agent = _build_agent(role, goal, backstory)
         prompt = _DEPT_PROMPTS[key]
 
-        task_desc = (
-            f"PITCH: {pitch_stripped}\n\n"
-            f"MARKET: {pkg.market}\n"
-            f"SURVEY: {pkg.survey_no}\n\n"
-            f"{prompt}\n\n"
-            f"=== INTELLIGENCE PACKAGE ===\n"
-            f"{ctx_json}\n"
-        )
+        task_desc_parts = [
+            f"PITCH: {pitch_stripped}\n",
+            f"MARKET: {pkg.market}\n",
+            f"SURVEY: {pkg.survey_no}\n",
+        ]
+        if key == "bd":
+            if context["jdv_jv_targets"]:
+                names = ", ".join(context["jdv_jv_targets"])
+                task_desc_parts.append(
+                    f"DISTRESSED DEVELOPERS IN {pkg.market} (JD/JV targets): {names}. Prioritise as acquisition candidates.\n"
+                )
+            comp_context = _get_competitive_context(pkg.market)
+            if comp_context:
+                task_desc_parts.append(f"\n{comp_context}\n")
+        task_desc_parts.extend([
+            f"\n{prompt}\n",
+            "\n=== INTELLIGENCE PACKAGE ===\n",
+            f"{ctx_json}\n",
+        ])
+        task_desc = "".join(task_desc_parts)
 
         task = Task(
             description=task_desc,

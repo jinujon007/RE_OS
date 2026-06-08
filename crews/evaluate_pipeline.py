@@ -325,6 +325,17 @@ def _run_pipeline(
         shareholder_round = run_shareholder_round(pkg, pitch)
         logger.info("[Evaluate] {} | Shareholder round: {} responses", ctx, len(shareholder_round))
 
+        # Auto-trigger quarterly review hook: ≥2 NO-GO + high IRR → WARNING
+        if shareholder_round:
+            nogo_count = sum(1 for s in shareholder_round if s.get("verdict") == "NO-GO")
+            fe = pkg.financial_evaluation
+            irr_base = fe.purchase.simple_irr_pct if (fe and fe.purchase) else None
+            if nogo_count >= 2 and irr_base is not None and irr_base > 20:
+                logger.warning(
+                    "[Evaluate] {} High-IRR deal ({:.1f}%) with {} NO-GO shareholders — recommend quarterly board review",
+                    ctx, irr_base, nogo_count,
+                )
+
         _update_job(job_id, status="running", msg="Deals entry")
         deal_id = _create_deal_entry(pkg, memo, brief)
 
