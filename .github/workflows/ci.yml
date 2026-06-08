@@ -69,7 +69,7 @@ jobs:
       - name: Run unit tests
         env:
           DB_PASSWORD: test_password_for_ci
-        run: pytest tests/ -v -m "not integration" --tb=short --cov=agents --cov=config --cov=crews --cov=scrapers --cov=utils --cov=dashboard --cov-report=term-missing --cov-report=xml --cov-fail-under=60
+        run: pytest tests/ -v -m "not integration" --tb=short --cov=agents --cov=config --cov=crews --cov=scrapers --cov=utils --cov=dashboard --cov-report=term-missing --cov-report=xml --cov-fail-under=80
 
       - name: Sprint 50 — HF Intelligence CI gate (finbert-tone + LegalDocQA)
         run: |
@@ -128,6 +128,34 @@ jobs:
         run: |
           pip install detect-secrets
           detect-secrets scan --baseline .secrets.baseline
+
+  sast:
+    name: Static Security Analysis (Bandit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: lint
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install bandit
+        run: pip install bandit[toml]
+
+      - name: Run Bandit
+        # -ll = medium severity and above, -ii = medium confidence and above
+        # Excludes test files (assertions and subprocess use is intentional)
+        # Excludes .kilo worktrees and kilo output directories
+        run: |
+          bandit -r . -ll -ii \
+            --exclude ./.kilo,./kilo_output,./kilo_logs,./tests,./scripts \
+            -f text
 
   pip-audit:
     name: Dependency Vulnerability Scan

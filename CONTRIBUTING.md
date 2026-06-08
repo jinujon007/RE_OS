@@ -63,9 +63,9 @@ See the [Architecture section in README.md](README.md#architecture) for the full
 
 ## Development Protocol
 
-- **Architect:** Claude Code (this session) — writes task specs, reviews code, commits
+- **Architect:** Claude Code — writes task specs, reviews code, commits
 - **Implementer:** Kilo Code — executes task specs from `TASK_BRIEFS.md`
-- **All new dashboard routes:** `dashboard/app_fastapi.py` — never `dashboard/app.py`
+- **All new dashboard routes:** `dashboard/app_fastapi.py`
 - **Before marking any task done:** `ruff check .` and `pytest tests/ -q -m unit` must pass
 
 ## Code Style

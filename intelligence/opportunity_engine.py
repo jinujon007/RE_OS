@@ -231,6 +231,11 @@ def _timing_score(pkg: Any) -> float:
     Based on market supply — lower months_of_supply = better entry timing:
       <12mo  → 1.0 | 12-18 → 0.7 | 18-24 → 0.5 | 24-36 → 0.3 | >36 → 0.1
       None   → 0.5 (neutral)
+
+    Supply pressure penalty (Sprint 73 — GATE-73):
+      pipeline_units / max(total_unsold, 1) ratio deducts from mos_score:
+      >3.0 → -0.40 | >2.0 → -0.25 | >1.0 → -0.10 | <=1.0 → 0.0
+      adjusted_timing = max(0.0, mos_score - penalty)
     """
     mp = getattr(pkg, "market_pulse", None)
     if mp is None:
@@ -241,14 +246,32 @@ def _timing_score(pkg: Any) -> float:
         return 0.5
 
     if mos < _SUPPLY_LOW:
-        return 1.0
-    if mos < _SUPPLY_MODERATE:
-        return 0.7
-    if mos < _SUPPLY_HIGH:
-        return 0.5
-    if mos < _SUPPLY_VERY_HIGH:
-        return 0.3
-    return 0.1
+        mos_score = 1.0
+    elif mos < _SUPPLY_MODERATE:
+        mos_score = 0.7
+    elif mos < _SUPPLY_HIGH:
+        mos_score = 0.5
+    elif mos < _SUPPLY_VERY_HIGH:
+        mos_score = 0.3
+    else:
+        mos_score = 0.1
+
+    demand = getattr(pkg, "demand_signals", None)
+    pipeline = getattr(demand, "pipeline_supply_units", 0) if demand is not None else 0
+    pipeline = pipeline or 0
+    total_unsold = getattr(mp, "total_unsold", 0) or 0
+    pressure = pipeline / max(total_unsold, 1)
+
+    if pressure > 3.0:
+        penalty = 0.40
+    elif pressure > 2.0:
+        penalty = 0.25
+    elif pressure > 1.0:
+        penalty = 0.10
+    else:
+        penalty = 0.0
+
+    return max(0.0, round(mos_score - penalty, 4))
 
 
 def _distress_score(pkg: Any) -> float:
@@ -341,7 +364,7 @@ def _exclusivity_score(
       >10        → 0.2
 
     Bonuses (capped at 1.0):
-      +0.10 if metro proximity
+      +accessibility_score * 0.15 (continuous metro/transit bonus, max 0.15)
       +0.10 if encumbrance clear (clean title chain = fewer legal complications)
       +0.05 if aggregated land (single negotiation vs multiple owners)
       +0.05 if grade-A developers ≤ 3 (less competition)
@@ -361,8 +384,9 @@ def _exclusivity_score(
     land = getattr(pkg, "land_picture", None)
     if land is not None:
         infra = getattr(land, "infrastructure", None)
-        if infra is not None and getattr(infra, "has_metro_proximity", False):
-            bonus += 0.10
+        if infra is not None:
+            acc = getattr(infra, "accessibility_score", 0.0) or 0.0
+            bonus += round(acc * 0.15, 4)
 
     if encumbrance_clear:
         bonus += 0.10

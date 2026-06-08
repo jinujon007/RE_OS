@@ -1,47 +1,40 @@
 ---
 type: wiki
-date: 2026-06-05
+date: 2026-06-08
 area: lls
 market: Yelahanka
 confidence: 0.8
 sources: 155
-last_confirmed: 2026-06-05
+last_confirmed: 2026-06-08
 ai_generated: true
 ---
 # Yelahanka Market Brief
 
-**SECTION 1 — MARKET PULSE**
-- Absorption Rate: 71%
-- Average PSF Range: ₹8,500
-- Active Project Count: 5 major projects
+**MARKET PULSE**
+- Absorption Rate: 71.0%
+- Average PSF Range: ₹6,188 – ₹7,138 psf
+- Active Project Count: 10,515 units
 - Market Status: Stable
 
-**SECTION 2 — SUPPLY ANALYSIS**
-- Months of Inventory: 4-5 months
-- New Supply Risk: Moderate, if new launches exceed 4-5 months of inventory
-- Grade Mix: 
-  - Completed: 1 project (Prestige Lakeside)
-  - Under Construction: 2 projects (Sobha City, Puravankara Heights)
-  - Launched: 2 projects (Brigade Greenfield, Godrej Greens)
+**SUPPLY ANALYSIS**
+- Months of Inventory: 120 months
+- New Supply Risk: Severe oversupply; developers must price-adjust or accelerate delivery.
+- Grade Mix: Grade A developers have a strong presence with Prestige Estates Projects, Brigade Enterprises, and Sobha Limited leading the market.
 
-**SECTION 3 — COMPETITOR ACTIVITY**
-- Grade A Players: 
-  - Prestige: 95% absorption, ₹9,000/psf
-  - Sobha: 85% absorption, ₹8,700/psf
-  - Brigade: 80% absorption, ₹8,600/psf; Delay Flag: Yes
-  - Godrej: 70% absorption, ₹8,500/psf
-  - Puravankara: 65% absorption, ₹8,400/psf; Delay Flag: Yes
-- Distressed Signals: Brigade and Puravankara have delay flags, potential JV or acquisition targets
+**COMPETITOR ACTIVITY**
+- Grade A Players: Prestige Estates Projects, Brigade Enterprises, Sobha Limited, Godrej Properties, and Salarpuria Sattva Group.
+- Their Actions: Prestige Estates Projects has 84.7% absorption, Brigade Enterprises has 75.0% absorption, and Sobha Limited has 85.1% absorption.
+- Distressed Signals: Godrej Properties and Salarpuria Sattva Group have delayed projects and potential debt issues.
 
-**SECTION 4 — DEMAND SIGNALS**
-- Kaveri Registration Count: Not provided
-- GV Gap: 30% (market PSF vs. circle rate of ₹6,500/psf)
-- Implication: Room for land-cost negotiation; pricing near market ceiling
+**DEMAND SIGNALS**
+- Kaveri Registration Count: Not explicitly provided but 7,455 units sold indicate strong demand.
+- GV Gap: ₹4,500 psf (circle rate) vs. ₹6,901 psf (market average), a 53% premium indicating high land cost for new entrants.
+- Implication: The large GV gap suggests that only parcels priced at or below ₹5,000 psf can deliver attractive margins.
 
-**SECTION 5 — RISK FLAGS**
-1. **Supply Pressure Risk**: If new launches exceed 4-5 months of inventory, it may lead to oversupply.
-2. **Construction Delay Risk**: Brigade and Puravankara projects may face delivery setbacks.
-3. **Price Sensitivity Risk**: High price sensitivity, with soft market-wide absorption at 3.3%.
+**RISK FLAGS**
+1. **Low Absorption Risk**: Salarpuria Sattva Misty Charm has 25.0% absorption.
+2. **Overdue + High Unsold Risk**: Prestige Lakeside Habitat, Sobha Dream Gardens, and Shriram Suhaana.
+3. **Execution Risk**: Godrej Woodscape with delays and low absorption.
 
-**SECTION 6 — LLS ACTION**
-Acquire land in Yelahanka at ₹7,500/psf or lower, considering a 30% GV gap and potential for mid-tier pricing (₹8,000-₹8,400/psf) to capture price-sensitive buyers before Brigade or other developers escalate prices further.
+**LLS ACTION**
+Acquire land in Yelahanka at ₹5,200 – ₹5,600 psf for 2-3 BHK units, capturing value-add buyers while earning ~10-12% margin over land cost.

@@ -86,6 +86,11 @@ class DemandSignals:
     # before listing data has registered it.
     gcc_north_norm: float | None = None
 
+    # Sprint 73 — Land supply pipeline (GATE-73)
+    # Future supply from RERA pre-registrations, KIADB tenders, and
+    # BDA/BMRDA layout approvals. Feeds _timing_score() penalty.
+    pipeline_supply_units: int = 0
+
     signals: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
@@ -206,6 +211,7 @@ class DemandIntel:
                 self._load_absorption_trend(conn, ds, mi)
                 self._load_days_on_market_by_config(conn, ds, mi)
 
+            self._load_pipeline_supply(conn, ds, mi)
             self._load_gcc_signal(ds, mi)
             self._compute_price_momentum(ds)
             self._compute_demand_signal(ds)
@@ -644,6 +650,24 @@ class DemandIntel:
 
         except Exception as exc:
             logger.debug("[DemandIntel] Kaveri registration velocity failed for {}: {}", mi["name"], exc)
+
+    def _query_pipeline_supply(self, conn, mi: dict) -> int:
+        from sqlalchemy import text
+        with timed_intel_query("demand_pipeline_supply"):
+            row = conn.execute(text("""
+                SELECT COALESCE(SUM(estimated_units), 0)
+                FROM supply_pipeline sp
+                JOIN micro_markets mm ON LOWER(mm.name) ILIKE sp.market
+                WHERE mm.slug = :slug
+                  AND (
+                      sp.expected_completion_year >= EXTRACT(YEAR FROM NOW())
+                      OR sp.expected_completion_year IS NULL
+                  )
+            """), {"slug": mi["slug"]}).fetchone()
+        return int(row[0]) if row and row[0] else 0
+
+    def _load_pipeline_supply(self, conn, ds: DemandSignals, mi: dict):
+        ds.pipeline_supply_units = self._query_pipeline_supply(conn, mi)
 
     def _load_gcc_signal(self, ds: DemandSignals, mi: dict):
         """Load gcc_north_norm from GCCIntel — the forward-looking GCC pipeline score."""

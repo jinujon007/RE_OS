@@ -1,0 +1,324 @@
+"""
+RE_OS — Mobility Scout (Sprint 74 — GATE-74)
+─────────────────────────────────────────────
+Measures travel times from each market centroid to 5 key employment hubs
+using Google Maps Distance Matrix API. Populates accessibility_scores table
+for continuous accessibility scoring in the Opportunity Engine.
+
+Market centroids (hardcoded):
+  Yelahanka:    13.1007, 77.5963
+  Devanahalli:  13.2497, 77.7144
+  Hebbal:       13.0450, 77.5980
+
+Destinations (5 employment hubs):
+  Manyata Tech Park      (13.0535, 77.6184) — weight 0.30
+  BIAL                   (13.1979, 77.7063) — weight 0.25
+  Hebbal ORR             (13.0440, 77.5920) — weight 0.20
+  Whitefield ITPB        (12.9793, 77.7413) — weight 0.15
+  Nagawara               (13.0437, 77.6187) — weight 0.10
+
+Run standalone:
+  python scrapers/mobility_scout.py --market Yelahanka
+  python scrapers/mobility_scout.py  (runs all markets)
+"""
+
+import argparse
+import json
+import os
+import time
+from datetime import datetime, timezone
+from typing import Any
+
+import requests
+from loguru import logger
+
+from config.metrics import scraper_runs_total
+
+MARKET_CENTROIDS: dict[str, tuple[float, float]] = {
+    "Yelahanka": (13.1007, 77.5963),
+    "Devanahalli": (13.2497, 77.7144),
+    "Hebbal": (13.0450, 77.5980),
+}
+
+DESTINATIONS: list[dict[str, Any]] = [
+    {"name": "Manyata Tech Park",  "lat": 13.0535, "lng": 77.6184, "weight": 0.30},
+    {"name": "BIAL",               "lat": 13.1979, "lng": 77.7063, "weight": 0.25},
+    {"name": "Hebbal ORR",         "lat": 13.0440, "lng": 77.5920, "weight": 0.20},
+    {"name": "Whitefield ITPB",    "lat": 12.9793, "lng": 77.7413, "weight": 0.15},
+    {"name": "Nagawara",           "lat": 13.0437, "lng": 77.6187, "weight": 0.10},
+]
+
+DESTINATION_WEIGHTS: dict[str, float] = {d["name"]: d["weight"] for d in DESTINATIONS}
+
+_RETRYABLE_STATUSES = {"OVER_QUERY_LIMIT", "OVER_DAILY_LIMIT"}
+_MAX_RETRIES = 3
+_INITIAL_RETRY_DELAY_S = 2.0
+
+
+class MobilityScout:
+    def __init__(self):
+        self.api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+        self._session = requests.Session()
+
+    def measure_travel_times(self, market: str) -> list[dict]:
+        if not self.api_key:
+            logger.warning("[MobilityScout] GOOGLE_MAPS_API_KEY not set — returning empty")
+            return []
+
+        centroid = MARKET_CENTROIDS.get(market)
+        if not centroid:
+            logger.warning("[MobilityScout] Unknown market: {}", market)
+            return []
+
+        results = []
+        for dest in DESTINATIONS:
+            row = self._query_distance_matrix_with_retry(centroid, dest)
+            if row:
+                results.append(row)
+
+        logger.info("[MobilityScout] {}: {}/{} destinations measured", market, len(results), len(DESTINATIONS))
+        return results
+
+    def _query_distance_matrix_with_retry(self, origin: tuple[float, float], dest: dict) -> dict | None:
+        last_error = None
+        delay = _INITIAL_RETRY_DELAY_S
+
+        for attempt in range(1, _MAX_RETRIES + 1):
+            try:
+                result, should_retry = self._query_distance_matrix(origin, dest)
+                if result is not None:
+                    return result
+                if should_retry and attempt < _MAX_RETRIES:
+                    logger.info("[MobilityScout] Retry {}/{} for {} in {}s",
+                                attempt, _MAX_RETRIES, dest["name"], delay)
+                    time.sleep(delay)
+                    delay *= 2.0
+                    last_error = result
+                else:
+                    break
+            except requests.exceptions.Timeout:
+                if attempt < _MAX_RETRIES:
+                    logger.info("[MobilityScout] Timeout {}/{} for {}, retrying", attempt, _MAX_RETRIES, dest["name"])
+                    time.sleep(delay)
+                    delay *= 2.0
+                else:
+                    logger.warning("[MobilityScout] All {} retries exhausted for {} (timeout)", _MAX_RETRIES, dest["name"])
+            except requests.exceptions.RequestException as exc:
+                logger.warning("[MobilityScout] Request failed for {}: {} — not retrying", dest["name"], exc)
+                break
+
+        return None
+
+    def _query_distance_matrix(self, origin: tuple[float, float], dest: dict) -> tuple[dict | None, bool]:
+        url = "https://maps.googleapis.com/maps/api/distancematrix/json"
+        params = {
+            "origins": f"{origin[0]},{origin[1]}",
+            "destinations": f"{dest['lat']},{dest['lng']}",
+            "mode": "driving",
+            "key": self.api_key,
+        }
+
+        resp = self._session.get(url, params=params, timeout=15)
+        if resp.status_code != 200:
+            logger.warning("[MobilityScout] Distance Matrix API HTTP {} for {}", resp.status_code, dest["name"])
+            return (None, False)
+
+        data = resp.json()
+        api_status = data.get("status")
+
+        if api_status == "OK":
+            try:
+                element = data["rows"][0]["elements"][0]
+                if element["status"] != "OK":
+                    logger.debug("[MobilityScout] Element status {} for {}",
+                                 element.get("status"), dest["name"])
+                    return (None, False)
+
+                travel_seconds = element["duration"]["value"]
+                distance_metres = element["distance"]["value"]
+                travel_min = round(travel_seconds / 60.0, 1)
+                distance_km = round(distance_metres / 1000.0, 1)
+
+                return ({
+                    "destination_name": dest["name"],
+                    "travel_time_min": travel_min,
+                    "distance_km": distance_km,
+                    "mode": "driving",
+                    "traffic_condition": "typical",
+                    "measured_at": datetime.now(timezone.utc).isoformat(),
+                }, False)
+
+            except (KeyError, IndexError, TypeError) as exc:
+                logger.warning("[MobilityScout] Parse error for {}: {}", dest["name"], exc)
+                return (None, False)
+
+        if api_status in _RETRYABLE_STATUSES:
+            logger.warning("[MobilityScout] {} for {} — retryable", api_status, dest["name"])
+            return (None, True)
+
+        if api_status in ("INVALID_REQUEST", "NOT_FOUND", "ZERO_RESULTS"):
+            logger.info("[MobilityScout] Non-retryable status {} for {}", api_status, dest["name"])
+            return (None, False)
+
+        logger.warning("[MobilityScout] Unknown API status {} for {}", api_status, dest["name"])
+        return (None, False)
+
+
+def compute_market_accessibility(market: str, conn=None) -> float:
+    """Compute weighted accessibility score for a market [0.0, 1.0].
+
+    Uses the latest measurement for each of the 5 destinations within the
+    last 30 days. Accepts an optional SQLAlchemy connection for reuse when
+    called from within an existing DB transaction.
+
+    Returns 0.0 on empty DB or any error (never raises).
+    """
+    try:
+        if conn is None:
+            from utils.db import get_engine
+            from sqlalchemy import text as sa_text
+            engine = get_engine(pool_size=2, max_overflow=1)
+            with engine.connect() as db_conn:
+                return _compute_from_db(db_conn, market)
+        return _compute_from_db(conn, market)
+    except Exception as exc:
+        logger.warning("[MobilityScout] compute_market_accessibility failed for {}: {}", market, exc)
+        return 0.0
+
+
+def _compute_from_db(conn, market: str) -> float:
+    from sqlalchemy import text as sa_text
+
+    rows = conn.execute(
+        sa_text("""
+            SELECT destination_name, travel_time_min
+            FROM accessibility_scores
+            WHERE market = :market
+              AND measured_at > NOW() - INTERVAL '30 days'
+            ORDER BY measured_at DESC
+        """),
+        {"market": market},
+    ).fetchall()
+
+    if not rows:
+        return 0.0
+
+    latest_per_dest: dict[str, float] = {}
+    for r in rows:
+        dest_name = str(r[0])
+        if dest_name not in latest_per_dest:
+            latest_per_dest[dest_name] = float(r[1])
+
+    score = 0.0
+    for dest_name, travel_min in latest_per_dest.items():
+        weight = DESTINATION_WEIGHTS.get(dest_name, 0.0)
+        component = weight * (1.0 - min(travel_min / 60.0, 1.0))
+        score += component
+
+    return round(max(0.0, min(score, 1.0)), 4)
+
+
+def _compute_row_component(dest_name: str, travel_minutes: float) -> float:
+    """Compute a single destination's contribution to the accessibility score.
+
+    Returns the weighted component (not the total market score), used for
+    per-row persistence in the accessibility_scores table.
+    """
+    weight = DESTINATION_WEIGHTS.get(dest_name, 0.0)
+    return round(weight * (1.0 - min(travel_minutes / 60.0, 1.0)), 4)
+
+
+def run_mobility_scout():
+    """Scheduled job: measure travel times for all markets and persist.
+
+    Runs 15 API calls (3 markets × 5 destinations) and inserts results
+    into accessibility_scores. Designed for monthly execution on 1st of month.
+    """
+    success_count = 0
+    total_markets = len(MARKET_CENTROIDS)
+
+    for market in MARKET_CENTROIDS:
+        try:
+            scout = MobilityScout()
+            results = scout.measure_travel_times(market)
+            if results:
+                _persist_results(market, results)
+                success_count += 1
+            else:
+                logger.info("[MobilityScout] No results for {} (API key may be missing)", market)
+        except Exception as exc:
+            logger.warning("[MobilityScout] run failed for {}: {}", market, exc)
+
+    try:
+        scraper_runs_total.labels(source="mobility", market="all", status="success").inc()
+    except Exception as exc:
+        logger.debug("[MobilityScout] Metrics increment skipped: {}", exc)
+
+    logger.info("[MobilityScout] Completed: {}/{} markets updated", success_count, total_markets)
+
+
+def _persist_results(market: str, results: list[dict]):
+    from utils.db import get_engine
+    from sqlalchemy import text as sa_text
+
+    with get_engine().begin() as conn:
+        for r in results:
+            component = _compute_row_component(r["destination_name"], r["travel_time_min"])
+            conn.execute(
+                sa_text("""
+                    INSERT INTO accessibility_scores
+                        (market, destination_name, travel_time_min, distance_km,
+                         mode, traffic_condition, measured_at, accessibility_score)
+                    VALUES
+                        (:market, :destination_name, :travel_time_min, :distance_km,
+                         :mode, :traffic_condition, :measured_at, :accessibility_score)
+                    ON CONFLICT (market, destination_name, mode, (measured_at AT TIME ZONE 'Asia/Kolkata')::DATE)
+                    DO UPDATE SET
+                        travel_time_min = EXCLUDED.travel_time_min,
+                        distance_km = EXCLUDED.distance_km,
+                        accessibility_score = EXCLUDED.accessibility_score,
+                        measured_at = EXCLUDED.measured_at
+                """),
+                {
+                    "market": market,
+                    "destination_name": r["destination_name"],
+                    "travel_time_min": r["travel_time_min"],
+                    "distance_km": r["distance_km"],
+                    "mode": r["mode"],
+                    "traffic_condition": r["traffic_condition"],
+                    "measured_at": r["measured_at"],
+                    "accessibility_score": component,
+                },
+            )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Mobility Scout — travel time measurement")
+    parser.add_argument("--market", default=None, choices=list(MARKET_CENTROIDS.keys()),
+                        help="Market name (default: run all markets)")
+    args = parser.parse_args()
+
+    if args.market:
+        scout = MobilityScout()
+        results = scout.measure_travel_times(args.market)
+        ts = datetime.now().strftime("%Y%m%d_%H%M")
+        slug = args.market.lower().replace(" ", "_")
+        out_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "outputs", slug,
+        )
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, f"mobility_{ts}.json")
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2, default=str)
+
+        print(f"\nMobility Scout — {args.market.upper()}")
+        print(f"  Results: {len(results)} destinations")
+        print(f"  Output:  {out_path}")
+        for r in results:
+            acc = _compute_row_component(r["destination_name"], r["travel_time_min"])
+            geo_type = "API" if scout.api_key else "simulated"
+            print(f"  {r['destination_name']:20s} → {r['travel_time_min']:5.1f} min, "
+                  f"{r['distance_km']:5.1f} km (acc={acc:.4f}, source={geo_type})")
+    else:
+        run_mobility_scout()

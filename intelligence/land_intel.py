@@ -25,12 +25,14 @@ class InfrastructureProximity:
     upcoming_infra: list[str] = field(default_factory=list)
     has_metro_proximity: bool = False
     has_highway_proximity: bool = False
+    accessibility_score: float = 0.0
 
     def __str__(self) -> str:
         return (
             f"{self.infra_projects_nearby} projects"
             f"{' (metro)' if self.has_metro_proximity else ''}"
             f"{' (highway)' if self.has_highway_proximity else ''}"
+            f" acc={self.accessibility_score:.2f}"
         )
 
 
@@ -232,6 +234,11 @@ class LandIntel:
                 infra.has_highway_proximity = True
             if status and status not in ("Completed",):
                 infra.upcoming_infra.append(f"{name} ({itype}, {status})")
+        try:
+            from scrapers.mobility_scout import compute_market_accessibility
+            infra.accessibility_score = compute_market_accessibility(mi["name"], conn=conn)
+        except Exception as exc:
+            logger.warning("[{}] accessibility_score compute failed for {}: {}", self._caller, mi.get("name", "?"), exc)
         pic.infrastructure = infra
 
     def _load_guidance_value(self, conn, pic: LandPicture, mi: dict):
@@ -293,8 +300,12 @@ class LandIntel:
             pic.flags.append("Lake buffer zone detected — flood risk, construction restrictions apply")
             pic.development_readiness = "CONSTRAINED"
 
-        if pic.infrastructure and not pic.infrastructure.has_metro_proximity:
-            pic.flags.append("No metro proximity — transit accessibility limited")
+        if pic.infrastructure:
+            acc = getattr(pic.infrastructure, "accessibility_score", 0.0) or 0.0
+            if acc < 0.3:
+                pic.flags.append(f"Low transit accessibility (score={acc:.2f}) — may limit demand pool")
+            elif acc < 0.5:
+                pic.flags.append(f"Moderate transit accessibility (score={acc:.2f}) — monitor infra pipeline")
 
 
 if __name__ == "__main__":

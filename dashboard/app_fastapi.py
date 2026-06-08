@@ -9,7 +9,8 @@ Foundation Hardening (T-904–T-924): backup, deals, surveys, LLM quota, data fr
 Architecture:
   - FastAPI app with CORS middleware, rate limiting (slowapi/Redis), Prometheus
     /metrics endpoint, SSE log streaming, and security headers.
-  - Auth: middleware-based API key gate (X-API-Key header or ?api_key= query),
+  - Auth: middleware-based API key gate (X-API-Key header only — query param
+    removed to prevent key exposure in server access logs),
     with read-only path exemptions and DASHBOARD_API_KEY_PREV rotation support.
    - DB: SQLAlchemy engine from utils.db.get_engine() (pool_size=10, max_overflow=5).
   - Pipeline: subprocess-based market intelligence crew with running-state
@@ -202,7 +203,7 @@ def _is_run_api_authorized(req: Request) -> bool:
     api_key = os.environ.get("DASHBOARD_API_KEY", "")
     if not api_key:
         return True
-    provided = req.headers.get("X-API-Key", "") or req.query_params.get("api_key", "")
+    provided = req.headers.get("X-API-Key", "")
     if provided == api_key:
         return True
     api_key_prev = os.environ.get("DASHBOARD_API_KEY_PREV", "")
@@ -2250,6 +2251,77 @@ async def kepler_data(market: str):
         }
     except Exception as exc:
         logger.warning("[kepler_data] Failed: %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+# ── Accessibility (Sprint 74 — GATE-74) ────────────────────────────────────
+
+
+@app.get(
+    "/api/market/accessibility",
+    tags=["Market"],
+    summary="Travel-time accessibility scores for a market",
+)
+async def market_accessibility(market: str = Query(default="Yelahanka", description="Market name")):
+    try:
+        from utils.db import get_engine
+        from sqlalchemy import text as sa_text
+
+        canonical = _normalize_market(market)
+        if not canonical:
+            return JSONResponse({"error": "invalid market"}, status_code=400)
+
+        with get_engine().connect() as conn:
+            rows = conn.execute(
+                sa_text("""
+                    SELECT destination_name, travel_time_min, distance_km, measured_at, accessibility_score
+                    FROM accessibility_scores
+                    WHERE market = :market
+                      AND measured_at > NOW() - INTERVAL '30 days'
+                    ORDER BY measured_at DESC
+                """),
+                {"market": canonical},
+            ).fetchall()
+
+        if not rows:
+            return JSONResponse({"error": "no accessibility data for market"}, status_code=404)
+
+        latest: dict[str, dict] = {}
+        latest_dt: dict[str, datetime] = {}
+        for r in rows:
+            dest = str(r[0])
+            if dest not in latest:
+                measured = r[3]
+                if hasattr(measured, "isoformat"):
+                    measured_iso = measured.isoformat()
+                    latest_dt[dest] = measured
+                else:
+                    measured_iso = str(measured)
+                    latest_dt[dest] = measured
+                latest[dest] = {
+                    "name": dest,
+                    "travel_time_min": float(r[1]),
+                    "distance_km": float(r[2]) if r[2] else None,
+                    "measured_at": measured_iso,
+                    "accessibility_score": float(r[4]) if r[4] else 0.0,
+                }
+
+        destinations = list(latest.values())
+        total_score = sum(d["accessibility_score"] for d in destinations)
+
+        last_updated = None
+        if latest_dt:
+            last_updated = max(latest_dt.values())
+            last_updated = last_updated.isoformat() if hasattr(last_updated, "isoformat") else str(last_updated)
+
+        return {
+            "market": canonical,
+            "accessibility_score": round(total_score, 4),
+            "destinations": destinations,
+            "last_updated": last_updated,
+        }
+    except Exception as exc:
+        logger.warning("[market_accessibility] Failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
@@ -4389,6 +4461,61 @@ async def distress_signals(
         })
     except Exception as exc:
         logger.warning("[API] /api/distress/signals failed: {}", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/market/supply", tags=["Market"],
+         summary="Pipeline supply for a market")
+async def market_supply(
+    request: Request,
+    market: str = Query("Yelahanka", description="Market name"),
+):
+    """Return total pipeline supply units and per-record breakdown."""
+    market = (market or "").strip()
+    if not market:
+        return JSONResponse({"error": "market is required"}, status_code=400)
+    try:
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text("""
+                    SELECT project_name, developer_name, estimated_units,
+                           estimated_acres, source, approval_date,
+                           expected_completion_year, raw_snippet, created_at
+                    FROM supply_pipeline
+                    WHERE market ILIKE :market
+                    ORDER BY created_at DESC, estimated_units DESC
+                    LIMIT 100
+                """),
+                {"market": f"%{market}%"},
+            ).fetchall()
+            total = conn.execute(
+                _sa_text("""
+                    SELECT COALESCE(SUM(estimated_units), 0)
+                    FROM supply_pipeline WHERE market ILIKE :market
+                """),
+                {"market": f"%{market}%"},
+            ).scalar() or 0
+        records = []
+        for row in rows:
+            records.append({
+                "project_name": row.project_name,
+                "developer_name": row.developer_name,
+                "estimated_units": int(row.estimated_units or 0),
+                "estimated_acres": float(row.estimated_acres) if row.estimated_acres else None,
+                "source": row.source,
+                "approval_date": str(row.approval_date) if row.approval_date else None,
+                "expected_completion_year": row.expected_completion_year,
+                "raw_snippet": row.raw_snippet,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            })
+        return JSONResponse({
+            "market": market,
+            "total_pipeline_units": int(total),
+            "count": len(records),
+            "records": records,
+        })
+    except Exception as exc:
+        logger.warning("[API] /api/market/supply failed: {}", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 

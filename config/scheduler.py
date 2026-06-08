@@ -26,11 +26,13 @@ from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 import os
 import sys
+import threading
 
 from config.settings import TARGET_MARKETS
 from sqlalchemy import text
 from utils.db import get_engine
 from utils.scheduler_helpers import safe_job as _safe_job
+from scrapers.mobility_scout import run_mobility_scout
 
 
 def _send_rera_alert(market: str, job_start) -> None:
@@ -427,8 +429,7 @@ def run_distressed_developer_scan():
     Skips if IngestEngine (which also runs DistressedPlugin) is still in progress
     to avoid Discord alerts based on partially-updated scores.
     """
-    global _ingest_running
-    if _ingest_running:
+    if _ingest_running.is_set():
         logger.warning(
             "[DistressedDev] IngestEngine still running — standalone scan deferred "
             "to avoid partial-score alerts. Will run at next scheduled trigger."
@@ -470,10 +471,9 @@ def run_ingest_engine():
     This function converts current UTC to IST before comparing, so
     ``day_of_week`` and ``hour`` checks match Indian calendar days correctly.
 
-    Sets _ingest_running=True for the duration so the standalone distressed
+    Sets _ingest_running event for the duration so the standalone distressed
     developer scan (06:15 IST) defers itself if this job overlaps.
     """
-    global _ingest_running
     from datetime import datetime, timezone, timedelta
     from ingest.engine import IngestEngine
     from ingest.plugins import (
@@ -519,14 +519,14 @@ def run_ingest_engine():
         logger.info("[Scheduler] IngestEngine: no plugins scheduled for today at this hour")
         return
 
-    _ingest_running = True
+    _ingest_running.set()
     try:
         report = engine.run_all(markets=TARGET_MARKETS)
         logger.info("[Scheduler] IngestEngine complete: {}", report.summary())
         for s in report.failed_plugins:
             logger.warning("[Scheduler] Plugin failed: {}/{} — {}", s.plugin_id, s.market, s.error_message)
     finally:
-        _ingest_running = False
+        _ingest_running.clear()
 
 
 def run_conflict_detection():
@@ -702,18 +702,20 @@ def run_compliance_check():
 # (02:00 IST, contains DistressedPlugin) and the standalone scan (06:15 IST).
 # If IngestEngine is still running at 06:15, the standalone scan skips sending
 # Discord alerts based on partially-updated scores.
-_ingest_running = False
-_backup_lock = False
+#
+# Both use proper threading primitives — APScheduler runs jobs in threads, so
+# plain bool flags are subject to read-modify-write races across job threads.
+_ingest_running = threading.Event()   # set() while ingest runs, clear() when done
+_backup_lock = threading.Lock()        # acquire(blocking=False) to skip concurrent backups
 
 def run_db_backup():
     """Daily pg_dump backup at 01:00 IST. 7-day retention.
-    
+
     Uses PGPASSWORD env var for auth (never passes password on command line).
-    Guarded by module-level lock to prevent concurrent backup runs.
+    Guarded by threading.Lock to prevent concurrent backup runs across APScheduler threads.
     Logs to agent_runs table with status 'success' or 'failed'.
     """
-    global _backup_lock
-    if _backup_lock:
+    if not _backup_lock.acquire(blocking=False):
         logger.warning("[DB-Backup] Previous backup still running — skipping")
         return
 
@@ -732,12 +734,12 @@ def run_db_backup():
     db_url = os.environ.get("DATABASE_URL", "")
     if not db_url:
         logger.error("[DB-Backup] DATABASE_URL not set — backup aborted")
+        _backup_lock.release()
         return
     parsed = urlparse(db_url)
     db_env = {**os.environ, "PGPASSWORD": parsed.password or ""}
 
     try:
-        _backup_lock = True
         _subprocess.run(
             [
                 "pg_dump",
@@ -801,7 +803,7 @@ def run_db_backup():
         except Exception as log_exc:
             logger.warning("[DB-Backup] Failed to log failure: {}", log_exc)
     finally:
-        _backup_lock = False
+        _backup_lock.release()
 
 
 def run_locality_validation():
@@ -1415,6 +1417,15 @@ if __name__ == "__main__":
         misfire_grace_time=7200,
     )
 
+    # Monthly mobility scout — 1st of month at 01:00 IST (Sprint 74, T-1039)
+    scheduler.add_job(
+        lambda: _safe_job(run_mobility_scout, "run_mobility_scout"),
+        CronTrigger(day=1, hour=1, minute=0),
+        id="run_mobility_scout",
+        name="Monthly Mobility Scout (accessibility_scores refresh)",
+        misfire_grace_time=7200,
+    )
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
     logger.info("  01:00 AM IST — Daily pg_dump backup [T-904]")
@@ -1439,6 +1450,7 @@ if __name__ == "__main__":
     logger.info("  Daily 08:00 IST — GCC daily scan (seed + news → L1/L2 alerts) [T-1021]")
     logger.info("  Monday 07:30 IST — GCC weekly digest (pipeline → Discord intel) [T-1022]")
     logger.info("  1st of month 09:30 IST — Monthly CEO letter (PerformanceDigest + agent_runs) [T-1019]")
+    logger.info("  1st of month 06:30 IST — Monthly mobility scout (accessibility_scores) [T-1039]")
     logger.info(f"Active jobs: {[j.id for j in scheduler.get_jobs()]}")
 
     scheduler.start()
