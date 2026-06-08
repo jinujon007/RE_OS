@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';">
+<title>Demand Intelligence — LLS</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0a0e1a; color: #c9d1d9;
+  font-family: 'Courier New', Courier, monospace; font-size: 14px;
+  min-height: 100vh; padding: 20px;
+}
+h1 { color: #f0a020; font-size: 18px; margin-bottom: 16px; letter-spacing: 1px; }
+h2 { color: #f0a020; font-size: 14px; margin-bottom: 10px; }
+h3 { color: #58a6ff; font-size: 13px; margin-bottom: 6px; }
+.panel {
+  background: #0f1520; border: 1px solid #2a3a55;
+  padding: 16px; margin-bottom: 16px; max-width: 1200px;
+}
+.row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; align-items: flex-end; }
+.field-group { display: flex; flex-direction: column; gap: 4px; }
+.field-group label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+.field-group select, .field-group input {
+  background: #161b2e; border: 1px solid #2a3a55; color: #c9d1d9;
+  padding: 8px 12px; font-family: 'Courier New', Courier, monospace; font-size: 13px; min-width: 160px;
+}
+.btn {
+  background: #1a5a3a; border: 1px solid #2a8a5a; color: #c9d1d9;
+  padding: 8px 20px; cursor: pointer; font-family: 'Courier New', Courier, monospace; font-size: 13px;
+}
+.btn:hover { background: #2a8a5a; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.metric-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.metric-card {
+  background: #161b2e; border: 1px solid #2a3a55;
+  padding: 14px; min-width: 180px; flex: 1;
+}
+.metric-card .label { font-size: 11px; color: #8b949e; text-transform: uppercase; }
+.metric-card .value { font-size: 22px; color: #f0a020; margin-top: 4px; }
+.metric-card .value.green { color: #3fb950; }
+.metric-card .value.red { color: #f85149; }
+.metric-card .sub { font-size: 11px; color: #8b949e; margin-top: 2px; }
+table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+th { text-align: left; padding: 8px 12px; border-bottom: 1px solid #2a3a55; color: #8b949e; font-size: 11px; text-transform: uppercase; }
+td { padding: 8px 12px; border-bottom: 1px solid #1a2540; font-size: 13px; }
+tr:hover td { background: #1a2540; }
+canvas { max-width: 100%; }
+.spinner { display: none; color: #8b949e; font-size: 13px; padding: 20px; text-align: center; }
+.spinner.active { display: block; }
+
+.skeleton-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.skeleton-card {
+  background: #161b2e; border: 1px solid #2a3a55;
+  padding: 14px; min-width: 180px; flex: 1; height: 80px;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+.skeleton-card .bar {
+  background: #2a3a55; height: 12px; width: 60%; margin-top: 8px; border-radius: 2px;
+}
+.skeleton-card .bar.short { width: 40%; }
+
+.error-panel {
+  background: #1a0a0a; border: 1px solid #5a1a1a;
+  padding: 16px; margin-bottom: 16px; max-width: 1200px; display: none;
+}
+.error-panel .title { color: #f85149; font-size: 14px; margin-bottom: 8px; }
+.error-panel .detail { color: #8b949e; font-size: 12px; margin-bottom: 8px; }
+.error-panel .retry-btn {
+  background: #5a1a1a; border: 1px solid #8a2a2a; color: #c9d1d9;
+  padding: 6px 16px; cursor: pointer; font-family: 'Courier New', Courier, monospace; font-size: 12px;
+}
+.error-panel .retry-btn:hover { background: #8a2a2a; }
+</style>
+</head>
+<body>
+<h1>Demand Intelligence</h1>
+
+<div class="panel">
+  <div class="row">
+    <div class="field-group">
+      <label>Market</label>
+      <select id="marketSelect">
+      </select>
+    </div>
+    <button class="btn" id="loadBtn" onclick="loadDemandData()">Load</button>
+  </div>
+</div>
+
+<div class="error-panel" id="errorPanel">
+  <div class="title" id="errorTitle">Error</div>
+  <div class="detail" id="errorDetail"></div>
+  <button class="retry-btn" onclick="loadDemandData()">Retry</button>
+</div>
+
+<div class="skeleton-row" id="skeletonRow">
+  <div class="skeleton-card"><div class="bar"></div><div class="bar short"></div></div>
+  <div class="skeleton-card"><div class="bar"></div><div class="bar short"></div></div>
+  <div class="skeleton-card"><div class="bar"></div><div class="bar short"></div></div>
+  <div class="skeleton-card"><div class="bar"></div><div class="bar short"></div></div>
+  <div class="skeleton-card"><div class="bar"></div><div class="bar short"></div></div>
+  <div class="skeleton-card"><div class="bar"></div><div class="bar short"></div></div>
+</div>
+
+<div id="results" style="display:none">
+  <div class="metric-row" id="metricCards"></div>
+
+  <div class="panel">
+    <h2>Config Absorption</h2>
+    <div id="configAbsorption"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Absorption Trend (6 months)</h2>
+    <canvas id="trendChart" height="200"></canvas>
+  </div>
+
+  <div class="panel">
+    <h2>Demand Signals</h2>
+    <ul id="signalsList" style="list-style:none; padding:0;"></ul>
+  </div>
+</div>
+
+<div class="spinner" id="spinner">Loading demand data...</div>
+
+<script>
+async function loadDemandData() {
+  const market = document.getElementById('marketSelect').value;
+  const spinner = document.getElementById('spinner');
+  const results = document.getElementById('results');
+  const errorPanel = document.getElementById('errorPanel');
+  const skeleton = document.getElementById('skeletonRow');
+
+  errorPanel.style.display = 'none';
+  results.style.display = 'none';
+  skeleton.style.display = 'flex';
+  spinner.classList.remove('active');
+
+  try {
+    const resp = await fetch('/api/demand/' + encodeURIComponent(market));
+    if (!resp.ok) {
+      const errBody = await resp.text().catch(() => '');
+      throw new Error('HTTP ' + resp.status + (errBody ? ': ' + errBody.slice(0, 200) : ''));
+    }
+    const data = await resp.json();
+    renderMetrics(data);
+    renderConfigAbsorption(data);
+    renderTrendChart(data);
+    renderSignals(data);
+    results.style.display = 'block';
+    skeleton.style.display = 'none';
+  } catch (e) {
+    skeleton.style.display = 'none';
+    document.getElementById('errorTitle').textContent = 'Failed to load demand data';
+    document.getElementById('errorDetail').textContent = e.message;
+    errorPanel.style.display = 'block';
+  }
+}
+
+function renderMetrics(d) {
+  const cards = [
+    { label: 'Demand Score V2', value: (d.demand_score_v2 || 0).toFixed(4), cls: d.demand_score_v2 >= 0.5 ? 'green' : 'red' },
+    { label: 'Demand Signal', value: d.demand_signal || 'N/A', cls: (d.demand_signal || '').toLowerCase() },
+    { label: 'Days on Market (p50)', value: d.days_on_market_p50 ? d.days_on_market_p50.toFixed(0) + 'd' : 'N/A', cls: '' },
+    { label: 'Median Ticket Size', value: d.ticket_size_median_cr ? '\u20B9' + d.ticket_size_median_cr.toFixed(2) + 'Cr' : 'N/A', cls: '' },
+    { label: 'Absorption', value: d.absorption_pct != null ? d.absorption_pct.toFixed(1) + '%' : 'N/A', cls: '' },
+    { label: 'MoS', value: d.months_of_supply != null ? d.months_of_supply.toFixed(1) + 'mo' : 'N/A', cls: '' },
+  ];
+  document.getElementById('metricCards').innerHTML = cards.map(function(c) {
+    return '<div class="metric-card"><div class="label">' + escapeHTML(c.label) +
+      '</div><div class="value ' + c.cls + '">' + escapeHTML(c.value) +
+      '</div></div>';
+  }).join('');
+}
+
+function escapeHTML(s) {
+  return String(s).replace(/[&<>"']/g, function(m) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+  });
+}
+
+function renderConfigAbsorption(d) {
+  const ca = d.config_absorption || {};
+  const keys = Object.keys(ca);
+  const el = document.getElementById('configAbsorption');
+  if (!keys.length) {
+    el.innerHTML = '<div class="sub">No config absorption data</div>';
+    return;
+  }
+  var html = '<table><tr><th>Config</th><th>Absorption %</th></tr>';
+  keys.forEach(function(k) {
+    html += '<tr><td>' + escapeHTML(k) + '</td><td>' + ca[k].toFixed(2) + '%</td></tr>';
+  });
+  html += '</table>';
+  el.innerHTML = html;
+}
+
+function renderTrendChart(d) {
+  var trend = d.absorption_trend || [];
+  var canvas = document.getElementById('trendChart');
+  var parent = canvas.parentElement;
+  if (!trend.length) {
+    canvas.style.display = 'none';
+    return;
+  }
+  canvas.style.display = 'block';
+  var ctx = canvas.getContext('2d');
+  var w = parent.clientWidth - 40;
+  canvas.width = Math.min(w, 1000); canvas.height = 200;
+  var pad = { top: 20, bottom: 30, left: 50, right: 20 };
+  var cw = canvas.width - pad.left - pad.right;
+  var ch = canvas.height - pad.top - pad.bottom;
+
+  var months = trend.map(function(r) { return r.month; });
+  var values = trend.map(function(r) { return r.avg_absorption_pct; });
+  var maxVal = Math.max.apply(null, values.concat([10]));
+  var minVal = Math.min.apply(null, values.concat([0]));
+  var range = maxVal - minVal || 1;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = '#2a3a55'; ctx.lineWidth = 1;
+  for (var i = 0; i <= 4; i++) {
+    var y = pad.top + (ch * i / 4);
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(canvas.width - pad.right, y); ctx.stroke();
+    ctx.fillStyle = '#8b949e'; ctx.font = '10px Courier New';
+    ctx.fillText((maxVal - (range * i / 4)).toFixed(1) + '%', 2, y + 4);
+  }
+
+  var xStep = months.length > 1 ? cw / (months.length - 1) : cw / 2;
+  ctx.strokeStyle = '#3fb950'; ctx.lineWidth = 2; ctx.beginPath();
+  values.forEach(function(v, i) {
+    var x = pad.left + (i * xStep);
+    var y = pad.top + ch - ((v - minVal) / range * ch);
+    if (i === 0) { ctx.moveTo(x, y); } else { ctx.lineTo(x, y); }
+  });
+  ctx.stroke();
+
+  ctx.fillStyle = '#8b949e'; ctx.font = '10px Courier New'; ctx.textAlign = 'center';
+  months.forEach(function(m, i) {
+    var x = pad.left + (i * xStep);
+    ctx.fillText(m, x, canvas.height - 6);
+  });
+}
+
+function renderSignals(d) {
+  var list = (d.signals || []).map(function(s) {
+    return '<li style="padding:4px 0;border-bottom:1px solid #1a2540;font-size:13px;">&bull; ' + escapeHTML(s) + '</li>';
+  }).join('');
+  document.getElementById('signalsList').innerHTML = list || '<li class="sub">No signals</li>';
+}
+
+window.addEventListener('DOMContentLoaded', function() {
+  var sel = document.getElementById('marketSelect');
+  var markets = ['Yelahanka', 'Devanahalli', 'Hebbal'];
+  markets.forEach(function(m) {
+    var opt = document.createElement('option');
+    opt.value = m; opt.textContent = m;
+    sel.appendChild(opt);
+  });
+  loadDemandData();
+});
+
+window.addEventListener('resize', function() {
+  var canvas = document.getElementById('trendChart');
+  if (canvas.style.display !== 'none') {
+    var data = window.__trendData;
+    if (data) renderTrendChart({ absorption_trend: data });
+  }
+});
+</script>
+</body>
+</html>

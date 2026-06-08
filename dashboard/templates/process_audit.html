@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+<title>Process Audit — LLS Intelligence Operations</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0a0e1a; color: #c9d1d9;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 14px; min-height: 100vh; padding: 20px;
+}
+h1 { color: #f0a020; font-size: 18px; margin-bottom: 16px; letter-spacing: 1px; }
+h2 { color: #f0a020; font-size: 14px; margin-bottom: 10px; }
+h3 { color: #58a6ff; font-size: 13px; margin-bottom: 6px; }
+.panel { background: #0f1520; border: 1px solid #2a3a55; padding: 16px; margin-bottom: 16px; max-width: 1200px; }
+.row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; align-items: flex-end; }
+.stat-card {
+  background: #0f1520; border: 1px solid #2a3a55; padding: 12px 16px;
+  min-width: 140px; flex: 1;
+}
+.stat-card .value { font-size: 22px; color: #58a6ff; }
+.stat-card .label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
+.stat-card.failure-rate .value { color: #f85149; }
+.badge { padding: 2px 8px; font-size: 11px; }
+.badge-high { background: #3a1a1a; color: #f85149; border: 1px solid #f85149; }
+.badge-medium { background: #2a2a1a; color: #d29922; border: 1px solid #d29922; }
+.badge-low { background: #1a2a1a; color: #3fb950; border: 1px solid #3fb950; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { text-align: left; color: #8b949e; border-bottom: 1px solid #2a3a55; padding: 8px 4px; }
+td { padding: 8px 4px; border-bottom: 1px solid #1c2538; }
+.bottleneck-card { background: #161b2e; border: 1px solid #2a3a55; padding: 12px; margin-bottom: 12px; }
+.bottleneck-card .stage { color: #f0a020; font-size: 16px; }
+.bottleneck-card .finding { color: #c9d1d9; margin: 6px 0; }
+.bottleneck-card .rec { color: #58a6ff; font-style: italic; }
+.spinner {
+  display: inline-block; width: 16px; height: 16px; border: 2px solid #2a3a55;
+  border-top: 2px solid #58a6ff; border-radius: 50%;
+  animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 8px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-msg { color: #8b949e; font-style: italic; padding: 8px; }
+.error-msg { color: #f85149; padding: 12px; border: 1px solid #f85149; background: #1a0a0a; }
+</style>
+</head>
+<body>
+<h1>Process Audit</h1>
+
+<div class="panel" id="pipeline-health">
+  <h2>Pipeline Health</h2>
+  <div class="row" id="stats-row">
+    <div class="stat-card" id="card-stage1">
+      <div class="value" id="avg-stage1">--</div>
+      <div class="label">Stage 1 (Scraping) avg</div>
+    </div>
+    <div class="stat-card" id="card-stage2">
+      <div class="value" id="avg-stage2">--</div>
+      <div class="label">Stage 2 (Parsing) avg</div>
+    </div>
+    <div class="stat-card" id="card-stage3">
+      <div class="value" id="avg-stage3">--</div>
+      <div class="label">Stage 3 (LLM Synthesis) avg</div>
+    </div>
+    <div class="stat-card failure-rate" id="card-failure">
+      <div class="value" id="failure-rate">--</div>
+      <div class="label">Failure Rate</div>
+    </div>
+  </div>
+  <div id="bar-chart" style="height:80px;display:flex;gap:4px;align-items:flex-end;margin-top:8px;">
+    <div id="bar-s1" style="flex:1;background:#58a6ff;min-height:4px;text-align:center;font-size:10px;color:#fff;" title="Stage 1 (Scraping)"></div>
+    <div id="bar-s2" style="flex:1;background:#d29922;min-height:4px;text-align:center;font-size:10px;color:#fff;" title="Stage 2 (Parsing)"></div>
+    <div id="bar-s3" style="flex:1;background:#f85149;min-height:4px;text-align:center;font-size:10px;color:#fff;" title="Stage 3 (LLM Synthesis)"></div>
+  </div>
+</div>
+
+<div class="panel" id="bottleneck-section">
+  <h2>Latest Bottleneck</h2>
+  <div class="bottleneck-card" id="bottleneck-card">
+    <div class="stage" id="bn-stage">No data yet</div>
+    <div class="finding" id="bn-finding">Run the Log Analyst to identify pipeline bottlenecks.</div>
+    <div class="rec" id="bn-rec"></div>
+  </div>
+</div>
+
+<div class="panel" id="improvements-section">
+  <h2>Improvement Queue</h2>
+  <table id="improvements-table">
+    <thead><tr><th>Priority</th><th>Title</th><th>Target File</th><th>Token Saving</th><th>Task</th></tr></thead>
+    <tbody id="improvements-body"></tbody>
+  </table>
+</div>
+
+<div class="panel" id="runbooks-section">
+  <h2>Runbook Index</h2>
+  <div id="runbook-list"><span class="spinner"></span>Loading...</div>
+</div>
+
+<script>
+function safeSet(id, val) {
+  var el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+function displayHealth(report) {
+  if (!report) return;
+  var s1 = report.avg_stage1_s || 0;
+  var s2 = report.avg_stage2_s || 0;
+  var s3 = report.avg_stage3_s || 0;
+  var fr = report.failure_rate_pct || 0;
+  safeSet('avg-stage1', s1 + 's');
+  safeSet('avg-stage2', s2 + 's');
+  safeSet('avg-stage3', s3 + 's');
+  safeSet('failure-rate', fr + '%');
+  var max = Math.max(s1, s2, s3, 1);
+  var bar1 = document.getElementById('bar-s1');
+  var bar2 = document.getElementById('bar-s2');
+  var bar3 = document.getElementById('bar-s3');
+  if (bar1) { bar1.style.height = (s1 / max * 80) + 'px'; bar1.textContent = s1 ? 'SCR' : ''; }
+  if (bar2) { bar2.style.height = (s2 / max * 80) + 'px'; bar2.textContent = s2 ? 'PRS' : ''; }
+  if (bar3) { bar3.style.height = (s3 / max * 80) + 'px'; bar3.textContent = s3 ? 'LLM' : ''; }
+}
+
+function displayBottleneck(report) {
+  if (!report) return;
+  var stage = report.bottleneck_stage || 'none';
+  var label = stage.charAt(0).toUpperCase() + stage.slice(1);
+  if (stage === 'scraping') label = 'Scraping';
+  else if (stage === 'llm_synthesis') label = 'LLM Synthesis';
+  else if (stage === 'none') label = 'None (Healthy)';
+  safeSet('bn-stage', label);
+  safeSet('bn-finding', report.top_finding || 'No findings yet.');
+  safeSet('bn-rec', report.recommendation || '');
+}
+
+function displayImprovements(proposal) {
+  var tbody = document.getElementById('improvements-body');
+  if (!tbody) return;
+  if (!proposal || !proposal.title) {
+    tbody.innerHTML = '<tr><td colspan="5">No improvements proposed yet.</td></tr>';
+    return;
+  }
+  var prio = proposal.priority || 'LOW';
+  var cls = prio === 'HIGH' ? 'badge-high' : prio === 'MEDIUM' ? 'badge-medium' : 'badge-low';
+  var taskLink = proposal.task_created ? 'Created' : prio === 'LOW' ? 'N/A' : 'Failed';
+  tbody.innerHTML = '<tr><td><span class="badge ' + cls + '">' + prio + '</span></td>' +
+    '<td>' + (proposal.title || '') + '</td>' +
+    '<td>' + (proposal.target_file || '') + '</td>' +
+    '<td>' + (proposal.estimated_token_saving_pct || 0) + '%</td>' +
+    '<td>' + taskLink + '</td></tr>';
+}
+
+function displayRunbooks(runbooks) {
+  var div = document.getElementById('runbook-list');
+  if (!div) return;
+  if (!runbooks || runbooks.length === 0) {
+    div.innerHTML = '<p>No runbooks found. Run the weekly process audit to generate one.</p>';
+    return;
+  }
+  var html = '<ul>';
+  for (var i = 0; i < runbooks.length; i++) {
+    var name = runbooks[i].split('/').pop();
+    html += '<li><a href="/' + runbooks[i] + '" style="color:#58a6ff;">' + name + '</a></li>';
+  }
+  html += '</ul>';
+  div.innerHTML = html;
+}
+
+function showError(msg) {
+  document.getElementById('bottleneck-card').querySelector('.finding').textContent = 'Error: ' + (msg || 'Unknown error');
+}
+
+async function loadReport() {
+  try {
+    var resp = await fetch('/api/process-audit/report');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    var data = await resp.json();
+    var report = data.report || {};
+    displayHealth(report);
+    displayBottleneck(report);
+    displayImprovements(data.proposal);
+    displayRunbooks(data.runbooks || []);
+  } catch(e) {
+    showError(e.message);
+  }
+}
+
+loadReport();
+setInterval(loadReport, 300000); // auto-refresh every 5 minutes
+</script>
+</body>
+</html>

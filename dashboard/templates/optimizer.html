@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';">
+<title>Optimizer — LLS</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0a0e1a; color: #c9d1d9;
+  font-family: 'Courier New', Courier, monospace; font-size: 14px;
+  min-height: 100vh; padding: 20px;
+}
+h1 { color: #58a6ff; font-size: 18px; margin-bottom: 16px; letter-spacing: 1px; }
+h2 { color: #f0a020; font-size: 14px; margin-bottom: 10px; }
+h3 { color: #58a6ff; font-size: 13px; margin-bottom: 6px; }
+.panel {
+  background: #0f1520; border: 1px solid #2a3a55;
+  padding: 16px; margin-bottom: 16px; max-width: 1200px;
+}
+.metric-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.metric-card {
+  background: #161b2e; border: 1px solid #2a3a55;
+  padding: 14px; min-width: 180px; flex: 1;
+}
+.metric-card .label { font-size: 11px; color: #8b949e; text-transform: uppercase; }
+.metric-card .value { font-size: 22px; color: #f0a020; margin-top: 4px; }
+.metric-card .value.green { color: #3fb950; }
+.metric-card .value.red { color: #f85149; }
+.metric-card .sub { font-size: 11px; color: #8b949e; margin-top: 2px; }
+table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+th { text-align: left; padding: 8px 12px; border-bottom: 1px solid #2a3a55; color: #8b949e; font-size: 11px; text-transform: uppercase; }
+td { padding: 8px 12px; border-bottom: 1px solid #1a2540; font-size: 13px; }
+tr:hover td { background: #1a2540; }
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 2px; font-size: 11px;
+  text-transform: uppercase;
+}
+.badge.HIGH { background: #1a0a0a; border: 1px solid #5a1a1a; color: #f85149; }
+.badge.MEDIUM { background: #1a150a; border: 1px solid #5a3a1a; color: #f0a020; }
+.badge.LOW { background: #1a1a1a; border: 1px solid #3a3a3a; color: #8b949e; }
+.spinner { display: none; color: #8b949e; font-size: 13px; padding: 20px; text-align: center; }
+.spinner.active { display: block; }
+.history-link { color: #58a6ff; text-decoration: none; }
+.history-link:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<h1>⚙ Optimizer — Token & Redundancy Analysis</h1>
+
+<div class="panel">
+  <h2>7-Day Summary</h2>
+  <div class="metric-row" id="summary-cards">
+    <div class="metric-card">
+      <div class="label">Total Tokens Used</div>
+      <div class="value" id="total-tokens"> — </div>
+    </div>
+    <div class="metric-card">
+      <div class="label">Over-Budget Agents</div>
+      <div class="value red" id="over-budget-count"> — </div>
+    </div>
+    <div class="metric-card">
+      <div class="label">Redundancy Findings</div>
+      <div class="value" id="findings-count"> — </div>
+    </div>
+    <div class="metric-card">
+      <div class="label">Cache Hit Rate</div>
+      <div class="value green" id="cache-hit-rate"> — </div>
+    </div>
+  </div>
+  <div class="spinner" id="loading-summary">Loading...</div>
+</div>
+
+<div class="panel">
+  <h2>Findings</h2>
+<table id="findings-table">
+   <thead>
+     <tr>
+       <th>Severity</th>
+       <th>Type</th>
+       <th>Agent/Market</th>
+       <th>Recommendation</th>
+       <th>Action</th>
+     </tr>
+   </thead>
+   <tbody id="findings-body">
+     <tr><td colspan="5" class="spinner">Loading...</td></tr>
+   </tbody>
+ </table>
+</div>
+
+<div class="panel">
+  <h2>Report History</h2>
+  <div id="history-links"><em>Loading...</em></div>
+</div>
+
+<script>
+async function loadReport() {
+  try {
+    document.getElementById('loading-summary').classList.add('active');
+    const resp = await fetch('/api/optimizer/report');
+    const data = await resp.json();
+
+    document.getElementById('loading-summary').classList.remove('active');
+
+    // Update summary cards
+    const total = data.token_summary.reduce((acc, s) => acc + (s.total_tokens_7d || 0), 0);
+    const overBudget = data.token_summary.filter(s => s.over_budget_runs > 0).length;
+    document.getElementById('total-tokens').textContent = total.toLocaleString();
+    document.getElementById('over-budget-count').textContent = overBudget || 0;
+    document.getElementById('findings-count').textContent = data.redundancy_findings.length;
+    document.getElementById('cache-hit-rate').textContent = (data.cache_hit_rate * 100).toFixed(0) + '%';
+
+    // Update findings table
+    const tbody = document.getElementById('findings-body');
+    if (data.redundancy_findings.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="color:#8b949e">No redundancies detected in last 7 days.</td></tr>';
+    } else {
+tbody.innerHTML = data.redundancy_findings.map(f => `
+         <tr>
+           <td><span class="badge ${f.severity || 'LOW'}">${f.severity || 'UNKNOWN'}</span></td>
+           <td>${f.type || 'unknown'}</td>
+           <td>${f.agent || f.market || ' — '}</td>
+           <td>${f.recommendation || ''}</td>
+           <td><a href="/api/optimizer/report" class="history-link">View</a></td>
+         </tr>
+       `).join('');
+    }
+  } catch (e) {
+    console.error('Failed to load optimizer report', e);
+  }
+}
+
+loadReport();
+</script>
+</body>
+</html>

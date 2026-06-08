@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';">
+<title>Content Studio — LLS Intelligence Operations</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0a0e1a;
+  color: #c9d1d9;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 14px;
+  min-height: 100vh;
+  padding: 20px;
+}
+
+h1 {
+  font-family: 'Courier New', Courier, monospace;
+  color: #f0a020;
+  font-size: 18px;
+  margin-bottom: 16px;
+  letter-spacing: 1px;
+}
+
+h2 {
+  color: #f0a020;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+h3 {
+  color: #58a6ff;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.panel {
+  background: #0f1520;
+  border: 1px solid #2a3a55;
+  padding: 16px;
+  margin-bottom: 16px;
+  max-width: 1200px;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  align-items: flex-end;
+}
+
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-group label {
+  font-size: 11px;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.field-group select, .field-group input {
+  background: #161b2e;
+  border: 1px solid #2a3a55;
+  color: #c9d1d9;
+  padding: 8px 12px;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 13px;
+  min-width: 160px;
+}
+
+.field-group select:focus, .field-group input:focus {
+  outline: none;
+  border-color: #f0a020;
+}
+
+.btn {
+  background: #2a3a55;
+  border: 1px solid #3a4a65;
+  color: #c9d1d9;
+  padding: 8px 20px;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn:hover {
+  background: #3a4a65;
+}
+
+.btn-primary {
+  background: #f0a020;
+  border-color: #f0a020;
+  color: #0a0e1a;
+  font-weight: bold;
+}
+
+.btn-primary:hover {
+  background: #d48c1a;
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-small {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #2a3a55;
+  border-top-color: #f0a020;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid #2a3a55;
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+
+.tab {
+  padding: 8px 16px;
+  background: #0f1520;
+  border: 1px solid #2a3a55;
+  border-bottom: none;
+  cursor: pointer;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12px;
+  color: #8b949e;
+  margin-right: 2px;
+  white-space: nowrap;
+}
+
+.tab.active {
+  background: #161b2e;
+  color: #f0a020;
+  border-color: #f0a020;
+  border-bottom: 1px solid #161b2e;
+  margin-bottom: -1px;
+}
+
+.tab-content {
+  display: none;
+  padding: 12px 0;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+.content-block {
+  background: #161b2e;
+  border: 1px solid #2a3a55;
+  padding: 12px;
+  margin-bottom: 10px;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.5;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.section-item {
+  background: #161b2e;
+  border: 1px solid #2a3a55;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.section-title {
+  color: #58a6ff;
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+
+.section-body {
+  color: #c9d1d9;
+  line-height: 1.5;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.section-wordcount {
+  color: #8b949e;
+  font-size: 10px;
+  margin-top: 4px;
+}
+
+.tagline {
+  color: #f0a020;
+  font-size: 16px;
+  font-style: italic;
+  margin-bottom: 8px;
+}
+
+.error {
+  color: #f85149;
+  margin-top: 8px;
+}
+
+.status-msg {
+  color: #8b949e;
+  margin-top: 8px;
+}
+
+.placeholder {
+  color: #484f58;
+  font-style: italic;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #161b2e 25%, #1a2140 50%, #161b2e 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+  height: 16px;
+  margin-bottom: 8px;
+}
+
+.skeleton-line { height: 14px; margin-bottom: 6px; }
+.skeleton-line.wide { width: 85%; }
+.skeleton-line.medium { width: 65%; }
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.meta-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: #8b949e;
+}
+
+.copy-btn {
+  background: transparent;
+  border: 1px solid #2a3a55;
+  color: #8b949e;
+  padding: 2px 8px;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 10px;
+  cursor: pointer;
+  margin-left: 8px;
+}
+
+.copy-btn:hover {
+  border-color: #f0a020;
+  color: #f0a020;
+}
+
+.cooldown-msg {
+  color: #f0a020;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+@media (max-width: 768px) {
+  body { padding: 10px; }
+  .panel { padding: 10px; }
+  .field-group select, .field-group input { min-width: 100%; }
+  .row { flex-direction: column; }
+  .tabs { flex-wrap: nowrap; }
+  .tab { font-size: 11px; padding: 6px 10px; }
+  h1 { font-size: 16px; }
+}
+</style>
+</head>
+<body>
+
+<h1>CONTENT STUDIO</h1>
+
+<div class="panel">
+  <h2>Generate Investor Content</h2>
+  <div class="row">
+    <div class="field-group">
+      <label>Market</label>
+      <select id="market">
+        <option value="Yelahanka">Yelahanka</option>
+        <option value="Devanahalli">Devanahalli</option>
+        <option value="Hebbal">Hebbal</option>
+      </select>
+    </div>
+    <div class="field-group">
+      <label>Survey No.</label>
+      <input type="text" id="survey_no" value="45/2" placeholder="e.g. 45/2">
+    </div>
+    <div class="field-group">
+      <label>Deal Type</label>
+      <select id="deal_type">
+        <option value="compare">Compare</option>
+        <option value="purchase">Purchase</option>
+        <option value="jd">JD</option>
+        <option value="jv">JV</option>
+      </select>
+    </div>
+    <div class="field-group">
+      <label>Job ID (optional)</label>
+      <input type="text" id="job_id" placeholder="evaluate job ID">
+    </div>
+    <div class="field-group">
+      <label>&nbsp;</label>
+      <button class="btn btn-primary" id="generateBtn" onclick="generate()">Generate</button>
+    </div>
+  </div>
+  <div id="statusMsg" class="status-msg">Enter parameters and click Generate.</div>
+</div>
+
+<div id="results" style="display:none;">
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab(this, 'linkedin-tab')">LinkedIn</div>
+    <div class="tab" onclick="switchTab(this, 'instagram-tab')">Instagram</div>
+    <div class="tab" onclick="switchTab(this, 'brief-tab')">Project Brief</div>
+    <div class="tab" onclick="switchTab(this, 'narrative-tab')">Investor Narrative</div>
+  </div>
+
+  <div id="linkedin-tab" class="tab-content active">
+    <div id="linkedin-content" class="content-block placeholder">Generate content to see the LinkedIn post here.</div>
+    <div id="linkedin-skeleton" class="skeleton" style="display:none;"><div class="skeleton-line wide"></div><div class="skeleton-line medium"></div></div>
+    <button class="btn btn-small" onclick="downloadTxt('linkedin')">Download as .txt</button>
+  </div>
+
+  <div id="instagram-tab" class="tab-content">
+    <div id="instagram-content" class="content-block placeholder">Generate content to see the Instagram caption here.</div>
+    <div id="instagram-skeleton" class="skeleton" style="display:none;"><div class="skeleton-line wide"></div><div class="skeleton-line medium"></div></div>
+    <button class="btn btn-small" onclick="downloadTxt('instagram')">Download as .txt</button>
+  </div>
+
+  <div id="brief-tab" class="tab-content">
+    <div id="brief-content" class="placeholder">Generate content to see the project brief here.</div>
+    <div id="brief-skeleton" class="skeleton" style="display:none;"><div class="skeleton-line wide"></div><div class="skeleton-line medium"></div><div class="skeleton-line wide"></div></div>
+  </div>
+
+  <div id="narrative-tab" class="tab-content">
+    <div id="narrative-content" class="content-block placeholder">Generate content to see the investor narrative here.</div>
+    <div id="narrative-skeleton" class="skeleton" style="display:none;"><div class="skeleton-line wide"></div><div class="skeleton-line medium"></div></div>
+    <button class="btn btn-small" onclick="downloadTxt('narrative')">Download as .txt</button>
+  </div>
+</div>
+
+<div id="metadata" style="display:none;" class="meta-row"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var _lastResult = null;
+  var _generating = false;
+
+  function getApiKey() {
+    return window.localStorage.getItem('apiKey') || '';
+  }
+
+  window.setApiKey = function () {
+    var key = window.prompt('Enter Dashboard API Key:');
+    if (key) { window.localStorage.setItem('apiKey', key); }
+  };
+
+  function _escapeHtml(str) {
+    if (!str) return '';
+    var div = document.createElement('div');
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+  }
+
+  function _showLoading(id) {
+    var block = document.getElementById(id + '-content');
+    var skeleton = document.getElementById(id + '-skeleton');
+    if (block) { block.style.display = 'none'; }
+    if (skeleton) { skeleton.style.display = 'block'; }
+  }
+
+  function _hideLoading(id) {
+    var block = document.getElementById(id + '-content');
+    var skeleton = document.getElementById(id + '-skeleton');
+    if (block) { block.style.display = ''; }
+    if (skeleton) { skeleton.style.display = 'none'; }
+  }
+
+  function _cleanupOldSkeletons() {
+    ['linkedin', 'instagram', 'brief', 'narrative'].forEach(function (id) {
+      _hideLoading(id);
+    });
+  }
+
+  window.generate = function () {
+    if (_generating) return;
+    _generating = true;
+
+    var btn = document.getElementById('generateBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Generating...';
+    document.getElementById('statusMsg').textContent = 'Running PR Head + Content Writer...';
+    document.getElementById('results').style.display = 'block';
+    _cleanupOldSkeletons();
+    _showLoading('linkedin');
+    _showLoading('instagram');
+    _showLoading('brief');
+    _showLoading('narrative');
+
+    var payload = JSON.stringify({
+      market: document.getElementById('market').value,
+      survey_no: document.getElementById('survey_no').value.trim(),
+      deal_type: document.getElementById('deal_type').value,
+      job_id: document.getElementById('job_id').value.trim() || null,
+    });
+
+    function _resetBtn() {
+      btn.disabled = false;
+      btn.innerHTML = 'Generate';
+      _generating = false;
+      _cleanupOldSkeletons();
+    }
+
+    fetch('/api/content/generate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': getApiKey(),
+      },
+      body: payload,
+    })
+    .then(function (resp) {
+      if (resp.status === 401) {
+        document.getElementById('statusMsg').innerHTML = '<span class="error">Unauthorized. <a href="#" onclick="setApiKey()">Set API Key</a></span>';
+        _resetBtn();
+        return null;
+      }
+      if (resp.status === 429) {
+        document.getElementById('statusMsg').innerHTML = '<span class="cooldown-msg">Rate limit reached (5/hour). Wait and retry.</span>';
+        _resetBtn();
+        return null;
+      }
+      return resp.json().then(function (data) {
+        if (resp.status !== 200) {
+          document.getElementById('statusMsg').innerHTML = '<span class="error">Error: ' + _escapeHtml(data.error || 'unknown') + '</span>';
+          _resetBtn();
+          return null;
+        }
+        return data;
+      });
+    })
+    .then(function (data) {
+      if (!data) return;
+      _lastResult = data;
+      _displayResults(data);
+      document.getElementById('statusMsg').textContent = 'Generated at ' + (data.generated_at || new Date().toISOString());
+      _resetBtn();
+    })
+    .catch(function (err) {
+      document.getElementById('statusMsg').innerHTML = '<span class="error">Request failed: ' + _escapeHtml(err.message) + '</span>';
+      _resetBtn();
+    });
+  };
+
+  function _displayResults(data) {
+    document.getElementById('results').style.display = 'block';
+
+    var linkedinEl = document.getElementById('linkedin-content');
+    linkedinEl.textContent = data.linkedin_post || '(not generated)';
+    linkedinEl.style.display = '';
+
+    var instaEl = document.getElementById('instagram-content');
+    instaEl.textContent = data.instagram_caption || '(not generated)';
+    instaEl.style.display = '';
+
+    var sections = data.project_brief_sections || [];
+    var briefHtml = '';
+    for (var i = 0; i < sections.length; i++) {
+      var s = sections[i];
+      briefHtml += '<div class="section-item">';
+      briefHtml += '<div class="section-title">' + _escapeHtml(s.title || 'Section') + '</div>';
+      briefHtml += '<div class="section-body">' + _escapeHtml(s.body || '') + '</div>';
+      if (s.word_count) {
+        briefHtml += '<div class="section-wordcount">' + _escapeHtml(String(s.word_count)) + ' words</div>';
+      }
+      briefHtml += '</div>';
+    }
+    if (!briefHtml) { briefHtml = '<div class="placeholder">No sections generated.</div>'; }
+    document.getElementById('brief-content').innerHTML = briefHtml;
+
+    var narrativeEl = document.getElementById('narrative-content');
+    narrativeEl.textContent = data.investor_narrative || '(not generated)';
+    narrativeEl.style.display = '';
+
+    var metaHtml = '';
+    if (data.project_tagline) {
+      metaHtml += '<div class="tagline">"' + _escapeHtml(data.project_tagline) + '"</div>';
+    }
+    if (data.key_differentiators && data.key_differentiators.length) {
+      metaHtml += '<div><strong>Differentiators:</strong> ' + _escapeHtml(data.key_differentiators.join(', ')) + '</div>';
+    }
+    if (data.target_segment) {
+      metaHtml += '<div><strong>Target:</strong> ' + _escapeHtml(data.target_segment) + '</div>';
+    }
+    if (data.risk_acknowledgements && data.risk_acknowledgements.length) {
+      metaHtml += '<div><strong>Risks:</strong> ' + _escapeHtml(data.risk_acknowledgements.join('; ')) + '</div>';
+    }
+    var meta = document.getElementById('metadata');
+    meta.innerHTML = metaHtml;
+    meta.style.display = 'block';
+  }
+
+  window.switchTab = function (tabEl, tabId) {
+    var tabs = document.querySelectorAll('.tab');
+    for (var i = 0; i < tabs.length; i++) { tabs[i].classList.remove('active'); }
+    var contents = document.querySelectorAll('.tab-content');
+    for (var j = 0; j < contents.length; j++) { contents[j].classList.remove('active'); }
+    tabEl.classList.add('active');
+    document.getElementById(tabId).classList.add('active');
+  };
+
+  window.downloadTxt = function (type) {
+    if (!_lastResult) return;
+    var content = '';
+    var filename = '';
+
+    switch (type) {
+      case 'linkedin':
+        content = _lastResult.linkedin_post || '';
+        filename = 'linkedin_post.txt';
+        break;
+      case 'instagram':
+        content = _lastResult.instagram_caption || '';
+        filename = 'instagram_caption.txt';
+        break;
+      case 'narrative':
+        content = _lastResult.investor_narrative || '';
+        filename = 'investor_narrative.txt';
+        break;
+      default:
+        return;
+    }
+
+    if (!content) return;
+    var blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+})();
+</script>
+
+</body>
+</html>

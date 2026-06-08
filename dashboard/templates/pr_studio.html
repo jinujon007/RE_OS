@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+<title>PR Studio — LLS Intelligence Operations</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0a0e1a; color: #c9d1d9;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 14px; min-height: 100vh; padding: 20px;
+}
+h1 { color: #f0a020; font-size: 18px; margin-bottom: 16px; letter-spacing: 1px; }
+h2 { color: #f0a020; font-size: 14px; margin-bottom: 10px; }
+h3 { color: #58a6ff; font-size: 13px; margin-bottom: 6px; }
+.panel {
+  background: #0f1520; border: 1px solid #2a3a55;
+  padding: 16px; margin-bottom: 16px; max-width: 1200px;
+}
+.tabs { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
+.tab-btn {
+  background: #161b2e; border: 1px solid #2a3a55;
+  color: #8b949e; padding: 8px 16px; cursor: pointer;
+  font-family: 'Courier New', Courier, monospace; font-size: 12px;
+  transition: background 0.15s;
+}
+.tab-btn:hover { background: #1c2538; }
+.tab-btn.active { background: #2a3a55; color: #f0a020; border-color: #f0a020; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { text-align: left; color: #8b949e; border-bottom: 1px solid #2a3a55; padding: 8px 4px; }
+td { padding: 8px 4px; border-bottom: 1px solid #1c2538; }
+.badge { padding: 2px 8px; font-size: 11px; border-radius: 2px; }
+.badge-pos { background: #1a3a2a; color: #3fb950; }
+.badge-neg { background: #3a1a1a; color: #f85149; }
+.badge-neu { background: #2a2a1a; color: #d29922; }
+.chip {
+  display: inline-block; background: #1c2538; border: 1px solid #2a3a55;
+  padding: 2px 8px; font-size: 11px; margin: 2px;
+}
+.btn-action {
+  background: #1c2538; border: 1px solid #2a3a55;
+  color: #58a6ff; padding: 4px 12px; cursor: pointer;
+  font-family: 'Courier New', Courier, monospace; font-size: 11px;
+  transition: background 0.15s;
+}
+.btn-action:hover { background: #2a3a55; }
+.btn-action:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-copy {
+  background: transparent; border: 1px solid #2a3a55;
+  color: #8b949e; padding: 2px 8px; cursor: pointer;
+  font-family: 'Courier New', Courier, monospace; font-size: 11px;
+  transition: all 0.15s;
+}
+.btn-copy:hover { background: #2a3a55; color: #58a6ff; }
+.post-card {
+  background: #161b2e; border: 1px solid #2a3a55;
+  padding: 12px; margin-bottom: 8px;
+}
+.card-grid { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.comp-card {
+  background: #161b2e; border: 1px solid #2a3a55;
+  padding: 12px; min-width: 200px; flex: 1 0 200px;
+}
+.comp-card h4 { color: #f0a020; font-size: 13px; margin-bottom: 4px; }
+.comp-card .meta { color: #8b949e; font-size: 11px; margin: 4px 0; }
+.comp-card .detail { font-size: 11px; color: #58a6ff; }
+.stat-banner {
+  display: flex; gap: 12px; margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.stat-pill {
+  background: #161b2e; border: 1px solid #2a3a55;
+  padding: 8px 16px; display: flex; flex-direction: column;
+  align-items: center; min-width: 90px;
+}
+.stat-num { color: #f0a020; font-size: 20px; font-weight: bold; }
+.stat-lbl { color: #8b949e; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+.loading { color: #8b949e; font-size: 12px; padding: 16px; text-align: center; }
+.error-state { color: #f85149; font-size: 12px; padding: 16px; text-align: center; }
+.retry-bar {
+  background: #1c2538; border: 1px solid #2a3a55;
+  padding: 8px 12px; margin-bottom: 12px; font-size: 12px;
+  color: #8b949e; display: flex; gap: 8px; align-items: center;
+}
+.toast {
+  position: fixed; bottom: 20px; right: 20px;
+  background: #1a3a2a; border: 1px solid #3fb950;
+  color: #3fb950; padding: 8px 16px; font-size: 12px;
+  font-family: 'Courier New', Courier, monospace;
+  transition: opacity 0.3s; opacity: 0; pointer-events: none;
+  z-index: 9999;
+}
+.toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<h1>PR Studio — Brand & Social Media</h1>
+<div id="toast" class="toast"></div>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('mentions')" id="tab-mentions-btn">
+    Brand Mentions <span id="unread-badge" style="background:#f85149;color:#fff;padding:0 6px;border-radius:8px;font-size:10px;display:none;">0</span>
+  </button>
+  <button class="tab-btn" onclick="switchTab('calendar')" id="tab-calendar-btn">Content Calendar</button>
+  <button class="tab-btn" onclick="switchTab('competitor')" id="tab-competitor-btn">Competitor Moves</button>
+</div>
+
+<div id="tab-mentions" class="tab-content active">
+  <div class="panel" id="mentions-panel">
+    <h2>Brand Mentions <span id="mention-count" class="loading"></span></h2>
+    <div class="stat-banner" id="mentions-stats"></div>
+    <div id="mentions-error" class="error-state" style="display:none;"></div>
+    <table id="mentions-table" style="display:none;">
+      <thead><tr><th>Title</th><th>Sentiment</th><th>Type</th><th>Source</th><th>Ago</th></tr></thead>
+      <tbody id="mentions-table-body"></tbody>
+    </table>
+    <div id="mentions-empty" class="loading" style="display:none;">No brand mentions this week.</div>
+    <div id="mentions-loading" class="loading">Loading mentions...</div>
+  </div>
+</div>
+
+<div id="tab-calendar" class="tab-content">
+  <div class="panel">
+    <h2>Content Calendar</h2>
+    <div id="calendar-error" class="error-state" style="display:none;"></div>
+    <div id="calendar-posts"><p class="loading">Generate content to see posts here.</p></div>
+    <div style="margin-top:12px; display:flex; gap:8px;">
+      <button class="btn-action" onclick="generateCalendar(this)" id="gen-btn">Generate This Week</button>
+      <span id="gen-status" class="loading" style="display:none;align-self:center;">Generating...</span>
+    </div>
+  </div>
+</div>
+
+<div id="tab-competitor" class="tab-content">
+  <div class="panel">
+    <h2>Competitor Launches (30 days)</h2>
+    <div id="comp-error" class="error-state" style="display:none;"></div>
+    <div class="card-grid" id="competitor-cards"><div class="loading">Loading...</div></div>
+  </div>
+</div>
+
+<script>
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function copyTextFallback(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); showToast('Copied!'); }
+  catch(e) { showToast('Copy failed — select text manually.'); }
+  document.body.removeChild(ta);
+}
+
+async function loadMentions() {
+  const tb = document.getElementById('mentions-table-body');
+  const mc = document.getElementById('mention-count');
+  const el = document.getElementById('mentions-loading');
+  const et = document.getElementById('mentions-error');
+  const empty = document.getElementById('mentions-empty');
+  const table = document.getElementById('mentions-table');
+  const statsDiv = document.getElementById('mentions-stats');
+  et.style.display = 'none';
+  try {
+    const r = await fetch('/api/pr/mentions?days=7');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    mc.textContent = `(${data.mention_count})`;
+    el.style.display = 'none';
+    if (!data.mentions || data.mentions.length === 0) {
+      empty.style.display = 'block'; table.style.display = 'none';
+      statsDiv.innerHTML = '';
+      return;
+    }
+    table.style.display = ''; empty.style.display = 'none';
+    const pos = data.mentions.filter(m => m.sentiment_label === 'positive').length;
+    const neg = data.mentions.filter(m => m.sentiment_label === 'negative').length;
+    statsDiv.innerHTML =
+      `<div class="stat-pill"><span class="stat-num">${data.mention_count}</span><span class="stat-lbl">Total</span></div>` +
+      `<div class="stat-pill"><span class="stat-num" style="color:#3fb950">${pos}</span><span class="stat-lbl">Positive</span></div>` +
+      `<div class="stat-pill"><span class="stat-num" style="color:#f85149">${neg}</span><span class="stat-lbl">Negative</span></div>`;
+    const unread = data.mentions.length;
+    const ub = document.getElementById('unread-badge');
+    if (unread > 0) { ub.textContent = unread; ub.style.display = 'inline'; }
+    tb.innerHTML = data.mentions.map(m => {
+      const daysAgo = m.published_at
+        ? Math.max(0, Math.floor((Date.now() - new Date(m.published_at).getTime()) / 86400000))
+        : '?';
+      const badge = m.sentiment_label === 'positive' ? 'badge-pos'
+        : m.sentiment_label === 'negative' ? 'badge-neg' : 'badge-neu';
+      return `<tr><td>${(m.title||'').substring(0,80)}</td>` +
+        `<td><span class="badge ${badge}">${m.sentiment_label}</span></td>` +
+        `<td>${m.mention_type||'general'}</td>` +
+        `<td>${m.source||'?'}</td>` +
+        `<td>${daysAgo}d</td></tr>`;
+    }).join('');
+  } catch(e) {
+    el.style.display = 'none';
+    et.style.display = 'block';
+    et.innerHTML = `Failed to load mentions: ${e.message}. <button class="btn-action" onclick="loadMentions()">Retry</button>`;
+  }
+}
+
+async function loadCompetitor() {
+  const cc = document.getElementById('competitor-cards');
+  const et = document.getElementById('comp-error');
+  et.style.display = 'none';
+  try {
+    const r = await fetch('/api/pr/mentions?days=30');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    if (!data.competitor_launches || data.competitor_launches.length === 0) {
+      cc.innerHTML = '<div class="loading">No competitor launches in the last 30 days.</div>';
+      return;
+    }
+    cc.innerHTML = data.competitor_launches.map(l =>
+      `<div class="comp-card">
+        <h4>${l.project_name||'?'}</h4>
+        <div class="meta">${l.developer_name||'?'} · ${l.market||'?'}</div>
+        <div class="detail">${l.total_units||'?'} units · ₹${l.price_min_psf||'?'}/sqft</div>
+      </div>`
+    ).join('');
+  } catch(e) {
+    et.style.display = 'block';
+    et.innerHTML = `Failed to load competitor data. <button class="btn-action" onclick="loadCompetitor()">Retry</button>`;
+    cc.innerHTML = '';
+  }
+}
+
+async function generateCalendar(btn) {
+  const cp = document.getElementById('calendar-posts');
+  const et = document.getElementById('calendar-error');
+  const gs = document.getElementById('gen-status');
+  et.style.display = 'none'; gs.style.display = 'inline';
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/content/generate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({market: 'Yelahanka', survey_no: 'system', deal_type: 'pr'})
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const posts = [];
+    if (data.linkedin_post) posts.push({channel:'LinkedIn', content: data.linkedin_post, time:'07:30 IST'});
+    if (data.instagram_caption) posts.push({channel:'Instagram', content: data.instagram_caption, time:'08:00 IST'});
+    if (posts.length === 0) { cp.innerHTML = '<p class="loading">No posts generated.</p>'; return; }
+    cp.innerHTML = posts.map((p, i) =>
+      `<div class="post-card">
+        <div><span class="chip">${p.channel}</span> <span class="loading" style="font-size:11px;">${p.time}</span></div>
+        <div class="post-text" style="margin:8px 0; line-height:1.4; white-space:pre-wrap;">${p.content}</div>
+        <div><button class="btn-copy" data-idx="${i}">Copy</button></div>
+      </div>`
+    ).join('');
+    cp.querySelectorAll('.btn-copy').forEach(b => {
+      const idx = parseInt(b.dataset.idx);
+      const text = posts[idx].content;
+      b.onclick = () => { copyTextFallback(text); b.textContent = 'Copied!'; setTimeout(() => { b.textContent = 'Copy'; }, 2000); };
+    });
+    showToast('Content generated successfully');
+  } catch(e) {
+    et.style.display = 'block';
+    et.innerHTML = `Generation failed: ${e.message}. Ensure Content Pipeline is available.`;
+  } finally {
+    gs.style.display = 'none';
+    if (btn) btn.disabled = false;
+  }
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`tab-${name}`).classList.add('active');
+  document.getElementById(`tab-${name}-btn`).classList.add('active');
+}
+
+loadMentions();
+loadCompetitor();
+</script>
+</body>
+</html>
