@@ -374,3 +374,76 @@ class TestRunDataQualityCheckpoint:
             result = run_data_quality_checkpoint("Yelahanka")
         assert result["success"] is True
         assert result.get("status") == "completed"
+
+
+# ── T-1072: GV freshness check ──────────────────────────────────────────────
+
+class TestGVFreshness:
+    def test_gv_freshness_check_alerts_when_stale(self):
+        """check_gv_freshness alerts when gazette data is >18 months stale."""
+        mock_conn = MagicMock()
+        results = [MagicMock(), MagicMock()]
+        results[0].fetchone.return_value = (2022,)  # gazette: stale
+        results[1].fetchone.return_value = (None,)   # portal: none
+        mock_conn.execute.side_effect = results
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        from utils.data_quality import DataQualityMonitor
+        with (
+            patch("utils.data_quality.get_engine", return_value=mock_engine),
+            patch("utils.discord_notifier.send_scraper_alert") as mock_alert,
+        ):
+            result = DataQualityMonitor.check_gv_freshness("Yelahanka")
+
+        assert result["alert_needed"] is True
+        assert result["months_stale"] > 18
+        assert result["gazette_year"] == 2022
+        mock_alert.assert_called_once()
+
+    def test_gv_freshness_check_silent_when_fresh(self):
+        """check_gv_freshness is silent when gazette data is recent."""
+        mock_conn = MagicMock()
+        from datetime import date
+        cy = date.today().year
+        results = [MagicMock(), MagicMock()]
+        results[0].fetchone.return_value = (cy,)   # gazette: fresh
+        results[1].fetchone.return_value = (None,)  # portal: none
+        mock_conn.execute.side_effect = results
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        from utils.data_quality import DataQualityMonitor
+        with (
+            patch("utils.data_quality.get_engine", return_value=mock_engine),
+            patch("utils.discord_notifier.send_scraper_alert") as mock_alert,
+        ):
+            result = DataQualityMonitor.check_gv_freshness("Yelahanka")
+
+        assert result["alert_needed"] is False
+        assert result["gazette_year"] == cy
+        mock_alert.assert_not_called()
+
+    def test_gv_freshness_silent_when_portal_live_no_gazette(self):
+        """No alert when gazette_pdf absent but portal_scraped data is fresh."""
+        mock_conn = MagicMock()
+        from datetime import date
+        cy = date.today().year
+        results = [MagicMock(), MagicMock()]
+        results[0].fetchone.return_value = (None,)   # gazette: none
+        results[1].fetchone.return_value = (cy,)      # portal: fresh
+        mock_conn.execute.side_effect = results
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        from utils.data_quality import DataQualityMonitor
+        with (
+            patch("utils.data_quality.get_engine", return_value=mock_engine),
+            patch("utils.discord_notifier.send_scraper_alert") as mock_alert,
+        ):
+            result = DataQualityMonitor.check_gv_freshness("Yelahanka")
+
+        assert result["alert_needed"] is False
+        assert result["gazette_year"] is None
+        assert result["portal_year"] == cy
+        mock_alert.assert_not_called()

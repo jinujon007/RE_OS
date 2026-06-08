@@ -62,7 +62,7 @@ jobs:
           pip install \
             pytest>=7.0 pytest-mock>=3.0 pytest-cov>=4.0 \
             loguru python-dotenv \
-            psycopg2-binary sqlalchemy \
+            psycopg2-binary sqlalchemy alembic \
             "prometheus-client>=0.21.0" \
             redis requests
 
@@ -237,6 +237,81 @@ jobs:
         run: |
           psql -h localhost -U re_os_user -d re_os_test -f database/schema.sql
           echo "Schema applied successfully"
+
+      - name: Alembic migration drift check
+        env:
+          DB_PASSWORD: re_os_test
+        run: |
+          pip install alembic>=1.13.0 psycopg2-binary sqlalchemy
+          # Overwrite alembic.ini DB URL to point at the test DB
+          sed -i 's|re_os|re_os_test|g' alembic.ini
+          # Run all pending migrations
+          alembic upgrade head
+          echo "Migrations applied successfully"
+          # Check no drift (migrations match schema)
+          alembic check
+          echo "Alembic check passed — no drift detected"
+          # Verify single head
+          HEADS=$(alembic heads | wc -l)
+          if [ "$HEADS" -ne 1 ]; then
+            echo "FAIL: Expected 1 alembic head, got $HEADS"
+            alembic heads
+            exit 1
+          fi
+          echo "Single alembic head confirmed"
+
+  integrity-tests:
+    name: DB Integrity Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: schema-check
+
+    services:
+      postgres:
+        image: postgis/postgis:15-3.3
+        env:
+          POSTGRES_DB: re_os_test
+          POSTGRES_USER: re_os_user
+          POSTGRES_PASSWORD: re_os_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U re_os_user -d re_os_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install psql + test deps
+        run: |
+          sudo apt-get install -y postgresql-client
+          pip install pytest>=7.0 loguru python-dotenv \
+            psycopg2-binary sqlalchemy alembic \
+            geoalchemy2 prometheus-client redis requests
+
+      - name: Apply schema + run migrations
+        env:
+          PGPASSWORD: re_os_test
+          DB_PASSWORD: re_os_test
+        run: |
+          psql -h localhost -U re_os_user -d re_os_test -f database/schema.sql
+          sed -i 's|re_os|re_os_test|g' alembic.ini
+          alembic upgrade head
+
+      - name: Run data integrity checks
+        env:
+          DB_PASSWORD: re_os_test
+        run: |
+          pytest tests/test_data_integrity.py -m integration -v --tb=short
 
   repo-hygiene:
     name: Dev-file Hygiene

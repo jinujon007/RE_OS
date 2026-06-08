@@ -19,9 +19,14 @@ RUN apt-get update && apt-get install -y \
     libcairo2 libasound2 gdal-bin libgdal-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python packages to a local venv
+# Install uv — faster resolver with override support (cached before COPY requirements.txt)
+RUN pip install --no-cache-dir uv
+
+# Install Python packages
+# uv --override forces chromadb>=0.5.10 past crewai 0.80's embedchain transitive dep (requires <0.5.0)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN printf 'chromadb>=0.5.10,<0.6.0\nopenai>=2.20.0,<3.0.0\n' > /tmp/overrides.txt && \
+    UV_SYSTEM_PYTHON=1 uv pip install --no-cache -r requirements.txt --override /tmp/overrides.txt
 
 # ── Runtime stage ─────────────────────────────────────────
 FROM python:3.11-slim

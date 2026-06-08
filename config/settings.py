@@ -118,6 +118,20 @@ CHROMA_DB_PATH = os.environ.get("CHROMA_DB_PATH", "/app/data/chroma")
 # ── REDIS ────────────────────────────────────────────────────────────────────
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
+# ── RERA PLAYWRIGHT FALLBACK ─────────────────────────────────────────────────
+# Markets where HTTP POST fails and Playwright form-interaction fallback is used.
+RERA_USE_PLAYWRIGHT_MARKETS: list[str] = ["Yelahanka", "Hebbal"]
+RERA_ALERT_COOLDOWN_SECONDS: int = 3600  # min interval between FALLBACK_SEED alerts per market
+
+# Dropdown option values for Playwright form fill — portal may use different
+# values than the POST payload for certain markets.
+# Key: market name. Value: (district_option_value, subdistrict_option_value)
+RERA_PLAYWRIGHT_LOCALITY_VALUES: dict[str, tuple[str, str]] = {
+    "Yelahanka": ("Bengaluru Urban", "Yelahanka"),
+    "Hebbal": ("Bengaluru Urban", "Bengaluru North"),
+    "Devanahalli": ("Bengaluru  Rural", "Devanahalli"),
+}
+
 # ── MARKETS ──────────────────────────────────────────────────────────────────
 TARGET_MARKETS = [m.strip() for m in os.getenv("TARGET_MARKETS", "Yelahanka,Devanahalli,Hebbal").split(",") if m.strip()]
 
@@ -201,6 +215,22 @@ GRADE_A_MIN_UNITS = 500
 # Grade B: 100-499 units
 GRADE_B_MIN_UNITS = 100
 
+# Grade B developer registry (T-1081 — GATE-80)
+# Mapped to North Bengaluru project listing URLs.
+# All Grade B sites use requests + BeautifulSoup (no Playwright needed).
+GRADE_B_DEVELOPER_URLS: dict[str, str] = {
+    "Ace Group": "https://www.acegroup.co.in/projects",
+    "Godavari Developers": "https://www.godavaridevelopers.com/projects",
+    "Concorde": "https://www.concorde.in/projects/bangalore",
+    "HomeCity": "https://www.homecity.in/projects",
+    "Nambiar Builders": "https://www.nambiarbuilders.com/projects/bangalore",
+    "Shivaganga": "https://www.shivaganga.in/projects",
+    "VSR Infra": "https://www.vsrinfra.com/projects",
+    "Mahaveer Group": "https://www.mahaveergroup.in/projects",
+    "Sumadhura Group": "https://www.sumadhura.com/projects/bangalore",
+    "Aratt Developers": "https://www.arattdevelopers.com/projects",
+}
+
 # ── Discord (Phase 7 — Alerts) ────────────────────────────────────────────────
 DISCORD_WEBHOOK_RERA_YELAHANKA   = os.environ.get("DISCORD_WEBHOOK_RERA_YELAHANKA", "")
 DISCORD_WEBHOOK_RERA_DEVANAHALLI = os.environ.get("DISCORD_WEBHOOK_RERA_DEVANAHALLI", "")
@@ -248,6 +278,13 @@ TOKEN_BUDGETS: dict[str, int] = {
     "PR_HEAD": int(os.getenv("PR_HEAD_TOKEN_BUDGET", "1500")),
     "CONTENT_WRITER": int(os.getenv("CONTENT_WRITER_TOKEN_BUDGET", "1000")),
 }
+
+# ── PORTAL SCOUT CANARY (Sprint 79 — GATE-79) ──────────────────────────────────
+PORTAL_SCOUT_MIN_LISTINGS_CANARY: int = 10
+
+# ── GV FRESHNESS (Sprint 78 — GATE-78) ────────────────────────────────────────
+# If the gazette year is more than this many months old, flag as stale
+GV_FRESHNESS_WARN_MONTHS: int = 18
 
 # ── AGENT RUN STATUSES ────────────────────────────────────────────────────────
 AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]

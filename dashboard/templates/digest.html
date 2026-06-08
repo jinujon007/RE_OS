@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net;">
+<title>Intelligence Digest — LLS</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/1.9.10/htmx.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0a0e1a; color: #c9d1d9;
+  font-family: 'Courier New', Courier, monospace; font-size: 14px;
+  min-height: 100vh; padding: 20px;
+}
+h1 { color: #58a6ff; font-size: 18px; margin-bottom: 16px; letter-spacing: 1px; }
+h2 { font-size: 15px; margin-bottom: 12px; }
+h3 { color: #58a6ff; font-size: 13px; margin-bottom: 8px; }
+.grid { display: flex; gap: 16px; flex-wrap: wrap; }
+.section {
+  background: #0f1520; border: 1px solid #2a3a55;
+  padding: 16px; margin-bottom: 20px; flex: 1; min-width: 480px;
+}
+.card {
+  background: #161b2e; border: 1px solid #2a3a55;
+  padding: 14px; margin-bottom: 12px;
+}
+.card h3 { margin-bottom: 8px; }
+.card .row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 13px; }
+.card .label { color: #8b949e; }
+.card .value { color: #f0a020; }
+.card .value.green { color: #3fb950; }
+.card .value.red { color: #f85149; }
+.card .value.dim { color: #8b949e; }
+.card ul { list-style: none; margin-top: 4px; font-size: 12px; color: #8b949e; }
+.card ul li { padding: 1px 0; }
+.controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+button {
+  background: #1a2540; border: 1px solid #2a3a55; color: #c9d1d9;
+  padding: 6px 14px; cursor: pointer; font-family: inherit; font-size: 12px;
+}
+button:hover { background: #2a3a55; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+button.sending { opacity: 0.6; }
+.spinner { display: none; text-align: center; padding: 30px; color: #8b949e; }
+.spinner.active { display: block; }
+.toast {
+  position: fixed; bottom: 20px; right: 20px; z-index: 1000;
+  background: #1a2540; border: 1px solid #2a3a55; color: #c9d1d9;
+  padding: 10px 18px; font-size: 12px; display: none; max-width: 400px;
+}
+.toast.success { border-color: #3fb950; }
+.toast.error { border-color: #f85149; }
+.toast.show { display: block; }
+.error-placeholder { padding: 20px; text-align: center; color: #f85149; }
+</style>
+</head>
+<body>
+<h1>Intelligence Digest</h1>
+<div id="toast" class="toast"></div>
+
+<div class="grid">
+  <div class="section">
+    <h2 style="color:#3fb950">This Week</h2>
+    <div class="controls">
+      <button id="refresh-weekly" hx-get="/api/digest/weekly" hx-target="#weekly-cards" hx-swap="innerHTML" hx-indicator="#weekly-spinner">Refresh</button>
+      <button id="send-weekly" onclick="sendDigest('weekly')">Send to Discord Now</button>
+      <span id="weekly-spinner" class="spinner" style="display:none">Loading...</span>
+    </div>
+    <div id="weekly-cards">
+      <div class="spinner active">Loading weekly data...</div>
+    </div>
+  </div>
+  <div class="section">
+    <h2 style="color:#58a6ff">This Month</h2>
+    <div class="controls">
+      <button id="refresh-monthly" hx-get="/api/digest/monthly" hx-target="#monthly-cards" hx-swap="innerHTML" hx-indicator="#monthly-spinner">Refresh</button>
+      <button id="send-monthly" onclick="sendDigest('monthly')">Send to Discord Now</button>
+      <span id="monthly-spinner" class="spinner" style="display:none">Loading...</span>
+    </div>
+    <div id="monthly-cards">
+      <div class="spinner active">Loading monthly data...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + type + ' show';
+  setTimeout(() => { t.className = 'toast'; }, 4000);
+}
+
+async function sendDigest(type) {
+  const btn = document.getElementById('send-' + type);
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  try {
+    const resp = await fetch('/api/digest/' + type + '/send', { method: 'POST' });
+    if (resp.ok) {
+      showToast(type.charAt(0).toUpperCase() + type.slice(1) + ' digest sent to Discord', 'success');
+    } else if (resp.status === 429) {
+      showToast('Rate limited: 1 send per hour', 'error');
+    } else {
+      showToast('Failed to send ' + type + ' digest', 'error');
+    }
+  } catch (e) {
+    showToast('Network error sending ' + type + ' digest', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send to Discord Now';
+  }
+}
+
+function dirClass(d) { return d === 'up' ? 'green' : d === 'down' ? 'red' : 'dim'; }
+function dirArrow(d) { return d === 'up' ? '▲' : d === 'down' ? '▼' : '—'; }
+
+function loadDigests() {
+  async function loadWeekly() {
+    try {
+      const resp = await fetch('/api/digest/weekly');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      const markets = data.results || (Array.isArray(data) ? data : [data]);
+      document.getElementById('weekly-cards').innerHTML = markets.map(m => renderWeeklyCard(m)).join('');
+    } catch (e) {
+      document.getElementById('weekly-cards').innerHTML = '<div class="error-placeholder">Failed to load weekly digest. Check API health.</div>';
+    }
+  }
+  async function loadMonthly() {
+    try {
+      const resp = await fetch('/api/digest/monthly');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      const markets = data.results || (Array.isArray(data) ? data : [data]);
+      document.getElementById('monthly-cards').innerHTML = markets.map(m => renderMonthlyCard(m)).join('');
+    } catch (e) {
+      document.getElementById('monthly-cards').innerHTML = '<div class="error-placeholder">Failed to load monthly digest. Check API health.</div>';
+    }
+  }
+  loadWeekly();
+  loadMonthly();
+}
+
+function renderWeeklyCard(m) {
+  const comps = (m.competitor_launches || []).slice(0, 5).map(c =>
+    `${c.developer_name || '?'} — ${c.project_name || '?'} (${c.grade || '?'}, ${c.units || 0}u)`
+  ).join(', ') || 'none';
+  const dist = (m.distressed_developers || []).slice(0, 3).map(d =>
+    `${d.developer_name || '?'} (${(d.distress_score || 0).toFixed(2)})`
+  ).join(', ') || 'none';
+  const top = m.top_opportunity
+    ? `${m.top_opportunity.survey_no || '?'} — score ${(m.top_opportunity.composite_score || 0).toFixed(4)}`
+    : 'None';
+  const psfPct = m.psf_delta_pct || 0;
+  return `<div class="card"><h3>${m.market || '?'}</h3>
+    <div class="row"><span class="label">PSF Delta</span><span class="value ${dirClass(m.psf_direction)}">${dirArrow(m.psf_direction)} ${psfPct.toFixed(2)}%</span></div>
+    <div class="row"><span class="label">New RERA</span><span class="value">${m.new_rera_count || 0}</span></div>
+    <div class="row"><span class="label">Competitor Launches</span><span class="value dim">${comps}</span></div>
+    <div class="row"><span class="label">Distressed Devs</span><span class="value dim">${dist}</span></div>
+    <div class="row"><span class="label">Top Opportunity</span><span class="value dim">${top}</span></div>
+  </div>`;
+}
+
+function renderMonthlyCard(m) {
+  const opps = (m.top_opportunities || []).slice(0, 3).map(o =>
+    `${o.survey_no || '?'} (${(o.composite_score || 0).toFixed(4)})`
+  ).join(', ') || 'none';
+  const psfPct = m.psf_mom_pct || 0;
+  const psfDir = psfPct > 0 ? 'green' : psfPct < 0 ? 'red' : 'dim';
+  return `<div class="card"><h3>${m.market || '?'}</h3>
+    <div class="row"><span class="label">PSF MoM</span><span class="value ${psfDir}">${psfPct.toFixed(2)}%</span></div>
+    <div class="row"><span class="label">Absorption</span><span class="value">${m.absorption_trend || 'flat'}</span></div>
+    <div class="row"><span class="label">Pipeline Supply</span><span class="value">${m.pipeline_supply_added || 0} units</span></div>
+    <div class="row"><span class="label">GCC Events</span><span class="value">${m.gcc_events_count || 0}</span></div>
+    <div class="row"><span class="label">Govt Policy</span><span class="value">${m.govt_policy_events_count || 0}</span></div>
+    <div class="row"><span class="label">Top Opps</span><span class="value dim">${opps}</span></div>
+    ${m.llm_synthesis ? `<div class="row"><span class="label">Synthesis</span><span class="value dim">${m.llm_synthesis}</span></div>` : ''}
+  </div>`;
+}
+
+document.addEventListener('DOMContentLoaded', loadDigests);
+</script>
+</body>
+</html>

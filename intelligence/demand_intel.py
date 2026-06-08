@@ -519,7 +519,7 @@ class DemandIntel:
         with timed_intel_query("demand_absorption"):
             row = conn.execute(text("""
                 SELECT micro_market, avg_absorption_pct, months_of_supply, supply_label
-                FROM v_market_brief
+                FROM v_market_brief_mat
                 WHERE micro_market ILIKE :m
                 LIMIT 1
             """), {"m": mi["name"]}).fetchone()

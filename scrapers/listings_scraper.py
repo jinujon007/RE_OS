@@ -1,16 +1,11 @@
 """
-RE_OS — Property Listings Scraper
-────────────────────────────────────
-Scrapes active sale/rent listings for Karnataka micro-markets.
-Sources: 99acres, MagicBricks, Housing.com (public search pages)
-
-Strategy:
-- Try 99acres search page (most data-rich)
-- Fallback to MagicBricks
-- Return structured listing data — price, area, BHK, transaction type
-
-Run standalone: python scrapers/listings_scraper.py --market Yelahanka
+RE_OS — Property Listings Scraper (DEPRECATED)
+────────────────────────────────────────────────
+Superseded by portal_scout.py (Sprint 79 — 2026-06-08).
+Retained for reference only. Do not re-add to crew.
 """
+
+DEPRECATED = True
 
 import requests
 from bs4 import BeautifulSoup

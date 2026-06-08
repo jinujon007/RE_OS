@@ -165,3 +165,111 @@ def test_engineering_template_requires_feasible():
 def test_ops_template_requires_channel_mix():
     from crews.board_room import _DEPT_TASK_TEMPLATES
     assert "channel mix" in _DEPT_TASK_TEMPLATES["ops"].lower()
+
+
+# ── T-1071: GV source + freshness in Finance Head context (GATE-78) ──────────
+
+def _make_gv_mock_conn(gv_row: tuple | None = None):
+    """Create a mock DB connection that returns a GV row for guidance_values query."""
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+
+    def _mock_execute(*args, **kwargs):
+        sql = args[0] if args else kwargs.get("statement", "")
+        sql_str = str(sql) if hasattr(sql, '__str__') else str(sql)
+        result = MagicMock()
+        if 'guidance_values' in sql_str and 'gv' in sql_str.lower():
+            result.fetchone.return_value = gv_row
+        else:
+            result.fetchone.return_value = None
+            result.fetchall.return_value = []
+        return result
+
+    mock_conn.execute.side_effect = _mock_execute
+    mock_engine.connect.return_value.__enter__.return_value = mock_conn
+    return mock_engine
+
+
+def test_board_room_finance_head_receives_gv_source_string():
+    """Finance Head task description contains 'GUIDANCE VALUE SOURCE' string."""
+    gv_row = ("gazette_pdf", 2024, 0.85, 5200.0)
+    mock_engine = _make_gv_mock_conn(gv_row)
+
+    captured_tasks = []
+
+    class MockCrew:
+        def __init__(self, *args, **kwargs):
+            self.tasks = kwargs.get("tasks", [])
+
+        def kickoff(self):
+            return MagicMock()
+
+    captured_tasks = []
+
+    with (
+        patch("utils.db.get_engine", return_value=mock_engine),
+        patch("crews.board_room.get_engine", return_value=mock_engine),
+        patch("crews.board_room._DEPT_TASK_TEMPLATES", {
+            "finance": "Market: {market}\n{dept_question}",
+        }),
+        patch("crews.board_room._extract_pitch_params", return_value={
+            "area_sqft": None, "psf": None, "acreage": None,
+        }),
+        patch("utils.psf_forecaster.PSFForecaster", return_value=MagicMock()),
+        patch("utils.irr_model.GDVEstimator"),
+        patch("utils.irr_model.compare_scenarios"),
+        patch("crews.board_room._query_market_supply", return_value=(None, "N/A")),
+        patch("crewai.Task", side_effect=lambda *a, **kw: (captured_tasks.append(kw), MagicMock())[1]),
+    ):
+        from crews.board_room import _run_dept_heads
+        result = _run_dept_heads(
+            pitch="5 acres Yelahanka",
+            market="Yelahanka",
+            decomposition={"finance": "Calculate IRR for Yelahanka"},
+        )
+
+    task_descriptions = [t.get("description", "") for t in captured_tasks]
+    all_text = " ".join(task_descriptions)
+    assert "GUIDANCE VALUE SOURCE" in all_text, (
+        f"GV source string not found in task descriptions: {task_descriptions}"
+    )
+
+
+def test_board_room_flags_stale_gv_when_over_18_months():
+    """Finance Head context warns when GV is stale (>18 months)."""
+    gv_row = ("gazette_pdf", 2022, 0.70, 4500.0)
+    mock_engine = _make_gv_mock_conn(gv_row)
+
+    captured_tasks = []
+
+    with (
+        patch("utils.db.get_engine", return_value=mock_engine),
+        patch("crews.board_room.get_engine", return_value=mock_engine),
+        patch("crews.board_room._DEPT_TASK_TEMPLATES", {
+            "finance": "Market: {market}\n{dept_question}",
+        }),
+        patch("crews.board_room._extract_pitch_params", return_value={
+            "area_sqft": None, "psf": None, "acreage": None,
+        }),
+        patch("utils.psf_forecaster.PSFForecaster", return_value=MagicMock()),
+        patch("utils.irr_model.GDVEstimator"),
+        patch("utils.irr_model.compare_scenarios"),
+        patch("crews.board_room._query_market_supply", return_value=(None, "N/A")),
+        patch("crewai.Task", side_effect=lambda *a, **kw: (captured_tasks.append(kw), MagicMock())[1]),
+    ):
+        from crews.board_room import _run_dept_heads
+        result = _run_dept_heads(
+            pitch="5 acres Yelahanka",
+            market="Yelahanka",
+            decomposition={"finance": "Calculate IRR for Yelahanka"},
+        )
+
+    task_descriptions = [t.get("description", "") for t in captured_tasks]
+    all_text = " ".join(task_descriptions)
+    assert "GUIDANCE VALUE SOURCE" in all_text
+    # Stale GV (2022) should produce a warning
+    assert any("WARNING" in d or "stale" in d.lower() for d in task_descriptions), (
+        "No stale GV warning found in task descriptions"
+    )

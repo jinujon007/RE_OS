@@ -955,7 +955,7 @@ ORDER BY total_units DESC NULLS LAST;
 -- (e.g. 0013_foo), update this stamp to the new revision ID so that
 -- fresh deployments see the DB as current.
 --
--- Current HEAD: 0014_add_osm_edges
+-- Current HEAD: 0050_merge_sprint81_82
 -- ============================================================
 CREATE TABLE IF NOT EXISTS alembic_version (
     version_num VARCHAR(32) NOT NULL,
@@ -1039,5 +1039,5 @@ ORDER BY new_projects_365d DESC;
 
 -- Stamp to current HEAD — safe to re-run (ON CONFLICT DO NOTHING)
 INSERT INTO alembic_version (version_num)
-VALUES ('0014_add_osm_edges')
+VALUES ('0050_merge_sprint81_82')
 ON CONFLICT (version_num) DO NOTHING;

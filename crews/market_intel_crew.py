@@ -293,16 +293,6 @@ def _build_data_crew(market_name: str) -> Crew:
         context=[scrape_rera],
     )
 
-    scrape_listings = Task(
-        description=(
-            f"Scrape current property listings for: {market_name}. "
-            f"Call the listings_scraper tool with input '{market_name}'. "
-            f"Return a brief summary of how many listings found."
-        ),
-        expected_output=(f"One line: 'Found N listings for {market_name}.'"),
-        agent=scraper,
-    )
-
     scrape_portal = Task(
         description=(
             f"Scout 7 property portals for active {market_name} listings. "
@@ -366,7 +356,6 @@ def _build_data_crew(market_name: str) -> Crew:
         tasks=[
             scrape_rera,
             scrape_rera_detail,
-            scrape_listings,
             scrape_portal,
             scrape_developer,
             scrape_news,
@@ -615,7 +604,6 @@ def run_market_intelligence(market_name: str) -> str:
                 "  [Cache] All scouts cached. Delete outputs/{market}/checkpoints/ to force re-scrape."
             )
             rl.agent_done("scrape_rera")
-            rl.agent_done("scrape_listings")
             stage1_ok = True
             raw_projects = cp.load(market_name, "rera_scraped") or []
             records_scraped = len(raw_projects)
@@ -629,7 +617,6 @@ def run_market_intelligence(market_name: str) -> str:
                     market_name,
                 )
                 rl.agent_done("scrape_rera")
-                rl.agent_done("scrape_listings")
                 stage1_ok = True
             except Exception as s1_exc:
                 s1_duration = round((datetime.now() - stage1_started).total_seconds(), 2)
@@ -852,6 +839,20 @@ def run_market_intelligence(market_name: str) -> str:
             if isinstance(r, dict)
         )
 
+        # T-1066: Data-quality gate — prepend warning to agent contexts on seed fallback
+        fallback_warning = ""
+        if has_fallback_data:
+            fallback_count = sum(
+                1 for r in raw_projects
+                if isinstance(r, dict)
+                and str(r.get("data_source", r.get("source", ""))).strip().lower() in {"fallback_sample", "seed_estimated"}
+            )
+            fallback_warning = (
+                f"[DATA QUALITY WARNING: {market_name} RERA on seed fallback — "
+                f"{fallback_count} hardcoded records only. "
+                f"PSF signals unreliable. Do not present pricing estimates as live data.]"
+            )
+
         # Load institutional memory for CEO + Analyst agents (T-255)
         ceo_memories = read_memories("ceo", market_name, limit=5)
         analyst_memories = read_memories("analyst", market_name, limit=5)
@@ -864,6 +865,17 @@ def run_market_intelligence(market_name: str) -> str:
         if analyst_memories:
             analyst_memory_context = "\n".join(
                 [f"- {m['fact']} (confidence: {m['confidence']:.2f})" for m in analyst_memories]
+            )
+
+        # T-1066: Prepend fallback warning to analyst + CEO contexts
+        if fallback_warning:
+            analyst_memory_context = (
+                f"{fallback_warning}\n\n{analyst_memory_context}" if analyst_memory_context
+                else fallback_warning
+            )
+            ceo_memory_context = (
+                f"{fallback_warning}\n\n{ceo_memory_context}" if ceo_memory_context
+                else fallback_warning
             )
 
         # Compute appreciation forecasts for market pincodes (T-313)

@@ -52,11 +52,11 @@ with db.engine.connect() as conn:
     print(f"  Orphaned rera_projects (NULL micro_market_id): {orphaned}")
 
     # Market brief snapshot
-    print("\n  v_market_brief:")
+    print("\n  v_market_brief_mat:")
     rows = conn.execute(
         sa.text(
             "SELECT micro_market, total_projects, avg_min_psf, avg_max_psf, avg_absorption_pct "
-            "FROM v_market_brief"
+            "FROM v_market_brief_mat"
         )
     ).fetchall()
     for row in rows:

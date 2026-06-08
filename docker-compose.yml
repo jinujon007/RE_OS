@@ -41,7 +41,7 @@ x-agent-volumes: &agent-volumes
   - re_os_logs:/app/logs
   - hf_cache:/root/.cache/huggingface
   - chroma_data:/app/data/chroma
-  - re_os_backups:/app/backups
+  - ./backups:/backups
   - "D:\\Brain\\JINU JOSHI\\03 LLS\\01 Wiki\\markets\\bangalore:/app/obsidian_sync"
 
 services:
@@ -171,4 +171,4 @@ volumes:
   re_os_logs:
   hf_cache:
   chroma_data:
-  re_os_backups:
+  # re_os_backups: removed — replaced by bind mount ./backups:/backups (Sprint 83)

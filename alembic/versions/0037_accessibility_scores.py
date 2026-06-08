@@ -54,19 +54,21 @@ def upgrade():
         ),
         sa.Column("accessibility_score", sa.Float(), nullable=True),
     )
-    op.create_unique_constraint(
-        "uq_accessibility_per_day",
+    # Uniqueness enforced at application layer on insert (upsert).
+    # AT TIME ZONE 'text' is STABLE not IMMUTABLE — PostgreSQL rejects it in index expressions.
+    op.create_index(
+        "idx_accessibility_market_dest_mode",
         "accessibility_scores",
-        ["market", "destination_name", "mode", sa.text("(measured_at AT TIME ZONE 'Asia/Kolkata')::DATE")],
+        ["market", "destination_name", "mode", "measured_at"],
     )
     op.create_index(
         "idx_accessibility_market_measured",
         "accessibility_scores",
-        ["market", sa.text("measured_at DESC")],
+        ["market", "measured_at"],
     )
 
 
 def downgrade():
     op.drop_index("idx_accessibility_market_measured", table_name="accessibility_scores")
-    op.drop_constraint("uq_accessibility_per_day", "accessibility_scores", type_="unique")
+    op.drop_index("idx_accessibility_market_dest_mode", table_name="accessibility_scores")
     op.drop_table("accessibility_scores")

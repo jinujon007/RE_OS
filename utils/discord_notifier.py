@@ -19,6 +19,7 @@ Discord channel map (set webhook URLs in .env):
 """
 import json
 import os
+import time as _time
 from datetime import datetime, timezone
 
 from loguru import logger
@@ -46,6 +47,7 @@ _CHANNEL_ENV_MAP = {
     "bd_opportunities": "DISCORD_WEBHOOK_BD_OPPORTUNITIES",
     "gcc_intel":        "DISCORD_WEBHOOK_GCC_INTEL",
     "govt_policy_scout": "DISCORD_WEBHOOK_GOVT_POLICY",
+    "intel_reports": "DISCORD_WEBHOOK_INTEL_REPORTS",
 }
 
 _VALID_CHANNELS = frozenset(_CHANNEL_ENV_MAP)
@@ -213,6 +215,48 @@ def send_price_alert(market: str, old_psf: float, new_psf: float) -> bool:
 def send_system_alert(job_name: str, error: str) -> bool:
     title   = f"Scheduler error — {job_name}"
     message = f"**Job:** `{job_name}`\n**Error:** {error[:500]}"
+    return send("system", title, message, COLOR_RED)
+
+
+def send_scraper_alert(market: str, scraper_name: str, alert_type: str,
+                       cooldown_hours: int = 1, **kwargs) -> bool:
+    """Send a scraper-level alert to the system channel.
+
+    Uses SQL cooldown dedup: same (title, channel) within cooldown_hours is skipped.
+    Total message truncated at 300 chars to fit Discord embed limits.
+    First kwargs are most important — ordering matters for truncation.
+
+    Args:
+        market: Market name (e.g. 'Yelahanka')
+        scraper_name: Scraper identifier (e.g. 'kaveri_gv', 'rera_karnataka')
+        alert_type: Alert type code (e.g. 'STALE_GV', 'FALLBACK_SEED')
+        cooldown_hours: Suppress duplicate alerts within this window (default 1h).
+        **kwargs: Extra detail fields for the message. Truncated at 300 chars total.
+    """
+    title = f"{alert_type} — {scraper_name} / {market}"
+    try:
+        from utils.db import get_engine
+        from sqlalchemy import text as _sa_text
+        with get_engine().connect() as _conn:
+            _row = _conn.execute(
+                _sa_text("""
+                    SELECT id FROM alerts
+                    WHERE channel = 'system' AND title = :title
+                      AND created_at > NOW() - (:hrs || ' hours')::interval
+                    LIMIT 1
+                """),
+                {"title": title, "hrs": cooldown_hours},
+            ).fetchone()
+        if _row:
+            logger.debug("[Discord] Scraper alert dedup: '{}' already sent within {}h — skip", title, cooldown_hours)
+            return False
+    except Exception as _exc:
+        logger.debug("[Discord] Scraper alert dedup check failed (allowing send): {}", _exc)
+
+    details = " | ".join(f"{k}={v}" for k, v in kwargs.items() if v is not None)
+    message = f"⚠ **[{scraper_name}] {market}**: {alert_type}.\n{details}\nCheck portal connectivity."
+    if len(message) > 300:
+        message = message[:297] + "..."
     return send("system", title, message, COLOR_RED)
 
 
@@ -570,5 +614,103 @@ def send_govt_policy_digest(result) -> bool:
         return True
     except Exception as exc:
         logger.warning("[Discord] send_govt_policy_digest failed: {}", exc)
+        return False
+
+
+def format_weekly_digest(result) -> str:
+    """Format a single weekly digest result as a Discord embed message. ≤400 chars."""
+    market = result.market
+    psf_dir = "▲" if result.psf_direction == "up" else ("▼" if result.psf_direction == "down" else "—")
+    psf_line = f"PSF: {psf_dir} {result.psf_delta_pct:+.2f}%" if result.psf_delta_pct != 0 else "PSF: no change"
+    rera_line = f"New RERA: {result.new_rera_count}"
+    comps = result.competitor_launches or []
+    if comps:
+        names = ", ".join(c["developer_name"] for c in comps[:3])
+        comp_line = f"Competitors: {names}" + ("…" if len(comps) > 3 else "")
+    else:
+        comp_line = "Competitors: none"
+    dists = result.distressed_developers or []
+    if dists:
+        dist_line = "Distressed: " + ", ".join(f"{d['developer_name']}({d['distress_score']:.2f})" for d in dists[:3])
+    else:
+        dist_line = "Distressed: none"
+    top = result.top_opportunity
+    if top:
+        opp_line = f"Top opp: {top['survey_no']} (score {top['composite_score']:.4f})"
+    else:
+        opp_line = "Top opp: none"
+    msg = f"**{market}**\n{psf_line}\n{rera_line}\n{comp_line}\n{dist_line}\n{opp_line}"
+    return msg[:400]
+
+
+def format_monthly_digest(results: list) -> str:
+    """Format all monthly digest results as one combined message. ≤800 chars."""
+    date_str = datetime.now(timezone.utc).strftime("%d %b %Y")
+    lines = [f"**Monthly Intelligence Digest — {date_str}**\n"]
+    for r in results:
+        lines.append(f"__{r.market}__")
+        lines.append(f"PSF MoM: {r.psf_mom_pct:+.2f}% | Absorption: {r.absorption_trend}")
+        lines.append(f"Pipeline: {r.pipeline_supply_added}u | GCC: {r.gcc_events_count} | Gov: {r.govt_policy_events_count}")
+        if r.llm_synthesis:
+            syn = r.llm_synthesis[:600]
+            lines.append(f"> {syn}")
+        lines.append("")
+    msg = "\n".join(lines)
+    if len(msg) > 800:
+        msg = msg[:797] + "…"
+    return msg
+
+
+def send_weekly_digest(results: list) -> None:
+    """Send weekly digest — one embed per market to intel_reports channel."""
+    from loguru import logger as _log
+    for r in results:
+        try:
+            msg = format_weekly_digest(r)
+            send("intel_reports", f"Weekly Digest — {r.market}", msg, COLOR_GREEN)
+        except Exception as exc:
+            _log.warning("[Discord] send_weekly_digest failed for {}: {}", r.market, exc)
+
+
+def send_monthly_digest(results: list) -> None:
+    """Send monthly digest — single combined embed to intel_reports channel."""
+    from loguru import logger as _log
+    try:
+        msg = format_monthly_digest(results)
+        send("intel_reports", "Monthly Intelligence Digest", msg, COLOR_BLUE)
+    except Exception as exc:
+        _log.warning("[Discord] send_monthly_digest failed: {}", exc)
+
+
+_OPS_ALERT_COOLDOWN: dict[str, float] = {}
+_OPS_ALERT_COOLDOWN_S = 300
+
+
+def send_ops_alert(alert_type: str, detail: str) -> bool:
+    """Send an OPS alert to the system Discord channel.
+
+    Uses a 5-minute cooldown per alert_type to prevent alert storms.
+    Returns True if sent, False if throttled or failed.
+
+    Args:
+        alert_type: Machine-readable alert code (e.g. 'DB_BACKUP_FAILED').
+        detail: Human-readable description (truncated to 200 chars).
+    """
+    from loguru import logger as _log
+    from datetime import datetime, timezone
+
+    now = _time.time()
+    last = _OPS_ALERT_COOLDOWN.get(alert_type, 0.0)
+    if now - last < _OPS_ALERT_COOLDOWN_S:
+        _log.debug("[Discord] OPS alert '{}' throttled ({}s cooldown)", alert_type, _OPS_ALERT_COOLDOWN_S)
+        return False
+    _OPS_ALERT_COOLDOWN[alert_type] = now
+
+    try:
+        msg = f"{alert_type}: {detail[:200]}\nTime: {datetime.now(timezone.utc).isoformat()}"
+        result = send("system", f"⚠ {alert_type}", msg, COLOR_RED)
+        return result
+    except Exception as exc:
+        _log.warning("[Discord] send_ops_alert failed: {}", exc)
         return False
 

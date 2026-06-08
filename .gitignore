@@ -91,6 +91,9 @@ data/eval/
 # Backup files
 *.bak
 
+# Database backups (pg_dump output — never commit)
+backups/*.dump
+
 # ── PRIVATE CONTEXT ── not for public repo ────────────────────────────────────
 # AI assistant instruction files (contain private LLS context, system prompts)
 CLAUDE.md

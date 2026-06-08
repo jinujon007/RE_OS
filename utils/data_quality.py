@@ -178,11 +178,11 @@ _TABLE_MARKET_JOIN = {
 Tables not in this dict query all data (e.g. developers — no market FK)."""
 
 
-def _increment_check_counter(market: str, status: str):
+def _increment_check_counter(market: str, status: str, source: str = "dq_checkpoint"):
     """Increment Prometheus counter for data quality checks (no-op if metrics not configured)."""
     try:
         from config.metrics import data_quality_checks_total
-        data_quality_checks_total.labels(market=market, status=status).inc()
+        data_quality_checks_total.labels(market=market, source=source, status=status).inc()
     except Exception as exc:
         logger.debug(f"[DataQuality] Metrics counter skipped: {exc}")
 
@@ -428,7 +428,7 @@ class DataQualityMonitor:
                 result[source] = {"hours_since_update": round(hours, 1), "status": status}
             return result
         except Exception as exc:
-            logger.warning("[DataQuality] freshness_score failed: %s", exc)
+            logger.warning("[DataQuality] freshness_score failed: {}", exc)
             return {}
     
     @staticmethod
@@ -437,6 +437,95 @@ class DataQualityMonitor:
         freshness = DataQualityMonitor.freshness_score()
         return [s for s, info in freshness.items() if info.get("status") == "stale"]
     
+    @staticmethod
+    def check_gv_freshness(market: str) -> dict:
+        """Check if guidance values for a market are stale.
+
+        Queries MAX(gazette_year) for gazette_pdf data joined via micro_markets.
+        If no gazette_pdf rows exist, checks portal_scraped data — live portal data
+        means GV is not stale (portal is current-year or near-current).
+        Sends Discord alert only when both gazette and portal data are stale/missing.
+
+        Returns early with safe defaults if market is empty.
+        """
+        if not market or not market.strip():
+            logger.warning("[DataQuality] Empty market in check_gv_freshness — skipping")
+            return {"market": market, "gazette_year": None, "portal_year": None,
+                    "months_stale": None, "alert_needed": False,
+                    "error": "empty market"}
+        try:
+            from config.settings import GV_FRESHNESS_WARN_MONTHS
+            from sqlalchemy import text
+            from datetime import date
+
+            with get_engine().connect() as conn:
+                gazette_row = conn.execute(
+                    text("""
+                        SELECT MAX(gv.gazette_year)
+                        FROM guidance_values gv
+                        JOIN micro_markets mm ON mm.id = gv.micro_market_id
+                        WHERE mm.name ILIKE :m AND gv.data_source = 'gazette_pdf'
+                    """),
+                    {"m": f"%{market}%"},
+                ).fetchone()
+                portal_row = conn.execute(
+                    text("""
+                        SELECT MAX(EXTRACT(YEAR FROM gv.effective_from))
+                        FROM guidance_values gv
+                        JOIN micro_markets mm ON mm.id = gv.micro_market_id
+                        WHERE mm.name ILIKE :m AND gv.data_source = 'portal_scraped'
+                    """),
+                    {"m": f"%{market}%"},
+                ).fetchone()
+
+            gy = gazette_row[0] if gazette_row and gazette_row[0] else None
+            py = portal_row[0] if portal_row and portal_row[0] else None
+            cy = date.today().year
+
+            if gy:
+                months_stale = (cy - gy) * 12
+            elif py:
+                months_stale = (cy - py) * 12
+            else:
+                months_stale = None
+
+            # Alert only when BOTH gazette and portal are stale > threshold,
+            # OR when no data exists at all
+            if gy and months_stale is not None:
+                alert_needed = months_stale > GV_FRESHNESS_WARN_MONTHS
+            elif py and not gy:
+                alert_needed = False
+            else:
+                months_stale = 999
+                alert_needed = True
+
+            if alert_needed:
+                from utils.discord_notifier import send_scraper_alert
+                try:
+                    send_scraper_alert(
+                        market, "kaveri_gv", "STALE_GV",
+                        gazette_year=gy, portal_year=py, months_stale=months_stale,
+                    )
+                except Exception as _alert_exc:
+                    logger.warning("[DataQuality] GV stale alert failed: {}", _alert_exc)
+
+            logger.info(
+                "[DataQuality] GV freshness for {}: gazette_year={}, portal_year={}, months_stale={}, alert={}",
+                market, gy, py, months_stale, alert_needed,
+            )
+            return {
+                "market": market,
+                "gazette_year": gy,
+                "portal_year": py,
+                "months_stale": months_stale,
+                "alert_needed": alert_needed,
+            }
+        except Exception as exc:
+            logger.warning("[DataQuality] check_gv_freshness failed for {}: {}", market, exc)
+            return {"market": market, "gazette_year": None, "portal_year": None,
+                    "months_stale": None, "alert_needed": False,
+                    "error": str(exc)}
+
     @staticmethod
     def check_psf_divergence(market: str, max_gap_pct: float = 25.0) -> list[dict]:
         """Check listing PSF vs IGR PSF gap for a market.
@@ -484,129 +573,11 @@ class DataQualityMonitor:
                     }]
             return []
         except Exception as exc:
-            logger.warning("[DataQuality] PSF divergence check failed for %s: %s", market, exc)
-            return []
-    
-    @staticmethod
-    def check_seed_staleness(max_age_days: int = 7, min_live_listings: int = 10) -> list[dict]:
-        """Check if seed listings are stale and need refresh.
+            logger.warning("[DataQuality] PSF divergence check failed for {}: {}", market, exc)
 
-        Detects markets where:
-        - Seed listings (data_source='seed_estimated') are older than max_age_days
-        - Live-scraped listing count is below min_live_listings (seed still active)
+            logger.warning("[DataQuality] seed_staleness check failed: {}", exc)
 
-        Args:
-            max_age_days: Max age in days for seed data before flagging.
-            min_live_listings: If live-scraped count >= this, seed should be removed.
-
-        Returns:
-            List of dicts with market, seed_count, max_seed_age_days,
-            live_listing_count, action.
-        """
-        try:
-            from utils.db import get_engine
-            from sqlalchemy import text
-
-            with get_engine().connect() as conn:
-                rows = conn.execute(text("""
-                    SELECT
-                        mm.name AS market,
-                        COUNT(*) FILTER (WHERE l.data_source = 'seed_estimated') AS seed_count,
-                        MAX(l.scraped_at) FILTER (WHERE l.data_source = 'seed_estimated') AS last_seed_at,
-                        COUNT(*) FILTER (WHERE l.data_source != 'seed_estimated' AND l.price_psf > 1000) AS live_count
-                    FROM listings l
-                    JOIN micro_markets mm ON mm.id = l.micro_market_id
-                    GROUP BY mm.name
-                """)).fetchall()
-
-            now = datetime.now(timezone.utc)
-            flags = []
-            for r in rows:
-                market = r[0]
-                seed_count = r[1] or 0
-                last_seed = r[2]
-                live_count = r[3] or 0
-                if seed_count == 0:
-                    continue
-                age_days = None
-                if last_seed:
-                    age_days = (now - last_seed).total_seconds() / 86400
-                needs_refresh = age_days is not None and age_days > max_age_days
-                can_drop_seed = live_count >= min_live_listings
-                if needs_refresh or can_drop_seed:
-                    action = "remove_seed_and_use_live" if can_drop_seed else "re_scrape_needed"
-                    flags.append({
-                        "market": market,
-                        "seed_count": seed_count,
-                        "max_seed_age_days": round(age_days, 1) if age_days else None,
-                        "live_listing_count": live_count,
-                        "action": action,
-                        "severity": "INFO" if can_drop_seed else "WARNING",
-                    })
-            return flags
-        except Exception as exc:
-            logger.warning("[DataQuality] seed_staleness check failed: %s", exc)
-            return []
-
-    @staticmethod
-    def locality_validation_score(market: str, max_suspect_pct: float = 20.0) -> dict:
-        """Validate listings in a market against known alien locality aliases.
-        
-        Args:
-            market: Market name (e.g. 'Yelahanka').
-            max_suspect_pct: Max acceptable % of suspect listings before flagging.
-            
-        Returns:
-            Dict with keys: valid, suspect, score, suspect_listings, action.
-        """
-        try:
-            from utils.db import get_engine
-            from sqlalchemy import text
-            from config.locality_aliases import is_alien_locality
-            
-            with get_engine().connect() as conn:
-                rows = conn.execute(
-                    text("""
-                        SELECT id, source_url, property_type, locality, project_name
-                        FROM listings l
-                        JOIN micro_markets mm ON mm.id = l.micro_market_id
-                        WHERE mm.name ILIKE :m
-                          AND l.price_psf > 1000
-                        LIMIT 500
-                    """),
-                    {"m": f"%{market}%"},
-                ).fetchall()
-            
-            valid = 0
-            suspect = 0
-            suspect_listings = []
-            for r in rows:
-                listing_id = r[0]
-                locality = r[3] or ""
-                project_name = r[4] or ""
-                if is_alien_locality(market, locality):
-                    suspect += 1
-                    suspect_listings.append({
-                        "id": str(listing_id),
-                        "locality": locality,
-                        "project_name": project_name[:80],
-                    })
-                else:
-                    valid += 1
-            
-            total = valid + suspect
-            score = valid / total if total > 0 else 1.0
-            needs_action = score < (1.0 - max_suspect_pct / 100.0)
-            return {
-                "market": market,
-                "valid": valid,
-                "suspect": suspect,
-                "score": round(score, 4),
-                "suspect_listings": suspect_listings[:20],
-                "action": "WARN" if needs_action else "OK",
-            }
-        except Exception as exc:
-            logger.warning("[DataQuality] locality_validation_score failed for %s: %s", market, exc)
+            logger.warning("[DataQuality] locality_validation_score failed for {}: {}", market, exc)
             return {"market": market, "valid": 0, "suspect": 0, "score": 1.0, "suspect_listings": [], "action": "ERROR"}
 
     @staticmethod

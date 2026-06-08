@@ -1,7 +1,7 @@
 """
 RE_OS — Market Intelligence Module (Sprint 62)
 MarketIntel.get_pulse(market): consolidated market snapshot from
-v_market_brief, IGR transactions, news sentiment, and portal listing trends.
+v_market_brief_mat, IGR transactions, news sentiment, and portal listing trends.
 
 Returns MarketPulse with pricing, absorption, supply, developer activity,
 and news signals. Gracefully degrades on DB failure.
@@ -135,7 +135,7 @@ class MarketIntel:
                        avg_absorption_pct, avg_listing_psf, floor_psf, ceiling_psf,
                        months_of_supply, supply_label, unique_developers, grade_a_developers,
                        data_as_of
-                FROM v_market_brief
+                FROM v_market_brief_mat
                 WHERE micro_market ILIKE :m
                 LIMIT 1
             """), {"m": mi["name"]}).fetchone()

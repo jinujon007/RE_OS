@@ -61,6 +61,25 @@ HEADERS = {
     "Referer": "https://rera.karnataka.gov.in/viewAllProjects",
 }
 
+# T-1063: load session cookie from Playwright checkpoint
+def _load_session_cookie(market: str) -> str | None:
+    """Load session_cookie from checkpoint saved by Playwright fallback (T-1063)."""
+    try:
+        from config.checkpointer import Checkpointer
+        cp = Checkpointer()
+        data = cp.load(market, "rera_session")
+        if isinstance(data, dict):
+            return data.get("session_cookie")
+    except Exception:
+        pass
+    return None
+
+def _apply_session_cookie(headers: dict, cookie_value: str | None) -> dict:
+    """Inject session cookie into request headers if available."""
+    if cookie_value:
+        headers = {**headers, "Cookie": cookie_value}
+    return headers
+
 DETAIL_EXTRACTION_PROMPT = """\
 Extract real estate project details from this RERA Karnataka detail page text.
 Return ONLY a JSON object with these exact keys (use null if not found):
@@ -80,6 +99,7 @@ Return ONLY a JSON object with these exact keys (use null if not found):
   completion_pct       (number: 0-100)
   no_of_floors         (integer)
   amenities            (array of strings: top 10)
+  survey_number        (string: e.g. "45/2", "101/1A" — found in Sy. No. or Survey No. field)
 
 Return ONLY the JSON object, no commentary, no markdown fences.
 
@@ -133,14 +153,27 @@ def _ai_extract_detail(text: str) -> dict:
         return {}
 
     raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`")
+    # Regex pre-pass to assist AI: extract survey number from raw page text
+    # Handles: Sy. No. 45/2, Sy No: 101/1A, Survey No. 45/2A/3B, S. No. 12/3
+    survey_match = re.search(
+        r'(?:[Ss]y\.?\s*[Nn]o\.?|[Ss]urvey\s+[Nn]o\.?|S\.\s*[Nn]o\.?)'
+        r'\s*[:.]?\s*([\d]+/[\dA-Za-z]+(?:/[\dA-Za-z]+)*)',
+        text,
+    )
     try:
         obj = json.loads(raw)
+        # Fallback: inject regex match if AI returned empty survey_number
+        if isinstance(obj, dict) and (not obj.get("survey_number")) and survey_match:
+            obj["survey_number"] = survey_match.group(1).strip()
         return obj if isinstance(obj, dict) else {}
     except json.JSONDecodeError:
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         if match:
             try:
-                return json.loads(match.group())
+                obj = json.loads(match.group())
+                if isinstance(obj, dict) and (not obj.get("survey_number")) and survey_match:
+                    obj["survey_number"] = survey_match.group(1).strip()
+                return obj
             except json.JSONDecodeError:
                 pass
     logger.debug(f"[RERADetailScout] JSON parse failed: {raw[:100]}")
@@ -150,26 +183,60 @@ def _ai_extract_detail(text: str) -> dict:
 # ── Page fetching ─────────────────────────────────────────────────────────────
 
 
-def _fetch_detail_page_requests(detail_url: str, session: requests.Session) -> str:
+def _fetch_detail_page_requests(
+    detail_url: str,
+    session: requests.Session,
+    session_cookie: str | None = None,
+    project_name: str = "",
+) -> str:
+    """Fetch RERA detail page with optional session cookie (T-1063).
+
+    Args:
+        detail_url: URL to fetch
+        session: requests.Session with base headers
+        session_cookie: optional session cookie value from Playwright checkpoint
+        project_name: project name for logging
+
+    Returns:
+        Cleaned HTML text or empty string on failure
+    """
+    req_headers = dict(session.headers)
+    if session_cookie:
+        req_headers = _apply_session_cookie(req_headers, session_cookie)
+
     try:
         if "/projectDetails?action=" in detail_url:
             action = detail_url.split("action=", 1)[-1].strip()
             resp = session.post(
-                f"{RERA_BASE}/projectDetails", data={"action": action}, timeout=30
+                f"{RERA_BASE}/projectDetails",
+                data={"action": action},
+                headers=req_headers,
+                timeout=30,
             )
         else:
-            resp = session.get(detail_url, timeout=30)
+            resp = session.get(detail_url, headers=req_headers, timeout=30)
         time.sleep(1)
         if resp.status_code == 200:
             return _clean_html(resp.text)
-        logger.debug(f"[RERADetailScout] HTTP {resp.status_code} for {detail_url}")
+        # T-1063: session expired — log warning, skip enrichment
+        if resp.status_code in (302, 401):
+            name = project_name or detail_url
+            logger.warning(
+                f"[RERADetailScout] Session missing or expired ({resp.status_code}) "
+                f"— skipping enrichment for {name}"
+            )
+        else:
+            logger.debug(f"[RERADetailScout] HTTP {resp.status_code} for {detail_url}")
     except requests.exceptions.RequestException as exc:
         logger.debug(f"[RERADetailScout] Request error: {exc}")
     return ""
 
 
 def _fetch_with_fallbacks(
-    url_candidates: list[str], session: requests.Session
+    url_candidates: list[str],
+    session: requests.Session,
+    session_cookie: str | None = None,
+    project_name: str = "",
 ) -> tuple[str, str]:
     """Try multiple candidate URLs; return first page with meaningful content."""
     best_text = ""
@@ -177,7 +244,7 @@ def _fetch_with_fallbacks(
     for url in url_candidates:
         if not url:
             continue
-        text = _fetch_detail_page_requests(url, session)
+        text = _fetch_detail_page_requests(url, session, session_cookie, project_name)
         if len(text) > len(best_text):
             best_text = text
             best_url = url
@@ -263,6 +330,8 @@ class RERADetailScout:
         self.session.headers.update(HEADERS)
         if cookies:
             self.session.cookies.update(cookies)
+        # T-1063: load session cookie from Playwright checkpoint
+        self._session_cookie = _load_session_cookie(market) or None
 
     def scout(
         self, projects: list[dict] | None = None, max_projects: int = 30
@@ -322,7 +391,7 @@ class RERADetailScout:
 
         logger.info(f"[RERADetailScout] Diving: {project_name} ({rera_number})")
 
-        text, used_url = _fetch_with_fallbacks(candidate_urls, self.session)
+        text, used_url = _fetch_with_fallbacks(candidate_urls, self.session, self._session_cookie, project_name)
         if used_url:
             detail_url = used_url
         if len(text) < 200:
@@ -363,6 +432,7 @@ class RERADetailScout:
                 "completion_pct": None,
                 "no_of_floors": None,
                 "amenities": None,
+                "survey_number": None,
             }
 
         enriched = {
@@ -395,7 +465,14 @@ class RERADetailScout:
             "completion_pct": details.get("completion_pct"),
             "no_of_floors": details.get("no_of_floors"),
             "amenities": details.get("amenities") or [],
+            "survey_no": details.get("survey_number")
+            or project.get("survey_no", ""),
         }
+        sn = enriched["survey_no"]
+        if sn:
+            logger.info(f"[RERADetailScout] Survey No. {sn} extracted for {rera_number}")
+        else:
+            logger.debug(f"[RERADetailScout] No survey number found for {rera_number}")
         return enriched
 
     def _build_detail_urls(self, rera_number: str, detail_url: str = "") -> list[str]:

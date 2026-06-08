@@ -38,7 +38,7 @@ def _get_db_query_histogram():
 def timed_query(query_name: str):
     """Context manager that records query duration to Prometheus.
     Usage:
-        with timed_query("v_market_brief"):
+        with timed_query("v_market_brief_mat"):
             result = conn.execute(text("SELECT ..."))
     """
     hist = _get_db_query_histogram()

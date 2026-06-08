@@ -47,6 +47,7 @@ from config.settings import (
     CEREBRAS_MODEL,
     GEMINI_API_KEY,
     GEMINI_CEO_MODEL,
+    PORTAL_SCOUT_MIN_LISTINGS_CANARY,
 )
 from config.metrics import scraper_runs_total
 from config.locality_aliases import get_locality_aliases
@@ -651,6 +652,16 @@ def scout_market(market: str, sources: list[str] | None = None) -> list[dict]:
                 send_price_alert(market, old_psf, new_psf)
     except Exception as _alert_err:
         logger.warning(f"[PortalScout] Price alert failed for {market}: {_alert_err}")
+
+    # Canary: alert if listing count drops below threshold (silent failure detection)
+    # Only fire when all 7 sources were attempted (not a partial/source-filtered run)
+    # Skip if threshold is 0 or negative (misconfiguration guard)
+    if sources is None and PORTAL_SCOUT_MIN_LISTINGS_CANARY > 0 and len(findings) < PORTAL_SCOUT_MIN_LISTINGS_CANARY:
+        try:
+            from utils.discord_notifier import send_scraper_alert
+            send_scraper_alert(market, "portal_scout", "ZERO_LISTINGS_CANARY", record_count=len(findings))
+        except Exception as _canary_err:
+            logger.warning(f"[PortalScout] Canary alert failed for {market}: {_canary_err}")
 
     scraper_runs_total.labels(source="portal", market=market, status="success").inc()
     print(f"\n{'=' * 55}")

@@ -43,7 +43,7 @@ def _get_market_psf_fallback(market: str) -> float:
         from sqlalchemy import text
         with get_engine().connect() as conn:
             row = conn.execute(
-                text("SELECT avg_listing_psf FROM v_market_brief WHERE micro_market ILIKE :m LIMIT 1"),
+                text("SELECT avg_listing_psf FROM v_market_brief_mat WHERE micro_market ILIKE :m LIMIT 1"),
                 {"m": "%%{}%%".format(market)},
             ).fetchone()
         if row and row[0] and float(row[0]) > 500:
@@ -125,7 +125,7 @@ class FinancialEvaluation:
     #      → psf_source_quality = "live_igr" when >=5 records in last 90 days
     #   3. IGR guidance value (guidance_values) — government-stamped minimum values
     #      → psf_source_quality = "guidance_value" when >=3 records in DB
-    #   4. Market fallback (_get_market_psf_fallback) — from v_market_brief view
+    #   4. Market fallback (_get_market_psf_fallback) — from v_market_brief_mat view
     #      → psf_source_quality = "listing_only" when no IGR/guidance data
     # A gap between listing PSF and IGR PSF of 2-3x is expected:
     #   - Listing = ASKING price, aspirational/negotiable

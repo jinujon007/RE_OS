@@ -30,7 +30,7 @@ class MarketSummaryTool(BaseTool):
     def _run(self, market_name: str) -> str:
         engine = get_engine()
         with engine.connect() as conn:
-            # v_market_brief: one query for inventory + grade breakdown + risk counts
+            # v_market_brief_mat: one query for inventory + grade breakdown + risk counts
             # avg_listing_psf is the authoritative PSF from portal listings (RERA has no pricing)
             brief_row = conn.execute(
                 text("""
@@ -53,7 +53,7 @@ class MarketSummaryTool(BaseTool):
                     months_of_supply,
                     supply_label,
                     data_as_of
-                FROM v_market_brief
+                FROM v_market_brief_mat
                 WHERE micro_market ILIKE :market
                 LIMIT 1
             """),

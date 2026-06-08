@@ -136,6 +136,32 @@ class DBOrganizer:
 
     def __init__(self):
         self.engine = _get_organizer_engine()
+        self._market_id_cache: dict[str, str] = {}
+        self._load_market_cache()
+
+    def _load_market_cache(self) -> None:
+        """Load micro_markets into cache: lowercase_name -> id.
+        One query at init eliminates per-record DB round-trips.
+        Logs warning on empty cache — fallback path triggers per-record."""
+        try:
+            with self.engine.connect() as conn:
+                rows = conn.execute(
+                    text("SELECT LOWER(name), id::text FROM micro_markets")
+                ).fetchall()
+                for row in rows:
+                    self._market_id_cache[str(row[0])] = str(row[1])
+            n = len(self._market_id_cache)
+            if n == 0:
+                logger.warning(
+                    "[DBOrganizer] Market ID cache loaded 0 markets — "
+                    "all lookups will fall through to per-record DB queries"
+                )
+            else:
+                logger.info(
+                    f"[DBOrganizer] Market ID cache loaded: {n} markets"
+                )
+        except Exception as exc:
+            logger.warning(f"[DBOrganizer] Failed to load market cache: {exc}")
 
     # ── Public ─────────────────────────────────────────────────────────────────
 
@@ -214,6 +240,17 @@ class DBOrganizer:
         }
 
         self._log_run(market_name, stats)
+
+        # Refresh materialized market brief (non-fatal — view is a cache, stale is OK)
+        try:
+            with self.engine.begin() as refresh_conn:
+                refresh_conn.execute(
+                    text("REFRESH MATERIALIZED VIEW CONCURRENTLY v_market_brief_mat")
+                )
+        except Exception as mat_exc:
+            logger.warning(
+                f"[DBOrganizer] v_market_brief_mat refresh failed (non-fatal): {mat_exc}"
+            )
 
         # ── Data quality checkpoint (blocks Stage 3 on ERROR severity) ──
         from utils.data_quality import DataQualityError
@@ -541,12 +578,20 @@ class DBOrganizer:
         taluk = str(project.get("taluk", "")).lower()
 
         for market_name, keywords in MARKET_RERA_KEYWORDS.items():
+            market_name_key = market_name.strip().lower()
             for kw in keywords:
                 kw_lower = kw.lower()
                 if kw_lower in locality or kw_lower in taluk:
+                    market_id = self._market_id_cache.get(market_name_key)
+                    if market_id:
+                        return market_id
+                    logger.warning(
+                        f"[DBOrganizer] Market '{market_name}' not in cache "
+                        f"— querying DB (cache miss)"
+                    )
                     row = conn.execute(
-                        text("SELECT id FROM micro_markets WHERE name = :n"),
-                        {"n": market_name},
+                        text("SELECT id FROM micro_markets WHERE LOWER(name) = LOWER(:n)"),
+                        {"n": market_name_key},
                     ).fetchone()
                     if row:
                         return str(row[0])
@@ -680,9 +725,9 @@ class DBOrganizer:
                 try:
                     conn.execute(text(f"SAVEPOINT {sp}"))
                     market_id = self._get_market_id_by_name(conn, market_name)
-                    self._insert_registration(conn, rec, market_id)
+                    if self._insert_registration(conn, rec, market_id):
+                        reg_inserted += 1
                     conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
-                    reg_inserted += 1
                 except Exception as exc:
                     conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
                     conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
@@ -709,10 +754,30 @@ class DBOrganizer:
         )
         return stats
 
-    # ── Kaveri — guidance values ───────────────────────────────────────────────
+    # ── Deprecated checkpoint guard ────────────────────────────────────────────
+    _DEPRECATED_CHECKPOINT_PREFIXES = ["listings_scraper", "listings_scraped"]
+
+    @staticmethod
+    def _is_deprecated_checkpoint(filename: str) -> bool:
+        """Return True if filename matches a deprecated scraper checkpoint pattern."""
+        is_dep = any(filename.startswith(p) for p in DBOrganizer._DEPRECATED_CHECKPOINT_PREFIXES)
+        if is_dep:
+            logger.info(f"Skipping deprecated listings_scraper checkpoint: {filename}")
+        return is_dep
+
+
+# ── Kaveri — guidance values ───────────────────────────────────────────────
 
     def _get_market_id_by_name(self, conn, market_name: str) -> str | None:
-        """Look up micro_market.id by exact case-insensitive name match."""
+        """Look up micro_market.id by exact case-insensitive name match.
+        Uses cache — no DB round-trip. Falls back to DB with warning on cache miss."""
+        market_id = self._market_id_cache.get(market_name.lower())
+        if market_id:
+            return market_id
+        logger.warning(
+            f"[DBOrganizer] Market '{market_name}' not in cache "
+            f"— querying DB (cache miss)"
+        )
         row = conn.execute(
             text("SELECT id FROM micro_markets WHERE LOWER(name) = LOWER(:n) LIMIT 1"),
             {"n": market_name},
@@ -724,8 +789,22 @@ class DBOrganizer:
 
         Uses ON CONFLICT against idx_guidance_values_unique to avoid race conditions
         from the old SELECT-then-INSERT pattern.
+
+        Handles data_source, extraction_confidence, gazette_year, and
+        gazette_published_date from the record.
+        Portal data (portal_scraped) overwrites gazette data (gazette_pdf) on conflict
+        — live > gazette > seed.
         """
         eff_date = _safe_date(rec.get("effective_from")) or "2024-04-01"
+        data_source = rec.get("data_source", "portal_scraped")
+        extraction_confidence = float(rec.get("extraction_confidence", 0.7) or 0.7)
+        gv_year = rec.get("gazette_year_int") or rec.get("gazette_year")
+        if gv_year is not None and not isinstance(gv_year, int):
+            try:
+                gv_year = int(str(gv_year)[:4])
+            except (ValueError, TypeError):
+                gv_year = None
+        gv_pub_date = _safe_date(rec.get("gazette_published_date"))
         params = {
             "mid": market_id,
             "locality": rec.get("locality", ""),
@@ -734,6 +813,10 @@ class DBOrganizer:
             "psf": float(rec.get("guidance_value_psf", 0) or 0),
             "sqm": round(float(rec.get("guidance_value_psf", 0) or 0) * 10.764, 2),
             "eff": eff_date,
+            "ds": data_source,
+            "conf": extraction_confidence,
+            "gv_year": gv_year,
+            "gv_pub": gv_pub_date,
         }
 
         result = conn.execute(
@@ -741,18 +824,24 @@ class DBOrganizer:
             INSERT INTO guidance_values (
                 micro_market_id, locality, property_type, road_type,
                 guidance_value_psf, guidance_value_per_sqm, effective_from,
-                data_source
+                data_source, extraction_confidence,
+                gazette_year, gazette_published_date
             ) VALUES (
                 :mid, :locality, :ptype, :road,
                 :psf, :sqm, :eff,
-                'portal_scraped'
+                :ds, :conf,
+                :gv_year, :gv_pub
             )
             ON CONFLICT (micro_market_id, locality, property_type, effective_from)
             WHERE micro_market_id IS NOT NULL
             DO UPDATE SET
                 guidance_value_psf     = EXCLUDED.guidance_value_psf,
                 guidance_value_per_sqm = EXCLUDED.guidance_value_per_sqm,
-                road_type              = EXCLUDED.road_type
+                road_type              = EXCLUDED.road_type,
+                data_source            = EXCLUDED.data_source,
+                extraction_confidence  = EXCLUDED.extraction_confidence,
+                gazette_year           = EXCLUDED.gazette_year,
+                gazette_published_date = EXCLUDED.gazette_published_date
             RETURNING (xmax = 0) AS inserted
         """),
             params,
@@ -762,11 +851,60 @@ class DBOrganizer:
 
     # ── Kaveri — registrations ─────────────────────────────────────────────────
 
-    def _insert_registration(self, conn, rec: dict, market_id: str | None):
-        """Insert one Kaveri registration. Skips on duplicate registration_number."""
+    def _fuzzy_match_registration(self, conn, rec: dict) -> bool:
+        """Second-pass fuzzy dedup: check survey_no prefix + date ±1 day + amount ±5%.
+        Called only when exact registration_number dedup passes.
+        Returns True if a fuzzy match exists (skip insert).
+        NOTE: This query benefits from an index on kaveri_registrations(survey_no).
+        Without it, each call performs a sequential scan. Add index in a future
+        migration if performance degrades (Sprint 81+ candidate)."""
+        survey_no = str(rec.get("survey_number", "") or "")
+        if not survey_no or len(survey_no) < 6:
+            return False
+        # Strip non-alphanumeric prefix chars to avoid overly broad LIKE matches
+        prefix = "".join(c for c in survey_no[:6] if c.isalnum()) + "%"
+        if len(prefix) < 3:  # prefix too short after sanitisation would match too broadly
+            return False
+        reg_date = _safe_date(rec.get("registration_date"))
+        amount = float(rec.get("transaction_amount", 0) or 0)
+        if not reg_date or amount <= 0:
+            return False
+        row = conn.execute(
+            text("""
+                SELECT id FROM kaveri_registrations
+                WHERE survey_no LIKE :prefix
+                  AND registration_date IS NOT NULL
+                  AND consideration_amount IS NOT NULL
+                  AND ABS(EXTRACT(EPOCH FROM (registration_date - :date))) < 86400
+                  AND ABS(consideration_amount - :amount) / NULLIF(consideration_amount, 0) < 0.05
+                LIMIT 1
+            """),
+            {"prefix": prefix, "date": reg_date, "amount": amount},
+        ).fetchone()
+        return row is not None
+
+    def _insert_registration(self, conn, rec: dict, market_id: str | None) -> bool:
+        """Insert one Kaveri registration. Returns True if actually inserted.
+        First-pass: exact match on registration_number.
+        Second-pass: fuzzy dedup via _fuzzy_match_registration if exact match passes.
+        Skips insert if either match finds an existing record."""
+        # Exact dedup: check if registration_number already exists
+        reg_no = str(rec.get("registration_number", "")).strip()
+        if reg_no:
+            existing = conn.execute(
+                text("SELECT id FROM kaveri_registrations WHERE registration_number = :rn"),
+                {"rn": reg_no},
+            ).fetchone()
+            if existing:
+                return False
+
+        # Fuzzy dedup: catch same property with minor field variation
+        if self._fuzzy_match_registration(conn, rec):
+            return False
+
         raw_json = json.dumps(rec.get("raw_data", {}), default=str)
         params = {
-            "reg_no": rec.get("registration_number", ""),
+            "reg_no": reg_no,
             "doc_no": rec.get("document_number", ""),
             "mid": market_id,
             "ptype": rec.get("property_type", "Apartment"),
@@ -819,6 +957,7 @@ class DBOrganizer:
         """),
             params,
         )
+        return True
 
     @staticmethod
     def _parse_area_sqft(raw) -> float:
@@ -993,6 +1132,11 @@ class DBOrganizer:
         if project_addr:
             params["project_address"] = project_addr
             set_clauses.append("address = COALESCE(NULLIF(address, ''), :project_address)")
+
+        survey_no = str(rec.get("survey_no") or "").strip()
+        if survey_no:
+            params["survey_no"] = survey_no
+            set_clauses.append("survey_no = :survey_no")
 
         # Approval numbers + extra fields → raw_data JSONB only (not typed columns)
         raw_enrich = {

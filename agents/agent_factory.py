@@ -309,7 +309,7 @@ def sync_registry_to_db(registry_dir: Path | None = None) -> int:
                             (id, name, role, department, spec, llm_tier, active, hired_on)
                         VALUES
                             (:id, :name, :role, :dept, CAST(:spec AS jsonb), :tier, :active,
-                             COALESCE(:hired_on::timestamptz, NOW()))
+                             COALESCE(CAST(:hired_on AS timestamptz), NOW()))
                         ON CONFLICT (id) DO UPDATE SET
                             name       = EXCLUDED.name,
                             role       = EXCLUDED.role,

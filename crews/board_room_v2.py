@@ -67,6 +67,50 @@ def _get_jdv_jv_targets(market: str) -> list[str]:
         return []
 
 
+def _get_grade_b_pipeline(market: str) -> list[dict]:
+    """Return Grade B pre-launch pipeline projects for BD Head context (T-1082)."""
+    market_raw = " ".join((market or "").split())
+    if not market_raw:
+        return []
+    try:
+        from sqlalchemy import text as _text
+        with get_engine().connect() as conn:
+            # Match micro_market_id via ILIKE on micro_markets.name (consistent with JD/JV)
+            mm_row = conn.execute(
+                _text("SELECT id FROM micro_markets WHERE name ILIKE :m"),
+                {"m": f"%{market_raw}%"},
+            ).fetchone()
+            if not mm_row:
+                return []
+            rows = conn.execute(
+                _text("""
+                    SELECT d.developer_name, r.project_name, r.locality,
+                           r.total_units, r.launch_status
+                    FROM rera_projects r
+                    JOIN developers d ON r.developer_id = d.id
+                    WHERE d.grade = 'B'
+                      AND r.launch_status IN ('pre-registration', 'new')
+                      AND r.micro_market_id = :mm_id
+                    ORDER BY r.created_at DESC
+                    LIMIT 10
+                """),
+                {"mm_id": mm_row.id},
+            ).fetchall()
+        return [
+            {
+                "developer_name": row.developer_name,
+                "project_name": row.project_name,
+                "locality": row.locality,
+                "total_units": row.total_units,
+                "launch_status": row.launch_status,
+            }
+            for row in rows
+        ]
+    except Exception as exc:
+        logger.debug("[BoardRoomV2] Grade B pipeline lookup failed for {}: {}", market_raw, exc)
+        return []
+
+
 @dataclass
 class BoardSessionV2Result:
     session_id: str
@@ -267,6 +311,7 @@ def _run_dept_heads(pkg: IntelPackage, pitch: str) -> dict[str, str]:
 
     context = build_intel_context(pkg)
     context["jdv_jv_targets"] = _get_jdv_jv_targets(pkg.market)
+    context["grade_b_pipeline"] = _get_grade_b_pipeline(pkg.market)
     ctx_json = json.dumps(context, indent=2, default=str)
     pitch_stripped = (pitch or "").strip()[:2000]
 
@@ -286,6 +331,19 @@ def _run_dept_heads(pkg: IntelPackage, pitch: str) -> dict[str, str]:
                 task_desc_parts.append(
                     f"DISTRESSED DEVELOPERS IN {pkg.market} (JD/JV targets): {names}. Prioritise as acquisition candidates.\n"
                 )
+            grade_b = context.get("grade_b_pipeline", [])
+            if grade_b:
+                lines = []
+                for gb in grade_b[:5]:
+                    lines.append(
+                        f"  {gb['developer_name']} — {gb['project_name']} ({gb.get('total_units', '?')} units, {gb.get('launch_status', '?')})"
+                    )
+                task_desc_parts.append(
+                    "GRADE B PRE-LAUNCH PIPELINE (monitor for distress and JD/JV opportunity):\n"
+                    + "\n".join(lines) + "\n"
+                )
+            else:
+                task_desc_parts.append("GRADE B PRE-LAUNCH PIPELINE: None detected in current DB.\n")
             comp_context = _get_competitive_context(pkg.market)
             if comp_context:
                 task_desc_parts.append(f"\n{comp_context}\n")

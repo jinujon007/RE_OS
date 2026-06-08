@@ -3,13 +3,17 @@ RE_OS — Scheduler
 ──────────────────
 Runs the agent crew on schedule. Runs inside Docker as a separate service.
 
-Schedule (post-Sprint-66):
-- 01:00 AM IST — Daily pg_dump backup (T-904)
+Schedule (post-Sprint-79):
+- 04:00 AM IST — Daily pg_dump backup via DBBackup (Sprint 83, GATE-83)
 - 02:00 AM IST — Unified Ingest Engine (all scrapers via DataPlugin adapters)
 - 03:00 AM IST — Opportunity scoring (GATE-47 — survey scoring + Discord alert)
+- 03:00 AM IST — Portal scout canary check (GATE-79 — zero-listing alert)
+- 03:30 AM IST — FinBERT sentiment repair (GATE-79 — null score retry)
 - 04:30 AM IST — Intel embedding index (ChromaDB via Ollama nomic-embed-text)
 - 05:00 AM IST — News sentiment scoring (FinBERT via HF Inference API)
 - 06:00 AM IST — Market snapshots (daily RERA + listing aggregates)
+- 06:05 AM IST — Seed staleness check
+- 06:10 AM IST — Locality alias validation
 - 06:15 AM IST — Distressed developer scan (JD/JV targeting via Discord alert)
 - 08:00 AM IST — LLS Compliance Calendar check (Discord #legal-flags if <30 days)
 - Every 1 hr   — Stuck board session recovery
@@ -706,75 +710,21 @@ def run_compliance_check():
 # Both use proper threading primitives — APScheduler runs jobs in threads, so
 # plain bool flags are subject to read-modify-write races across job threads.
 _ingest_running = threading.Event()   # set() while ingest runs, clear() when done
-_backup_lock = threading.Lock()        # acquire(blocking=False) to skip concurrent backups
 
 def run_db_backup():
-    """Daily pg_dump backup at 01:00 IST. 7-day retention.
+    """Daily pg_dump backup via DBBackup utility (Sprint 83, GATE-83)."""
+    from utils.backup import DBBackup
+    from utils.discord_notifier import send_ops_alert
 
-    Uses PGPASSWORD env var for auth (never passes password on command line).
-    Guarded by threading.Lock to prevent concurrent backup runs across APScheduler threads.
-    Logs to agent_runs table with status 'success' or 'failed'.
-    """
-    if not _backup_lock.acquire(blocking=False):
-        logger.warning("[DB-Backup] Previous backup still running — skipping")
-        return
-
-    import gzip
-    import shutil
-    import subprocess as _subprocess
-    from datetime import datetime, timedelta
-    from urllib.parse import urlparse
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_dir = "/app/backups"
-    os.makedirs(backup_dir, exist_ok=True)
-    backup_path = os.path.join(backup_dir, f"re_os_{timestamp}.sql")
-    gz_path = backup_path + ".gz"
-
-    db_url = os.environ.get("DATABASE_URL", "")
-    if not db_url:
-        logger.error("[DB-Backup] DATABASE_URL not set — backup aborted")
-        _backup_lock.release()
-        return
-    parsed = urlparse(db_url)
-    db_env = {**os.environ, "PGPASSWORD": parsed.password or ""}
-
-    try:
-        _subprocess.run(
-            [
-                "pg_dump",
-                "--host", parsed.hostname or "localhost",
-                "--port", str(parsed.port or 5432),
-                "--username", parsed.username or "re_os_user",
-                f"--dbname={parsed.path.lstrip('/')}",
-                "--no-owner",
-                "--no-acl",
-                "--format", "custom",
-                "--file", backup_path,
-            ],
-            check=True, capture_output=True, timeout=600, env=db_env,
+    result = DBBackup().run()
+    if result["status"] == "ok":
+        obj_count = result.get("object_count", "?")
+        pruned = result.get("pruned", 0)
+        elapsed = result.get("elapsed_s", 0)
+        logger.info(
+            "[DB-Backup] Complete: {} ({} bytes, {} objects) | pruned {} | {:.1f}s",
+            result["file"], result["size_bytes"], obj_count, pruned, elapsed,
         )
-        with open(backup_path, "rb") as f_in:
-            with gzip.open(gz_path, "wb") as f_out:
-                shutil.copyfileobj(f_in, f_out)
-        os.remove(backup_path)
-
-        size_mb = os.path.getsize(gz_path) / (1024 * 1024)
-        logger.info("[DB-Backup] Created {} ({:.1f} MB)", gz_path, size_mb)
-
-        cutoff = datetime.now() - timedelta(days=7)
-        removed = 0
-        for fname in os.listdir(backup_dir):
-            fpath = os.path.join(backup_dir, fname)
-            if not fname.endswith(".sql.gz"):
-                continue
-            mtime = datetime.fromtimestamp(os.path.getmtime(fpath))
-            if mtime < cutoff:
-                os.remove(fpath)
-                removed += 1
-        if removed:
-            logger.info("[DB-Backup] Cleaned {} old backups (>7 days)", removed)
-
         try:
             with get_engine().begin() as conn:
                 conn.execute(
@@ -783,13 +733,15 @@ def run_db_backup():
                             (agent_name, micro_market, event_type, status, records_inserted, notes)
                         VALUES ('backup', 'system', 'db_backup', 'success', 0, :notes)
                     """),
-                    {"notes": "pg_dump backup {} ({:.1f} MB)".format(timestamp, size_mb)},
+                    {"notes": "pg_dump {} ({} bytes, {} objects, {:.1f}s)".format(
+                        result["file"], result["size_bytes"], obj_count, elapsed)},
                 )
         except Exception as exc:
             logger.warning("[DB-Backup] Failed to log backup: {}", exc)
-
-    except Exception as exc:
-        logger.error("[DB-Backup] Failed: {}", exc)
+    else:
+        error = result.get("error", "Unknown error")
+        logger.error("[DB-Backup] Failed: {}", error)
+        send_ops_alert("DB_BACKUP_FAILED", error)
         try:
             with get_engine().begin() as conn:
                 conn.execute(
@@ -798,12 +750,32 @@ def run_db_backup():
                             (agent_name, micro_market, event_type, status, records_inserted, notes)
                         VALUES ('backup', 'system', 'db_backup', 'failed', 0, :notes)
                     """),
-                    {"notes": "Backup failed: {}".format(exc)},
+                    {"notes": "Backup failed: {}".format(error)},
                 )
         except Exception as log_exc:
             logger.warning("[DB-Backup] Failed to log failure: {}", log_exc)
-    finally:
-        _backup_lock.release()
+
+
+def run_backup_staleness_check():
+    """Daily backup staleness check — 06:00 UTC. Alerts Discord if >26h old."""
+    try:
+        from utils.backup import check_backup_staleness
+        from utils.discord_notifier import send_ops_alert
+
+        result = check_backup_staleness()
+        age = result.get("age_hours")
+        latest = result.get("latest_file")
+        if result["stale"]:
+            if latest:
+                detail = f"Latest backup {age}h old — file: {latest}" if age else "No backup file found"
+            else:
+                detail = "No backup file found"
+            logger.warning("[BackupStaleness] Stale: {}", detail)
+            send_ops_alert("DB_BACKUP_STALE", detail)
+        else:
+            logger.info("[BackupStaleness] Fresh: {}h old (file: {})", age, latest)
+    except Exception as exc:
+        logger.warning("[BackupStaleness] Check failed: {}", exc)
 
 
 def run_locality_validation():
@@ -825,6 +797,144 @@ def run_locality_validation():
             )
     except Exception as exc:
         logger.warning(f"[Scheduler] Locality validation failed: {exc}")
+
+
+def run_finbert_sentiment_repair():
+    """Nightly retry for null sentiment scores. 03:30 UTC.
+    Queries news_articles with NULL sentiment from last 7 days (max FINBERT_REPAIR_BATCH_LIMIT).
+    Retries each article 3x with exponential backoff (2s/4s/8s).
+    Sets sentinel -99.0 on final failure to prevent re-processing."""
+    FINBERT_REPAIR_BATCH_LIMIT = 50
+    import time as _time
+    from utils.sentiment import score_headline, label_from_score
+    engine = get_engine()
+
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT id, COALESCE(summary, title, '') AS content FROM news_articles
+                WHERE sentiment_score IS NULL
+                  AND created_at >= NOW() - INTERVAL '7 days'
+                LIMIT :limit
+            """), {"limit": FINBERT_REPAIR_BATCH_LIMIT}).fetchall()
+
+        updated = sentinel = 0
+        for row in rows:
+            article_id, content = row
+            text_to_score = (content or "")[:512]
+            if not text_to_score.strip():
+                continue
+
+            score = None
+            for attempt in range(3):
+                try:
+                    score = score_headline(text_to_score)
+                    if score is not None:
+                        break
+                except Exception:
+                    pass
+                if attempt < 2:
+                    _time.sleep(2 * (2 ** attempt))
+
+            with engine.begin() as conn:
+                if score is not None:
+                    label = label_from_score(score)
+                    conn.execute(
+                        text("UPDATE news_articles SET sentiment_score = :s, sentiment_label = :l WHERE id = :id"),
+                        {"s": score, "l": label, "id": article_id},
+                    )
+                    updated += 1
+                else:
+                    # Sentinel: set score only, leave label as NULL to distinguish from scored articles
+                    conn.execute(
+                        text("UPDATE news_articles SET sentiment_score = -99.0 WHERE id = :id AND sentiment_score IS NULL"),
+                        {"id": article_id},
+                    )
+                    sentinel += 1
+
+        logger.info(
+            f"[Scheduler] FinBERT repair: {updated} scored, {sentinel} sentineled"
+        )
+    except Exception as exc:
+        logger.warning(f"[Scheduler] FinBERT sentiment repair failed: {exc}")
+
+
+def run_portal_scout_canary_check():
+    """Post-ingest canary: query for markets with zero new listings in last 24h.
+    Fires Discord alert via send_scraper_alert. Runs at 03:00 UTC."""
+    try:
+        engine = get_engine()
+        markets = [m.strip() for m in TARGET_MARKETS]
+        _last_alert_key = "portal_canary_"
+        for market in markets:
+            # Cooldown: skip if alert already sent within last 23 hours
+            title = f"portal_canary_{market}"
+            if _digest_already_sent(title, cooldown_hours=23):
+                logger.info(f"[Canary] {market}: skipped — alert sent within 23h")
+                continue
+            with engine.connect() as conn:
+                row = conn.execute(text("""
+                    SELECT COUNT(*) FROM listings
+                    WHERE data_source = 'portal_scout'
+                      AND created_at >= NOW() - INTERVAL '24 hours'
+                      AND micro_market_id = (SELECT id FROM micro_markets WHERE name ILIKE :m)
+                """), {"m": f"%{market}%"}).fetchone()
+            count = row[0] if row else 0
+            if count == 0:
+                from utils.discord_notifier import send_scraper_alert
+                send_scraper_alert(market, "portal_scout", "ZERO_LISTINGS_CANARY", record_count=count)
+                _mark_digest_sent(f"portal_canary_{market}")
+                logger.warning(f"[Canary] {market}: 0 new portal listings in 24h — check portal connectivity; verify proxy/network; alert sent to Discord")
+            else:
+                logger.info(f"[Canary] {market}: {count} new portal listings in 24h — OK")
+    except Exception as exc:
+        logger.warning(f"[Scheduler] Portal scout canary check failed: {exc}")
+
+
+def run_gv_freshness_check():
+    """Daily GV freshness check — alerts if gazette data is >18 months stale.
+    Runs concurrently across markets for performance."""
+    try:
+        from utils.data_quality import DataQualityMonitor
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        markets = [m.strip() for m in TARGET_MARKETS]
+        results = {}
+
+        with ThreadPoolExecutor(max_workers=len(markets)) as pool:
+            futures = {pool.submit(DataQualityMonitor.check_gv_freshness, m): m for m in markets}
+            for future in as_completed(futures):
+                m = futures[future]
+                try:
+                    results[m] = future.result()
+                except Exception as exc:
+                    logger.warning("[Scheduler] GV freshness check failed for {}: {}", m, exc)
+                    results[m] = {"alert_needed": False, "gazette_year": None, "months_stale": None}
+
+        for market, result in results.items():
+            if result.get("alert_needed"):
+                logger.warning(
+                    "[Scheduler] GV fresh STALE for {}: gazette {}, portal {}, {} months",
+                    market, result.get("gazette_year"), result.get("portal_year"),
+                    result.get("months_stale"),
+                )
+            else:
+                logger.info(
+                    "[Scheduler] GV fresh OK for {}: gazette {}, portal {}, {} months",
+                    market, result.get("gazette_year"), result.get("portal_year"),
+                    result.get("months_stale"),
+                )
+
+        # Track metrics
+        try:
+            from config.metrics import data_quality_checks_total
+            for market, result in results.items():
+                status = "stale" if result.get("alert_needed") else "fresh"
+                data_quality_checks_total.labels(market=market, source="gv_freshness", status=status).inc()
+        except Exception:
+            pass
+    except Exception as exc:
+        logger.warning("[Scheduler] GV freshness check overall failure: {}", exc)
 
 
 def weekly_competitive_digest():
@@ -1072,7 +1182,7 @@ def run_gcc_daily_scan():
                                 :gcc_signal_score, :primary_housing_segment,
                                 :time_horizon, :estimated_demand_units,
                                 :source_name, :source_reliability,
-                                :announced_at::date, :discord_alert_fired
+                                CAST(:announced_at AS date), :discord_alert_fired
                             )
                             ON CONFLICT (canonical_id) DO NOTHING
                         """), d)
@@ -1183,7 +1293,7 @@ def run_govt_policy_daily_scan():
                                 :micro_markets, :investment_cr, :stage, :impact_score,
                                 :signal_strength, :demand_type, :time_horizon,
                                 :actionability, :summary, :why_it_matters,
-                                :source_urls, :published_date::date, :is_north_bengaluru
+                                :source_urls, CAST(:published_date AS date), :is_north_bengaluru
                             )
                             ON CONFLICT DO NOTHING
                         """), d)
@@ -1222,6 +1332,119 @@ def run_govt_policy_weekly_digest():
         )
     except Exception as exc:
         logger.error("[Scheduler] Govt policy weekly digest failed: {}", exc)
+
+
+def _digest_already_sent(digest_type: str, cooldown_hours: int = 23) -> bool:
+    """Check if a digest was already sent within cooldown_hours.
+    Uses a dedicated marker alert in the ops channel with title 'intel_digest:{type}'.
+    Fails open (returns False) on DB error so alerts are never silently dropped."""
+    title = f"intel_digest:{digest_type}"
+    try:
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT id FROM alerts
+                    WHERE channel = 'ops'
+                      AND title = :title
+                      AND created_at > NOW() - (:hrs || ' hours')::interval
+                    LIMIT 1
+                """),
+                {"title": title, "hrs": cooldown_hours},
+            ).fetchone()
+        return row is not None
+    except Exception as exc:
+        logger.debug("[Digest-Dedup] Check failed — allowing send: {}", exc)
+        return False
+
+
+def _mark_digest_sent(digest_type: str) -> None:
+    """Write a dedup marker alert to ops channel so subsequent runs can detect duplicates."""
+    title = f"intel_digest:{digest_type}"
+    try:
+        from utils.discord_notifier import send as _discord_send
+        _discord_send("ops", title, f"Digest marker — {digest_type} sent")
+    except Exception as exc:
+        logger.debug("[Digest-Dedup] Failed to write marker: {}", exc)
+
+
+def run_weekly_intel_digest():
+    """Monday 01:30 UTC = 07:00 IST — Weekly intel digest.
+    Builds digest for all 3 markets, sends to Discord, optionally exports to Obsidian.
+    Dedup guard prevents duplicate sends on scheduler restart within the same 23h window."""
+    if _digest_already_sent("weekly", cooldown_hours=23):
+        logger.info("[Scheduler] Weekly digest dedup: already sent within 23h — skipping")
+        return
+
+    logger.info("[Scheduler] Weekly intel digest starting")
+    failure_count = 0
+    try:
+        from utils.weekly_digest import WeeklyIntelDigest
+        from utils.discord_notifier import send_weekly_digest
+        from utils.obsidian_export import ObsidianExport
+        markets = [m.strip() for m in TARGET_MARKETS]
+        results = []
+        for market in markets:
+            try:
+                digest = WeeklyIntelDigest()
+                result = digest.build(market)
+                results.append(result)
+            except Exception as exc:
+                failure_count += 1
+                logger.warning("[Scheduler] Weekly digest build failed for {}: {}", market, exc)
+        if results:
+            _mark_digest_sent("weekly")
+            send_weekly_digest(results)
+            successful = len(results) - failure_count
+            logger.info(
+                "[Scheduler] Weekly intel digest sent for {}/{} markets ({} failures)",
+                successful, len(results), failure_count,
+            )
+        else:
+            logger.warning("[Scheduler] Weekly intel digest: 0 results built — skipping Discord send")
+            return
+        ObsidianExport.write_weekly(results)
+    except Exception as exc:
+        logger.warning("[Scheduler] Weekly intel digest failed: {}", exc)
+
+
+def run_monthly_intel_digest():
+    """1st of month 02:00 UTC = 07:30 IST — Monthly intel digest.
+    Builds digest for all 3 markets, sends to Discord, optionally exports to Obsidian.
+    Dedup guard prevents duplicate sends on scheduler restart within the same 47h window."""
+    if _digest_already_sent("monthly", cooldown_hours=47):
+        logger.info("[Scheduler] Monthly digest dedup: already sent within 47h — skipping")
+        return
+
+    logger.info("[Scheduler] Monthly intel digest starting")
+    failure_count = 0
+    try:
+        from utils.monthly_digest import MonthlyIntelDigest
+        from utils.discord_notifier import send_monthly_digest
+        from utils.obsidian_export import ObsidianExport
+        markets = [m.strip() for m in TARGET_MARKETS]
+        results = []
+        for market in markets:
+            try:
+                digest = MonthlyIntelDigest()
+                result = digest.build(market)
+                results.append(result)
+            except Exception as exc:
+                failure_count += 1
+                logger.warning("[Scheduler] Monthly digest build failed for {}: {}", market, exc)
+        if results:
+            _mark_digest_sent("monthly")
+            send_monthly_digest(results)
+            successful = len(results) - failure_count
+            logger.info(
+                "[Scheduler] Monthly intel digest sent for {}/{} markets ({} failures)",
+                successful, len(results), failure_count,
+            )
+        else:
+            logger.warning("[Scheduler] Monthly intel digest: 0 results built — skipping Discord send")
+            return
+        ObsidianExport.write_monthly(results)
+    except Exception as exc:
+        logger.warning("[Scheduler] Monthly intel digest failed: {}", exc)
 
 
 def run_post_crew_optimizer_hook():
@@ -1266,6 +1489,113 @@ def run_post_crew_optimizer_hook():
                    len(high_findings), report.auto_tasks_created)
     except Exception as exc:
         logger.error("[Scheduler] Post-crew optimizer hook failed: {}", exc)
+
+
+_BHOOMI_DEDUP_PREFIX = "bhoomi_auto_survey:"
+
+
+def _bhoomi_already_ran(market: str, cooldown_hours: int = 12) -> bool:
+    title = f"{_BHOOMI_DEDUP_PREFIX}{market}"
+    try:
+        with get_engine().connect() as conn:
+            row = conn.execute(text("""
+                SELECT id FROM alerts
+                WHERE channel = 'ops' AND title = :title
+                  AND created_at > NOW() - (:hrs || ' hours')::interval
+                LIMIT 1
+            """), {"title": title, "hrs": cooldown_hours}).fetchone()
+        return row is not None
+    except Exception as exc:
+        logger.debug("[Bhoomi-Dedup] Check failed: {}", exc)
+        return False
+
+
+def _mark_bhoomi_ran(market: str) -> None:
+    title = f"{_BHOOMI_DEDUP_PREFIX}{market}"
+    try:
+        from utils.discord_notifier import send as ds
+        ds("ops", title, f"Bhoomi auto-survey ran for {market}")
+    except Exception as exc:
+        logger.debug("[Bhoomi-Dedup] Marker failed: {}", exc)
+
+
+def run_bhoomi_auto_survey(market: str = ""):
+    from config.settings import TARGET_MARKETS as _M
+    from scrapers.bhoomi_scraper import fetch as _bf
+
+    markets = [m.strip() for m in _M] if not market else [market.strip()]
+    engine = get_engine()
+
+    for mkt in markets:
+        if _bhoomi_already_ran(mkt, cooldown_hours=12):
+            logger.info("[BhoomiAutoSurvey] Dedup skip: {}", mkt)
+            continue
+
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT id, survey_no, developer_name FROM rera_projects
+                    WHERE survey_no IS NOT NULL AND survey_no != ''
+                      AND bhoomi_checked_at IS NULL
+                      AND micro_market_id = (SELECT id FROM micro_markets WHERE name ILIKE :m)
+                    LIMIT 20
+                """), {"m": f"%{mkt}%"}).fetchall()
+        except Exception as exc:
+            logger.warning("[BhoomiAutoSurvey] Query failed for {}: {}", mkt, exc)
+            continue
+
+        if not rows:
+            logger.info("[BhoomiAutoSurvey] No unchecked survey numbers for {}", mkt)
+            _mark_bhoomi_ran(mkt)
+            continue
+
+        checked = 0
+        skipped_429 = False
+        for row in rows:
+            if skipped_429:
+                break
+            try:
+                result = _bf(row.survey_no, market=mkt)
+            except Exception as exc:
+                logger.warning("[BhoomiAutoSurvey] Fetch error {}: {}", row.survey_no, exc)
+                continue
+
+            if result.get("bhoomi_status") == "unavailable":
+                if result.get("error") == "rate_limited":
+                    logger.warning("[BhoomiAutoSurvey] 429 on {} — stopping batch", mkt)
+                    skipped_429 = True
+                continue
+
+            owner = result.get("owner_name", "").strip()
+            if owner:
+                try:
+                    with engine.begin() as conn:
+                        existing = conn.execute(text(
+                            "SELECT id FROM landowner_contacts WHERE survey_no=:sn AND market=:m"
+                        ), {"sn": row.survey_no, "m": mkt}).fetchone()
+                        if existing:
+                            conn.execute(text(
+                                "UPDATE landowner_contacts SET owner_name=:o, updated_at=NOW() WHERE id=:lid"
+                            ), {"o": owner, "lid": existing.id})
+                        else:
+                            conn.execute(text(
+                                "INSERT INTO landowner_contacts (survey_no, market, owner_name) VALUES (:sn, :m, :o)"
+                            ), {"sn": row.survey_no, "m": mkt, "o": owner})
+                except Exception as exc:
+                    logger.warning("[BhoomiAutoSurvey] Upsert failed: {}", exc)
+
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(
+                        "UPDATE rera_projects SET bhoomi_checked_at=NOW() WHERE id=:pid"
+                    ), {"pid": row.id})
+                checked += 1
+            except Exception as exc:
+                logger.warning("[BhoomiAutoSurvey] Mark failed: {}", exc)
+
+        _mark_bhoomi_ran(mkt)
+        logger.info("[BhoomiAutoSurvey] {}: {}/{} checked{}",
+            mkt, checked, len(rows), " (429)" if skipped_429 else "")
 
 
 if __name__ == "__main__":
@@ -1400,12 +1730,22 @@ if __name__ == "__main__":
         misfire_grace_time=3600,
     )
 
-    # Daily DB backup — 01:00 IST (T-904)
+    # Daily DB backup — 04:00 IST (Sprint 83, GATE-83)
     scheduler.add_job(
         lambda: _safe_job(run_db_backup, "db_backup"),
-        CronTrigger(hour=1, minute=0),
+        CronTrigger(hour=4, minute=0),
         id="db_backup",
         name="Daily pg_dump Backup",
+        misfire_grace_time=3600,
+        replace_existing=True,
+    )
+
+    # Daily backup staleness check — 06:00 UTC (GATE-83, T-1100)
+    scheduler.add_job(
+        lambda: _safe_job(run_backup_staleness_check, "backup_staleness_check"),
+        CronTrigger(hour=6, minute=0, timezone="UTC"),
+        id="backup_staleness_check",
+        name="Daily Backup Staleness Check (Discord alert if >26h old)",
         misfire_grace_time=3600,
     )
 
@@ -1424,6 +1764,33 @@ if __name__ == "__main__":
         CronTrigger(hour=6, minute=10),
         id="locality_validation",
         name="Daily Locality Alias Validation (R06/R15)",
+        misfire_grace_time=3600,
+    )
+
+    # FinBERT sentiment repair — 03:30 UTC (GATE-79)
+    scheduler.add_job(
+        lambda: _safe_job(run_finbert_sentiment_repair, "finbert_sentiment_repair"),
+        CronTrigger(hour=3, minute=30, timezone="UTC"),
+        id="finbert_sentiment_repair",
+        name="FinBERT Sentiment Repair (null score retry)",
+        misfire_grace_time=3600,
+    )
+
+    # Portal scout canary check — 03:00 UTC (GATE-79)
+    scheduler.add_job(
+        lambda: _safe_job(run_portal_scout_canary_check, "portal_scout_canary_check"),
+        CronTrigger(hour=3, minute=0, timezone="UTC"),
+        id="portal_scout_canary_check",
+        name="Portal Scout Canary (zero listing alert)",
+        misfire_grace_time=3600,
+    )
+
+    # Daily GV freshness check — 06:12 IST (after locality validation) — GATE-78
+    scheduler.add_job(
+        lambda: _safe_job(run_gv_freshness_check, "gv_freshness_check"),
+        CronTrigger(hour=6, minute=12),
+        id="gv_freshness_check",
+        name="Daily GV Freshness Check (Discord alert on stale data)",
         misfire_grace_time=3600,
     )
 
@@ -1518,11 +1885,40 @@ if __name__ == "__main__":
         misfire_grace_time=7200,
     )
 
+    # Bhoomi auto-survey — daily at 03:30 UTC = 09:00 IST (Sprint 80, T-1080)
+    scheduler.add_job(
+        lambda: _safe_job(run_bhoomi_auto_survey, "bhoomi_auto_survey"),
+        CronTrigger(hour=3, minute=30, timezone="UTC"),
+        id="bhoomi_auto_survey",
+        name="Daily Bhoomi Auto-Survey from RERA survey numbers (T-1080)",
+        misfire_grace_time=3600,
+    )
+
+    # Weekly intel digest — Monday 01:30 UTC = 07:00 IST (Sprint 76, T-1057)
+    scheduler.add_job(
+        lambda: _safe_job(run_weekly_intel_digest, "weekly_intel_digest"),
+        CronTrigger(day_of_week="mon", hour=1, minute=30, timezone="UTC"),
+        id="weekly_intel_digest",
+        name="Monday Weekly Intel Digest → Discord intel_reports",
+        misfire_grace_time=3600,
+    )
+
+    # Monthly intel digest — 1st of month 02:00 UTC = 07:30 IST (Sprint 76, T-1057)
+    scheduler.add_job(
+        lambda: _safe_job(run_monthly_intel_digest, "monthly_intel_digest"),
+        CronTrigger(day=1, hour=2, minute=0, timezone="UTC"),
+        id="monthly_intel_digest",
+        name="Monthly Intel Digest → Discord intel_reports",
+        misfire_grace_time=7200,
+    )
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
     logger.info("  01:00 AM IST — Daily pg_dump backup [T-904]")
     logger.info("  02:00 AM IST — Unified Ingest Engine (all scrapers)")
     logger.info("  03:00 AM IST — Opportunity scoring (GATE-47)")
+    logger.info("  03:00 AM IST — Portal scout canary check (zero-listing alert) [GATE-79]")
+    logger.info("  03:30 AM IST — FinBERT sentiment repair (null score retry) [GATE-79]")
     logger.info("  04:30 AM IST — Intel embedding index (ChromaDB)")
     logger.info("  05:00 AM IST — News sentiment scoring (FinBERT)")
     logger.info("  06:00 AM IST — Market snapshots")
@@ -1545,6 +1941,10 @@ if __name__ == "__main__":
     logger.info("  1st of month 06:30 IST — Monthly mobility scout (accessibility_scores) [T-1039]")
     logger.info("  06:30 IST daily — Govt/Policy daily scan (events→Discord alerts) [T-1050]")
     logger.info("  Monday 08:00 IST — Govt/Policy weekly digest (north_bengaluru_score→Discord) [T-1050]")
+    logger.info("  Monday 07:00 IST — Weekly intel digest (PSF delta + RERA + competitive) → Discord intel_reports [T-1057]")
+    logger.info("  1st of month 07:30 IST — Monthly intel digest (MoM PSF + absorption + LLM synthesis) → Discord [T-1057]")
+    logger.info("  Daily 09:00 IST — Bhoomi auto-survey from RERA survey numbers (T-1080)")
     logger.info(f"Active jobs: {[j.id for j in scheduler.get_jobs()]}")
 
     scheduler.start()
+

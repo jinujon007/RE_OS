@@ -58,6 +58,7 @@ from config.settings import (
     GEMINI_API_KEY,
     GEMINI_CEO_MODEL,
     GEMINI_LIGHT_MODEL,
+    GRADE_B_DEVELOPER_URLS,
 )
 from config.metrics import scraper_runs_total
 from scrapers.scout_memory import ScoutMemory
@@ -594,6 +595,7 @@ def _normalize_developer_finding(
         "market": market,
         "project_name": name,
         "developer": developer_name,
+        "developer_grade": "A",  # Grade A by default; Grade B set explicitly in scout_grade_b
         "bhk_configs": bhk_configs,
         "price_display": price_str,
         "price_min": price_val,
@@ -625,10 +627,11 @@ class DeveloperScout:
         self.session = requests.Session()
         self.session.headers.update(SCRAPE_HEADERS)
 
-    def scout(self, developers: list[str] | None = None) -> list[dict]:
+    def scout(self, developers: list[str] | None = None, include_grade_b: bool = True) -> list[dict]:
         """
         Crawl developer sites. Returns all findings with is_new flag.
         developers: list of keys from DEVELOPER_SITES, e.g. ["Brigade", "Sobha"]
+        include_grade_b: if True (default), also scouts Grade B developer sites.
         """
         all_findings: list[dict] = []
         targets = developers if developers else list(DEVELOPER_SITES.keys())
@@ -652,12 +655,86 @@ class DeveloperScout:
             except Exception as exc:
                 logger.warning(f"[DeveloperScout][{dev_key}] Failed: {exc}")
 
+        if include_grade_b:
+            grade_b_results = self.scout_grade_b()
+            all_findings.extend(grade_b_results)
+
         new_total = sum(1 for f in all_findings if f.get("is_new"))
         logger.info(
             f"[DeveloperScout] {self.market}: "
             f"{len(all_findings)} total | {new_total} new pre-launch finds"
         )
         return all_findings
+
+    def scout_grade_b(self) -> list[dict]:
+        """Process Grade B developer sites (T-1081).
+
+        Uses requests + BeautifulSoup only — these sites are not JS-heavy.
+        Tags all findings with developer_grade='B'.
+        """
+        all_findings: list[dict] = []
+        for dev_name, url in GRADE_B_DEVELOPER_URLS.items():
+            try:
+                findings = self._scout_grade_b_developer(dev_name, url)
+                new, known = self.memory.mark_all(
+                    findings, source=f"dev_grade_b_{dev_name.lower().replace(' ', '_')}"
+                )
+                all_findings.extend(new + known)
+                logger.info(
+                    f"[DeveloperScout][GradeB][{dev_name}] "
+                    f"{len(findings)} found | {len(new)} new | {len(known)} known"
+                )
+                time.sleep(1.5)
+            except Exception as exc:
+                logger.warning(f"[DeveloperScout][GradeB][{dev_name}] Failed: {exc}")
+        return all_findings
+
+    def _scout_grade_b_developer(self, dev_name: str, url: str) -> list[dict]:
+        """Fetch and extract projects from a Grade B developer site.
+
+        Uses requests + BeautifulSoup (no Playwright).
+        Applies north_blr_keywords filter to keep only North Bengaluru projects.
+        Returns list of normalized project dicts with developer_grade='B'.
+        """
+        raw_html = self._requests_fetch_raw(url)
+        if len(raw_html) < 500:
+            logger.debug(f"[DeveloperScout][GradeB][{dev_name}] No content from {url}")
+            return []
+
+        text = _clean_html(raw_html)
+        if len(text) < 200:
+            return []
+
+        raw_items = _ai_extract_developer(text, dev_name)
+        results = []
+        north_kw = {kw.lower() for kw in self._grade_b_keywords()}
+        for r in raw_items:
+            locality = (r.get("locality") or "").lower()
+            project = (r.get("project_name") or "").lower()
+            if not any(kw in locality or kw in project for kw in north_kw):
+                continue
+            normalized = _normalize_developer_finding(
+                r, f"grade_b_{dev_name.lower().replace(' ', '_')}",
+                dev_name, self.market, url,
+            )
+            if normalized:
+                normalized["developer_grade"] = "B"
+                results.append(normalized)
+        logger.info(
+            f"[DeveloperScout][GradeB][{dev_name}] "
+            f"{len(raw_items)} extracted → {len(results)} after filter"
+        )
+        return results
+
+    @staticmethod
+    def _grade_b_keywords() -> set[str]:
+        """Return North Bengaluru keywords for Grade B filtering."""
+        return {
+            "yelahanka", "hebbal", "devanahalli", "jakkur", "thanisandra",
+            "kogilu", "bagalur", "singanayakanahalli", "nagawara",
+            "north bangalore", "north bengaluru", "bial", "airport",
+            "yelahanka new town", "yelahanka satellite town",
+        }
 
     def _scout_developer(self, dev_key: str, dev_info: dict) -> list[dict]:
         listing_url = dev_info.get("listing_url", "")
@@ -824,10 +901,13 @@ class DeveloperScout:
 # ── Standalone runner ─────────────────────────────────────────────────────────
 
 
-def scout_developers(market: str, developers: list[str] | None = None) -> list[dict]:
+def scout_developers(market: str, developers: list[str] | None = None, grade_b: bool = True) -> list[dict]:
     memory = ScoutMemory(market)
     scout = DeveloperScout(market, memory)
     findings = scout.scout(developers=developers)
+    if grade_b:
+        grade_b_findings = scout.scout_grade_b()
+        findings.extend(grade_b_findings)
 
     output_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

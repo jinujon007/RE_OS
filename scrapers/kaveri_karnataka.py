@@ -403,58 +403,46 @@ class KaveriScraper:
         Fetch current guidance values for a micro-market.
         Returns list of GV records: locality, property_type, road_type, psf.
 
-        Sources tried in order (each logged):
-          1. IGR official gazette PDFs (authoritative — Karnataka Gazette 2023-24)
-          2. Scrapling TLS spoof (kaveri.karnataka.gov.in)
-          3. kaveri2.karnataka.gov.in mirror (requests)
-          4. IGR guidance value API (kaveri.karnataka.gov.in/api/gv/search)
-          5. Playwright AJAX interception (legacy)
-          6. Direct POST form submit (legacy)
-          7. Hardcoded verified fallback (logged as warning — never silent)
+        Source hierarchy (Sprint 78 — GATE-78):
+          1. IGR official gazette PDFs — ALWAYS runs first (data_source='gazette_pdf')
+          2. Kaveri portal live data — ALWAYS runs after gazette (data_source='portal_scraped')
+             Portal data overwrites gazette on conflict key — live > gazette > seed
+          3. Hardcoded seed fallback — ONLY if both gazette AND portal return 0 rows
         """
         logger.info(f"[KaveriScraper] Guidance values scrape: {market_name}")
         meta = MARKET_KAVERI_META.get(market_name, {})
         taluk = meta.get("taluk", market_name)
 
-        # 1. Official IGR gazette PDFs — authoritative source
-        records = self._scrape_gv_from_igr_gazette(market_name)
-        if records:
+        # 1. ALWAYS run official IGR gazette PDFs first — authoritative source
+        gazette_records = self._scrape_gv_from_igr_gazette(market_name)
+        if gazette_records:
             logger.info(
-                f"[KaveriScraper][IGR Gazette][{market_name}] {len(records)} GV records"
+                f"[KaveriScraper][IGR Gazette][{market_name}] {len(gazette_records)} GV records"
             )
-            return records
 
-        # 2. Scrapling TLS spoof
-        records = self._scrape_gv_with_scrapling(taluk, meta)
-        if records:
-            logger.info(f"[KaveriScraper][Scrapling TLS][{market_name}] {len(records)} GV records")
-            return records
+        # 2. ALWAYS try live portal data — overwrites gazette on conflict via upsert
+        portal_records = (
+            self._scrape_gv_with_scrapling(taluk, meta)
+            or self._scrape_gv_from_mirror(taluk, meta)
+            or self._scrape_gv_from_igr_api(taluk, meta)
+            or self._scrape_gv_with_playwright(taluk, meta)
+            or self._scrape_gv_via_post(taluk, meta)
+        )
+        if portal_records:
+            logger.info(
+                f"[KaveriScraper][Portal][{market_name}] {len(portal_records)} GV records"
+            )
+            return portal_records
 
-        # 3. kaveri2 mirror
-        records = self._scrape_gv_from_mirror(taluk, meta)
-        if records:
-            logger.info(f"[KaveriScraper][Mirror][{market_name}] {len(records)} GV records")
-            return records
+        # 3. Gazette records — return if portal failed but gazette succeeded
+        if gazette_records:
+            logger.info(
+                f"[KaveriScraper][GazetteOnly][{market_name}] "
+                f"Returning {len(gazette_records)} gazette-only records"
+            )
+            return gazette_records
 
-        # 4. IGR GV API
-        records = self._scrape_gv_from_igr_api(taluk, meta)
-        if records:
-            logger.info(f"[KaveriScraper][IGR API][{market_name}] {len(records)} GV records")
-            return records
-
-        # 5. Playwright (legacy)
-        records = self._scrape_gv_with_playwright(taluk, meta)
-        if records:
-            logger.info(f"[KaveriScraper][Playwright][{market_name}] {len(records)} GV records")
-            return records
-
-        # 6. Direct POST (legacy)
-        records = self._scrape_gv_via_post(taluk, meta)
-        if records:
-            logger.info(f"[KaveriScraper][POST][{market_name}] {len(records)} GV records")
-            return records
-
-        # 7. Hardcoded fallback — always logged as warning, never silent
+        # 4. Seed fallback — only if both gazette AND portal return 0 rows
         logger.warning(
             f"[KaveriScraper] All GV sources failed for {market_name} — using fallback data"
         )
@@ -533,7 +521,7 @@ class KaveriScraper:
             parser = GazetteParser()
             records = parser.scrape_guidance_values(market_name)
             for r in records:
-                r["data_source"] = "igr_gazette"
+                r["data_source"] = "gazette_pdf"
             return records
         except Exception as exc:
             logger.warning(f"[KaveriScraper][IGR Gazette] Failed for {market_name}: {exc}")

@@ -204,6 +204,20 @@ class TestGazetteParserIntegration:
         for market in IGR_GAZETTE_PDFS:
             assert market in SRO_CODES, f"SRO code missing for {market}"
 
+    def test_gazette_year_extracted_from_pdf_header(self):
+        """Gazette year extracted from BENGALURU, MONDAY header pattern."""
+        from scrapers.kaveri_gazette_parser import GazetteParser
+        text = "BENGALURU, MONDAY, 10TH APRIL, 2023 / ಮಂಗಳವಾರ, 10 ಏಪ್ರಿಲ್ 2023"
+        year = GazetteParser._extract_gazette_year(text, "https://igr.karnataka.gov.in/storage/pdf-files/test.pdf")
+        assert year == 2023
+
+    def test_gazette_freshness_falls_back_to_filename_year(self):
+        """Gazette year falls back to filename year pattern when header not found."""
+        from scrapers.kaveri_gazette_parser import GazetteParser
+        text = "Some random PDF content without a header"
+        year = GazetteParser._extract_gazette_year(text, "https://igr.karnataka.gov.in/storage/pdf-files/2024/Gazette-CVC/Yalahanka.pdf")
+        assert year == 2024
+
     def test_gazette_pdf_urls_accessible(self):
         """Smoke test — verify all configured PDF URLs have valid structure."""
         from scrapers.kaveri_gazette_parser import IGR_GAZETTE_PDFS
@@ -213,3 +227,102 @@ class TestGazetteParserIntegration:
                 assert pdf_spec["url"].endswith(".pdf")
                 assert pdf_spec["effective_from"]
                 assert pdf_spec["sro"]
+
+    # ── T-1069: Promote gazette to primary GV source ─────────────────────────
+
+    @patch("scrapers.kaveri_karnataka.KaveriScraper._scrape_gv_from_igr_gazette")
+    @patch("scrapers.kaveri_karnataka.KaveriScraper._scrape_gv_with_scrapling")
+    def test_gazette_parser_runs_before_portal(self, mock_scrapling, mock_gazette):
+        """Gazette parser is called even when portal would succeed."""
+        from scrapers.kaveri_karnataka import KaveriScraper
+        mock_gazette.return_value = [{"locality": "Test", "guidance_value_psf": 5000.0}]
+        mock_scrapling.return_value = [{"locality": "Portal", "guidance_value_psf": 5200.0}]
+        scraper = KaveriScraper()
+        result = scraper.scrape_guidance_values("Yelahanka")
+        mock_gazette.assert_called_once()
+        assert len(result) > 0
+
+    @patch("scrapers.kaveri_karnataka.KaveriScraper._scrape_gv_from_igr_gazette")
+    @patch("scrapers.kaveri_karnataka.KaveriScraper._scrape_gv_with_scrapling")
+    def test_portal_data_overwrites_gazette_on_upsert(self, mock_scrapling, mock_gazette):
+        """When portal returns data, it is returned (overwrites gazette on upsert)."""
+        from scrapers.kaveri_karnataka import KaveriScraper
+        mock_gazette.return_value = [{"locality": "Gazette", "guidance_value_psf": 5000.0}]
+        mock_scrapling.return_value = [{"locality": "Portal", "guidance_value_psf": 5200.0}]
+        scraper = KaveriScraper()
+        result = scraper.scrape_guidance_values("Yelahanka")
+        # Portal returned data, so result should be portal records
+        assert len(result) == 1
+        assert result[0]["locality"] == "Portal"
+
+    @patch("scrapers.kaveri_karnataka.KaveriScraper._scrape_gv_from_igr_gazette")
+    @patch("scrapers.kaveri_karnataka.KaveriScraper._scrape_gv_with_scrapling")
+    @patch("scrapers.kaveri_karnataka.KaveriScraper._fallback_guidance_values")
+    def test_seed_triggered_only_when_both_fail(self, mock_fallback, mock_scrapling, mock_gazette):
+        """Seed fallback only triggers when both gazette and portal return empty."""
+        from scrapers.kaveri_karnataka import KaveriScraper
+        mock_gazette.return_value = []
+        mock_scrapling.return_value = []
+        mock_fallback.return_value = [{"locality": "Fallback", "guidance_value_psf": 4000.0}]
+        scraper = KaveriScraper()
+        result = scraper.scrape_guidance_values("Yelahanka")
+        assert len(result) > 0
+        assert result[0]["locality"] == "Fallback"
+
+    # ── T-1068: English extraction accuracy ──────────────────────────────────
+
+    def test_extract_english_only_removes_kannada_chars(self):
+        """_extract_english_only strips Kannada Unicode but preserves ASCII."""
+        from scrapers.kaveri_gazette_parser import GazetteParser
+        mixed = "Atturu Village 35000 ಕನ್ನಡ"
+        cleaned = GazetteParser._extract_english_only(mixed)
+        assert "ಕನ್ನಡ" not in cleaned
+        assert "Atturu" in cleaned
+        assert "35000" in cleaned
+
+    def test_psm_to_psf_conversion_is_10_764(self):
+        """PSM→PSF conversion uses exactly 10.764 (not 10.763 or 10.76)."""
+        from scrapers.kaveri_gazette_parser import GVRecord, _SQM_TO_SQFT
+        assert _SQM_TO_SQFT == 10.764
+        rec = GVRecord(locality="Test", psm=10000.0, effective_from="2024-01-01",
+                       source_document="test.pdf", sro="Test", gazette_year="2024")
+        expected_psf = round(10000.0 / 10.764, 2)
+        assert rec.guidance_value_psf == expected_psf
+
+    def test_extraction_confidence_1_0_for_pure_english(self):
+        """Records from pages with no Kannada text get extraction_confidence=1.0."""
+        from scrapers.kaveri_gazette_parser import GazetteParser
+        parser = GazetteParser()
+        pdf_spec = {"effective_from": "2023-04-01", "url": "test.pdf", "sro": "Test", "gazette_year": "2023-24"}
+        # Pure English page text
+        records = list(parser._extract_records_from_page(
+            "1  Village Layout  Atturu Village  35000", pdf_spec
+        ))
+        assert len(records) > 0
+        for rec in records:
+            assert rec["extraction_confidence"] == 1.0
+
+    def test_extraction_confidence_clamped_to_valid_range(self):
+        """extraction_confidence is always clamped to [0.0, 1.0]."""
+        from scrapers.kaveri_gazette_parser import GazetteParser
+        parser = GazetteParser()
+        pdf_spec = {"effective_from": "2023-04-01", "url": "test.pdf", "sro": "Test", "gazette_year": "2023-24"}
+        # Confidence should never exceed 1.0 or go below 0.0
+        records = list(parser._extract_records_from_page(
+            "1  Village Layout  Atturu Village  35000", pdf_spec
+        ))
+        for rec in records:
+            conf = rec["extraction_confidence"]
+            assert 0.0 <= conf <= 1.0, f"Confidence {conf} out of range"
+
+    def test_extraction_confidence_0_5_for_fallback_regex(self):
+        """Records matched by fallback regex get extraction_confidence=0.5."""
+        from scrapers.kaveri_gazette_parser import GazetteParser
+        parser = GazetteParser()
+        pdf_spec = {"effective_from": "2023-04-01", "url": "test.pdf", "sro": "Test", "gazette_year": "2023-24"}
+        # Line with trailing survey count that triggers fallback match
+        records = list(parser._extract_records_from_page(
+            "19 Atturu Village 35000 227", pdf_spec
+        ))
+        fallback_records = [r for r in records if r.get("extraction_confidence") == 0.5]
+        assert len(fallback_records) > 0

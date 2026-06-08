@@ -277,7 +277,6 @@ def create_scraper_agent() -> Agent:
         ),
         tools=[
             RERAScraperTool(),
-            ListingsScraperTool(),
             GuidanceValueTool(),
             KaveriRegistrationTool(),
             PortalScoutTool(),

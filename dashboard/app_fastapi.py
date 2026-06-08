@@ -94,6 +94,7 @@ from config.metrics import (  # noqa: F401
     llm_router_fallbacks_total,
     pipeline_stage_duration_seconds,
     db_query_duration_seconds,
+    digest_runs_total,
 )
 from utils.discord_notifier import _CHANNEL_ENV_MAP
 
@@ -184,6 +185,8 @@ _READ_ONLY_PATHS = frozenset(
         "/api/portfolio/summary",
         "/api/pr/mentions",
         "/api/optimizer/report",
+        "/api/digest/weekly",
+        "/api/digest/monthly",
         "/optimizer",
     }
 )
@@ -797,16 +800,100 @@ async def health(request: Request):
                 locality_scores[m] = DataQualityMonitor.locality_validation_score(m.strip())
         except Exception as exc:
             logger.warning("[health] locality_score check failed: {}", exc)
+        try:
+            with _get_sa_engine().connect() as conn:
+                null_rate = conn.execute(
+                    _sa_text("""
+                        SELECT ROUND(
+                            COUNT(CASE WHEN sentiment_score IS NULL THEN 1 END)::numeric
+                            / NULLIF(COUNT(*), 0), 3
+                        )
+                        FROM news_articles
+                        WHERE created_at >= NOW() - INTERVAL '7 days'
+                    """)
+                ).scalar()
+            sentiment_null_rate = float(null_rate) if null_rate is not None else None
+        except Exception:
+            sentiment_null_rate = None
+
         services["data_quality"] = {
             "slo_pass": slo_result["slo_pass"],
             "slo_fail": slo_result["slo_fail"],
             "freshness": freshness if freshness else None,
             "seed_stale_warnings": seed_stale[:5],
             "locality_scores": locality_scores,
+            "sentiment_null_rate": sentiment_null_rate,
         }
     except Exception as exc:
         logger.warning("[health] data_quality check failed: {}", exc)
-        services["data_quality"] = {"slo_pass": 0, "slo_fail": 0, "freshness": None, "seed_stale_warnings": [], "locality_scores": {}}
+        services["data_quality"] = {"slo_pass": 0, "slo_fail": 0, "freshness": None, "seed_stale_warnings": [], "locality_scores": {}, "sentiment_null_rate": None}
+
+    # T-1064: Per-market scraper health from agent_runs
+    try:
+        with _get_sa_engine().connect() as conn:
+            scraper_health = {}
+            for mkt in ["Yelahanka", "Hebbal", "Devanahalli"]:
+                row = conn.execute(
+                    _sa_text("""
+                        SELECT metadata, completed_at FROM agent_runs
+                        WHERE agent_name = 'rera_scraper'
+                          AND micro_market = :market
+                          AND task_type = 'scrape_complete'
+                        ORDER BY completed_at DESC LIMIT 1
+                    """),
+                    {"market": mkt},
+                ).fetchone()
+                if row:
+                    md = row[0]
+                    scraper_health[mkt] = {
+                        "record_count": md.get("record_count") if isinstance(md, dict) else None,
+                        "fallback_triggered": md.get("fallback_triggered") if isinstance(md, dict) else None,
+                        "path_used": md.get("path_used") if isinstance(md, dict) else None,
+                        "run_at": row[1].isoformat() if hasattr(row[1], "isoformat") else str(row[1]) if row[1] else None,
+                    }
+                else:
+                    scraper_health[mkt] = None
+            services["scraper_health"] = scraper_health
+    except Exception as exc:
+        logger.warning("[health] scraper_health check failed: {}", exc)
+        services["scraper_health"] = {"error": str(exc)}
+
+    # T-1100: Backup staleness status
+    try:
+        from utils.backup import check_backup_staleness, get_backup_dir
+        stale_info = check_backup_staleness()
+        backup_status = {
+            "stale": stale_info["stale"],
+            "latest_backup_age_hours": stale_info["age_hours"],
+            "latest_backup_file": stale_info["latest_file"],
+            "backup_dir": get_backup_dir(),
+        }
+        # Also fetch last backup timestamp from agent_runs
+        try:
+            with _get_sa_engine().connect() as conn:
+                ts_row = conn.execute(
+                    _sa_text("""
+                        SELECT created_at FROM agent_runs
+                        WHERE agent_name = 'backup' AND event_type = 'db_backup' AND status = 'success'
+                        ORDER BY created_at DESC LIMIT 1
+                    """)
+                ).fetchone()
+                backup_status["latest_backup_timestamp"] = ts_row[0].isoformat() if ts_row else None
+        except Exception:
+            backup_status["latest_backup_timestamp"] = None
+        backup_status["backup_ok"] = (
+            not backup_status["stale"]
+            and backup_status["latest_backup_timestamp"] is not None
+        )
+        services["backup_status"] = backup_status
+    except Exception as exc:
+        logger.warning("[health] backup_status check failed: {}", exc)
+        services["backup_status"] = {
+            "backup_ok": False,
+            "stale": True,
+            "latest_backup_age_hours": None,
+            "latest_backup_timestamp": None,
+        }
 
     try:
         from config.llm_router import get_router_status, get_circuit_states
@@ -3159,8 +3246,8 @@ async def create_project(body: ProjectCreate, request: Request):
                                           start_date, target_close_date,
                                           source_deal_id, source_board_session_id)
                     VALUES (:name, :market, :survey_no, :deal_type, :status, :notes,
-                            :start::date, :target::date,
-                            :deal_id::uuid, :board_id::uuid)
+                            CAST(:start AS date), CAST(:target AS date),
+                            CAST(:deal_id AS uuid), CAST(:board_id AS uuid))
                     RETURNING id, name, market, survey_no, deal_type, status, notes,
                               start_date, target_close_date, created_at, updated_at
                 """),
@@ -3413,7 +3500,7 @@ async def create_task(project_id: str, body: TaskCreate, request: Request):
             row = conn.execute(
                 _sa_text("""
                     INSERT INTO project_tasks (project_id, title, owner_agent_id, dept, due_date, notes)
-                    VALUES (:pid, :title, :owner, :dept, :due::date, :notes)
+                    VALUES (:pid, :title, :owner, :dept, CAST(:due AS date), :notes)
                     RETURNING id, title, owner_agent_id, dept, status, due_date, notes, created_at
                 """),
                 {
@@ -4729,7 +4816,7 @@ async def gcc_create_event(request: Request):
                     :appreciation_impact_score, :rental_impact_score,
                     :gcc_signal_score, :primary_housing_segment,
                     :time_horizon, :source_name, :source_reliability,
-                    :announced_at::date, FALSE
+                    CAST(:announced_at AS date), FALSE
                 )
                 ON CONFLICT (canonical_id) DO NOTHING
             """), {
@@ -4975,6 +5062,99 @@ async def shareholders_panel(request: Request):
         return templates.TemplateResponse(request, "shareholders.html")
     except Exception as exc:
         logger.error("[shareholders_panel] %s", exc)
+        return JSONResponse({"error": "template not found"}, status_code=500)
+
+
+# ── Digest Routes (Sprint 76 — T-1058) ─────────────────────────────────────
+
+VALID_MARKETS_DIGEST = frozenset({"Yelahanka", "Devanahalli", "Hebbal"})
+
+
+def _resolve_market(market: str | None) -> str | None:
+    if market is None:
+        return None
+    canonical = market.strip().lower()
+    for valid in VALID_MARKETS_DIGEST:
+        if valid.lower() == canonical:
+            return valid
+    return None
+
+
+def _all_markets() -> list[str]:
+    from config.settings import TARGET_MARKETS
+    return [m.strip() for m in TARGET_MARKETS]
+
+
+@app.get("/api/digest/weekly", tags=["Digest"], summary="Weekly intelligence digest")
+@limiter.limit("20/hour")
+async def digest_weekly(request: Request, market: str = Query(default=None, description="Market name (omit for all)")):
+    from utils.weekly_digest import WeeklyIntelDigest
+    resolved = _resolve_market(market) if market else None
+    if market and not resolved:
+        digest_runs_total.labels(type="weekly", status="invalid_market").inc()
+        return JSONResponse({"error": f"Unknown market '{market}'. Valid: {sorted(VALID_MARKETS_DIGEST)}"}, status_code=404)
+    digest = WeeklyIntelDigest()
+    if resolved:
+        result = digest.build(resolved)
+        digest_runs_total.labels(type="weekly", status="ok").inc()
+        return {k: v for k, v in result.__dict__.items()}
+    results = [digest.build(m) for m in _all_markets()]
+    digest_runs_total.labels(type="weekly", status="ok").inc()
+    return {"results": [{k: v for k, v in r.__dict__.items()} for r in results]}
+
+
+@app.get("/api/digest/monthly", tags=["Digest"], summary="Monthly intelligence digest")
+@limiter.limit("20/hour")
+async def digest_monthly(request: Request, market: str = Query(default=None, description="Market name (omit for all)")):
+    from utils.monthly_digest import MonthlyIntelDigest
+    resolved = _resolve_market(market) if market else None
+    if market and not resolved:
+        digest_runs_total.labels(type="monthly", status="invalid_market").inc()
+        return JSONResponse({"error": f"Unknown market '{market}'. Valid: {sorted(VALID_MARKETS_DIGEST)}"}, status_code=404)
+    digest = MonthlyIntelDigest()
+    if resolved:
+        result = digest.build(resolved)
+        digest_runs_total.labels(type="monthly", status="ok").inc()
+        return {k: v for k, v in result.__dict__.items()}
+    results = [digest.build(m) for m in _all_markets()]
+    digest_runs_total.labels(type="monthly", status="ok").inc()
+    return {"results": [{k: v for k, v in r.__dict__.items()} for r in results]}
+
+
+@app.post("/api/digest/weekly/send", tags=["Digest"], summary="Send weekly digest to Discord now")
+@limiter.limit("1/hour")
+async def digest_weekly_send(request: Request):
+    if not _is_run_api_authorized(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    from utils.weekly_digest import WeeklyIntelDigest
+    from utils.discord_notifier import send_weekly_digest
+    digest = WeeklyIntelDigest()
+    results = [digest.build(m) for m in _all_markets()]
+    send_weekly_digest(results)
+    digest_runs_total.labels(type="weekly_send", status="sent").inc()
+    return {"status": "sent", "markets": len(results)}
+
+
+@app.post("/api/digest/monthly/send", tags=["Digest"], summary="Send monthly digest to Discord now")
+@limiter.limit("1/hour")
+async def digest_monthly_send(request: Request):
+    if not _is_run_api_authorized(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    from utils.monthly_digest import MonthlyIntelDigest
+    from utils.discord_notifier import send_monthly_digest
+    digest = MonthlyIntelDigest()
+    results = [digest.build(m) for m in _all_markets()]
+    send_monthly_digest(results)
+    digest_runs_total.labels(type="monthly_send", status="sent").inc()
+    return {"status": "sent", "markets": len(results)}
+
+
+@app.get("/digest", response_class=HTMLResponse, tags=["Pages"], summary="Intelligence Digest panel")
+async def digest_panel(request: Request):
+    try:
+        return templates.TemplateResponse(request, "digest.html")
+    except Exception as exc:
+        logger.error("[digest_panel] %s", exc)
         return JSONResponse({"error": "template not found"}, status_code=500)
 
 

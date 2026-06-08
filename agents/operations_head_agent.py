@@ -43,7 +43,7 @@ def _task_delegator_tool(project_id: str, task_title: str, dept: str,
             row = conn.execute(
                 text("""
                     INSERT INTO project_tasks (project_id, title, owner_agent_id, dept, status, due_date)
-                    VALUES (:pid, :title, 'ops_head', :dept, 'todo', :due::date)
+                    VALUES (:pid, :title, 'ops_head', :dept, 'todo', CAST(:due AS date))
                     RETURNING id, title, dept, status
                 """),
                 {"pid": project_id, "title": task_title, "dept": dept, "due": due},

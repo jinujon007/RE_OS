@@ -71,7 +71,9 @@ def test_safe_date_integer_input():
 @pytest.fixture
 def org():
     """DBOrganizer with a mocked engine so no DB connection is attempted."""
-    with patch("utils.db_organizer.create_engine") as mock_engine:
+    import utils.db_organizer as _dbo
+    _dbo._SHARED_ENGINE = None
+    with patch.object(_dbo, "create_engine") as mock_engine:
         mock_engine.return_value = MagicMock()
         return DBOrganizer()
 
@@ -296,6 +298,65 @@ def test_run_developer_scout_failing_record_counts_failed(org):
 # ── utils/db.py singleton ──────────────────────────────────────────────────────
 
 
+# ── T-1076: fuzzy dedup ──────────────────────────────────────────────────────
+
+
+def test_fuzzy_dedup_catches_same_property_minor_variation():
+    """_fuzzy_match_registration returns True when survey_no prefix + date + amount all match."""
+    org = _make_org()
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchone.return_value = ("existing-id",)
+    rec = {
+        "survey_number": "45/2A/1234",
+        "registration_date": "2026-06-01",
+        "transaction_amount": 1500000,
+    }
+    result = org._fuzzy_match_registration(mock_conn, rec)
+    assert result is True
+    call_sql = mock_conn.execute.call_args[0][0].text
+    assert "survey_no LIKE" in call_sql
+    assert "EXTRACT(EPOCH" in call_sql
+    assert "consideration_amount" in call_sql
+
+
+def test_fuzzy_dedup_allows_genuinely_different_record():
+    """_fuzzy_match_registration returns False when no fuzzy match found."""
+    org = _make_org()
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchone.return_value = None
+    rec = {
+        "survey_number": "99/1",
+        "registration_date": "2026-06-01",
+        "transaction_amount": 500000,
+    }
+    result = org._fuzzy_match_registration(mock_conn, rec)
+    assert result is False
+
+
+def test_exact_dedup_still_fast_paths_before_fuzzy():
+    """_insert_registration returns False on exact registration_number match without calling fuzzy."""
+    org = _make_org()
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchone.return_value = ("existing-reg-id",)
+    rec = {
+        "registration_number": "KA/01/1234/2025",
+        "survey_number": "45/2",
+        "registration_date": "2026-06-01",
+        "transaction_amount": 1500000,
+    }
+    with patch.object(org, "_fuzzy_match_registration", wraps=org._fuzzy_match_registration) as spy:
+        result = org._insert_registration(mock_conn, rec, "market-id")
+    assert result is False
+
+
+def _make_org():
+    """Helper: create DBOrganizer with mocked engine."""
+    from unittest.mock import patch, MagicMock
+    with patch("utils.db_organizer.create_engine") as mock_engine:
+        mock_engine.return_value = MagicMock()
+        return DBOrganizer()
+
+
 def test_get_engine_returns_engine():
     """get_engine() returns a non-None engine without hitting the DB."""
     with patch("utils.db.create_engine") as mock_ce:
@@ -305,3 +366,134 @@ def test_get_engine_returns_engine():
         engine = db_mod.get_engine()
         assert engine is not None
         db_mod._engine = None  # clean up
+
+
+# ── T-1074: deprecated checkpoint guard ──────────────────────────────────────
+
+
+def test_db_organizer_skips_listings_scraper_checkpoint():
+    """_is_deprecated_checkpoint returns True for listings_scraper* filenames."""
+    from utils.db_organizer import DBOrganizer
+    assert DBOrganizer._is_deprecated_checkpoint("listings_scraper_2026-06-08.json") is True
+    assert DBOrganizer._is_deprecated_checkpoint("listings_scraped_2026-06-08.json") is True
+
+
+def test_db_organizer_recognizes_active_checkpoints():
+    """_is_deprecated_checkpoint returns False for active scraper checkpoints."""
+    from utils.db_organizer import DBOrganizer
+    assert DBOrganizer._is_deprecated_checkpoint("rera_scraped_2026-06-08.json") is False
+    assert DBOrganizer._is_deprecated_checkpoint("portal_scout_2026-06-08.json") is False
+    assert DBOrganizer._is_deprecated_checkpoint("developer_scout_2026-06-08.json") is False
+
+
+# ── Market ID Cache (T-1092 — Sprint 82) ────────────────────────────────────
+
+
+def _make_mock_org(market_rows: list[tuple]) -> tuple:
+    """Helper: create DBOrganizer with mocked engine returning given market rows.
+    Resets _SHARED_ENGINE so the patch takes effect.
+    Returns (org, mock_conn) for further assertions."""
+    import utils.db_organizer as _dbo
+
+    _dbo._SHARED_ENGINE = None
+    with patch.object(_dbo, "create_engine") as mock_engine:
+        mock_engine.return_value = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.execute().fetchall.return_value = market_rows
+        mock_engine.return_value.connect.return_value.__enter__.return_value = mock_conn
+        org = DBOrganizer()
+    return org, mock_conn
+
+
+def test_market_id_cache_loaded_at_init():
+    """Cache has all 3 micro-markets after init when DB returns data."""
+    org, _ = _make_mock_org([
+        ("yelahanka", "550e8400-e29b-41d4-a716-446655440000"),
+        ("devanahalli", "550e8400-e29b-41d4-a716-446655440001"),
+        ("hebbal", "550e8400-e29b-41d4-a716-446655440002"),
+    ])
+    assert len(org._market_id_cache) >= 3
+    assert org._market_id_cache.get("yelahanka") == "550e8400-e29b-41d4-a716-446655440000"
+    assert org._market_id_cache.get("devanahalli") == "550e8400-e29b-41d4-a716-446655440001"
+
+
+def test_run_issues_one_market_lookup_not_n():
+    """10 records same market → 0 DB round-trips for _get_market_id (all from cache)."""
+    org, mock_conn = _make_mock_org([
+        ("yelahanka", "uuid-yel"),
+        ("devanahalli", "uuid-dev"),
+        ("hebbal", "uuid-heb"),
+    ])
+    mock_conn.execute.reset_mock()
+
+    records = [{"locality": "Yelahanka New Town", "taluk": ""} for _ in range(10)]
+    for rec in records:
+        mid = org._get_market_id(mock_conn, rec)
+        assert mid == "uuid-yel"
+
+    assert mock_conn.execute.call_count == 0, (
+        f"Expected 0 DB calls for _get_market_id lookup, got {mock_conn.execute.call_count}"
+    )
+
+
+def test_unknown_market_returns_none_gracefully():
+    """Record that doesn't match any keyword → returns None without DB hit."""
+    org, mock_conn = _make_mock_org([
+        ("yelahanka", "uuid-1"),
+        ("devanahalli", "uuid-2"),
+        ("hebbal", "uuid-3"),
+    ])
+    mock_conn.execute.reset_mock()
+
+    mid = org._get_market_id(mock_conn, {"locality": "Mumbai", "taluk": ""})
+    assert mid is None
+    assert mock_conn.execute.call_count == 0
+
+
+# ── Materialized View Refresh (T-1094 — Sprint 82) ──────────────────────────
+
+
+def test_run_triggers_mat_view_refresh():
+    """DBOrganizer.run() executes REFRESH MATERIALIZED VIEW CONCURRENTLY."""
+    org, mock_conn = _make_mock_org([("yelahanka", "uuid-yel")])
+    mock_conn.execute.reset_mock()
+
+    with patch.object(org, "_run_quality_check", return_value={"success": True}):
+        with patch.object(org, "engine") as mock_engine:
+            mock_engine.begin.return_value = _make_ctx_manager(mock_conn)
+            org.run("Yelahanka", [])
+
+    refresh_calls = [
+        c for c in mock_conn.execute.call_args_list
+        if c.args and "REFRESH MATERIALIZED VIEW CONCURRENTLY" in str(c.args[0])
+    ]
+    assert len(refresh_calls) >= 1, (
+        "No REFRESH MATERIALIZED VIEW CONCURRENTLY call found in run()"
+    )
+
+
+def test_refresh_failure_does_not_block_stage3():
+    """REFRESH raising → run() still returns stats dict without crashing."""
+    org, mock_conn = _make_mock_org([("yelahanka", "uuid-yel")])
+    mock_conn.execute.reset_mock()
+
+    with patch.object(org, "_run_quality_check", return_value={"success": True}):
+        with patch.object(org, "engine") as mock_engine:
+            mock_conn_begin = MagicMock()
+            mock_conn_begin.__enter__ = MagicMock(return_value=mock_conn)
+            mock_conn_begin.__exit__ = MagicMock(return_value=False)
+            mock_engine.begin.return_value = mock_conn_begin
+
+            original_execute = mock_conn.execute
+
+            def execute_side_effect(*args, **kwargs):
+                statement = str(args[0]) if args else ""
+                if "REFRESH" in statement:
+                    raise RuntimeError("Simulated refresh failure")
+                return original_execute(*args, **kwargs)
+
+            mock_conn.execute.side_effect = execute_side_effect
+            stats = org.run("Yelahanka", [])
+
+    assert isinstance(stats, dict)
+    assert stats.get("market") == "Yelahanka"

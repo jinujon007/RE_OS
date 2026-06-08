@@ -91,6 +91,12 @@ SRO_CODES: dict[str, int] = {
 }
 
 
+_GAZETTE_YEAR_HEADER_RE = re.compile(
+    r"BENGALURU,\s*(?:MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY),?\s+.*?(\d{4})"
+)
+_GAZETTE_YEAR_FILENAME_RE = re.compile(r"(\d{4})")
+
+
 class GVRecord:
     """One guidance-value row extracted from a gazette PDF."""
 
@@ -98,6 +104,8 @@ class GVRecord:
         "locality", "property_type", "road_type",
         "guidance_value_psf", "guidance_value_per_sqm",
         "effective_from", "source_document", "sro", "gazette_year",
+        "gazette_year_int", "gazette_published_date",
+        "extraction_confidence",
     )
 
     def __init__(
@@ -109,6 +117,9 @@ class GVRecord:
         sro: str,
         gazette_year: str,
         property_type: str = "Residential",
+        extraction_confidence: float = 0.7,
+        gazette_year_int: int | None = None,
+        gazette_published_date: str | None = None,
     ) -> None:
         self.locality = locality
         self.guidance_value_per_sqm = psm
@@ -119,9 +130,12 @@ class GVRecord:
         self.gazette_year = gazette_year
         self.property_type = property_type
         self.road_type = "Main Road"  # gazette doesn't distinguish consistently
+        self.extraction_confidence = extraction_confidence
+        self.gazette_year_int = gazette_year_int
+        self.gazette_published_date = gazette_published_date
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "locality": self.locality,
             "property_type": self.property_type,
             "road_type": self.road_type,
@@ -133,6 +147,11 @@ class GVRecord:
             "sro": self.sro,
             "gazette_year": self.gazette_year,
         }
+        if self.gazette_year_int is not None:
+            d["gazette_year_int"] = self.gazette_year_int
+        if self.gazette_published_date is not None:
+            d["gazette_published_date"] = self.gazette_published_date
+        return d
 
 
 class GazetteParser:
@@ -228,6 +247,26 @@ class GazetteParser:
             logger.debug("[GazetteParser] Registration volume API failed for {}: {}", market, exc)
         return {}
 
+    @staticmethod
+    def _extract_gazette_year(text: str, pdf_url: str) -> int:
+        """Extract gazette publication year from PDF header or filename.
+
+        Priority:
+          1. Header regex: BENGALURU, MONDAY ... 2024
+          2. PDF filename year pattern: /path/to/2024/file.pdf
+          3. Fallback: current_year - 1
+        """
+        from datetime import date
+        m = _GAZETTE_YEAR_HEADER_RE.search(text)
+        if m:
+            return int(m.group(1))
+        m = _GAZETTE_YEAR_FILENAME_RE.search(pdf_url)
+        if m:
+            year = int(m.group(1))
+            if 1900 <= year <= 2100:
+                return year
+        return date.today().year - 1
+
     def _parse_pdf(self, pdf_spec: dict) -> list[dict]:
         """Download a gazette PDF and extract guidance-value records."""
         try:
@@ -240,13 +279,24 @@ class GazetteParser:
         resp.raise_for_status()
 
         records: list[dict] = []
+        gazette_year_int = None
         with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
             for page in pdf.pages:
                 text = page.extract_text() or ""
+                # Extract gazette year from first page header
+                if gazette_year_int is None and text.strip():
+                    gazette_year_int = self._extract_gazette_year(text, url)
                 for rec in self._extract_records_from_page(text, pdf_spec):
+                    if gazette_year_int is not None:
+                        rec["gazette_year_int"] = gazette_year_int
                     records.append(rec)
 
         return records
+
+    @staticmethod
+    def _clamp_confidence(conf: float) -> float:
+        """Clamp extraction_confidence to [0.0, 1.0]."""
+        return max(0.0, min(1.0, conf))
 
     def _extract_records_from_page(
         self, text: str, pdf_spec: dict
@@ -258,15 +308,28 @@ class GazetteParser:
           <sl_no>  <kannada_text>  <English locality name>  [survey/property IDs]  <psm_value>
 
         Strategy:
-          1. Split into lines.
-          2. For each line, find the last standalone 4–6 digit integer — that's the PSM rate.
-          3. Extract the English name (ASCII sequences after Kannada text).
-          4. Skip lines that look like headers, page numbers, or boilerplate.
+          1. Detect Kannada chars for extraction_confidence.
+          2. Strip non-English characters before regex passes.
+          3. Split into lines.
+          4. For each line, find the last standalone 4–6 digit integer — that's the PSM rate.
+          5. Extract the English name (ASCII sequences after Kannada text).
+          6. Skip lines that look like headers, page numbers, or boilerplate.
         """
+        # Determine page-level confidence
+        has_kannada = bool(self._KANNADA_RE.search(text))
+        page_confidence = self._clamp_confidence(1.0 if not has_kannada else 0.7)
+
+        # Strip Kannada characters to prevent corruption of number patterns
+        text = self._extract_english_only(text)
+
         lines = text.split("\n")
         for line in lines:
             rec = self._parse_line(line.strip(), pdf_spec)
             if rec:
+                if "extraction_confidence" not in rec:
+                    rec["extraction_confidence"] = page_confidence
+                else:
+                    rec["extraction_confidence"] = self._clamp_confidence(rec["extraction_confidence"])
                 yield rec
 
     _SKIP_PHRASES = frozenset([
@@ -280,6 +343,14 @@ class GazetteParser:
 
     # Kannada Unicode block (U+0C80–U+0CFF)
     _KANNADA_RE = re.compile(r'[ಀ-೿‌‍]+')
+
+    # Characters to keep in _extract_english_only: ASCII printable + ₹
+    _ENGLISH_ONLY_KEEP = re.compile(r'[^\x20-\x7E\u20B9\r\n]')
+
+    @staticmethod
+    def _extract_english_only(text: str) -> str:
+        """Strip all characters outside ASCII printable + ₹ + newlines."""
+        return GazetteParser._ENGLISH_ONLY_KEEP.sub('', text)
 
     # Property ID patterns to discard as locality names
     _PROP_ID_RE = re.compile(
@@ -341,11 +412,13 @@ class GazetteParser:
         # Allow optional small trailing number (survey count like "227", "304")
         # Pattern: "...  35000 227" → rate=35000, trailing=227 (ignored)
         # Pattern: "...  35000"     → rate=35000
+        used_fallback = False
         rate_match = self._PSM_RE.search(line)
         if not rate_match:
             alt = re.search(r'(?<![/\-\w])(\d{4,6})\s+\d{1,3}\s*$', line)
             if alt:
                 rate_match = alt
+                used_fallback = True
             else:
                 return None
 
@@ -376,4 +449,7 @@ class GazetteParser:
             sro=pdf_spec["sro"],
             gazette_year=pdf_spec["gazette_year"],
         )
-        return rec.to_dict()
+        result = rec.to_dict()
+        if used_fallback:
+            result["extraction_confidence"] = 0.5
+        return result

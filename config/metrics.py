@@ -75,8 +75,8 @@ db_query_duration_seconds = Histogram(
 
 data_quality_checks_total = Counter(
     "data_quality_checks_total",
-    "Data quality check results by market and status (pass/fail/skipped/error/db_error)",
-    ["market", "status"],
+    "Data quality check results by market, source, and status (pass/fail/skipped/error/db_error/stale/fresh)",
+    ["market", "source", "status"],
 )
 
 # Process Automation (Sprint 61, T-1007–T-1012)
@@ -129,4 +129,10 @@ optimizer_tokens_tracked_total = Counter(
     "optimizer_tokens_tracked_total",
     "Total tokens tracked in optimizer reports",
     [],
+)
+
+digest_runs_total = Counter(
+    "digest_runs_total",
+    "Total intelligence digest runs (weekly/monthly)",
+    ["type", "status"],
 )

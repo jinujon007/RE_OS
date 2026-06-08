@@ -75,7 +75,7 @@ def _pitch_mentions_land(pitch: str) -> bool:
 
 
 def _query_market_supply(market: str) -> tuple[str, str]:
-    """Query v_market_brief for months_of_supply. Returns (months_str, label).
+    """Query v_market_brief_mat for months_of_supply. Returns (months_str, label).
     Returns ('N/A', 'N/A') on failure or empty market."""
     market = (market or "").strip()
     if not market:
@@ -84,9 +84,9 @@ def _query_market_supply(market: str) -> tuple[str, str]:
         from utils.db import get_engine as _ge, db_query_duration_seconds
         from sqlalchemy import text as _st
         with _ge().connect() as _c:
-            with db_query_duration_seconds.labels(query_name="v_market_brief").time():
+            with db_query_duration_seconds.labels(query_name="v_market_brief_mat").time():
                 row = _c.execute(
-                    _st("SELECT months_of_supply, supply_label FROM v_market_brief WHERE micro_market ILIKE :m LIMIT 1"),
+                    _st("SELECT months_of_supply, supply_label FROM v_market_brief_mat WHERE micro_market ILIKE :m LIMIT 1"),
                     {"m": f"%{market}%"},
                 ).fetchone()
             if row:
@@ -146,9 +146,9 @@ def _ceo_decompose(pitch: str, market: str, _session_excluded: set) -> Optional[
             from utils.db import get_engine as _mos_ge, db_query_duration_seconds
             from sqlalchemy import text as _mos_st
             with _mos_ge().connect() as _mos_c:
-                with db_query_duration_seconds.labels(query_name="v_market_brief").time():
+                with db_query_duration_seconds.labels(query_name="v_market_brief_mat").time():
                     _mos_row = _mos_c.execute(
-                        _mos_st("SELECT months_of_supply, supply_label FROM v_market_brief WHERE micro_market ILIKE :m LIMIT 1"),
+                        _mos_st("SELECT months_of_supply, supply_label FROM v_market_brief_mat WHERE micro_market ILIKE :m LIMIT 1"),
                         {"m": f"%{market}%"},
                     ).fetchone()
                 if _mos_row and _mos_row[0] is not None:
@@ -529,7 +529,7 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                         f"\n"
                     )
 
-            # months_of_supply signal from v_market_brief (T-485)
+            # months_of_supply signal from v_market_brief_mat (T-485)
             if market_safe:
                 mos_val, mos_label = _query_market_supply(market_safe)
                 if mos_label not in ("N/A", "INSUFFICIENT_DATA"):
@@ -540,7 +540,54 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                         f" market conditions\n"
                     )
 
-            dept_question = irr_context + dept_question
+            # GV source + freshness (Sprint 78 — GATE-78)
+            gv_source_context = ""
+            try:
+                from utils.db import get_engine as _gv_engine
+                from sqlalchemy import text as _gv_text
+                if market_safe:
+                    with _gv_engine().connect() as _gv_c:
+                        _gv_row = _gv_c.execute(
+                            _gv_text("""
+                                SELECT gv.data_source, gv.gazette_year,
+                                       gv.extraction_confidence, gv.guidance_value_psf
+                                FROM guidance_values gv
+                                JOIN micro_markets mm ON mm.id = gv.micro_market_id
+                                WHERE mm.name ILIKE :m
+                                  AND gv.data_source IN ('gazette_pdf', 'portal_scraped')
+                                ORDER BY gv.extraction_confidence DESC, gv.gazette_year DESC
+                                LIMIT 1
+                            """),
+                            {"m": f"%{market_safe}%"},
+                        ).fetchone()
+                    if _gv_row:
+                        ds = _gv_row[0] or "unknown"
+                        gy = _gv_row[1]
+                        conf = _gv_row[2] or 0.0
+                        psf = _gv_row[3] or 0.0
+                        from datetime import date as _gv_date
+                        cy = _gv_date.today().year
+                        months_old = (cy - gy) * 12 if gy else 0
+                        gv_source_context = (
+                            f"\n[GUIDANCE VALUE SOURCE: {ds} | "
+                            f"Gazette year: {gy} | "
+                            f"Age: {months_old} months | "
+                            f"PSF: ₹{psf:,.0f} | "
+                            f"Confidence: {conf:.0%}]\n"
+                        )
+                        if ds == "gazette_pdf" and months_old > 18:
+                            gv_source_context += (
+                                "WARNING: Guidance values are stale (>18 months). "
+                                "Explicitly flag this limitation in your feasibility statement.\n"
+                            )
+                        logger.info(
+                            "[board_room] GV context injected for {}: source={}, year={}, months_old={}",
+                            market, ds, gy, months_old,
+                        )
+            except Exception as _gv_exc:
+                logger.debug("[board_room] GV source lookup failed for {}: {}", market, _gv_exc)
+
+            dept_question = gv_source_context + irr_context + dept_question
 
         if key == "legal":
             legal_context = ""
@@ -565,7 +612,7 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                             dev_match = type("_RegexStub", (), {"group": lambda s, _: _row[0]})()
                             logger.info("[board_room] developer detected via DB: %s", _row[0])
                 except Exception as _db_exc:
-                    logger.debug("[board_room] developer DB lookup failed: %s", _db_exc)
+                    logger.debug("[board_room] developer DB lookup failed: {}", _db_exc)
                 if not dev_match:
                     dev_match = re.search(
                         r"\b(Brigade|Prestige|Sobha|Godrej|Adarsh|Salarpuria"
@@ -877,7 +924,7 @@ def _run_board_session_bg(session_id: str, pitch: str, market: str) -> None:
                                 (agent_name, task_type, micro_market, status, metadata, started_at, completed_at)
                             VALUES
                                 ('board_coherence_flag', 'board_coherence_flag', :market, 'completed',
-                                 :metadata::jsonb, NOW(), NOW())
+                                 CAST(:metadata AS jsonb), NOW(), NOW())
                         """), {
                             "market": market,
                             "metadata": json.dumps({
