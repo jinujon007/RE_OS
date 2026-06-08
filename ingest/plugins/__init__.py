@@ -13,6 +13,8 @@ from ingest.plugins.developer_plugin import DeveloperPlugin
 from ingest.plugins.news_plugin import NewsPlugin
 from ingest.plugins.distressed_plugin import DistressedPlugin
 from ingest.plugins.bbmp_plugin import BBMPPlugin
+from ingest.plugins.demand_plugin import DemandPlugin
+from ingest.plugins.gcc_plugin import GCCPlugin
 
 __all__ = [
     "RERAPlugin",
@@ -23,4 +25,6 @@ __all__ = [
     "NewsPlugin",
     "DistressedPlugin",
     "BBMPPlugin",
+    "DemandPlugin",
+    "GCCPlugin",
 ]

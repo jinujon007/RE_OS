@@ -44,6 +44,7 @@ _CHANNEL_ENV_MAP = {
     "system":           "DISCORD_WEBHOOK_SYSTEM",
     "health":           "DISCORD_WEBHOOK_SYSTEM",  # alias — maps to same webhook as system
     "bd_opportunities": "DISCORD_WEBHOOK_BD_OPPORTUNITIES",
+    "gcc_intel":        "DISCORD_WEBHOOK_GCC_INTEL",
 }
 
 _VALID_CHANNELS = frozenset(_CHANNEL_ENV_MAP)
@@ -270,6 +271,185 @@ def send_quality_alert(market: str, errors: list, warnings: list) -> bool:
         parts.append("")
         parts.extend(f"⚠️ `{w['table']}.{w['column']}`: {w.get('expectation', '?')}" for w in warnings[:5])
     return send("health", title, "\n".join(parts), COLOR_RED if errors else COLOR_AMBER)
+
+
+def format_competitive_digest(pulse: dict) -> str:
+    from datetime import datetime, timezone
+    date_str = datetime.now(timezone.utc).strftime("%a %d %b %Y")
+    lines = [f"**Competitive Intelligence Pulse — {date_str}**\n"]
+
+    launches = pulse.get("new_launches", [])
+    lines.append(f"🆕 **New Launches ({len(launches)})**")
+    if launches:
+        for la in launches[:10]:
+            item = f"{la.get('project_name', '?')} — {la.get('developer_name', '?')} ({la.get('market', '?')}) {la.get('total_units', 0)}u"
+            lines.append(f"• {item[:100]}")
+    else:
+        lines.append("None this week.")
+    lines.append("")
+
+    movers = pulse.get("psf_movers", [])
+    lines.append(f"📈 **PSF Movers ({len(movers)})**")
+    if movers:
+        for m in movers[:10]:
+            d = m.get("direction", "?")
+            icon = "▲" if d == "UP" else "▼"
+            item = f"{m.get('project_name', '?')} — {m.get('developer_name', '?')} ({m.get('market', '?')}) {icon}{abs(m.get('change_pct', 0)):.1f}%"
+            lines.append(f"• {item[:100]}")
+    else:
+        lines.append("None this week.")
+    lines.append("")
+
+    absorbers = pulse.get("absorption_leaders", [])
+    lines.append("🏆 **Absorption Leaders**")
+    if absorbers:
+        for a in absorbers[:5]:
+            item = f"{a.get('project_name', '?')} — {a.get('developer_name', '?')} ({a.get('market', '?')}) {a.get('absorption_pct', 0):.0f}% sold"
+            lines.append(f"• {item[:100]}")
+    else:
+        lines.append("None this week.")
+
+    result = "\n".join(lines)
+    if len(result) > 1500:
+        result = result[:1497]
+        while len(result.encode("utf-8")) > 1500:
+            result = result[:-1]
+        result += "..."
+    return result
+
+
+def send_competitive_digest(pulse: dict) -> None:
+    msg = format_competitive_digest(pulse)
+    try:
+        send("bd_opportunities", "Competitive Intelligence Pulse", msg, COLOR_PURPLE)
+    except Exception as exc:
+        logger.warning("[Discord] send_competitive_digest failed: {}", exc)
+
+
+def _safe_truncate(text: str | None, max_bytes: int = 100) -> str:
+    """Truncate text at word boundary within byte limit.
+    Ensures valid UTF-8 — never splits a multi-byte character."""
+    if not text:
+        return ""
+    text = text.strip()
+    if len(text.encode("utf-8")) <= max_bytes:
+        return text
+    truncated = text[:max_bytes]
+    while len(truncated.encode("utf-8")) > max_bytes:
+        truncated = truncated[:-1]
+    last_space = truncated.rfind(" ")
+    if last_space > max_bytes // 2:
+        truncated = truncated[:last_space]
+    return truncated + "…"
+
+
+def format_landowner_update(status: str, survey_no: str, market: str, owner_name: str,
+                             ask_psf: float | None = None, notes: str | None = None) -> str:
+    psf_str = f"₹{ask_psf:,.0f}/sqft" if ask_psf else "PSF TBD"
+    note_str = f" | {_safe_truncate(notes)}" if notes else ""
+    return (
+        f"**{status.upper()}** — {market} | Survey {survey_no}\n"
+        f"Owner: {owner_name} | {psf_str}{note_str}"
+    )[:500]
+
+
+def send_landowner_alert(status: str, survey_no: str, market: str, owner_name: str,
+                          ask_psf: float | None = None, notes: str | None = None) -> bool:
+    msg = format_landowner_update(status, survey_no, market, owner_name, ask_psf, notes)
+    try:
+        return send("bd_opportunities", f"Landowner {status.upper()}: {survey_no}", msg)
+    except Exception as exc:
+        logger.warning("[Discord] send_landowner_alert failed: {}", exc)
+        return False
+
+
+def send_gcc_alert(event: dict) -> bool:
+    """Send a GCC demand signal alert to bd_opportunities and gcc_intel channels.
+
+    Fires only for Level 1–2 events with gcc_signal_score ≥ 7.0 and
+    north_bengaluru_impact_score ≥ 0.70. Color reflects maturity:
+      Level 1 (pre-public) → GREEN  — genuine intelligence edge
+      Level 2 (semi-public) → AMBER — still ahead of market consensus
+    """
+    maturity = int(event.get("signal_maturity_level") or 3)
+    color = COLOR_GREEN if maturity == 1 else COLOR_AMBER
+
+    company = event.get("company", "Unknown")
+    corridor = (event.get("nearest_corridor") or "").replace("_", " ").title()
+    score = event.get("gcc_signal_score", 0.0) or 0.0
+    nb = (event.get("north_bengaluru_impact_score") or 0.0) * 100
+    headcount = event.get("planned_headcount")
+    ctc = event.get("median_ctc_l")
+    segment = event.get("primary_housing_segment", "N/A")
+    horizon = event.get("time_horizon", "N/A")
+    source = event.get("source_name", "N/A")
+    entrant = event.get("entrant_type", "N/A")
+    sector = event.get("sector", "N/A")
+    maturity_label = {1: "PRE-PUBLIC", 2: "SEMI-PUBLIC", 3: "PUBLIC", 4: "OPERATIONAL"}.get(
+        maturity, str(maturity)
+    )
+
+    hc_str = f"{headcount:,}" if headcount else "N/A"
+    ctc_str = f"₹{ctc}L" if ctc else "N/A"
+
+    msg = (
+        f"**Sector:** {sector}\n"
+        f"**Entrant:** {entrant}\n"
+        f"**Location:** {event.get('bengaluru_location', 'Bengaluru')}\n"
+        f"**Corridor:** {corridor}\n"
+        f"**Headcount:** {hc_str}\n"
+        f"**CTC Median:** {ctc_str}\n"
+        f"**Housing Segment:** {segment}\n"
+        f"**Signal Score:** {score:.1f}/10.0\n"
+        f"**NB Impact:** {nb:.0f}%\n"
+        f"**Maturity:** Level {maturity} — {maturity_label}\n"
+        f"**Time Horizon:** {horizon}\n"
+        f"**Source:** {source}"
+    )
+
+    title = f"GCC Signal — {company} | {corridor}"
+    try:
+        # Primary: bd_opportunities (BD team sees this)
+        send("bd_opportunities", title, msg, color)
+        # Secondary: gcc_intel (dedicated channel, if configured)
+        send("gcc_intel", title, msg, color)
+        return True
+    except Exception as exc:
+        logger.warning("[Discord] send_gcc_alert failed: {}", exc)
+        return False
+
+
+def send_gcc_weekly_digest(events: list[dict], corridor_scores: dict[str, float]) -> bool:
+    """Send weekly GCC pipeline digest to the intel channel."""
+    if not events and not corridor_scores:
+        return False
+
+    lines = ["**North Bengaluru GCC Pipeline — Weekly Digest**\n"]
+
+    if corridor_scores:
+        lines.append("**Corridor Scores (gcc_north_norm):**")
+        for corridor, norm in sorted(corridor_scores.items(), key=lambda x: -x[1]):
+            bar = "▓" * int(norm * 10) + "░" * (10 - int(norm * 10))
+            lines.append(f"`{corridor.replace('_', ' ').title():<28}` {bar} {norm:.3f}")
+        lines.append("")
+
+    if events:
+        lines.append(f"**Top {min(10, len(events))} Signals This Week:**")
+        for i, evt in enumerate(events[:10], 1):
+            score = evt.get("gcc_signal_score", 0) or 0
+            hc = evt.get("planned_headcount") or 0
+            lines.append(
+                f"{i}. **{evt.get('company', 'N/A')}** ({evt.get('sector', 'N/A')}) "
+                f"— {evt.get('nearest_corridor', '').replace('_', ' ')} "
+                f"| Score {score:.1f} | {hc:,} hires | {evt.get('time_horizon', 'N/A')}"
+            )
+
+    msg = "\n".join(lines)
+    try:
+        return send("intel", "GCC Weekly Digest — North Bengaluru", msg, COLOR_PURPLE)
+    except Exception as exc:
+        logger.warning("[Discord] send_gcc_weekly_digest failed: {}", exc)
+        return False
 
 
 

@@ -862,6 +862,239 @@ def run_locality_validation():
         logger.warning(f"[Scheduler] Locality validation failed: {exc}")
 
 
+def weekly_competitive_digest():
+    """Monday ~07:00 IST competitive pulse — Discord digest to #bd-opportunities.
+    Runs at 01:00 UTC (06:30 IST ≈ 07:00 IST). Wraps all failures gracefully."""
+    try:
+        from intelligence.competitive_intel import CompetitiveIntelEngine
+        from utils.discord_notifier import send_competitive_digest
+
+        engine = CompetitiveIntelEngine()
+        pulse = engine.pulse(market=None, days=7, top_n=5)
+        send_competitive_digest(pulse)
+        n_l = len(pulse.get("new_launches", []))
+        n_m = len(pulse.get("psf_movers", []))
+        n_a = len(pulse.get("absorption_leaders", []))
+        logger.info(
+            "[Scheduler] Competitive digest sent — {} launches, {} movers, {} absorbers",
+            n_l, n_m, n_a,
+        )
+    except Exception as exc:
+        logger.warning("[Scheduler] Competitive digest failed: {}", exc)
+
+
+def weekly_process_audit():
+    """Sunday 03:00 UTC — Process automation audit cycle.
+    LogAnalyst → EfficiencyOptimizer → RunbookDocumenter → Discord #ops summary."""
+    try:
+        from agents.log_analyst_agent import LogAnalystAgent
+        from agents.efficiency_optimizer_agent import EfficiencyOptimizerAgent
+        from agents.runbook_documenter_agent import RunbookDocumenterAgent
+        from utils.discord_notifier import send
+
+        title = "Weekly Process Audit"
+        if _ops_already_alerted(title, cooldown_hours=47):
+            logger.info("[Scheduler] Process audit dedup: already sent within 47h — skipping")
+            return
+
+        log_agent = LogAnalystAgent()
+        log_result = log_agent.run()
+        report = log_result.get("report", {})
+
+        eff_agent = EfficiencyOptimizerAgent()
+        eff_result = eff_agent.run(bottleneck_report=report)
+        proposal = eff_result.get("proposal", {})
+
+        doc_agent = RunbookDocumenterAgent()
+        doc_result = doc_agent.run(bottleneck_report=report, improvement_proposal=proposal)
+
+        summary = (
+            f"Process Audit complete — Bottleneck: {report.get('bottleneck_stage', 'none')} | "
+            f"Finding: {report.get('top_finding', '')[:120]} | "
+            f"Proposal: {proposal.get('title', '')[:80]} | "
+            f"Runbook: {doc_result.get('path', '')}"
+        )
+        if proposal.get("priority") == "HIGH":
+            send(summary, channel="#ops")
+        logger.info("[Scheduler] Process audit complete — {}", summary)
+    except Exception as exc:
+        logger.warning("[Scheduler] Process audit failed (non-fatal): {}", exc)
+
+
+def weekly_pr_brief():
+    """Monday ~07:30 IST PR brief digest — Discord to #bd-opportunities.
+    Runs at 02:00 UTC (07:30 IST). Gathers brand mentions, competitor launches,
+    and generates LinkedIn preview. Never crashes. 23h dedup guard prevents
+    re-firing if scheduler restarts mid-day."""
+    try:
+        from utils.brand_monitor import BrandMentionMonitor, format_pr_brief_digest
+        from intelligence.competitive_intel import CompetitiveIntelEngine
+        from utils.discord_notifier import send
+
+        title = "Weekly PR Brief"
+        if _ops_already_alerted(title, cooldown_hours=23):
+            logger.info("[Scheduler] PR brief dedup: already sent within 23h — skipping")
+            return
+
+        monitor = BrandMentionMonitor()
+        mentions = monitor.scan_mentions("LLS", 7)
+
+        engine = CompetitiveIntelEngine()
+        launches = engine.new_launches(market=None, days=7)
+
+        linkedin_preview = ""
+        try:
+            from utils.content_pipeline import ContentPipeline
+            pipeline = ContentPipeline()
+            result = pipeline.run(market="Yelahanka", survey_no="system", deal_type="pr")
+            linkedin_preview = result.get("linkedin_post", "")
+        except Exception as exc:
+            logger.debug("[Scheduler] PR brief LinkedIn preview skipped: {}", exc)
+
+        digest = format_pr_brief_digest(mentions, launches, linkedin_preview)
+        send("bd_opportunities", title, digest)
+
+        logger.info(
+            "[Scheduler] PR brief sent — {} mentions, {} launches, {} chars",
+            len(mentions), len(launches), len(digest),
+        )
+    except Exception as exc:
+        logger.warning("[Scheduler] Weekly PR brief failed (non-fatal): {}", exc)
+
+
+def run_gcc_daily_scan():
+    """Ingest new GCC events and fire Discord alerts for Level 1–2 signals.
+
+    1. Runs GCCPlugin for each market to pick up new seed + news events.
+    2. IngestEngine writes records to gcc_events table.
+    3. GCCIntel.get_pending_alerts() fetches qualifying events.
+    4. Fires Discord alert per event, marks discord_alert_fired=True.
+    5. Invalidates DemandIntel cache so next demand_score_v2 uses fresh GCC data.
+    """
+    logger.info("[Scheduler] GCC daily scan starting")
+    try:
+        from ingest.plugins.gcc_plugin import GCCPlugin
+        from intelligence.gcc_intel import GCCIntel
+        from utils.discord_notifier import send_gcc_alert
+        from utils.db import get_engine
+        from sqlalchemy import text as _text
+        import dataclasses
+
+        plugin = GCCPlugin()
+        engine = get_engine()
+
+        for market in [m.strip() for m in TARGET_MARKETS]:
+            try:
+                records = plugin.run(market)
+                if not records:
+                    continue
+
+                with engine.begin() as conn:
+                    for rec in records:
+                        d = rec.data
+                        conn.execute(_text("""
+                            INSERT INTO gcc_events (
+                                canonical_id, company, sector, country_of_origin,
+                                bengaluru_location, nearest_corridor, entrant_type,
+                                work_model, signal_maturity_level, is_negative_signal,
+                                north_bengaluru_impact_score, investment_cr,
+                                planned_headcount, headcount_timeline_months,
+                                median_ctc_l, office_sqft,
+                                demand_creation_score, residential_impact_score,
+                                appreciation_impact_score, rental_impact_score,
+                                gcc_signal_score, primary_housing_segment,
+                                time_horizon, estimated_demand_units,
+                                source_name, source_reliability, announced_at,
+                                discord_alert_fired
+                            ) VALUES (
+                                :canonical_id, :company, :sector, :country_of_origin,
+                                :bengaluru_location, :nearest_corridor, :entrant_type,
+                                :work_model, :signal_maturity_level, :is_negative_signal,
+                                :north_bengaluru_impact_score, :investment_cr,
+                                :planned_headcount, :headcount_timeline_months,
+                                :median_ctc_l, :office_sqft,
+                                :demand_creation_score, :residential_impact_score,
+                                :appreciation_impact_score, :rental_impact_score,
+                                :gcc_signal_score, :primary_housing_segment,
+                                :time_horizon, :estimated_demand_units,
+                                :source_name, :source_reliability,
+                                :announced_at::date, :discord_alert_fired
+                            )
+                            ON CONFLICT (canonical_id) DO NOTHING
+                        """), d)
+                logger.info("[Scheduler] GCC scan {}: {} records upserted", market, len(records))
+            except Exception as exc:
+                logger.warning("[Scheduler] GCC scan failed for {}: {}", market, exc)
+
+        # Fire pending alerts
+        intel = GCCIntel(caller="scheduler")
+        pending = intel.get_pending_alerts()
+        for evt in pending:
+            try:
+                evt_dict = dataclasses.asdict(evt) if hasattr(dataclasses, "asdict") else evt.__dict__
+                send_gcc_alert(evt_dict)
+                intel.mark_alert_fired(evt.canonical_id)
+            except Exception as exc:
+                logger.warning("[Scheduler] GCC alert failed for {}: {}", evt.canonical_id, exc)
+
+        # Invalidate DemandIntel cache for all markets
+        from intelligence.demand_intel import DemandIntel
+        for market in [m.strip() for m in TARGET_MARKETS]:
+            try:
+                DemandIntel(caller="scheduler").invalidate_cache(market)
+            except Exception:
+                pass
+
+        logger.info(
+            "[Scheduler] GCC daily scan done — {} pending alerts processed",
+            len(pending),
+        )
+    except Exception as exc:
+        logger.error("[Scheduler] GCC daily scan failed: {}", exc)
+
+
+def run_gcc_weekly_digest():
+    """Compile and send weekly GCC pipeline digest to Discord intel channel."""
+    logger.info("[Scheduler] GCC weekly digest starting")
+    try:
+        from intelligence.gcc_intel import GCCIntel, _MARKET_TO_CORRIDOR
+        from utils.discord_notifier import send_gcc_weekly_digest
+        import dataclasses
+
+        intel = GCCIntel(caller="scheduler")
+
+        # Per-corridor scores
+        corridor_scores: dict[str, float] = {}
+        for market in [m.strip() for m in TARGET_MARKETS]:
+            result = intel.get_gcc_score(market)
+            if result.corridor:
+                corridor_scores[result.corridor] = result.gcc_north_norm
+
+        # Top 10 recent events across all North BLR corridors
+        events = intel.get_events(
+            corridors=list(_MARKET_TO_CORRIDOR.values()),
+            maturity_levels=[1, 2, 3],
+            include_negative=False,
+            limit=10,
+        )
+        events_as_dicts = []
+        for evt in events:
+            try:
+                d = dataclasses.asdict(evt) if hasattr(dataclasses, "asdict") else evt.__dict__
+                events_as_dicts.append(d)
+            except Exception:
+                pass
+
+        send_gcc_weekly_digest(events_as_dicts, corridor_scores)
+        logger.info(
+            "[Scheduler] GCC weekly digest sent — {} events, {} corridors",
+            len(events_as_dicts),
+            len(corridor_scores),
+        )
+    except Exception as exc:
+        logger.error("[Scheduler] GCC weekly digest failed: {}", exc)
+
+
 _backup_lock = False
 
 
@@ -1024,6 +1257,51 @@ if __name__ == "__main__":
         misfire_grace_time=3600,
     )
 
+    # Weekly competitive pulse digest — Monday 01:00 UTC ≈ 06:30 IST ≈ 07:00 IST (T-976)
+    scheduler.add_job(
+        lambda: _safe_job(weekly_competitive_digest, "competitive_pulse_monday"),
+        CronTrigger(day_of_week="mon", hour=1, minute=0, timezone="UTC"),
+        id="competitive_pulse_monday",
+        name="Monday Competitive Intel Pulse Digest",
+        misfire_grace_time=3600,
+    )
+
+    # Weekly PR brief digest — Monday 02:00 UTC ≈ 07:30 IST (Sprint 59, T-999)
+    scheduler.add_job(
+        lambda: _safe_job(weekly_pr_brief, "weekly_pr_brief"),
+        CronTrigger(day_of_week="mon", hour=2, minute=0, timezone="UTC"),
+        id="weekly_pr_brief",
+        name="Monday PR Brief Digest (Brand Mentions + LinkedIn)",
+        misfire_grace_time=3600,
+    )
+
+    # Weekly process audit — Sunday 03:00 UTC (Sprint 61, T-1011)
+    scheduler.add_job(
+        lambda: _safe_job(weekly_process_audit, "weekly_process_audit"),
+        CronTrigger(day_of_week="sun", hour=3, minute=0, timezone="UTC"),
+        id="weekly_process_audit",
+        name="Weekly Process Audit (LogAnalyst → Optimizer → Runbook)",
+        misfire_grace_time=7200,
+    )
+
+    # GCC daily scan — 08:00 IST = 02:30 UTC (Sprint 67 — GATE-71, T-1021)
+    scheduler.add_job(
+        lambda: _safe_job(run_gcc_daily_scan, "gcc_daily_scan"),
+        CronTrigger(hour=2, minute=30, timezone="UTC"),
+        id="gcc_daily_scan",
+        name="GCC Daily Scan (seed + news scan → discord alerts for L1/L2)",
+        misfire_grace_time=3600,
+    )
+
+    # GCC weekly digest — Monday 02:00 UTC = 07:30 IST (Sprint 67 — GATE-71, T-1022)
+    scheduler.add_job(
+        lambda: _safe_job(run_gcc_weekly_digest, "gcc_weekly_digest"),
+        CronTrigger(day_of_week="mon", hour=2, minute=0, timezone="UTC"),
+        id="gcc_weekly_digest",
+        name="Monday GCC Weekly Digest → Discord intel channel",
+        misfire_grace_time=3600,
+    )
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
     logger.info("  01:00 AM IST — Daily pg_dump backup [T-904]")
@@ -1042,6 +1320,11 @@ if __name__ == "__main__":
     logger.info("  Monday 03:30 UTC — Memory conflict detection")
     logger.info("  Monday 03:45 IST — BERTScore quality evaluation")
     logger.info("  Monday 04:00 IST — Weekly memory digest (top-5 facts)")
+    logger.info("  Monday 06:30 IST — Competitive intel pulse digest [T-976]")
+    logger.info("  Monday 07:30 IST — PR brief digest (brand mentions + LinkedIn) [T-999]")
+    logger.info("  Sunday 08:30 IST — Process automation audit (LogAnalyst + Optimizer + Runbook) [T-1011]")
+    logger.info("  Daily 08:00 IST — GCC daily scan (seed + news → L1/L2 alerts) [T-1021]")
+    logger.info("  Monday 07:30 IST — GCC weekly digest (pipeline → Discord intel) [T-1022]")
     logger.info(f"Active jobs: {[j.id for j in scheduler.get_jobs()]}")
 
     scheduler.start()

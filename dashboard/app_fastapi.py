@@ -178,6 +178,10 @@ _READ_ONLY_PATHS = frozenset(
         "/api/registry",
         "/api/opportunity/queue",
         "/api/health/backup",
+        "/api/competitive/pulse",
+        "/api/portfolio",
+        "/api/portfolio/summary",
+        "/api/pr/mentions",
     }
 )
 _READ_ONLY_PREFIXES = (
@@ -187,6 +191,7 @@ _READ_ONLY_PREFIXES = (
     "/api/evaluate/",
     "/api/data/",
     "/api/memory/",
+    "/api/demand/",
 )
 
 
@@ -2722,6 +2727,52 @@ async def health_backup(request: Request):
         return {"last_backup": None, "status": "never_run"}
 
 
+# ── Competitive Intelligence Pulse (T-974) ──────────────────────────────
+
+_pulse_cache: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+_pulse_cache_lock = threading.Lock()
+_PULSE_CACHE_TTL = 14400  # 4 hours
+_PULSE_CACHE_MAX = 500
+
+
+@app.get(
+    "/api/competitive/pulse",
+    tags=["Competitive Intelligence"],
+    summary="Competitive pulse — new launches, PSF movers, absorption leaders",
+)
+@limiter.limit("20/hour")
+async def competitive_pulse(
+    request: Request,
+    market: str | None = Query(default=None, description="Market filter"),
+    days: int = Query(default=7, ge=1, le=365, description="New launch window days"),
+    top_n: int = Query(default=5, ge=1, le=50, description="Absorption leader count"),
+):
+    import time as _time_now
+    safe_market = market or ""
+    cache_key = f"{safe_market}:{days}:{top_n}"
+
+    with _pulse_cache_lock:
+        cached = _pulse_cache.get(cache_key)
+        if cached is not None:
+            ts, data = cached
+            if _time_now.time() < ts:
+                _pulse_cache.move_to_end(cache_key)
+                return data
+
+    try:
+        from intelligence.competitive_intel import CompetitiveIntelEngine
+        engine = CompetitiveIntelEngine()
+        result = engine.pulse(market=market, days=days, top_n=top_n)
+        with _pulse_cache_lock:
+            _pulse_cache[cache_key] = (_time_now.time() + _PULSE_CACHE_TTL, result)
+            if len(_pulse_cache) > _PULSE_CACHE_MAX:
+                _pulse_cache.popitem(last=False)
+        return result
+    except Exception as exc:
+        logger.error("[competitive_pulse] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 # ── Deal Pipeline (T-917) ────────────────────────────────────────────────
 
 
@@ -2941,6 +2992,572 @@ async def update_deal(deal_id: str, body: DealUpdate, request: Request):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+# ── Projects & Tasks (Sprint 58 — T-995) ───────────────────────────────────
+
+
+_VALID_PROJECT_STATUSES = frozenset({
+    "lead", "mou", "loi", "signed", "rera_applied",
+    "construction", "possession", "delivered", "paused",
+})
+
+# Forward progression: projects move linearly through these stages.
+# paused and delivered are terminal. No backward jumps.
+_PROJECT_STAGE_ORDER = [
+    "lead", "mou", "loi", "signed", "rera_applied",
+    "construction", "possession", "delivered",
+]
+_STAGE_RANK = {s: i for i, s in enumerate(_PROJECT_STAGE_ORDER)}
+_VALID_TRANSITIONS = {
+    s: {t for t in _PROJECT_STAGE_ORDER if _STAGE_RANK.get(t, -1) >= _STAGE_RANK.get(s, 0) and t != s}
+    | {"paused"}
+    for s in _PROJECT_STAGE_ORDER
+}
+_VALID_TRANSITIONS["paused"] = set(_PROJECT_STAGE_ORDER)
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    market: str | None = None
+    survey_no: str | None = None
+    deal_type: str | None = None
+    status: str | None = None
+    notes: str | None = None
+    start_date: str | None = None
+    target_close_date: str | None = None
+    source_deal_id: str | None = None
+    source_board_session_id: str | None = None
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    market: str | None = None
+    survey_no: str | None = None
+    deal_type: str | None = None
+    notes: str | None = None
+    start_date: str | None = None
+    target_close_date: str | None = None
+
+
+class ProjectStatusUpdate(BaseModel):
+    status: str
+
+
+class TaskCreate(BaseModel):
+    title: str
+    owner_agent_id: str | None = None
+    dept: str | None = None
+    due_date: str | None = None
+    notes: str | None = None
+
+
+class TaskUpdate(BaseModel):
+    status: str | None = None
+    notes: str | None = None
+
+
+@app.post("/api/projects", tags=["Operations"], status_code=201,
+          summary="Create a new project")
+@limiter.limit("30/hour")
+async def create_project(body: ProjectCreate, request: Request):
+    try:
+        st = (body.status or "lead").lower()
+        if st not in _VALID_PROJECT_STATUSES:
+            return JSONResponse({"error": f"invalid status: {st}"}, status_code=400)
+        if not body.name or len(body.name.strip()) < 1:
+            return JSONResponse({"error": "name is required"}, status_code=400)
+        if len(body.name) > 200:
+            return JSONResponse({"error": "name too long (max 200 chars)"}, status_code=400)
+        if body.notes and len(body.notes) > 5000:
+            return JSONResponse({"error": "notes too long (max 5000 chars)"}, status_code=400)
+
+        with _get_sa_engine().begin() as conn:
+            row = conn.execute(
+                _sa_text("""
+                    INSERT INTO projects (name, market, survey_no, deal_type, status, notes,
+                                          start_date, target_close_date,
+                                          source_deal_id, source_board_session_id)
+                    VALUES (:name, :market, :survey_no, :deal_type, :status, :notes,
+                            :start::date, :target::date,
+                            :deal_id::uuid, :board_id::uuid)
+                    RETURNING id, name, market, survey_no, deal_type, status, notes,
+                              start_date, target_close_date, created_at, updated_at
+                """),
+                {
+                    "name": body.name, "market": body.market,
+                    "survey_no": body.survey_no, "deal_type": body.deal_type,
+                    "status": st, "notes": body.notes,
+                    "start": body.start_date, "target": body.target_close_date,
+                    "deal_id": body.source_deal_id or None,
+                    "board_id": body.source_board_session_id or None,
+                },
+            ).fetchone()
+        return {
+            "id": str(row[0]), "name": row[1], "market": row[2],
+            "survey_no": row[3], "deal_type": row[4], "status": row[5],
+            "notes": row[6],
+            "start_date": row[7].isoformat() if row[7] else None,
+            "target_close_date": row[8].isoformat() if row[8] else None,
+            "created_at": row[9].isoformat() if row[9] else None,
+            "updated_at": row[10].isoformat() if row[10] else None,
+        }
+    except Exception as exc:
+        logger.error("[create_project] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/projects", tags=["Operations"],
+         summary="List projects with optional filters and pagination")
+@limiter.limit("60/minute")
+async def list_projects(
+    request: Request,
+    status: str = Query(default=None),
+    market: str = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=50, ge=1, le=200),
+):
+    try:
+        with _get_sa_engine().connect() as conn:
+            where = []
+            params = {}
+            if status:
+                where.append("p.status = :st")
+                params["st"] = status
+            if market:
+                where.append("p.market ILIKE :mkt")
+                params["mkt"] = f"%{market}%"
+            where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+            # Count total for pagination
+            total = conn.execute(
+                _sa_text(f"SELECT COUNT(*) FROM projects p {where_sql}"),
+                params,
+            ).scalar() or 0
+
+            offset = (page - 1) * per_page
+            rows = conn.execute(
+                _sa_text(f"""
+                    SELECT p.id, p.name, p.market, p.survey_no, p.deal_type, p.status,
+                           p.notes, p.created_at,
+                           EXTRACT(DAY FROM NOW() - p.created_at)::int AS days_in_stage,
+                           COUNT(pt.id) FILTER (WHERE pt.status IN ('todo','in_progress')) AS open_tasks
+                    FROM projects p
+                    LEFT JOIN project_tasks pt ON pt.project_id = p.id
+                    {where_sql}
+                    GROUP BY p.id, p.name, p.market, p.survey_no, p.deal_type, p.status,
+                             p.notes, p.created_at
+                    ORDER BY p.created_at DESC
+                    LIMIT :limit OFFSET :offset
+                """),
+                {**params, "limit": per_page, "offset": offset},
+            ).fetchall()
+
+        result = []
+        for r in rows:
+            result.append({
+                "id": str(r[0]), "name": r[1], "market": r[2],
+                "survey_no": r[3], "deal_type": r[4], "status": r[5],
+                "notes": r[6],
+                "created_at": r[7].isoformat() if r[7] else None,
+                "days_in_stage": int(r[8]) if r[8] else 0,
+                "open_task_count": int(r[9]) if r[9] else 0,
+            })
+        return {"projects": result, "total": total, "page": page, "per_page": per_page}
+    except Exception as exc:
+        logger.error("[list_projects] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/projects/{project_id}", tags=["Operations"],
+         summary="Get project detail with tasks and velocity")
+@limiter.limit("60/minute")
+async def get_project(project_id: str, request: Request):
+    try:
+        pid = str(uuid.UUID(project_id))
+    except ValueError:
+        return JSONResponse({"error": "invalid project_id"}, status_code=400)
+    try:
+        with _get_sa_engine().connect() as conn:
+            proj = conn.execute(
+                _sa_text("""
+                    SELECT id, name, market, survey_no, deal_type, status, notes,
+                           start_date, target_close_date, actual_close_date,
+                           created_at, updated_at,
+                           EXTRACT(DAY FROM NOW() - created_at)::int AS days_in_stage
+                    FROM projects WHERE id = :pid
+                """),
+                {"pid": pid},
+            ).fetchone()
+            if not proj:
+                return JSONResponse({"error": "project not found"}, status_code=404)
+
+            tasks = conn.execute(
+                _sa_text("""
+                    SELECT id, title, owner_agent_id, dept, status, due_date,
+                           completed_at, notes, created_at
+                    FROM project_tasks WHERE project_id = :pid
+                    ORDER BY due_date ASC NULLS LAST, created_at ASC
+                """),
+                {"pid": pid},
+            ).fetchall()
+
+            velocity = conn.execute(
+                _sa_text("""
+                    SELECT from_status, to_status, days_elapsed, transitioned_at
+                    FROM deal_velocity WHERE project_id = :pid
+                    ORDER BY transitioned_at ASC
+                """),
+                {"pid": pid},
+            ).fetchall()
+
+        tasks_list = []
+        for t in tasks:
+            tasks_list.append({
+                "id": str(t[0]), "title": t[1], "owner_agent_id": t[2],
+                "dept": t[3], "status": t[4],
+                "due_date": t[5].isoformat() if t[5] else None,
+                "completed_at": t[6].isoformat() if t[6] else None,
+                "notes": t[7],
+                "created_at": t[8].isoformat() if t[8] else None,
+            })
+
+        stages = []
+        for v in velocity:
+            stages.append({
+                "from_status": v[0], "to_status": v[1],
+                "days_elapsed": int(v[2]) if v[2] else 0,
+                "transitioned_at": v[3].isoformat() if v[3] else None,
+            })
+
+        current_stage = str(proj[5] or "lead")
+        current_stage_days = int(proj[12]) if proj[12] else 0
+
+        return {
+            "project": {
+                "id": str(proj[0]), "name": proj[1], "market": proj[2],
+                "survey_no": proj[3], "deal_type": proj[4], "status": current_stage,
+                "notes": proj[6],
+                "start_date": proj[7].isoformat() if proj[7] else None,
+                "target_close_date": proj[8].isoformat() if proj[8] else None,
+                "actual_close_date": proj[9].isoformat() if proj[9] else None,
+                "created_at": proj[10].isoformat() if proj[10] else None,
+                "updated_at": proj[11].isoformat() if proj[11] else None,
+                "days_in_stage": current_stage_days,
+            },
+            "tasks": tasks_list,
+            "velocity": {"stages": stages, "current_stage": current_stage,
+                          "current_stage_days": current_stage_days},
+        }
+    except Exception as exc:
+        logger.error("[get_project] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.patch("/api/projects/{project_id}", tags=["Operations"],
+           summary="Update project metadata (name, market, notes, dates)")
+@limiter.limit("30/hour")
+async def update_project(project_id: str, body: ProjectUpdate, request: Request):
+    try:
+        pid = str(uuid.UUID(project_id))
+    except ValueError:
+        return JSONResponse({"error": "invalid project_id"}, status_code=400)
+    try:
+        updates = []
+        params = {"pid": pid}
+        for field, col, cast in [
+            ("name", "name", None),
+            ("market", "market", None),
+            ("survey_no", "survey_no", None),
+            ("deal_type", "deal_type", None),
+            ("notes", "notes", None),
+            ("start_date", "start_date", "date"),
+            ("target_close_date", "target_close_date", "date"),
+        ]:
+            val = getattr(body, field, None)
+            if val is not None:
+                updates.append(f"{col} = :{field}")
+                params[field] = val
+
+        if not updates:
+            return JSONResponse({"error": "no fields to update"}, status_code=400)
+
+        updates.append("updated_at = NOW()")
+        set_clause = ", ".join(updates)
+        with _get_sa_engine().begin() as conn:
+            row = conn.execute(
+                _sa_text(f"""
+                    UPDATE projects SET {set_clause} WHERE id = :pid
+                    RETURNING id, name, market, survey_no, deal_type, status, notes,
+                              start_date, target_close_date, created_at, updated_at
+                """),
+                params,
+            ).fetchone()
+        if not row:
+            return JSONResponse({"error": "project not found"}, status_code=404)
+        return {
+            "id": str(row[0]), "name": row[1], "market": row[2],
+            "survey_no": row[3], "deal_type": row[4], "status": row[5],
+            "notes": row[6],
+            "start_date": row[7].isoformat() if row[7] else None,
+            "target_close_date": row[8].isoformat() if row[8] else None,
+            "created_at": row[9].isoformat() if row[9] else None,
+            "updated_at": row[10].isoformat() if row[10] else None,
+        }
+    except Exception as exc:
+        logger.error("[update_project] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/projects/{project_id}/tasks", tags=["Operations"],
+          status_code=201, summary="Add a task to a project")
+@limiter.limit("60/hour")
+async def create_task(project_id: str, body: TaskCreate, request: Request):
+    try:
+        pid = str(uuid.UUID(project_id))
+    except ValueError:
+        return JSONResponse({"error": "invalid project_id"}, status_code=400)
+    if not body.title or len(body.title.strip()) < 1:
+        return JSONResponse({"error": "title is required"}, status_code=400)
+    if len(body.title) > 500:
+        return JSONResponse({"error": "title too long (max 500 chars)"}, status_code=400)
+    try:
+        with _get_sa_engine().begin() as conn:
+            exists = conn.execute(
+                _sa_text("SELECT id FROM projects WHERE id = :pid"),
+                {"pid": pid},
+            ).fetchone()
+            if not exists:
+                return JSONResponse({"error": "project not found"}, status_code=404)
+
+            row = conn.execute(
+                _sa_text("""
+                    INSERT INTO project_tasks (project_id, title, owner_agent_id, dept, due_date, notes)
+                    VALUES (:pid, :title, :owner, :dept, :due::date, :notes)
+                    RETURNING id, title, owner_agent_id, dept, status, due_date, notes, created_at
+                """),
+                {
+                    "pid": pid, "title": body.title,
+                    "owner": body.owner_agent_id, "dept": body.dept,
+                    "due": body.due_date, "notes": body.notes,
+                },
+            ).fetchone()
+        return {
+            "id": str(row[0]), "title": row[1], "owner_agent_id": row[2],
+            "dept": row[3], "status": row[4],
+            "due_date": row[5].isoformat() if row[5] else None,
+            "notes": row[6],
+            "created_at": row[7].isoformat() if row[7] else None,
+        }
+    except Exception as exc:
+        logger.error("[create_task] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.patch("/api/projects/{project_id}/tasks/{task_id}", tags=["Operations"],
+           summary="Update task status/notes (sets completed_at on done)")
+@limiter.limit("60/hour")
+async def update_task(project_id: str, task_id: str, body: TaskUpdate, request: Request):
+    try:
+        pid = str(uuid.UUID(project_id))
+        tid = str(uuid.UUID(task_id))
+    except ValueError:
+        return JSONResponse({"error": "invalid id"}, status_code=400)
+    try:
+        updates = []
+        params = {"pid": pid, "tid": tid}
+        if body.status is not None:
+            if body.status not in ("todo", "in_progress", "done", "blocked"):
+                return JSONResponse({"error": f"invalid status: {body.status}"}, status_code=400)
+            updates.append("status = :st")
+            params["st"] = body.status
+            if body.status == "done":
+                updates.append("completed_at = NOW()")
+        if body.notes is not None:
+            updates.append("notes = :nt")
+            params["nt"] = body.notes
+        if not updates:
+            return JSONResponse({"error": "no fields to update"}, status_code=400)
+
+        set_clause = ", ".join(updates)
+        with _get_sa_engine().begin() as conn:
+            row = conn.execute(
+                _sa_text(f"""
+                    UPDATE project_tasks SET {set_clause}
+                    WHERE id = :tid AND project_id = :pid
+                    RETURNING id, title, status, completed_at, notes
+                """),
+                params,
+            ).fetchone()
+        if not row:
+            return JSONResponse({"error": "task not found"}, status_code=404)
+        return {
+            "id": str(row[0]), "title": row[1], "status": row[2],
+            "completed_at": row[3].isoformat() if row[3] else None,
+            "notes": row[4],
+        }
+    except Exception as exc:
+        logger.error("[update_task] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.patch("/api/projects/{project_id}/status", tags=["Operations"],
+           summary="Update project status (writes deal_velocity row, Discord on loi/signed)")
+@limiter.limit("30/hour")
+async def update_project_status(project_id: str, body: ProjectStatusUpdate, request: Request):
+    try:
+        pid = str(uuid.UUID(project_id))
+    except ValueError:
+        return JSONResponse({"error": "invalid project_id"}, status_code=400)
+
+    new_status = body.status.lower()
+    if new_status not in _VALID_PROJECT_STATUSES:
+        return JSONResponse({"error": f"invalid status: {new_status}"}, status_code=400)
+
+    try:
+        with _get_sa_engine().begin() as conn:
+            current = conn.execute(
+                _sa_text("SELECT id, status, name, market, survey_no, created_at FROM projects WHERE id = :pid"),
+                {"pid": pid},
+            ).fetchone()
+            if not current:
+                return JSONResponse({"error": "project not found"}, status_code=404)
+
+            old_status = str(current[1] or "lead")
+            market_str = str(current[3] or "")
+            survey_str = str(current[4] or "")
+
+            # Guard: reject backward stage transitions
+            if old_status != new_status and old_status != "paused":
+                allowed = _VALID_TRANSITIONS.get(old_status, set())
+                if new_status not in allowed:
+                    return JSONResponse(
+                        {"error": f"cannot transition from '{old_status}' to '{new_status}'"},
+                        status_code=400,
+                    )
+
+            created = current[5]
+            days_elapsed = 0
+            if created:
+                from datetime import timezone
+                delta = datetime.now(timezone.utc) - created
+                days_elapsed = delta.days
+
+            if old_status != new_status:
+                conn.execute(
+                    _sa_text("""
+                        INSERT INTO deal_velocity (project_id, from_status, to_status, days_elapsed)
+                        VALUES (:pid, :from_st, :to_st, :days)
+                    """),
+                    {"pid": pid, "from_st": old_status, "to_st": new_status,
+                     "days": days_elapsed},
+                )
+
+                if new_status == "delivered":
+                    conn.execute(
+                        _sa_text("UPDATE projects SET actual_close_date = CURRENT_DATE WHERE id = :pid"),
+                        {"pid": pid},
+                    )
+
+            row = conn.execute(
+                _sa_text("""
+                    UPDATE projects SET status = :st, updated_at = NOW()
+                    WHERE id = :pid
+                    RETURNING id, name, market, survey_no, status, notes, created_at, updated_at
+                """),
+                {"pid": pid, "st": new_status},
+            ).fetchone()
+
+        if new_status in ("loi", "signed"):
+            try:
+                from utils.discord_notifier import format_deal_alert, send
+                msg = format_deal_alert(new_status, market_str, survey_str)
+                send("bd_opportunities", f"Project {new_status.upper()}: {current[2]}", msg)
+            except Exception as exc:
+                logger.warning("[update_project_status] Discord alert failed: {}", exc)
+
+        return {
+            "id": str(row[0]), "name": row[1], "market": row[2],
+            "survey_no": row[3], "status": row[4], "notes": row[5],
+            "created_at": row[6].isoformat() if row[6] else None,
+            "updated_at": row[7].isoformat() if row[7] else None,
+        }
+    except Exception as exc:
+        logger.error("[update_project_status] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/projects/{project_id}/velocity", tags=["Operations"],
+         summary="Get deal velocity timeline for a project")
+async def get_velocity(project_id: str, request: Request):
+    try:
+        pid = str(uuid.UUID(project_id))
+    except ValueError:
+        return JSONResponse({"error": "invalid project_id"}, status_code=400)
+    try:
+        with _get_sa_engine().connect() as conn:
+            proj = conn.execute(
+                _sa_text("SELECT id, status, created_at FROM projects WHERE id = :pid"),
+                {"pid": pid},
+            ).fetchone()
+            if not proj:
+                return JSONResponse({"error": "project not found"}, status_code=404)
+
+            rows = conn.execute(
+                _sa_text("""
+                    SELECT from_status, to_status, days_elapsed, transitioned_at
+                    FROM deal_velocity WHERE project_id = :pid
+                    ORDER BY transitioned_at ASC
+                """),
+                {"pid": pid},
+            ).fetchall()
+
+        stages = []
+        for r in rows:
+            stages.append({
+                "from_status": r[0], "to_status": r[1],
+                "days_elapsed": int(r[2]) if r[2] else 0,
+                "transitioned_at": r[3].isoformat() if r[3] else None,
+            })
+
+        created = proj[2]
+        current_stage_days = 0
+        if created:
+            from datetime import timezone as _tz
+            delta = datetime.now(_tz.utc) - created
+            current_stage_days = delta.days
+
+        return {
+            "stages": stages,
+            "current_stage": str(proj[1] or "lead"),
+            "current_stage_days": current_stage_days,
+        }
+    except Exception as exc:
+        logger.error("[get_velocity] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.delete("/api/projects/{project_id}/tasks/{task_id}", tags=["Operations"],
+            summary="Delete a task")
+@limiter.limit("30/hour")
+async def delete_task(project_id: str, task_id: str, request: Request):
+    try:
+        pid = str(uuid.UUID(project_id))
+        tid = str(uuid.UUID(task_id))
+    except ValueError:
+        return JSONResponse({"error": "invalid id"}, status_code=400)
+    try:
+        with _get_sa_engine().begin() as conn:
+            result = conn.execute(
+                _sa_text("DELETE FROM project_tasks WHERE id = :tid AND project_id = :pid"),
+                {"pid": pid, "tid": tid},
+            )
+            if result.rowcount == 0:
+                return JSONResponse({"error": "task not found"}, status_code=404)
+        return {"status": "deleted", "id": task_id}
+    except Exception as exc:
+        logger.error("[delete_task] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 # ── LLM Quota (T-924) ──────────────────────────────────────────────────────
 
 
@@ -2975,6 +3592,548 @@ async def llm_quota(request: Request):
     except Exception:
         usage = {p: 0 for p in providers}
     return {"date": today, "usage": usage}
+
+
+# ── PR & Brand Department (Sprint 53 — GATE-61) ──────────────────────────────
+
+
+class ContentGenerateRequest(BaseModel):
+    market: str
+    survey_no: str
+    deal_type: str = "compare"
+    job_id: str | None = None
+
+
+class ContentGenerateResponse(BaseModel):
+    job_id: str
+    status: str
+    linkedin_post: str | None = None
+    instagram_caption: str | None = None
+    project_brief_sections: list[dict] | None = None
+    investor_narrative: str | None = None
+    key_differentiators: list[str] | None = None
+    email_subject: str | None = None
+    project_tagline: str | None = None
+    target_segment: str | None = None
+    risk_acknowledgements: list[str] | None = None
+    generated_at: str | None = None
+
+
+@app.post(
+    "/api/content/generate",
+    response_model=ContentGenerateResponse,
+    tags=["PR & Brand"],
+    summary="Generate brand content (LinkedIn, Instagram, narrative) from IntelPackage",
+    responses={400: {"model": ErrorResponse}},
+)
+@limiter.limit("5/hour")
+async def content_generate(request: Request):
+    """Run PR Head + Content Writer pipeline to produce investor-ready content.
+    Optionally reuse a completed evaluate job_id for context.
+    """
+    import asyncio
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        payload = {}
+
+    market = str(payload.get("market") or "").strip()
+    survey_no = str(payload.get("survey_no") or "").strip()
+    deal_type = str(payload.get("deal_type", "compare")).strip().lower()
+    job_id = payload.get("job_id")
+
+    if not market or not survey_no:
+        return JSONResponse(
+            {"error": "market and survey_no are required"}, status_code=400
+        )
+
+    from utils.content_pipeline import ContentPipeline
+
+    pipeline = ContentPipeline()
+
+    result = await asyncio.to_thread(
+        pipeline.run,
+        market=market,
+        survey_no=survey_no,
+        deal_type=deal_type,
+        job_id=job_id,
+    )
+    return result
+
+
+# ── Landowner CRM (Sprint 56 — T-986) ──────────────────────────────────────
+
+
+class LandownerCreate(BaseModel):
+    survey_no: str
+    market: str
+    owner_name: str
+    contact_phone: str | None = None
+    contact_type: str | None = None
+    approach_status: str | None = None
+    ask_psf: float | None = None
+    notes: str | None = None
+
+
+class LandownerUpdate(BaseModel):
+    owner_name: str | None = None
+    contact_phone: str | None = None
+    contact_type: str | None = None
+    approach_status: str | None = None
+    ask_psf: float | None = None
+    notes: str | None = None
+
+
+_VALID_CONTACT_TYPES = {"primary", "agent", "legal_heir", "power_of_attorney"}
+_VALID_APPROACH_STATUSES = {"cold", "warm", "meeting_done", "mou", "loi", "closed_won", "closed_lost"}
+
+
+_LANDOWNER_COLS = (
+    "id, survey_no, market, owner_name, contact_phone, "
+    "contact_type, approach_status, ask_psf, notes, created_at, updated_at"
+)
+
+
+def _row_to_landowner_dict(r) -> dict:
+    return {
+        "id": str(r[0]),
+        "survey_no": r[1],
+        "market": r[2],
+        "owner_name": r[3],
+        "contact_phone": r[4],
+        "contact_type": r[5],
+        "approach_status": r[6],
+        "ask_psf": float(r[7]) if r[7] else None,
+        "notes": r[8],
+        "created_at": r[9].isoformat() if r[9] else None,
+        "updated_at": r[10].isoformat() if r[10] else None,
+    }
+
+
+def _fire_landowner_discord(status: str, survey_no: str, market: str, owner_name: str,
+                              ask_psf: float | None, notes: str | None) -> None:
+    if status not in ("mou", "loi"):
+        return
+    from utils.discord_notifier import send_landowner_alert
+    send_landowner_alert(status, survey_no, market, owner_name, ask_psf, notes)
+
+
+@app.post("/api/landowners", tags=["Landowner CRM"], status_code=201,
+          summary="Create a new landowner contact")
+@limiter.limit("30/minute")
+async def create_landowner(body: LandownerCreate, request: Request):
+    if body.contact_type and body.contact_type not in _VALID_CONTACT_TYPES:
+        return JSONResponse({"error": f"invalid contact_type: {body.contact_type}"}, status_code=400)
+    status = body.approach_status or "cold"
+    if status not in _VALID_APPROACH_STATUSES:
+        return JSONResponse({"error": f"invalid approach_status: {status}"}, status_code=400)
+    try:
+        with _get_sa_engine().begin() as conn:
+            result = conn.execute(
+                _sa_text(f"""INSERT INTO landowner_contacts
+                    (survey_no, market, owner_name, contact_phone, contact_type, approach_status, ask_psf, notes)
+                    VALUES (:sn, :mkt, :on, :cp, :ct, :st, :ap, :nt)
+                    RETURNING {_LANDOWNER_COLS}"""),
+                {"sn": body.survey_no, "mkt": body.market, "on": body.owner_name,
+                 "cp": body.contact_phone, "ct": body.contact_type or "primary",
+                 "st": status, "ap": body.ask_psf, "nt": body.notes},
+            )
+            row = result.fetchone()
+        _fire_landowner_discord(status, body.survey_no, body.market, body.owner_name,
+                                body.ask_psf, body.notes)
+        return _row_to_landowner_dict(row)
+    except Exception as exc:
+        logger.error("[create_landowner] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/landowners", tags=["Landowner CRM"],
+         summary="List landowner contacts with filters")
+@limiter.limit("60/minute")
+async def list_landowners(
+    request: Request,
+    market: str = Query(default=None),
+    status: str = Query(default=None),
+    page: int = Query(default=1, ge=1, description="Page number"),
+    per_page: int = Query(default=50, ge=1, le=200, description="Items per page"),
+):
+    try:
+        with _get_sa_engine().connect() as conn:
+            where_parts = []
+            params = {}
+            if market:
+                where_parts.append("lc.market ILIKE :mkt")
+                params["mkt"] = f"%{market}%"
+            if status:
+                where_parts.append("lc.approach_status = :st")
+                params["st"] = status
+            where_sql = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+            count_row = conn.execute(
+                _sa_text(f"SELECT COUNT(*) FROM landowner_contacts lc {where_sql}"),
+                params,
+            ).scalar()
+            total = count_row or 0
+
+            offset = (page - 1) * per_page
+            rows = conn.execute(
+                _sa_text(f"""SELECT {_LANDOWNER_COLS}
+                     FROM landowner_contacts lc
+                     {where_sql}
+                     ORDER BY lc.created_at DESC
+                     LIMIT :lim OFFSET :off"""),
+                {**params, "lim": per_page, "off": offset},
+            ).fetchall()
+        return {
+            "data": [_row_to_landowner_dict(r) for r in rows],
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+                "total_pages": max(1, (total + per_page - 1) // per_page),
+            },
+        }
+    except Exception as exc:
+        logger.error("[list_landowners] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/landowners/pipeline", tags=["Landowner CRM"],
+         summary="Pipeline summary: counts by status + avg ask_psf per market")
+@limiter.limit("30/minute")
+async def landowner_pipeline(request: Request):
+    try:
+        with _get_sa_engine().connect() as conn:
+            by_status = conn.execute(
+                _sa_text("""SELECT approach_status, COUNT(*) as cnt
+                     FROM landowner_contacts
+                     GROUP BY approach_status
+                     ORDER BY cnt DESC"""),
+            ).fetchall()
+            by_market = conn.execute(
+                _sa_text("""SELECT market, COUNT(*) as cnt, AVG(ask_psf) as avg_psf
+                     FROM landowner_contacts
+                     GROUP BY market
+                     ORDER BY cnt DESC"""),
+            ).fetchall()
+        return {
+            "by_status": {r[0]: r[1] for r in by_status},
+            "by_market": {
+                r[0]: {"count": r[1], "avg_ask_psf": round(float(r[2]), 2) if r[2] else None}
+                for r in by_market
+            },
+        }
+    except Exception as exc:
+        logger.error("[landowner_pipeline] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/landowners/{landowner_id}", tags=["Landowner CRM"],
+         summary="Get a single landowner contact")
+@limiter.limit("60/minute")
+async def get_landowner(landowner_id: str, request: Request):
+    try:
+        tid = str(uuid.UUID(landowner_id))
+    except ValueError:
+        return JSONResponse({"error": "invalid landowner_id"}, status_code=400)
+    try:
+        with _get_sa_engine().connect() as conn:
+            row = conn.execute(
+                _sa_text(f"SELECT {_LANDOWNER_COLS} FROM landowner_contacts WHERE id = :tid"),
+                {"tid": tid},
+            ).fetchone()
+        if not row:
+            return JSONResponse({"error": "landowner not found"}, status_code=404)
+        return _row_to_landowner_dict(row)
+    except Exception as exc:
+        logger.error("[get_landowner] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.patch("/api/landowners/{landowner_id}", tags=["Landowner CRM"],
+           summary="Update landowner contact fields")
+@limiter.limit("30/minute")
+async def update_landowner(landowner_id: str, body: LandownerUpdate, request: Request):
+    try:
+        tid = str(uuid.UUID(landowner_id))
+    except ValueError:
+        return JSONResponse({"error": "invalid landowner_id"}, status_code=400)
+    try:
+        with _get_sa_engine().begin() as conn:
+            existing = conn.execute(
+                _sa_text("SELECT id, survey_no, market, owner_name, approach_status, ask_psf FROM landowner_contacts WHERE id = :tid"),
+                {"tid": tid},
+            ).fetchone()
+            if not existing:
+                return JSONResponse({"error": "landowner not found"}, status_code=404)
+            updates = []
+            params = {}
+            if body.owner_name is not None:
+                updates.append("owner_name = :on")
+                params["on"] = body.owner_name
+            if body.contact_phone is not None:
+                updates.append("contact_phone = :cp")
+                params["cp"] = body.contact_phone
+            if body.contact_type is not None:
+                if body.contact_type not in _VALID_CONTACT_TYPES:
+                    return JSONResponse({"error": f"invalid contact_type: {body.contact_type}"}, status_code=400)
+                updates.append("contact_type = :ct")
+                params["ct"] = body.contact_type
+            if body.approach_status is not None:
+                if body.approach_status not in _VALID_APPROACH_STATUSES:
+                    return JSONResponse({"error": f"invalid approach_status: {body.approach_status}"}, status_code=400)
+                updates.append("approach_status = :st")
+                params["st"] = body.approach_status
+            if body.ask_psf is not None:
+                updates.append("ask_psf = :ap")
+                params["ap"] = body.ask_psf
+                new_ask_psf = body.ask_psf
+            else:
+                new_ask_psf = float(existing[5]) if existing[5] else None
+            if body.notes is not None:
+                updates.append("notes = :nt")
+                params["nt"] = body.notes
+            if not updates:
+                return JSONResponse({"error": "no fields to update"}, status_code=400)
+            updates.append("updated_at = NOW()")
+            set_clause = ", ".join(updates)
+            params["tid"] = tid
+            row = conn.execute(
+                _sa_text(f"UPDATE landowner_contacts SET {set_clause} WHERE id = :tid RETURNING {_LANDOWNER_COLS}"),
+                params,
+            ).fetchone()
+        new_status = body.approach_status or existing[4]
+        _fire_landowner_discord(new_status, existing[1], existing[2], existing[3],
+                                new_ask_psf, body.notes)
+        return _row_to_landowner_dict(row)
+    except Exception as exc:
+        logger.error("[update_landowner] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+# ── Demand Intelligence Panel ──────────────────────────────────────────────────
+
+
+@app.get("/api/demand/{market}", tags=["Demand Intelligence"],
+         summary="Demand signals for a market")
+async def demand_api(market: str, request: Request):
+    from intelligence.demand_intel import DemandIntel
+    di = DemandIntel(caller="api")
+    ds = di.get_signals(market)
+    return {
+        "market": ds.market,
+        "market_found": ds.market_found,
+        "collected_at": ds.collected_at,
+        "avg_listing_psf": ds.avg_listing_psf,
+        "median_listing_psf": ds.median_listing_psf,
+        "listing_trend_30d_pct": ds.listing_trend_30d_pct,
+        "listing_count_30d": ds.listing_count_30d,
+        "absorption_pct": ds.absorption_pct,
+        "months_of_supply": ds.months_of_supply,
+        "demand_signal": ds.demand_signal,
+        "demand_score": ds.demand_score,
+        "demand_score_v2": ds.demand_score_v2,
+        "ticket_size_median_cr": ds.ticket_size_median_cr,
+        "days_on_market_p50": ds.days_on_market_p50,
+        "config_absorption": ds.config_absorption,
+        "absorption_trend": ds.absorption_trend,
+        "days_on_market_by_config": ds.days_on_market_by_config,
+        "avg_news_sentiment": ds.avg_news_sentiment,
+        "kaveri_monthly_approvals": ds.kaveri_monthly_approvals,
+        "signals": ds.signals,
+    }
+
+
+@app.get("/demand", tags=["Demand Intelligence"],
+         summary="Demand Intelligence dashboard panel")
+def demand_panel(request: Request):
+    return templates.TemplateResponse(request, "demand_intelligence.html")
+
+
+# ── Projects Page (Sprint 58) ───────────────────────────────────────────────
+
+
+@app.get("/projects", tags=["Operations"],
+         summary="Operations Projects dashboard panel")
+def projects_panel(request: Request):
+    return templates.TemplateResponse(request, "projects.html")
+
+
+# ── Content Studio Page ──────────────────────────────────────────────────────
+
+
+@app.get("/content", tags=["PR & Brand"], summary="Content Studio dashboard panel")
+def content_studio(request: Request):
+    return templates.TemplateResponse(request, "content_studio.html")
+
+
+# ── PR Studio Panel (Sprint 59) ─────────────────────────────────────────────
+
+
+@app.get("/pr", tags=["PR & Brand"], summary="PR Studio dashboard panel")
+def pr_studio(request: Request):
+    return templates.TemplateResponse(request, "pr_studio.html")
+
+
+@app.get("/api/pr/mentions", tags=["PR & Brand"],
+         summary="Brand mentions + competitor launches for PR Studio")
+@limiter.limit("30/minute")
+async def pr_mentions(
+    days: int = Query(default=7, description="Days to look back"),
+    request: Request = None,
+):
+    from utils.brand_monitor import BrandMentionMonitor
+    monitor = BrandMentionMonitor()
+    brand_mentions = monitor.scan_mentions("LLS", days)
+
+    launches = []
+    try:
+        from intelligence.competitive_intel import CompetitiveIntelEngine
+        engine = CompetitiveIntelEngine()
+        launches = engine.new_launches(market=None, days=30)
+    except Exception as exc:
+        logger.warning("[pr_mentions] Competitor engine failed (non-fatal): %s", exc)
+
+    return {
+        "mentions": brand_mentions,
+        "mention_count": len(brand_mentions),
+        "competitor_launches": launches,
+        "launch_count": len(launches),
+        "days_window": days,
+    }
+
+
+# ── Process Audit Panel (Sprint 61) ──────────────────────────────────────────
+
+
+@app.get("/process-audit", tags=["Process Automation"],
+         summary="Process Audit dashboard panel")
+def process_audit_panel(request: Request):
+    import os as _os
+    from pathlib import Path as _Path
+    return templates.TemplateResponse(request, "process_audit.html", {
+        "process_audit_dir": _Path(__file__).resolve().parent / "templates",
+    })
+
+
+@app.get("/api/process-audit/report", tags=["Process Automation"],
+         summary="Latest BottleneckReport + ImprovementProposal")
+@limiter.limit("30/minute")
+async def process_audit_report(request: Request):
+    from agents.log_analyst_agent import LogAnalystAgent
+    from agents.efficiency_optimizer_agent import EfficiencyOptimizerAgent
+    from agents.runbook_documenter_agent import RunbookDocumenterAgent
+    from pathlib import Path
+    import os
+
+    log_agent = LogAnalystAgent()
+    log_result = log_agent.run()
+    report = log_result.get("report", {})
+
+    eff_agent = EfficiencyOptimizerAgent()
+    eff_result = eff_agent.run(bottleneck_report=report)
+    proposal = eff_result.get("proposal", {})
+
+    doc_agent = RunbookDocumenterAgent()
+    doc_result = doc_agent.run(bottleneck_report=report, improvement_proposal=proposal)
+    runbook_path = doc_result.get("path", "")
+
+    sol_dir = Path(__file__).resolve().parent.parent / "docs" / "solutions" / "process-automation"
+    runbooks = []
+    if sol_dir.exists():
+        runbooks = sorted([str(p.relative_to(sol_dir.parent.parent)) for p in sol_dir.glob("*.md")])
+
+    return {
+        "report": report,
+        "proposal": proposal,
+        "runbook_path": runbook_path,
+        "runbooks": runbooks,
+    }
+
+
+# ── Portfolio (LLS Track Record) ──────────────────────────────────────────────
+
+_PORTFOLIO_COLS = (
+    "id, project_name, location, market, segment, total_units, sold_units, "
+    "launched_date, possession_date, land_cost_cr, gdv_cr, realized_irr_pct, "
+    "status, rera_no, notes, created_at"
+)
+
+
+def _row_to_portfolio_dict(r) -> dict:
+    return {
+        "id": str(r[0]),
+        "project_name": r[1],
+        "location": r[2],
+        "market": r[3],
+        "segment": r[4],
+        "total_units": r[5],
+        "sold_units": r[6],
+        "launched_date": r[7].isoformat() if r[7] else None,
+        "possession_date": r[8].isoformat() if r[8] else None,
+        "land_cost_cr": float(r[9]) if r[9] else None,
+        "gdv_cr": float(r[10]) if r[10] else None,
+        "realized_irr_pct": float(r[11]) if r[11] else None,
+        "status": r[12],
+        "rera_no": r[13],
+        "notes": (r[14][:2000] + "...") if r[14] and len(r[14]) > 2000 else r[14],
+        "created_at": r[15].isoformat() if r[15] else None,
+    }
+
+
+@app.get("/api/portfolio", tags=["Portfolio"],
+         summary="List LLS portfolio (ordered by launch date DESC)")
+@limiter.limit("60/minute")
+async def list_portfolio(request: Request):
+    try:
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text(f"SELECT {_PORTFOLIO_COLS} FROM lls_portfolio ORDER BY launched_date DESC"),
+            ).fetchall()
+        items = [_row_to_portfolio_dict(r) for r in rows]
+        logger.info("[list_portfolio] returned %d projects", len(items))
+        return {"data": items}
+    except Exception as exc:
+        logger.error("[list_portfolio] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/portfolio/summary", tags=["Portfolio"],
+         summary="LLS portfolio summary stats (single-query batched)")
+@limiter.limit("60/minute")
+async def portfolio_summary(request: Request):
+    try:
+        with _get_sa_engine().connect() as conn:
+            agg = conn.execute(
+                _sa_text("""
+                    SELECT
+                        COUNT(*) AS total,
+                        COUNT(*) FILTER (WHERE status = 'delivered') AS delivered,
+                        COALESCE(AVG(realized_irr_pct) FILTER (WHERE status = 'delivered' AND realized_irr_pct IS NOT NULL), 0) AS avg_irr,
+                        COALESCE(SUM(total_units) FILTER (WHERE status = 'delivered'), 0) AS total_units
+                    FROM lls_portfolio
+                """),
+            ).fetchone()
+            total = agg[0] or 0
+            delivered = agg[1] or 0
+            avg_irr = agg[2] or None
+            total_units = agg[3] or 0
+            market_rows = conn.execute(
+                _sa_text("SELECT DISTINCT market FROM lls_portfolio WHERE market IS NOT NULL"),
+            ).fetchall()
+        markets = [r[0] for r in market_rows if r[0]]
+        logger.info("[portfolio_summary] %d/%d delivered, %.1f%% avg IRR",
+                     delivered, total, avg_irr or 0)
+        return {
+            "total_projects": total,
+            "delivered_count": delivered,
+            "total_delivered_sqft_est": total_units * 1200,
+            "avg_realized_irr_pct": round(float(avg_irr), 2) if avg_irr else None,
+            "markets_covered": markets,
+        }
+    except Exception as exc:
+        logger.error("[portfolio_summary] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 # ── Telegram Webhook ──────────────────────────────────────────────────────────
@@ -3020,7 +4179,7 @@ async def telegram_webhook(request: Request):
     from interface.telegram_bot import parse_message, dispatch_evaluation
     parsed = parse_message(text)
 
-    if parsed.confidence > 0.6:
+    if parsed.confidence > 0.5:
         # Run blocking httpx.post in a thread — must not block the event loop.
         result = await asyncio.to_thread(dispatch_evaluation, parsed)
         status = result.get("status", "unknown")
@@ -3049,6 +4208,244 @@ async def telegram_webhook(request: Request):
         "[Telegram] webhook: market=%s conf=%.2f", parsed.market, parsed.confidence
     )
     return JSONResponse({"ok": True})
+
+
+# ── GCC Demand Scout routes (Sprint 67 — GATE-71) ────────────────────────────
+
+@app.get("/api/gcc/events")
+async def gcc_events(
+    request: Request,
+    market: str | None = Query(None, description="Filter by market (Yelahanka / Devanahalli / Hebbal)"),
+    corridor: str | None = Query(None, description="Filter by corridor slug"),
+    maturity: str | None = Query(None, description="Comma-separated maturity levels e.g. 1,2"),
+    include_negative: bool = Query(True),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """List GCC demand events with optional corridor / maturity filters.
+
+    Returns:
+        { "events": [...], "total": N, "gcc_north_norm": {market: float} }
+    """
+    try:
+        from intelligence.gcc_intel import GCCIntel, _MARKET_TO_CORRIDOR
+
+        maturity_levels: list[int] | None = None
+        if maturity:
+            try:
+                maturity_levels = [int(x.strip()) for x in maturity.split(",") if x.strip()]
+            except ValueError:
+                return JSONResponse({"error": "maturity must be comma-separated integers"}, status_code=400)
+
+        corridors: list[str] | None = None
+        if corridor:
+            corridors = [c.strip() for c in corridor.split(",") if c.strip()]
+
+        intel = GCCIntel()
+        events = intel.get_events(
+            market=market,
+            corridors=corridors,
+            maturity_levels=maturity_levels,
+            include_negative=include_negative,
+            limit=limit,
+            offset=offset,
+        )
+
+        # Per-market gcc_north_norm summary
+        north_scores: dict[str, float] = {}
+        for mkt in ("Yelahanka", "Devanahalli", "Hebbal"):
+            try:
+                r = intel.get_gcc_score(mkt)
+                north_scores[mkt] = r.gcc_north_norm
+            except Exception:
+                pass
+
+        return JSONResponse({
+            "events": [
+                {
+                    "id": e.id,
+                    "canonical_id": e.canonical_id,
+                    "company": e.company,
+                    "sector": e.sector,
+                    "country_of_origin": e.country_of_origin,
+                    "bengaluru_location": e.bengaluru_location,
+                    "nearest_corridor": e.nearest_corridor,
+                    "entrant_type": e.entrant_type,
+                    "work_model": e.work_model,
+                    "signal_maturity_level": e.signal_maturity_level,
+                    "is_negative_signal": e.is_negative_signal,
+                    "north_bengaluru_impact_score": e.north_bengaluru_impact_score,
+                    "planned_headcount": e.planned_headcount,
+                    "median_ctc_l": e.median_ctc_l,
+                    "gcc_signal_score": e.gcc_signal_score,
+                    "primary_housing_segment": e.primary_housing_segment,
+                    "time_horizon": e.time_horizon,
+                    "estimated_demand_units": e.estimated_demand_units,
+                    "source_name": e.source_name,
+                    "source_reliability": e.source_reliability,
+                    "announced_at": str(e.announced_at) if e.announced_at else None,
+                    "discord_alert_fired": e.discord_alert_fired,
+                }
+                for e in events
+            ],
+            "total": len(events),
+            "gcc_north_norm": north_scores,
+        })
+    except Exception as exc:
+        logger.warning("[API] /api/gcc/events failed: {}", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/gcc/north-score")
+async def gcc_north_score(request: Request):
+    """Return gcc_north_norm for all three primary markets.
+
+    This is the value that feeds demand_score_v2 as the 5th (GCC) component.
+    Rising norm + flat absorption = demand accumulating before listing data shows it.
+
+    Returns:
+        {
+          "Yelahanka": { "gcc_north_norm": 0.42, "event_count_12m": 4, ... },
+          ...
+        }
+    """
+    try:
+        from intelligence.gcc_intel import GCCIntel
+        intel = GCCIntel()
+        result = {}
+        for mkt in ("Yelahanka", "Devanahalli", "Hebbal"):
+            r = intel.get_gcc_score(mkt)
+            result[mkt] = {
+                "gcc_north_norm": r.gcc_north_norm,
+                "corridor": r.corridor,
+                "event_count_12m": r.event_count_12m,
+                "event_count_90d": r.event_count_90d,
+                "total_headcount_12m": r.total_headcount_12m,
+                "avg_gcc_signal_score": r.avg_gcc_signal_score,
+                "top_sectors": r.top_sectors,
+                "dominant_housing_segment": r.dominant_housing_segment,
+                "has_level1_signal": r.has_level1_signal,
+                "negative_suppressor_applied": r.negative_suppressor_applied,
+                "signals": r.signals,
+                "collected_at": r.collected_at,
+            }
+        return JSONResponse(result)
+    except Exception as exc:
+        logger.warning("[API] /api/gcc/north-score failed: {}", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/gcc/events")
+async def gcc_create_event(request: Request):
+    """Manually ingest a single GCC event.
+
+    Body: GCC event dict matching gcc_events schema. gcc_signal_score is
+    computed server-side from sub-scores if not supplied.
+
+    Returns: { "canonical_id": "...", "gcc_signal_score": 7.2 }
+    """
+    try:
+        body: dict = await request.json()
+    except Exception:
+        body = {}
+
+    if not body.get("company") or not body.get("bengaluru_location"):
+        return JSONResponse(
+            {"error": "company and bengaluru_location are required"},
+            status_code=400,
+        )
+
+    try:
+        from ingest.plugins.gcc_plugin import (
+            _make_canonical_id, _resolve_corridor, _compute_gcc_score,
+            _CORRIDOR_NB_IMPACT,
+        )
+        from utils.db import get_engine
+        from sqlalchemy import text as _t
+
+        announced = body.get("announced_at") or str(__import__("datetime").date.today())
+        cid = _make_canonical_id(
+            body["company"],
+            body.get("bengaluru_location", "Bengaluru"),
+            announced,
+        )
+
+        corridor, nb_impact = _resolve_corridor(body.get("bengaluru_location", ""))
+        if not body.get("nearest_corridor"):
+            body["nearest_corridor"] = corridor
+        if body.get("north_bengaluru_impact_score") is None:
+            body["north_bengaluru_impact_score"] = nb_impact
+
+        gcc_score = _compute_gcc_score(body)
+
+        with get_engine().begin() as conn:
+            conn.execute(_t("""
+                INSERT INTO gcc_events (
+                    canonical_id, company, sector, country_of_origin,
+                    bengaluru_location, nearest_corridor, entrant_type,
+                    work_model, signal_maturity_level, is_negative_signal,
+                    north_bengaluru_impact_score, investment_cr,
+                    planned_headcount, headcount_timeline_months,
+                    median_ctc_l, office_sqft,
+                    demand_creation_score, residential_impact_score,
+                    appreciation_impact_score, rental_impact_score,
+                    gcc_signal_score, primary_housing_segment,
+                    time_horizon, source_name, source_reliability,
+                    announced_at, discord_alert_fired
+                ) VALUES (
+                    :canonical_id, :company, :sector, :country_of_origin,
+                    :bengaluru_location, :nearest_corridor, :entrant_type,
+                    :work_model, :signal_maturity_level, :is_negative_signal,
+                    :nb_impact, :investment_cr,
+                    :planned_headcount, :headcount_timeline_months,
+                    :median_ctc_l, :office_sqft,
+                    :demand_creation_score, :residential_impact_score,
+                    :appreciation_impact_score, :rental_impact_score,
+                    :gcc_signal_score, :primary_housing_segment,
+                    :time_horizon, :source_name, :source_reliability,
+                    :announced_at::date, FALSE
+                )
+                ON CONFLICT (canonical_id) DO NOTHING
+            """), {
+                "canonical_id": cid,
+                "company": body["company"],
+                "sector": body.get("sector"),
+                "country_of_origin": body.get("country_of_origin"),
+                "bengaluru_location": body.get("bengaluru_location"),
+                "nearest_corridor": body.get("nearest_corridor"),
+                "entrant_type": body.get("entrant_type", "EXPANSION"),
+                "work_model": body.get("work_model", "HYBRID"),
+                "signal_maturity_level": body.get("signal_maturity_level", 3),
+                "is_negative_signal": bool(body.get("is_negative_signal", False)),
+                "nb_impact": body["north_bengaluru_impact_score"],
+                "investment_cr": body.get("investment_cr"),
+                "planned_headcount": body.get("planned_headcount"),
+                "headcount_timeline_months": body.get("headcount_timeline_months"),
+                "median_ctc_l": body.get("median_ctc_l"),
+                "office_sqft": body.get("office_sqft"),
+                "demand_creation_score": body.get("demand_creation_score"),
+                "residential_impact_score": body.get("residential_impact_score"),
+                "appreciation_impact_score": body.get("appreciation_impact_score"),
+                "rental_impact_score": body.get("rental_impact_score"),
+                "gcc_signal_score": gcc_score,
+                "primary_housing_segment": body.get("primary_housing_segment"),
+                "time_horizon": body.get("time_horizon"),
+                "source_name": body.get("source_name"),
+                "source_reliability": body.get("source_reliability", "PRESS"),
+                "announced_at": announced,
+            })
+
+        from intelligence.gcc_intel import GCCIntel
+        for mkt in ("Yelahanka", "Devanahalli", "Hebbal"):
+            GCCIntel().invalidate_cache(mkt)
+
+        return JSONResponse(
+            {"canonical_id": cid, "gcc_signal_score": gcc_score},
+            status_code=201,
+        )
+    except Exception as exc:
+        logger.warning("[API] POST /api/gcc/events failed: {}", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────

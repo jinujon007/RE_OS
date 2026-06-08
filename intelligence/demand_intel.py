@@ -1,15 +1,18 @@
 """
-RE_OS — Demand Intelligence Module (Sprint 62)
-DemandIntel.get_signals(market): analyses listing trends, absorption velocity,
-news sentiment, RERA launch velocity, and developer confidence to produce a
-composite BULLISH/BEARISH/NEUTRAL demand signal with explainer flags.
+RE_OS — Demand Intelligence Module (Sprint 55 V2 + Sprint 62 V1)
 
-Signal scoring uses weighted factors:
+DemandIntel.get_signals(market): weighted composite demand signal with v1 and v2
+scoring. V2 (Sprint 55) adds config_absorption, days_on_market, ticket_size_median,
+absorption_trend, days_on_market_by_config, and demand_score_v2 (composite 0-1).
+
+Signal scoring (v1):
   - months_of_supply (2x): <9 undersupply=bullish, >18 oversupply=bearish
   - price_momentum (1.5x): 30d non-overlapping PSF change
   - absorption_rate (1.5x): >60% = bullish, <30% = bearish
   - news_sentiment (1x): avg FinBERT score
   - new_launches (1x): 90d RERA registration velocity
+V2 composite (demand_score_v2): absorption_norm×0.40 + kaveri_norm×0.30 +
+  listing_norm×0.20 + config_balance×0.10, bounded [0, 1].
 """
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -69,12 +72,26 @@ class DemandSignals:
     demand_signal: str = "NEUTRAL"
     demand_score: float = 0.0
 
+    # V2 demand intelligence signals (Sprint 55 — GATE-63)
+    config_absorption: dict[str, float] = field(default_factory=dict)
+    days_on_market_p50: float | None = None
+    ticket_size_median_cr: float | None = None
+    demand_score_v2: float = 0.0
+    absorption_trend: list[dict] = field(default_factory=list)
+    days_on_market_by_config: dict[str, float] = field(default_factory=dict)
+
+    # V3 GCC demand signal (Sprint 67 — GATE-71)
+    # Forward-looking corporate pipeline pressure — the only leading indicator
+    # in demand_score_v2. Rising norm + flat absorption = demand accumulating
+    # before listing data has registered it.
+    gcc_north_norm: float | None = None
+
     signals: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
         trend = f"{(self.listing_trend_30d_pct or 0.0):+.1f}%"
         score = f"{(self.demand_score or 0.0):.1f}"
-        # Prefer official Kaveri MoS when available
+        score_v2 = f"{(self.demand_score_v2 or 0.0):.2f}"
         mos = self.months_of_supply
         mos_str = f"{mos:.1f}" if mos is not None else "N/A"
         kav = (
@@ -83,14 +100,37 @@ class DemandSignals:
             else ""
         )
         signal = self.demand_signal or "UNKNOWN"
-        return (
-            f"[DemandSignals:{self.market}] {signal} (score={score}) | "
-            f"PSF momentum {trend} | {mos_str} MoS{kav}"
-        )
+        parts = [
+            f"[DemandSignals:{self.market}] {signal} (v1={score}, v2={score_v2})",
+            f"PSF momentum {trend}",
+            f"{mos_str} MoS{kav}",
+        ]
+        if self.gcc_north_norm is not None:
+            parts.append(f"GCC norm={self.gcc_north_norm:.3f}")
+        if self.days_on_market_p50 is not None:
+            parts.append(f"DoM {self.days_on_market_p50:.0f}d")
+        if self.ticket_size_median_cr:
+            parts.append(f"ticket ₹{self.ticket_size_median_cr:.2f}Cr")
+        if self.config_absorption:
+            parts.append(f"config_abs {len(self.config_absorption)} configs")
+        if self.absorption_trend:
+            parts.append(f"trend {len(self.absorption_trend)}mo")
+        if self.days_on_market_by_config:
+            parts.append(f"DoM_config {len(self.days_on_market_by_config)} configs")
+        return " | ".join(parts)
 
 
 class DemandIntel:
     """Demand signal analysis with weighted composite scoring.
+
+    Risk Register:
+    | Risk | Impact | Mitigation |
+    |------|--------|------------|
+    | DB connection timeout | Degraded signals (empty fields) | Each _load_* wrapped in try/except; get_signals returns partial data |
+    | Portal NRI scrape failure | No nri_query events | _fetch_nri_listings returns empty list, logs debug |
+    | Config absorption N+1 | 6 extra roundtrips per market | Optimized to single GROUP BY queries (R2 fix) |
+    | Kaveri portal unreachable | No kaveri_velocity_ratio | Silent skip, logs debug |
+    | MarketCache stale data | 15-min stale signals | TTL-based expiry; invalidate_cache() available |
 
     Usage:
         ds = DemandIntel().get_signals("Yelahanka")
@@ -100,6 +140,27 @@ class DemandIntel:
     def __init__(self, caller: str = ""):
         self._cache = MarketCache()
         self._caller = caller or "DemandIntel"
+
+    def _with_db(self, market: str, fn, *args, **kwargs):
+        """Execute *fn(conn, mi, *args, **kwargs)* with a validated DB connection.
+
+        Returns fn's return value on success, empty/None on failure.
+        Handles sanitization, validation, DB connection, and error logging.
+        """
+        m = sanitize_market(market)
+        if not m:
+            return None
+        mi = validate_market(m)
+        if mi is None:
+            return None
+        try:
+            from utils.db import get_engine
+            from sqlalchemy import text
+            with get_engine(pool_size=2, max_overflow=1).connect() as conn:
+                return fn(conn, mi, *args, **kwargs)
+        except Exception as exc:
+            logger.warning("[{}] DB op failed for {}: {}", self._caller, market, exc)
+        return None
 
     def get_signals(self, market: str) -> DemandSignals:
         m = sanitize_market(market)
@@ -139,11 +200,20 @@ class DemandIntel:
                 self._load_developer_activity(conn, ds, mi)
                 self._load_absorption_velocity(conn, ds, mi)
                 self._load_kaveri_registration_velocity(conn, ds, mi)
+                self._load_config_absorption(conn, ds, mi)
+                self._load_days_on_market(conn, ds, mi)
+                self._load_ticket_size_median(conn, ds, mi)
+                self._load_absorption_trend(conn, ds, mi)
+                self._load_days_on_market_by_config(conn, ds, mi)
 
+            self._load_gcc_signal(ds, mi)
             self._compute_price_momentum(ds)
             self._compute_demand_signal(ds)
+            self._compute_demand_score_v2(ds)
             self._cache.set(_CACHE_NS, m, ds, is_positive=True)
 
+        except (MemoryError, KeyboardInterrupt, SystemExit):
+            raise
         except Exception as exc:
             logger.warning("[{}] get_signals({}) failed: {}", self._caller, m, exc)
 
@@ -152,15 +222,229 @@ class DemandIntel:
     def invalidate_cache(self, market: str | None = None):
         self._cache.invalidate(_CACHE_NS, sanitize_market(market) if market else None)
 
+    def get_config_absorption(self, market: str) -> dict[str, float]:
+        result = self._with_db(market, self._query_config_absorption)
+        return result if result is not None else {}
+
+    # Normalization ceiling for kaveri_velocity_ratio in demand_score_v2.
+    # Derived from observed max across 3 monitored SROs (Jala/224, Devanahalli/118, Hebbal/208)
+    # relative to state avg 3,580/month. 3.0x means a market doing ~10,740/month (top-decile).
+    _KAVERI_VELOCITY_CEILING = 3.0
+
+    def _query_config_absorption(self, conn, mi: dict) -> dict[str, float]:
+        from sqlalchemy import text
+        with timed_intel_query("demand_config_absorption"):
+            rows = conn.execute(text("""
+                SELECT
+                    CASE
+                        WHEN rp.unit_mix::text ILIKE '%1BHK%' OR rp.project_type ILIKE '%1BHK%' THEN '1BHK'
+                        WHEN rp.unit_mix::text ILIKE '%2BHK%' OR rp.project_type ILIKE '%2BHK%' THEN '2BHK'
+                        WHEN rp.unit_mix::text ILIKE '%3BHK%' OR rp.project_type ILIKE '%3BHK%' THEN '3BHK'
+                        ELSE 'OTHER'
+                    END AS bhk_label,
+                    AVG(rp.absorption_pct) AS avg_absorption
+                FROM rera_projects rp
+                JOIN micro_markets mm ON mm.id = rp.micro_market_id
+                WHERE mm.slug = :slug
+                  AND rp.is_active = TRUE
+                  AND rp.total_units IS NOT NULL AND rp.total_units > 0
+                  AND (
+                      rp.unit_mix::text ILIKE '%1BHK%' OR rp.project_type ILIKE '%1BHK%'
+                      OR rp.unit_mix::text ILIKE '%2BHK%' OR rp.project_type ILIKE '%2BHK%'
+                      OR rp.unit_mix::text ILIKE '%3BHK%' OR rp.project_type ILIKE '%3BHK%'
+                  )
+                GROUP BY bhk_label
+                ORDER BY bhk_label
+            """), {"slug": mi["slug"]}).fetchall()
+        return {str(r[0]): round(float(r[1]), 2) for r in rows if r[0] and r[1]}
+
+    def _load_config_absorption(self, conn, ds: DemandSignals, mi: dict):
+        ds.config_absorption = self._query_config_absorption(conn, mi)
+
+    def _load_days_on_market(self, conn, ds: DemandSignals, mi: dict):
+        """Median days to reach 80% absorption across all projects in market.
+
+        Uses launch_date + sold_units/total_units ratio as a proxy for
+        absorption velocity. Projects with <80% sold are excluded. Returns
+        None when fewer than 3 projects have reached the 80% threshold.
+        """
+        from sqlalchemy import text
+        with timed_intel_query("demand_days_on_market"):
+            rows = conn.execute(text("""
+                SELECT rp.launch_date, rp.sold_units, rp.total_units
+                FROM rera_projects rp
+                JOIN micro_markets mm ON mm.id = rp.micro_market_id
+                WHERE mm.slug = :slug
+                  AND rp.launch_date IS NOT NULL
+                  AND rp.total_units IS NOT NULL AND rp.total_units > 0
+                  AND rp.sold_units IS NOT NULL
+            """), {"slug": mi["slug"]}).fetchall()
+        days_list = []
+        for row in rows:
+            launch_date, sold_units, total_units = row
+            if launch_date is None or total_units is None or total_units <= 0:
+                continue
+            absorption_pct = (sold_units / total_units) * 100
+            if absorption_pct < 80:
+                continue
+            days_since_launch = (datetime.now(timezone.utc).date() - launch_date).days
+            if days_since_launch <= 0:
+                continue
+            days_list.append(days_since_launch)
+        if len(days_list) >= 3:
+            sorted_days = sorted(days_list)
+            ds.days_on_market_p50 = float(sorted_days[len(sorted_days) // 2])
+
+    def _load_ticket_size_median(self, conn, ds: DemandSignals, mi: dict):
+        from sqlalchemy import text
+        with timed_intel_query("demand_ticket_size_median"):
+            row = conn.execute(text("""
+                SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY (l.price_psf * 1000.0 / 100.0))
+            FROM listings l
+            JOIN micro_markets mm ON mm.id = l.micro_market_id
+            WHERE mm.slug = :slug
+              AND l.price_psf IS NOT NULL AND l.price_psf > 1000 AND l.price_psf < 50000
+              AND l.transaction_type = 'Sale'
+              AND l.last_seen_at >= NOW() - INTERVAL '90 days'
+        """), {"slug": mi["slug"]}).fetchone()
+        if row and row[0] is not None:
+            ds.ticket_size_median_cr = round(float(row[0]), 2)
+
+    def _compute_demand_score_v2(self, ds: DemandSignals):
+        """Composite demand score [0, 1] from up to 5 weighted factors.
+
+        V3 weights (Sprint 67 — GATE-71, 5 components):
+          absorption_pct_norm  × 0.35  (was 0.40)
+          kaveri_norm          × 0.25  (was 0.30)
+          listing_count_norm   × 0.18  (was 0.20)
+          config_balance       × 0.07  (was 0.10)
+          gcc_north_norm       × 0.15  (NEW — forward-looking GCC pipeline)
+
+        gcc_north_norm is the only leading indicator in the composite. Rising
+        gcc + flat absorption = demand accumulating before the listing market
+        has registered it — the primary early-acquisition signal for LLS.
+
+        Falls back to a clamped transform of v1 demand_score when no
+        v2/v3 components are available: max(0, (v1 + 5) / 10, 1).
+        """
+        components: list[float] = []
+        weights: list[float] = []
+
+        if ds.absorption_pct is not None:
+            components.append(min(ds.absorption_pct / 100.0, 1.0))
+            weights.append(0.35)
+
+        if ds.kaveri_velocity_ratio is not None:
+            components.append(min(ds.kaveri_velocity_ratio / self._KAVERI_VELOCITY_CEILING, 1.0))
+            weights.append(0.25)
+
+        if ds.listing_count_30d > 0:
+            listing_norm = min(ds.listing_count_30d / 200.0, 1.0)
+            components.append(listing_norm)
+            weights.append(0.18)
+
+        if ds.config_absorption:
+            values = [v for v in ds.config_absorption.values() if v is not None]
+            if values:
+                observed_range = max(values) - min(values)
+                if max(values) > min(values):
+                    # Normalize by observed range: absorption_pct is 0-100, so
+                    # range/100 converts to [0, 1] imbalance. 1.0 - that = balance.
+                    # Clamp: if values are fraction 0-1 instead of 0-100, this
+                    # still produces a valid [0, 1] balance score.
+                    balance = 1.0 - min(observed_range / 100.0, 1.0)
+                else:
+                    balance = 1.0
+                components.append(max(0.0, min(balance, 1.0)))
+                weights.append(0.07)
+
+        # 5th component: GCC forward-looking pipeline (Sprint 67)
+        if ds.gcc_north_norm is not None and ds.gcc_north_norm >= 0.0:
+            components.append(min(ds.gcc_north_norm, 1.0))
+            weights.append(0.15)
+
+        if components:
+            total_weight = sum(weights)
+            ds.demand_score_v2 = round(
+                sum(c * w for c, w in zip(components, weights)) / total_weight, 4
+            )
+        else:
+            ds.demand_score_v2 = round(max(0.0, min((ds.demand_score + 5.0) / 10.0, 1.0)), 4)
+
+    def get_absorption_trend(self, market: str, months: int = 6) -> list[dict]:
+        result = self._with_db(market, self._query_absorption_trend, months)
+        return result if result is not None else []
+
+    def _query_absorption_trend(self, conn, mi: dict, months: int = 6) -> list[dict]:
+        from sqlalchemy import text
+        with timed_intel_query("demand_absorption_trend"):
+            rows = conn.execute(text("""
+                SELECT
+                TO_CHAR(DATE_TRUNC('month', ps.snapshot_date), 'YYYY-MM') AS month,
+                AVG(rp.absorption_pct) AS avg_absorption_pct,
+                COUNT(DISTINCT ps.rera_project_id) AS project_count
+            FROM project_snapshots ps
+            JOIN rera_projects rp ON rp.id = ps.rera_project_id
+            JOIN micro_markets mm ON mm.id = rp.micro_market_id
+            WHERE mm.slug = :slug
+              AND ps.snapshot_date >= CURRENT_DATE - (INTERVAL '1 month' * :months)
+              AND rp.absorption_pct IS NOT NULL
+            GROUP BY DATE_TRUNC('month', ps.snapshot_date)
+            ORDER BY month ASC
+        """), {"slug": mi["slug"], "months": months}).fetchall()
+        return [
+            {
+                "month": str(r[0]),
+                "avg_absorption_pct": round(float(r[1]), 2) if r[1] else 0.0,
+                "project_count": int(r[2]) if r[2] else 0,
+            }
+            for r in rows
+        ]
+
+    def _load_absorption_trend(self, conn, ds: DemandSignals, mi: dict):
+        ds.absorption_trend = self._query_absorption_trend(conn, mi, months=6)
+
+    def days_on_market_by_config(self, market: str) -> dict[str, float]:
+        result = self._with_db(market, self._query_days_on_market_by_config)
+        return result if result is not None else {}
+
+    def _query_days_on_market_by_config(self, conn, mi: dict) -> dict[str, float]:
+        from sqlalchemy import text
+        with timed_intel_query("demand_days_on_market_by_config"):
+            rows = conn.execute(text("""
+                SELECT
+                    CASE
+                        WHEN rp.unit_mix::text ILIKE '%1BHK%' OR rp.project_type ILIKE '%1BHK%' THEN '1BHK'
+                        WHEN rp.unit_mix::text ILIKE '%2BHK%' OR rp.project_type ILIKE '%2BHK%' THEN '2BHK'
+                        WHEN rp.unit_mix::text ILIKE '%3BHK%' OR rp.project_type ILIKE '%3BHK%' THEN '3BHK'
+                        ELSE 'OTHER'
+                    END AS bhk_label,
+                    AVG(EXTRACT(DAY FROM (CURRENT_DATE - rp.launch_date))) AS avg_days
+                FROM rera_projects rp
+                JOIN micro_markets mm ON mm.id = rp.micro_market_id
+                WHERE mm.slug = :slug
+                  AND rp.launch_date IS NOT NULL
+                  AND rp.total_units IS NOT NULL AND rp.total_units > 0
+                  AND (
+                      rp.unit_mix::text ILIKE '%1BHK%' OR rp.project_type ILIKE '%1BHK%'
+                      OR rp.unit_mix::text ILIKE '%2BHK%' OR rp.project_type ILIKE '%2BHK%'
+                      OR rp.unit_mix::text ILIKE '%3BHK%' OR rp.project_type ILIKE '%3BHK%'
+                  )
+                  AND rp.sold_units IS NOT NULL
+                  AND (rp.sold_units::DECIMAL / rp.total_units) >= 0.5
+                GROUP BY bhk_label
+                ORDER BY bhk_label
+            """), {"slug": mi["slug"]}).fetchall()
+        return {str(r[0]): float(round(float(r[1]))) for r in rows if r[0] and r[1]}
+
+    def _load_days_on_market_by_config(self, conn, ds: DemandSignals, mi: dict):
+        ds.days_on_market_by_config = self._query_days_on_market_by_config(conn, mi)
+
     def _load_listing_trends(self, conn, ds: DemandSignals, mi: dict):
         from sqlalchemy import text
-        period_90_start = "NOW() - INTERVAL '90 days'"
-        period_30_start = "NOW() - INTERVAL '30 days'"
-        period_60_start = "NOW() - INTERVAL '60 days'"
-        period_31_start = "NOW() - INTERVAL '31 days'"
 
         with timed_intel_query("demand_listing_30d"):
-            row30 = conn.execute(text(f"""
+            row30 = conn.execute(text("""
                 SELECT
                     PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY l.price_psf) AS median_psf,
                     AVG(l.price_psf) AS avg_psf,
@@ -169,28 +453,28 @@ class DemandIntel:
                 JOIN micro_markets mm ON mm.id = l.micro_market_id
                 WHERE mm.slug = :slug
                   AND l.price_psf IS NOT NULL AND l.price_psf > 1000 AND l.price_psf < 50000
-                  AND l.last_seen_at >= {period_30_start}
+                  AND l.last_seen_at >= NOW() - INTERVAL '30 days'
             """), {"slug": mi["slug"]}).fetchone()
 
         with timed_intel_query("demand_listing_90d_prior"):
-            row90_prior = conn.execute(text(f"""
+            row90_prior = conn.execute(text("""
                 SELECT AVG(l.price_psf) AS avg_psf, COUNT(*) AS cnt
                 FROM listings l
                 JOIN micro_markets mm ON mm.id = l.micro_market_id
                 WHERE mm.slug = :slug
                   AND l.price_psf IS NOT NULL AND l.price_psf > 1000 AND l.price_psf < 50000
-                  AND l.last_seen_at >= {period_60_start}
-                  AND l.last_seen_at < {period_31_start}
+                  AND l.last_seen_at >= NOW() - INTERVAL '60 days'
+                  AND l.last_seen_at < NOW() - INTERVAL '31 days'
             """), {"slug": mi["slug"]}).fetchone()
 
         with timed_intel_query("demand_listing_90d"):
-            row90 = conn.execute(text(f"""
+            row90 = conn.execute(text("""
                 SELECT AVG(l.price_psf) AS avg_psf, COUNT(*) AS cnt
                 FROM listings l
                 JOIN micro_markets mm ON mm.id = l.micro_market_id
                 WHERE mm.slug = :slug
                   AND l.price_psf IS NOT NULL AND l.price_psf > 1000 AND l.price_psf < 50000
-                  AND l.last_seen_at >= {period_90_start}
+                  AND l.last_seen_at >= NOW() - INTERVAL '90 days'
             """), {"slug": mi["slug"]}).fetchone()
 
         if row30:
@@ -360,6 +644,17 @@ class DemandIntel:
 
         except Exception as exc:
             logger.debug("[DemandIntel] Kaveri registration velocity failed for {}: {}", mi["name"], exc)
+
+    def _load_gcc_signal(self, ds: DemandSignals, mi: dict):
+        """Load gcc_north_norm from GCCIntel — the forward-looking GCC pipeline score."""
+        try:
+            from intelligence.gcc_intel import GCCIntel
+            result = GCCIntel(caller="DemandIntel").get_gcc_score(mi["name"])
+            ds.gcc_north_norm = result.gcc_north_norm
+            if result.signals:
+                ds.signals.extend(result.signals)
+        except Exception as exc:
+            logger.debug("[DemandIntel] gcc signal load failed for {}: {}", mi["name"], exc)
 
     def _compute_price_momentum(self, ds: DemandSignals):
         if ds.listing_trend_30d_pct is not None:
