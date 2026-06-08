@@ -121,6 +121,6 @@ evaluate>=0.4.0  # BERTScore weekly eval
 datasets>=2.18.0  # eval harness
 
 # Testing
-pytest>=7.0
+pytest>=9.0.3
 pytest-mock>=3.0
 pytest-cov>=4.0
