@@ -1,14 +1,20 @@
 """
-RE_OS — Distressed Developer Scanner (Sprint 39 — Data Foundation)
-────────────────────────────────────────────────────────────────────
-Queries rera_projects for developers with delayed/incomplete projects
-and computes a distress score.
+RE_OS — Distressed Developer Scanner (Sprint 39 → Sprint 72)
+─────────────────────────────────────────────────────────────
+Two responsibilities, one canonical score:
 
-distress_score = (LEAST(avg_delay_months/24, 1.0) * 0.4) + (LEAST(incomplete_ratio, 1.0) * 0.3) + (LEAST(complaint_proxy, 1.0) * 0.3)
-All three components are clamped to [0,1] — max score = 1.0, threshold = 0.6.
+1. scan_distressed_developers() — queries rera_projects for raw delay/
+   incompletion stats.  Returns a preliminary sort score for ranking only
+   (not persisted).  Callers that need the authoritative blended score
+   should call compute_developer_distress_score() explicitly.
 
-Data already in DB — zero new scraping required.
-Returns ranked list of distressed developers for JD/JV targeting.
+2. compute_developer_distress_score() — SINGLE CANONICAL formula:
+       min(stall_ratio*0.55 + nclt_flag*0.35 + bda_flag*0.10, 1.0)
+   Reads from developer_distress_signals; persists under signal_type='computed'.
+   All downstream consumers (OpportunityEngine, BD context, Board Room) use
+   this function — never the inline scan formula.
+
+Score threshold for alerts: 0.6.  Max score: 1.0.
 """
 
 from __future__ import annotations
@@ -49,7 +55,7 @@ def compute_developer_distress_score(developer_name: str, market: str) -> float:
     """
     developer_name = " ".join((developer_name or "").split())
     market = " ".join((market or "").split())
-    if not developer_name or not market:
+    if not developer_name or not market or market.lower() == "unknown":
         return 0.0
 
     try:
@@ -140,11 +146,15 @@ def scan_distressed_developers(market: str | None = None,
         Ranked list of DistressedDeveloper, highest score first.
         Empty list on DB error or no matches.
 
-    Score formula (all components normalized to [0,1] — max score = 1.0):
-        distress_score = LEAST(avg_delay_months / 24.0, 1.0) * 0.4
-                       + LEAST(overdue_projects / total_projects, 1.0) * 0.3
-                       + LEAST(complaint_count / total_projects, 1.0) * 0.3
-        24 months = maximum delay reference (normalization cap).
+    Preliminary sort score (delay/overdue/complaint — for ranking only):
+        sort_score = LEAST(avg_delay_months / 24.0, 1.0) * 0.4
+                   + LEAST(overdue_projects / total_projects, 1.0) * 0.3
+                   + LEAST(complaint_count / total_projects, 1.0) * 0.3
+
+    This score is NOT the canonical distress score.  For the authoritative
+    blended score (stall_ratio × 0.55 + nclt_flag × 0.35 + bda_flag × 0.10)
+    call compute_developer_distress_score(developer_name, market) explicitly.
+    DistressedPlugin.run() does this automatically after Phase 4 & 5.
     """
     records: list[DistressedDeveloper] = []
     max_results = min(max(max_results, 1), 100)
@@ -157,7 +167,7 @@ def scan_distressed_developers(market: str | None = None,
                     WITH dev_stats AS (
                         SELECT
                             d.name AS developer_name,
-                            COALESCE(mm.name, 'Unknown') AS market,
+                            mm.name AS market,
                             COUNT(r.id) AS total_projects,
                             COUNT(CASE WHEN r.is_active THEN 1 END) AS active_projects,
                             COUNT(CASE WHEN r.delay_months > 0 THEN 1 END) AS delayed_projects,
@@ -179,8 +189,11 @@ def scan_distressed_developers(market: str | None = None,
                             ) AS complaint_count
                         FROM developers d
                         JOIN rera_projects r ON r.developer_id = d.id
+                        -- INNER JOIN enforces a known market; NULL micro_market_id rows
+                        -- are excluded rather than silently bucketed as 'Unknown'.
                         JOIN micro_markets mm ON mm.id = r.micro_market_id
-                        WHERE (:market_name IS NULL OR mm.name ILIKE :market_name)
+                        WHERE mm.name IS NOT NULL
+                          AND (:market_name IS NULL OR mm.name ILIKE :market_name)
                         GROUP BY d.name, mm.name
                     )
                     SELECT

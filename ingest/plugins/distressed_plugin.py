@@ -203,38 +203,43 @@ class DistressedPlugin(DataPlugin):
         ]
 
     def _detect_nclt_from_news(self, market: str) -> list[dict]:
-        """Group insolvency-related news mentions by known developer."""
+        """Match insolvency-related news against ALL developers in the developers table.
+
+        Replaces the old hardcoded 7-name CASE statement.  Performs a cross-join
+        between news_articles (last 180 days, NCLT/insolvency/bankruptcy keywords)
+        and the developers table, using ILIKE for flexible name matching so Grade B/C
+        developers — the primary JD/JV targets — are captured alongside Grade A firms.
+        """
         market = self._normalize_market(market)
         try:
             with get_engine().connect() as conn:
                 rows = conn.execute(
                     text(
                         """
-                        WITH matched AS (
-                            SELECT
-                                CASE
-                                    WHEN LOWER(COALESCE(title, '') || ' ' || COALESCE(content, '')) LIKE '%brigade%' THEN 'Brigade'
-                                    WHEN LOWER(COALESCE(title, '') || ' ' || COALESCE(content, '')) LIKE '%prestige%' THEN 'Prestige'
-                                    WHEN LOWER(COALESCE(title, '') || ' ' || COALESCE(content, '')) LIKE '%sobha%' THEN 'Sobha'
-                                    WHEN LOWER(COALESCE(title, '') || ' ' || COALESCE(content, '')) LIKE '%godrej%' THEN 'Godrej'
-                                    WHEN LOWER(COALESCE(title, '') || ' ' || COALESCE(content, '')) LIKE '%puravankara%' THEN 'Puravankara'
-                                    WHEN LOWER(COALESCE(title, '') || ' ' || COALESCE(content, '')) LIKE '%mantri%' THEN 'Mantri'
-                                    WHEN LOWER(COALESCE(title, '') || ' ' || COALESCE(content, '')) LIKE '%total environment%' THEN 'Total Environment'
-                                    ELSE NULL
-                                END AS developer_name
+                        WITH insolvency_news AS (
+                            SELECT id, title, content
                             FROM news_articles
                             WHERE created_at >= NOW() - INTERVAL '180 days'
-                              AND (:market IS NULL OR COALESCE(title, '') ILIKE :market_like OR COALESCE(content, '') ILIKE :market_like)
+                              AND (:market IS NULL OR COALESCE(title, '') ILIKE :market_like
+                                   OR COALESCE(content, '') ILIKE :market_like)
                               AND (
                                   LOWER(COALESCE(title, '') || ' ' || COALESCE(content, '')) LIKE '%nclt%'
                                   OR LOWER(COALESCE(title, '') || ' ' || COALESCE(content, '')) LIKE '%insolvency%'
                                   OR LOWER(COALESCE(title, '') || ' ' || COALESCE(content, '')) LIKE '%bankruptcy%'
                               )
+                        ),
+                        matched AS (
+                            SELECT
+                                d.name AS developer_name,
+                                COUNT(DISTINCT n.id) AS mention_count
+                            FROM developers d
+                            JOIN insolvency_news n
+                              ON LOWER(COALESCE(n.title, '') || ' ' || COALESCE(n.content, ''))
+                                 LIKE '%' || LOWER(d.name) || '%'
+                            GROUP BY d.name
                         )
-                        SELECT developer_name, COUNT(*) AS mention_count
+                        SELECT developer_name, mention_count
                         FROM matched
-                        WHERE developer_name IS NOT NULL
-                        GROUP BY developer_name
                         ORDER BY mention_count DESC, developer_name ASC
                         """
                     ),

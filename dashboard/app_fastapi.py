@@ -361,10 +361,18 @@ from utils.db import get_engine as _get_sa_engine
 
 _API_KEY = os.environ.get("DASHBOARD_API_KEY", "")
 if not _API_KEY:
-    logging.warning(
-        "[RE_OS] DASHBOARD_API_KEY is not set - all /api endpoints are publicly "
-        "accessible. Set DASHBOARD_API_KEY in .env before exposing port 8050."
-    )
+    _allow_empty = os.environ.get("DASHBOARD_API_KEY_ALLOW_EMPTY", "").lower() in ("1", "true", "yes")
+    if _allow_empty:
+        logging.warning(
+            "[RE_OS] DASHBOARD_API_KEY is not set — DASHBOARD_API_KEY_ALLOW_EMPTY=true "
+            "overrides the hard error. Port 8050 is publicly accessible."
+        )
+    else:
+        raise RuntimeError(
+            "DASHBOARD_API_KEY is not set. All /api endpoints would be publicly accessible. "
+            "Set DASHBOARD_API_KEY in .env, or set DASHBOARD_API_KEY_ALLOW_EMPTY=true to "
+            "explicitly permit unauthenticated access (e.g. local dev only)."
+        )
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -440,15 +448,14 @@ def _start_pipeline_for_market(market: str) -> tuple[dict, int]:
         else:
             slug = MARKET_SLUG.get(market, market.lower())
             log_dest = f"/app/logs/{slug}.log"
-        _log_fh = open(log_dest, "a")
-        proc = subprocess.Popen(
-            cmd,
-            cwd="/app",
-            shell=False,
-            stdout=_log_fh,
-            stderr=_log_fh,
-        )
-        _log_fh.close()
+        with open(log_dest, "a") as _log_fh:
+            proc = subprocess.Popen(
+                cmd,
+                cwd="/app",
+                shell=False,
+                stdout=_log_fh,
+                stderr=_log_fh,
+            )
         started = datetime.now().isoformat()
         _running[market] = {"proc": proc, "started": started}
         logger.info(

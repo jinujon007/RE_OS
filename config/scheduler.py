@@ -97,35 +97,6 @@ def run_single_market_rera(market: str):
     _send_rera_alert(market, job_start)
 
 
-def run_listings_scan():
-    """DEPRECATED — superseded by IngestEngine (T-671). No longer registered as a scheduler job."""
-    logger.warning("[Scheduler] run_listings_scan() called directly — use IngestEngine instead")
-    from scrapers.listings_scraper import ListingsScraper
-    from config.checkpointer import Checkpointer
-
-    logger.info("Scheduler: Starting listings scan")
-    scraper = ListingsScraper()
-    cp = Checkpointer()
-
-    total = 0
-    failures = 0
-
-    for market in [m.strip() for m in TARGET_MARKETS]:
-        try:
-            listings = scraper.scrape_market(market)
-            cp.save(market, "listings_scraped", listings)
-            count = len(listings or [])
-            total += count
-            logger.info(f"  Listings scan: {market} -> {count} listings")
-        except Exception as e:
-            failures += 1
-            logger.error(f"  Listings scan failed for {market}: {e}")
-
-    logger.info(
-        f"Scheduler: Listings scan complete — total={total}, failures={failures}"
-    )
-
-
 def run_memory_decay():
     """Weekly memory decay — reduce confidence of stale facts, delete below 0.3 (T-298)."""
     from utils.agent_memory import decay_memories
@@ -233,11 +204,6 @@ def run_news_sentiment_scoring():
         )
     except Exception as exc:
         logger.warning(f"[Scheduler] Sentiment scoring failed (non-fatal): {exc}")
-
-
-def run_yelahanka_refresh():
-    """DEPRECATED — superseded by IngestEngine (T-671). No longer registered as a scheduler job."""
-    logger.warning("[Scheduler] run_yelahanka_refresh() called directly — use IngestEngine instead")
 
 
 def run_market_snapshot():
@@ -458,7 +424,16 @@ def recover_stuck_board_sessions():
 def run_distressed_developer_scan():
     """Scan for distressed developers and alert via Discord if score > 0.6.
     7-day cooldown per developer prevents daily re-fire of unchanged signals.
+    Skips if IngestEngine (which also runs DistressedPlugin) is still in progress
+    to avoid Discord alerts based on partially-updated scores.
     """
+    global _ingest_running
+    if _ingest_running:
+        logger.warning(
+            "[DistressedDev] IngestEngine still running — standalone scan deferred "
+            "to avoid partial-score alerts. Will run at next scheduled trigger."
+        )
+        return
     try:
         from utils.distressed_developer import (
             scan_distressed_developers,
@@ -486,39 +461,6 @@ def run_distressed_developer_scan():
         logger.warning(f"[Scheduler] Distressed developer scan failed: {exc}")
 
 
-def run_igr_transaction_scrape():
-    """DEPRECATED — superseded by IngestEngine (T-671). No longer registered as a scheduler job."""
-    logger.warning("[Scheduler] run_igr_transaction_scrape() called directly — use IngestEngine instead")
-    from scrapers.igr_karnataka import IGRTransactionScout
-    for market in ["Yelahanka", "Devanahalli", "Hebbal"]:
-        try:
-            scout = IGRTransactionScout()
-            transactions = scout.run(market=market, days_back=30)
-            if transactions:
-                stats = scout.insert_transactions(transactions, market=market)
-                logger.info(
-                    f"[IGRScout] {market}: {stats['inserted']} inserted, "
-                    f"{stats['skipped']} skipped, {stats['failed']} failed"
-                )
-            else:
-                logger.info(f"[IGRScout] {market}: 0 transactions found")
-        except Exception as exc:
-            logger.warning(f"[Scheduler] IGR scrape failed for {market}: {exc}")
-
-
-def run_kaveri_scrape():
-    """DEPRECATED — superseded by IngestEngine (T-671). No longer registered as a scheduler job."""
-    logger.warning("[Scheduler] run_kaveri_scrape() called directly — use IngestEngine instead")
-    from scrapers.kaveri_karnataka import KaveriScraper
-    for market in ["Yelahanka", "Devanahalli", "Hebbal"]:
-        try:
-            scraper = KaveriScraper()
-            gv = scraper.scrape_guidance_values(market)
-            logger.info(f"[KaveriScraper] {market}: {len(gv)} guidance value records")
-        except Exception as exc:
-            logger.warning(f"[Scheduler] Kaveri scrape failed for {market}: {exc}")
-
-
 def run_ingest_engine():
     """Combined ingest pipeline — runs at 02:00 IST by default.
     Replaces 6 separate cron jobs (3 RERA + listings + kaveri + IGR).
@@ -527,7 +469,11 @@ def run_ingest_engine():
     IMPORTANT: All schedule times in PLUGIN_SCHEDULES are in **IST** (UTC+5:30).
     This function converts current UTC to IST before comparing, so
     ``day_of_week`` and ``hour`` checks match Indian calendar days correctly.
+
+    Sets _ingest_running=True for the duration so the standalone distressed
+    developer scan (06:15 IST) defers itself if this job overlaps.
     """
+    global _ingest_running
     from datetime import datetime, timezone, timedelta
     from ingest.engine import IngestEngine
     from ingest.plugins import (
@@ -551,7 +497,10 @@ def run_ingest_engine():
         if today_ist not in days:
             return False
         sched_minutes = schedule.get("hour", 2) * 60 + schedule.get("minute", 0)
-        return abs(current_time_minutes - sched_minutes) < 10
+        # Allow up to 5 min early (clock skew); never skip if we are late — a misfired
+        # job that fires after its scheduled time must still run all its plugins.
+        delta = current_time_minutes - sched_minutes
+        return delta >= -5
 
     engine = IngestEngine(max_workers=3, global_rate=3.0)
     all_plugins = [
@@ -570,10 +519,14 @@ def run_ingest_engine():
         logger.info("[Scheduler] IngestEngine: no plugins scheduled for today at this hour")
         return
 
-    report = engine.run_all(markets=TARGET_MARKETS)
-    logger.info("[Scheduler] IngestEngine complete: {}", report.summary())
-    for s in report.failed_plugins:
-        logger.warning("[Scheduler] Plugin failed: {}/{} — {}", s.plugin_id, s.market, s.error_message)
+    _ingest_running = True
+    try:
+        report = engine.run_all(markets=TARGET_MARKETS)
+        logger.info("[Scheduler] IngestEngine complete: {}", report.summary())
+        for s in report.failed_plugins:
+            logger.warning("[Scheduler] Plugin failed: {}/{} — {}", s.plugin_id, s.market, s.error_message)
+    finally:
+        _ingest_running = False
 
 
 def run_conflict_detection():
@@ -745,6 +698,11 @@ def run_compliance_check():
         logger.warning("[Scheduler] Compliance check failed (non-fatal): {}", exc)
 
 
+# Guards against concurrent distress score computation between IngestEngine
+# (02:00 IST, contains DistressedPlugin) and the standalone scan (06:15 IST).
+# If IngestEngine is still running at 06:15, the standalone scan skips sending
+# Discord alerts based on partially-updated scores.
+_ingest_running = False
 _backup_lock = False
 
 def run_db_backup():
@@ -771,7 +729,11 @@ def run_db_backup():
     backup_path = os.path.join(backup_dir, f"re_os_{timestamp}.sql")
     gz_path = backup_path + ".gz"
 
-    parsed = urlparse(os.environ["DATABASE_URL"])
+    db_url = os.environ.get("DATABASE_URL", "")
+    if not db_url:
+        logger.error("[DB-Backup] DATABASE_URL not set — backup aborted")
+        return
+    parsed = urlparse(db_url)
     db_env = {**os.environ, "PGPASSWORD": parsed.password or ""}
 
     try:
@@ -916,7 +878,7 @@ def weekly_process_audit():
             f"Runbook: {doc_result.get('path', '')}"
         )
         if proposal.get("priority") == "HIGH":
-            send(summary, channel="#ops")
+            send("system", "Weekly Process Audit", summary)
         logger.info("[Scheduler] Process audit complete — {}", summary)
     except Exception as exc:
         logger.warning("[Scheduler] Process audit failed (non-fatal): {}", exc)
@@ -1043,7 +1005,7 @@ def monthly_ceo_letter():
         )
         try:
             from utils.discord_notifier import send
-            send(summary, channel="#ops")
+            send("system", "Monthly CEO Letter", summary)
         except Exception:
             pass
 
@@ -1228,9 +1190,6 @@ def run_post_crew_optimizer_hook():
                    len(high_findings), report.auto_tasks_created)
     except Exception as exc:
         logger.error("[Scheduler] Post-crew optimizer hook failed: {}", exc)
-
-
-_backup_lock = False
 
 
 if __name__ == "__main__":
