@@ -91,6 +91,11 @@ class DemandSignals:
     # BDA/BMRDA layout approvals. Feeds _timing_score() penalty.
     pipeline_supply_units: int = 0
 
+    # Sprint 75 — Govt/Infra/Policy pipeline signal (GATE-75)
+    # 6th component of demand_score_v2. Captures government infrastructure
+    # and policy momentum for North Bengaluru. Derived from GovtPolicyIntel.
+    infra_pipeline_norm: float | None = None
+
     signals: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
@@ -112,6 +117,10 @@ class DemandSignals:
         ]
         if self.gcc_north_norm is not None:
             parts.append(f"GCC norm={self.gcc_north_norm:.3f}")
+        if self.pipeline_supply_units > 0:
+            parts.append(f"pipeline {self.pipeline_supply_units}u")
+        if self.infra_pipeline_norm is not None:
+            parts.append(f"infra_norm={self.infra_pipeline_norm:.3f}")
         if self.days_on_market_p50 is not None:
             parts.append(f"DoM {self.days_on_market_p50:.0f}d")
         if self.ticket_size_median_cr:
@@ -210,9 +219,10 @@ class DemandIntel:
                 self._load_ticket_size_median(conn, ds, mi)
                 self._load_absorption_trend(conn, ds, mi)
                 self._load_days_on_market_by_config(conn, ds, mi)
+                self._load_pipeline_supply(conn, ds, mi)
 
-            self._load_pipeline_supply(conn, ds, mi)
             self._load_gcc_signal(ds, mi)
+            self._load_govt_pipeline_signal(ds, mi)
             self._compute_price_momentum(ds)
             self._compute_demand_signal(ds)
             self._compute_demand_score_v2(ds)
@@ -317,56 +327,59 @@ class DemandIntel:
             ds.ticket_size_median_cr = round(float(row[0]), 2)
 
     def _compute_demand_score_v2(self, ds: DemandSignals):
-        """Composite demand score [0, 1] from up to 5 weighted factors.
+        """Composite demand score [0, 1] from up to 6 weighted factors.
 
-        V3 weights (Sprint 67 — GATE-71, 5 components):
-          absorption_pct_norm  × 0.35  (was 0.40)
-          kaveri_norm          × 0.25  (was 0.30)
-          listing_count_norm   × 0.18  (was 0.20)
-          config_balance       × 0.07  (was 0.10)
-          gcc_north_norm       × 0.15  (NEW — forward-looking GCC pipeline)
+        V4 weights (Sprint 75 — GATE-75, 6 components):
+          absorption_pct_norm  × 0.30  (was 0.35)
+          kaveri_norm          × 0.18  (was 0.25)
+          listing_count_norm   × 0.12  (was 0.18)
+          config_balance       × 0.12  (was 0.07)
+          gcc_north_norm       × 0.13  (was 0.15)
+          infra_pipeline_norm  × 0.15  (NEW — govt/infra/policy pipeline)
 
-        gcc_north_norm is the only leading indicator in the composite. Rising
-        gcc + flat absorption = demand accumulating before the listing market
-        has registered it — the primary early-acquisition signal for LLS.
+        gcc_north_norm is the leading indicator for corporate demand.
+        infra_pipeline_norm is the leading indicator for government-driven
+        demand. Rising infra + flat absorption = demand accumulating from
+        infrastructure-led development before listings reflect it.
 
         Falls back to a clamped transform of v1 demand_score when no
-        v2/v3 components are available: max(0, (v1 + 5) / 10, 1).
+        v2/v3/v4 components are available: max(0, (v1 + 5) / 10, 1).
         """
         components: list[float] = []
         weights: list[float] = []
 
         if ds.absorption_pct is not None:
             components.append(min(ds.absorption_pct / 100.0, 1.0))
-            weights.append(0.35)
+            weights.append(0.30)
 
         if ds.kaveri_velocity_ratio is not None:
             components.append(min(ds.kaveri_velocity_ratio / self._KAVERI_VELOCITY_CEILING, 1.0))
-            weights.append(0.25)
+            weights.append(0.18)
 
         if ds.listing_count_30d > 0:
             listing_norm = min(ds.listing_count_30d / 200.0, 1.0)
             components.append(listing_norm)
-            weights.append(0.18)
+            weights.append(0.12)
 
         if ds.config_absorption:
             values = [v for v in ds.config_absorption.values() if v is not None]
             if values:
                 observed_range = max(values) - min(values)
                 if max(values) > min(values):
-                    # Normalize by observed range: absorption_pct is 0-100, so
-                    # range/100 converts to [0, 1] imbalance. 1.0 - that = balance.
-                    # Clamp: if values are fraction 0-1 instead of 0-100, this
-                    # still produces a valid [0, 1] balance score.
                     balance = 1.0 - min(observed_range / 100.0, 1.0)
                 else:
                     balance = 1.0
                 components.append(max(0.0, min(balance, 1.0)))
-                weights.append(0.07)
+                weights.append(0.12)
 
         # 5th component: GCC forward-looking pipeline (Sprint 67)
         if ds.gcc_north_norm is not None and ds.gcc_north_norm >= 0.0:
             components.append(min(ds.gcc_north_norm, 1.0))
+            weights.append(0.13)
+
+        # 6th component: Govt/Infra/Policy pipeline (Sprint 75 — GATE-75)
+        if ds.infra_pipeline_norm is not None and ds.infra_pipeline_norm >= 0.0:
+            components.append(min(ds.infra_pipeline_norm, 1.0))
             weights.append(0.15)
 
         if components:
@@ -679,6 +692,16 @@ class DemandIntel:
                 ds.signals.extend(result.signals)
         except Exception as exc:
             logger.debug("[DemandIntel] gcc signal load failed for {}: {}", mi["name"], exc)
+
+    def _load_govt_pipeline_signal(self, ds: DemandSignals, mi: dict):
+        """Load infra_pipeline_norm from GovtPolicyIntel — the 6th demand component."""
+        try:
+            from intelligence.govt_policy_intel import GovtPolicyIntel
+            result = GovtPolicyIntel(caller="DemandIntel").compute(mi["name"])
+            ds.infra_pipeline_norm = result.north_bengaluru_score
+        except Exception as exc:
+            logger.debug("[DemandIntel] govt pipeline signal load failed for {}: {}", mi["name"], exc)
+            ds.infra_pipeline_norm = 0.5  # neutral fallback
 
     def _compute_price_momentum(self, ds: DemandSignals):
         if ds.listing_trend_30d_pct is not None:

@@ -126,7 +126,12 @@ class TestMobilityScout:
 
 
 class TestComputeAccessibility:
+    def _clear_cache(self):
+        from scrapers.mobility_scout import _accessibility_cache
+        _accessibility_cache.clear()
+
     def test_formula_correct_returns_expected_range(self):
+        self._clear_cache()
         from scrapers.mobility_scout import compute_market_accessibility
 
         mock_rows = [
@@ -145,6 +150,7 @@ class TestComputeAccessibility:
             assert 0.4 <= score <= 0.55, f"Expected score in [0.4, 0.55], got {score}"
 
     def test_returns_zero_on_empty_db(self):
+        self._clear_cache()
         from scrapers.mobility_scout import compute_market_accessibility
 
         with patch("utils.db.get_engine") as mock_eng:
@@ -155,6 +161,7 @@ class TestComputeAccessibility:
             assert score == 0.0
 
     def test_case_sensitive_market_match(self):
+        self._clear_cache()
         from scrapers.mobility_scout import compute_market_accessibility
 
         mock_rows = [
@@ -170,11 +177,13 @@ class TestComputeAccessibility:
             mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
             mock_conn.execute.return_value.fetchall.return_value = mock_rows
             score = compute_market_accessibility("Yelahanka")
-            executed_sql = mock_conn.execute.call_args[0][0]
-            assert "market =" in str(executed_sql), "Should use exact match, not ILIKE"
+            assert mock_conn.execute.called, "DB should be queried (not cached)"
+            executed_sql = str(mock_conn.execute.call_args[0][0]) if mock_conn.execute.call_args else ""
+            assert "market =" in executed_sql, "Should use exact match, not ILIKE"
             assert score > 0.0
 
     def test_accepts_existing_connection_parameter(self):
+        self._clear_cache()
         from scrapers.mobility_scout import compute_market_accessibility
 
         mock_conn = MagicMock()

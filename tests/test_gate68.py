@@ -66,7 +66,10 @@ def test_token_tracker_returns_over_budget_entry():
 
 def test_optimizer_route_exists():
     """GET /optimizer route is registered."""
-    from dashboard.app_fastapi import app
+    import os
+    from unittest.mock import patch
+    with patch.dict(os.environ, {"DASHBOARD_API_KEY": "test-key", "DASHBOARD_API_KEY_ALLOW_EMPTY": "true"}):
+        from dashboard.app_fastapi import app
 
     routes = [r.path for r in app.routes]
     assert "/optimizer" in routes

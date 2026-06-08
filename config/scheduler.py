@@ -1150,6 +1150,80 @@ def run_gcc_weekly_digest():
         logger.error("[Scheduler] GCC weekly digest failed: {}", exc)
 
 
+def run_govt_policy_daily_scan():
+    """Daily scan for govt/policy/infra events — 06:30 IST = 01:00 UTC."""
+    logger.info("[Scheduler] Govt policy daily scan starting")
+    try:
+        from ingest.plugins.govt_policy_plugin import GovtPolicyPlugin
+        from utils.discord_notifier import send_govt_policy_alert
+        from utils.db import get_engine
+        from sqlalchemy import text as _text
+
+        plugin = GovtPolicyPlugin()
+        engine = get_engine()
+
+        for market in [m.strip() for m in TARGET_MARKETS]:
+            try:
+                records = plugin.run(market)
+                if not records:
+                    continue
+
+                with engine.begin() as conn:
+                    for rec in records:
+                        d = rec.data
+                        conn.execute(_text("""
+                            INSERT INTO govt_policy_events (
+                                headline, category, subcategory, location_text,
+                                micro_markets, investment_cr, stage, impact_score,
+                                signal_strength, demand_type, time_horizon,
+                                actionability, summary, why_it_matters,
+                                source_urls, published_date, is_north_bengaluru
+                            ) VALUES (
+                                :headline, :category, :subcategory, :location_text,
+                                :micro_markets, :investment_cr, :stage, :impact_score,
+                                :signal_strength, :demand_type, :time_horizon,
+                                :actionability, :summary, :why_it_matters,
+                                :source_urls, :published_date::date, :is_north_bengaluru
+                            )
+                            ON CONFLICT DO NOTHING
+                        """), d)
+                logger.info(
+                    "[Scheduler] Govt policy scan {}: {} records", market, len(records),
+                )
+
+                # Fire Discord alerts for high-impact North Bengaluru events
+                for rec in records:
+                    d = rec.data
+                    if d.get("is_north_bengaluru") and (d.get("impact_score") or 0) >= 7:
+                        send_govt_policy_alert(d)
+            except Exception as exc:
+                logger.warning(
+                    "[Scheduler] Govt policy scan failed for {}: {}", market, exc,
+                )
+
+        logger.info("[Scheduler] Govt policy daily scan done")
+    except Exception as exc:
+        logger.error("[Scheduler] Govt policy daily scan failed: {}", exc)
+
+
+def run_govt_policy_weekly_digest():
+    """Weekly govt/policy digest — every Monday 08:00 IST = 02:30 UTC."""
+    logger.info("[Scheduler] Govt policy weekly digest starting")
+    try:
+        from intelligence.govt_policy_intel import GovtPolicyIntel
+        from utils.discord_notifier import send_govt_policy_digest
+
+        intel = GovtPolicyIntel(caller="scheduler")
+        result = intel.compute("north_bengaluru_aggregate")
+        send_govt_policy_digest(result)
+        logger.info(
+            "[Scheduler] Govt policy digest sent — NB score: {}",
+            result.north_bengaluru_score,
+        )
+    except Exception as exc:
+        logger.error("[Scheduler] Govt policy weekly digest failed: {}", exc)
+
+
 def run_post_crew_optimizer_hook():
     """Run after market_intel_crew completes — generates optimizer report and creates tasks for HIGH findings."""
     logger.info("[Scheduler] Post-crew optimizer hook starting")
@@ -1398,6 +1472,24 @@ if __name__ == "__main__":
         misfire_grace_time=3600,
     )
 
+    # Govt policy daily scan — 06:30 IST = 01:00 UTC (Sprint 75 — GATE-75, T-1050)
+    scheduler.add_job(
+        lambda: _safe_job(run_govt_policy_daily_scan, "govt_policy_daily_scan"),
+        CronTrigger(hour=1, minute=0, timezone="UTC"),
+        id="govt_policy_daily_scan",
+        name="Govt/Policy Daily Scan → upsert events + Discord alerts for high-impact NB events",
+        misfire_grace_time=3600,
+    )
+
+    # Govt policy weekly digest — Monday 02:30 UTC = 08:00 IST (Sprint 75 — GATE-75, T-1050)
+    scheduler.add_job(
+        lambda: _safe_job(run_govt_policy_weekly_digest, "govt_policy_weekly_digest"),
+        CronTrigger(day_of_week="mon", hour=2, minute=30, timezone="UTC"),
+        id="govt_policy_weekly_digest",
+        name="Monday Govt/Policy Weekly Digest → Discord govt_policy_scout channel",
+        misfire_grace_time=3600,
+    )
+
     # Post-crew optimizer hook — runs after successful crew completion (T-1005)
     # Called explicitly from Stage3 completion via subprocess callback
     scheduler.add_job(
@@ -1451,6 +1543,8 @@ if __name__ == "__main__":
     logger.info("  Monday 07:30 IST — GCC weekly digest (pipeline → Discord intel) [T-1022]")
     logger.info("  1st of month 09:30 IST — Monthly CEO letter (PerformanceDigest + agent_runs) [T-1019]")
     logger.info("  1st of month 06:30 IST — Monthly mobility scout (accessibility_scores) [T-1039]")
+    logger.info("  06:30 IST daily — Govt/Policy daily scan (events→Discord alerts) [T-1050]")
+    logger.info("  Monday 08:00 IST — Govt/Policy weekly digest (north_bengaluru_score→Discord) [T-1050]")
     logger.info(f"Active jobs: {[j.id for j in scheduler.get_jobs()]}")
 
     scheduler.start()

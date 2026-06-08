@@ -45,6 +45,7 @@ _CHANNEL_ENV_MAP = {
     "health":           "DISCORD_WEBHOOK_SYSTEM",  # alias — maps to same webhook as system
     "bd_opportunities": "DISCORD_WEBHOOK_BD_OPPORTUNITIES",
     "gcc_intel":        "DISCORD_WEBHOOK_GCC_INTEL",
+    "govt_policy_scout": "DISCORD_WEBHOOK_GOVT_POLICY",
 }
 
 _VALID_CHANNELS = frozenset(_CHANNEL_ENV_MAP)
@@ -452,4 +453,122 @@ def send_gcc_weekly_digest(events: list[dict], corridor_scores: dict[str, float]
         return False
 
 
+def format_govt_policy_alert(event: dict) -> str:
+    """Format a single govt/policy/infra event as a Discord alert.
+
+    Format:
+        🏗️ [EMOJI] HEADLINE
+        📍 LOCATION | 💰 INVESTMENT | 📊 STAGE
+        🎯 Impact: N/10 | ⏱️ HORIZON | ✅ ACTION
+        💡 WHY IT MATTERS (truncated to 200 chars)
+    """
+    headline = event.get("headline", "Unknown event")
+    location = event.get("location_text") or event.get("location", "N/A")
+    investment = event.get("investment_cr")
+    inv_str = f"₹{investment:,.0f}Cr" if investment else "N/A"
+    stage = event.get("stage", "N/A")
+    impact = event.get("impact_score", 0) or 0
+    horizon = event.get("time_horizon", "N/A")
+    action = event.get("actionability", "monitor")
+    why = event.get("why_it_matters", "")
+    if len(why) > 200:
+        why = why[:197] + "..."
+
+    signal = event.get("signal_strength", "emerging")
+    if signal == "high":
+        signal_emoji = "🟢"
+    elif signal == "risk":
+        signal_emoji = "🔴"
+    else:
+        signal_emoji = "🟡"
+
+    if action == "buy_now":
+        action_emoji = "⚡"
+    elif action == "accumulate":
+        action_emoji = "📈"
+    elif action == "avoid":
+        action_emoji = "⛔"
+    else:
+        action_emoji = "👁️"
+
+    lines = [
+        f"{signal_emoji} **{headline}**",
+        f"📍 {location} | 💰 {inv_str} | 📊 {stage}",
+        f"🎯 Impact: {impact}/10 | ⏱️ {horizon} | {action_emoji} {action.upper()}",
+    ]
+    if why:
+        lines.append(f"💡 {why}")
+    return "\n".join(lines)
+
+
+def format_govt_policy_weekly_digest(result) -> str:
+    """Format weekly govt/policy digest for Discord.
+
+    Args:
+        result: GovtPolicyResult dataclass instance or similar dict-like object.
+    """
+    score = getattr(result, "north_bengaluru_score", 0.0) or 0.0
+    high_count = getattr(result, "high_opportunity_count", 0)
+    risk_count = getattr(result, "risk_count", 0)
+    top_infra = getattr(result, "top_infra_events", []) or []
+    top_policy = getattr(result, "top_policy_events", []) or []
+    digest = getattr(result, "weekly_digest", "")
+
+    bar_count = min(int(score * 10), 10)
+    bar = "█" * bar_count + "░" * (10 - bar_count)
+
+    lines = [
+        "**North Bengaluru Govt/Infra/Policy — Weekly Digest**",
+        "",
+        f"**North Bengaluru Score:** {bar} {score:.3f}",
+        f"**High Opportunity:** {high_count} | **Risk Flags:** {risk_count}",
+        "",
+    ]
+
+    if top_infra:
+        lines.append("**Top Infrastructure Events:**")
+        for evt in top_infra:
+            headline = evt.get("headline", "N/A")[:80]
+            impact = evt.get("impact_score", 0) or 0
+            stage = evt.get("stage", "N/A")
+            lines.append(f"• {headline} | Impact {impact}/10 | {stage}")
+        lines.append("")
+
+    if top_policy:
+        lines.append("**Top Policy Events:**")
+        for evt in top_policy:
+            headline = evt.get("headline", "N/A")[:80]
+            impact = evt.get("impact_score", 0) or 0
+            lines.append(f"• {headline} | Impact {impact}/10")
+        lines.append("")
+
+    if digest:
+        lines.append(f"**Weekly Digest:**\n{digest[:500]}")
+
+    return "\n".join(lines)
+
+
+def send_govt_policy_alert(event: dict) -> bool:
+    """Send a single govt/policy alert to the govt_policy_scout channel."""
+    try:
+        msg = format_govt_policy_alert(event)
+        signal = event.get("signal_strength", "emerging")
+        color = COLOR_GREEN if signal == "high" else (COLOR_RED if signal == "risk" else COLOR_AMBER)
+        title = f"Govt/Infra Alert — {event.get('headline', '')[:60]}"
+        send("govt_policy_scout", title, msg, color)
+        return True
+    except Exception as exc:
+        logger.warning("[Discord] send_govt_policy_alert failed: {}", exc)
+        return False
+
+
+def send_govt_policy_digest(result) -> bool:
+    """Send weekly govt/policy digest to the govt_policy_scout channel."""
+    try:
+        msg = format_govt_policy_weekly_digest(result)
+        send("govt_policy_scout", "Govt/Infra/Policy Weekly Digest", msg, COLOR_BLUE)
+        return True
+    except Exception as exc:
+        logger.warning("[Discord] send_govt_policy_digest failed: {}", exc)
+        return False
 

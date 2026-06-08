@@ -39,14 +39,16 @@ def upgrade():
         "supply_pipeline",
         "source IN ('rera_pipeline', 'kiadb_tender', 'bda_news', 'bmrda')",
     )
-    op.create_unique_constraint(
-        "uq_supply_pipeline_market_project_source",
+    op.create_index(
+        "uq_supply_pipeline_dedup",
         "supply_pipeline",
-        ["market", "project_name", "source"],
+        ["market", "source", "project_name"],
+        unique=True,
+        postgresql_where=sa.text("project_name IS NOT NULL"),
     )
 
 
 def downgrade():
-    op.drop_constraint("uq_supply_pipeline_market_project_source", "supply_pipeline", type_="unique")
+    op.drop_index("uq_supply_pipeline_dedup", table_name="supply_pipeline")
     op.drop_constraint("ck_supply_pipeline_source", "supply_pipeline", type_="check")
     op.drop_table("supply_pipeline")

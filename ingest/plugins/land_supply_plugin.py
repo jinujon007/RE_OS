@@ -49,6 +49,15 @@ class LandSupplyPlugin(DataPlugin):
               status with future completion dates.
     Phase 2 — KIADB tenders: WordPress REST API fetch (best-effort).
     Phase 3 — BDA/BMRDA news: news_articles table scan.
+
+    Risk Register:
+    | Risk | Impact | Mitigation |
+    |------|--------|------------|
+    | KIADB API restructure | Phase 2 returns empty | Full try/except → empty list, logged at DEBUG |
+    | news_articles table empty | Phase 3 returns 0 records | Empty list, no crash |
+    | rera_projects schema changes | Phase 1 query fails | Full try/except → empty list, logged at DEBUG |
+    | Connection pool exhaustion | Blocked other plugins | Default pool_size=10 is shared; each phase uses .connect() + immediate release |
+    | Duplicate suppression by UNIQUE index | Missing pipeline records | Partial unique index (market+source+project_name) where project_name IS NOT NULL; NULL-name records always insert |
     """
 
     plugin_id = "land_supply"
@@ -91,7 +100,7 @@ class LandSupplyPlugin(DataPlugin):
                     text("""
                         SELECT
                             rp.id::text AS record_id,
-                            COALESCE(rp.project_name, 'Unknown') AS project_name,
+                            rp.project_name,
                             COALESCE(d.name, rp.developer_name, 'Unknown') AS developer_name,
                             rp.total_units,
                             rp.launch_date,
@@ -118,11 +127,16 @@ class LandSupplyPlugin(DataPlugin):
         records: list[ParsedRecord] = []
         for row in rows:
             record_id, project_name, developer_name, units, launch_date, completion_date, status = row
+            dev_name = str(developer_name)
+            if dev_name in ("Unknown", "unknown", ""):
+                logger.debug("[LandSupplyPlugin] Skipping RERA record {} with unknown developer", record_id)
+                continue
             units_int = int(units) if units else 0
             comp_year = completion_date.year if completion_date else None
+            pname = str(project_name) if project_name else None
             data = {
-                "project_name": str(project_name),
-                "developer_name": str(developer_name),
+                "project_name": pname,
+                "developer_name": dev_name,
                 "estimated_units": units_int,
                 "source": "rera_pipeline",
                 "market": market,
@@ -137,6 +151,7 @@ class LandSupplyPlugin(DataPlugin):
                 data=data,
                 confidence=0.8,
             ))
+        logger.debug("[LandSupplyPlugin] RERA phase: {} records from {} rows", len(records), len(rows))
         return records
 
     # ── Phase 2: KIADB tenders ──────────────────────────────────────────────
@@ -156,6 +171,10 @@ class LandSupplyPlugin(DataPlugin):
             return []
 
         posts = raw if isinstance(raw, list) else raw.get("data", raw.get("posts", []))
+        if not posts:
+            logger.debug("[LandSupplyPlugin] KIADB API returned empty or unexpected format for {}", market)
+            return []
+
         records: list[ParsedRecord] = []
         market_lower = market.lower()
 
@@ -217,7 +236,8 @@ class LandSupplyPlugin(DataPlugin):
                         SELECT na.id::text, na.title, na.content, na.published_at
                         FROM news_articles na
                         WHERE ({keyword_conditions})
-                          AND (na.title ILIKE :market OR na.content ILIKE :market)
+                          AND LOWER(COALESCE(na.title, '') || ' ' || COALESCE(na.content, ''))
+                              LIKE LOWER(:market)
                           AND na.created_at >= NOW() - INTERVAL '90 days'
                         ORDER BY na.created_at DESC
                         LIMIT 30

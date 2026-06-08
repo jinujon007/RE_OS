@@ -4417,6 +4417,148 @@ async def gcc_north_score(request: Request):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+@app.get("/api/govt/events", tags=["Govt/Policy"],
+         summary="List government/infrastructure/policy events")
+@limiter.limit("30/minute")
+async def govt_events(
+    request: Request,
+    market: str | None = Query(None, description="Filter by market"),
+    category: str | None = Query(None, description="Filter by category (infrastructure/govt_project/policy)"),
+    signal: str | None = Query(None, description="Filter by signal_strength (high/emerging/risk)"),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """List govt/policy events with optional filters."""
+    try:
+        from utils.db import get_engine
+        from sqlalchemy import text
+
+        where_clauses = []
+        params: dict = {}
+
+        if category:
+            where_clauses.append("category = :category")
+            params["category"] = category
+        if signal:
+            where_clauses.append("signal_strength = :signal")
+            params["signal"] = signal
+        if market:
+            where_clauses.append(":market = ANY(micro_markets)")
+            params["market"] = market
+
+        where_sql = " AND ".join(where_clauses)
+        if where_sql:
+            where_sql = "WHERE " + where_sql
+
+        engine = get_engine()
+        with engine.connect() as conn:
+            rows = conn.execute(text(f"""
+                SELECT id, headline, category, subcategory, location_text,
+                       micro_markets, investment_cr, stage, impact_score,
+                       signal_strength, time_horizon, actionability,
+                       summary, why_it_matters, source_urls,
+                       published_date, is_north_bengaluru, scraped_at
+                FROM govt_policy_events
+                {where_sql}
+                ORDER BY impact_score DESC NULLS LAST, scraped_at DESC
+                LIMIT :lim
+            """), {**params, "lim": limit}).fetchall()
+
+        nb_count = sum(1 for r in rows if r[16])
+        events = []
+        for r in rows:
+            events.append({
+                "id": r[0],
+                "headline": r[1],
+                "category": r[2],
+                "subcategory": r[3],
+                "location_text": r[4],
+                "micro_markets": r[5] or [],
+                "investment_cr": float(r[6]) if r[6] else None,
+                "stage": r[7],
+                "impact_score": r[8],
+                "signal_strength": r[9],
+                "time_horizon": r[10],
+                "actionability": r[11],
+                "summary": r[12],
+                "why_it_matters": r[13],
+                "source_urls": r[14] or [],
+                "published_date": str(r[15]) if r[15] else None,
+                "is_north_bengaluru": bool(r[16]),
+                "scraped_at": str(r[17]) if r[17] else None,
+            })
+
+        return JSONResponse({
+            "events": events,
+            "total": len(events),
+            "north_bengaluru_count": nb_count,
+        })
+    except Exception as exc:
+        logger.warning("[API] /api/govt/events failed: {}", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/govt/north-score", tags=["Govt/Policy"],
+         summary="North Bengaluru govt/infra/policy pipeline score")
+@limiter.limit("30/minute")
+async def govt_north_score(request: Request):
+    """Return north_bengaluru_score — the value feeding demand_score_v2.
+
+    Returns:
+        {
+            "north_bengaluru_score": float [0,1],
+            "high_opportunity_count": int,
+            "risk_count": int,
+            "top_events": [...],
+            "computed_at": ISO8601
+        }
+    """
+    try:
+        from intelligence.govt_policy_intel import GovtPolicyIntel
+        intel = GovtPolicyIntel(caller="api")
+        result = intel.compute("north_bengaluru_aggregate")
+        return JSONResponse({
+            "north_bengaluru_score": result.north_bengaluru_score,
+            "high_opportunity_count": result.high_opportunity_count,
+            "risk_count": result.risk_count,
+            "top_infra_events": result.top_infra_events,
+            "top_policy_events": result.top_policy_events,
+            "computed_at": result.computed_at,
+        })
+    except Exception as exc:
+        logger.warning("[API] /api/govt/north-score failed: {}", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/govt/digest", tags=["Govt/Policy"],
+         summary="Weekly govt/policy digest for North Bengaluru")
+@limiter.limit("30/minute")
+async def govt_digest(request: Request):
+    """Return LLM-generated weekly digest of govt/policy developments."""
+    try:
+        from intelligence.govt_policy_intel import GovtPolicyIntel
+        intel = GovtPolicyIntel(caller="api")
+        result = intel.compute("north_bengaluru_aggregate")
+        return JSONResponse({
+            "digest": result.weekly_digest,
+            "computed_at": result.computed_at,
+        })
+    except Exception as exc:
+        logger.warning("[API] /api/govt/digest failed: {}", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/govt", tags=["Govt/Policy"],
+         summary="Govt/Policy dashboard page")
+@limiter.limit("20/minute")
+async def govt_policy_panel(request: Request):
+    """Render govt policy intelligence dashboard panel."""
+    try:
+        return templates.TemplateResponse(request, "govt_policy.html")
+    except Exception as exc:
+        logger.error("[govt_policy_panel] %s", exc)
+        return JSONResponse({"error": "template not found"}, status_code=500)
+
+
 @app.get("/api/distress/signals")
 async def distress_signals(
     request: Request,

@@ -17,6 +17,16 @@ Destinations (5 employment hubs):
   Whitefield ITPB        (12.9793, 77.7413) — weight 0.15
   Nagawara               (13.0437, 77.6187) — weight 0.10
 
+Thread safety:
+  run_mobility_scout() uses a threading lock to prevent concurrent execution
+  from the scheduler overlapping with manual CLI runs.
+
+API key:
+  Set GOOGLE_MAPS_API_KEY in .env. Free tier covers 1,000 elements/month
+  (our usage = 3 markets x 5 destinations x 1 call = 15 elements/month).
+  Without the key, the scout logs a warning and returns empty — the system
+  relies on seed data until the API is configured.
+
 Run standalone:
   python scrapers/mobility_scout.py --market Yelahanka
   python scrapers/mobility_scout.py  (runs all markets)
@@ -25,6 +35,7 @@ Run standalone:
 import argparse
 import json
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -33,6 +44,8 @@ import requests
 from loguru import logger
 
 from config.metrics import scraper_runs_total
+
+_run_lock = threading.Lock()
 
 MARKET_CENTROIDS: dict[str, tuple[float, float]] = {
     "Yelahanka": (13.1007, 77.5963),
@@ -164,6 +177,14 @@ class MobilityScout:
         return (None, False)
 
 
+_accessibility_cache: dict[str, tuple[float, float]] = {}
+_ACCESSIBILITY_CACHE_TTL = 300.0
+
+
+def _cache_key(market: str) -> str:
+    return f"acc:{market}"
+
+
 def compute_market_accessibility(market: str, conn=None) -> float:
     """Compute weighted accessibility score for a market [0.0, 1.0].
 
@@ -171,16 +192,29 @@ def compute_market_accessibility(market: str, conn=None) -> float:
     last 30 days. Accepts an optional SQLAlchemy connection for reuse when
     called from within an existing DB transaction.
 
+    Cached in-process for _ACCESSIBILITY_CACHE_TTL seconds to avoid
+    repeated DB queries within a single IntelRegistry call cycle.
+
     Returns 0.0 on empty DB or any error (never raises).
     """
+    now = time.time()
+    ck = _cache_key(market)
+    cached = _accessibility_cache.get(ck)
+    if cached and (now - cached[1]) < _ACCESSIBILITY_CACHE_TTL:
+        return cached[0]
+
     try:
         if conn is None:
             from utils.db import get_engine
             from sqlalchemy import text as sa_text
             engine = get_engine(pool_size=2, max_overflow=1)
             with engine.connect() as db_conn:
-                return _compute_from_db(db_conn, market)
-        return _compute_from_db(conn, market)
+                score = _compute_from_db(db_conn, market)
+        else:
+            score = _compute_from_db(conn, market)
+
+        _accessibility_cache[ck] = (score, now)
+        return score
     except Exception as exc:
         logger.warning("[MobilityScout] compute_market_accessibility failed for {}: {}", market, exc)
         return 0.0
@@ -218,6 +252,20 @@ def _compute_from_db(conn, market: str) -> float:
     return round(max(0.0, min(score, 1.0)), 4)
 
 
+def check_api_key_configured() -> dict:
+    """Diagnostic: check if Google Maps API key is available and report status.
+
+    Returns a dict with 'configured' bool and 'sources_available' count for
+    use in /api/health responses.
+    """
+    key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    if not key:
+        return {"configured": False, "message": "GOOGLE_MAPS_API_KEY not set in environment"}
+    if key == "test_key" or key.startswith("AIza"):
+        return {"configured": True, "message": "API key present"}
+    return {"configured": True, "message": "API key set (unknown format)"}
+
+
 def _compute_row_component(dest_name: str, travel_minutes: float) -> float:
     """Compute a single destination's contribution to the accessibility score.
 
@@ -231,30 +279,50 @@ def _compute_row_component(dest_name: str, travel_minutes: float) -> float:
 def run_mobility_scout():
     """Scheduled job: measure travel times for all markets and persist.
 
+    Thread-safe: uses a module-level threading lock to prevent concurrent
+    execution (e.g., scheduler + manual CLI overlap).
+
     Runs 15 API calls (3 markets × 5 destinations) and inserts results
     into accessibility_scores. Designed for monthly execution on 1st of month.
     """
-    success_count = 0
-    total_markets = len(MARKET_CENTROIDS)
-
-    for market in MARKET_CENTROIDS:
-        try:
-            scout = MobilityScout()
-            results = scout.measure_travel_times(market)
-            if results:
-                _persist_results(market, results)
-                success_count += 1
-            else:
-                logger.info("[MobilityScout] No results for {} (API key may be missing)", market)
-        except Exception as exc:
-            logger.warning("[MobilityScout] run failed for {}: {}", market, exc)
+    if not _run_lock.acquire(blocking=False):
+        logger.warning("[MobilityScout] run_mobility_scout already in progress — skipping")
+        return
 
     try:
-        scraper_runs_total.labels(source="mobility", market="all", status="success").inc()
-    except Exception as exc:
-        logger.debug("[MobilityScout] Metrics increment skipped: {}", exc)
+        success_count = 0
+        total_markets = len(MARKET_CENTROIDS)
+        failed_markets: list[str] = []
 
-    logger.info("[MobilityScout] Completed: {}/{} markets updated", success_count, total_markets)
+        for market in MARKET_CENTROIDS:
+            try:
+                scout = MobilityScout()
+                results = scout.measure_travel_times(market)
+                if results:
+                    _persist_results(market, results)
+                    success_count += 1
+                    logger.info("[MobilityScout] {} results persisted for {}", len(results), market)
+                else:
+                    msg = "API key not configured" if not scout.api_key else "all destinations returned empty"
+                    logger.info("[MobilityScout] No results for {}: {}", market, msg)
+                    failed_markets.append(market)
+            except Exception as exc:
+                logger.warning("[MobilityScout] run failed for {}: {}", market, exc)
+                failed_markets.append(market)
+
+        try:
+            scraper_runs_total.labels(source="mobility", market="all",
+                                      status="success" if success_count == total_markets else "partial").inc()
+        except Exception as exc:
+            logger.debug("[MobilityScout] Metrics increment skipped: {}", exc)
+
+        if failed_markets:
+            logger.warning("[MobilityScout] Completed: {}/{} markets updated. Failed: {}",
+                           success_count, total_markets, failed_markets)
+        else:
+            logger.info("[MobilityScout] Completed: {}/{} markets updated", success_count, total_markets)
+    finally:
+        _run_lock.release()
 
 
 def _persist_results(market: str, results: list[dict]):
@@ -296,7 +364,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Mobility Scout — travel time measurement")
     parser.add_argument("--market", default=None, choices=list(MARKET_CENTROIDS.keys()),
                         help="Market name (default: run all markets)")
+    parser.add_argument("--debug", action="store_true", help="Enable debug-level logging")
     args = parser.parse_args()
+
+    if args.debug:
+        logger.remove()
+        logger.add(lambda msg: print(msg, end=""), level="DEBUG", format="<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}")
+        logger.debug("[MobilityScout] Debug mode enabled")
 
     if args.market:
         scout = MobilityScout()

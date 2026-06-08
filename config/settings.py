@@ -210,6 +210,7 @@ DISCORD_WEBHOOK_PRICE            = os.environ.get("DISCORD_WEBHOOK_PRICE", "")
 DISCORD_WEBHOOK_INTEL            = os.environ.get("DISCORD_WEBHOOK_INTEL", "")
 DISCORD_WEBHOOK_SYSTEM           = os.environ.get("DISCORD_WEBHOOK_SYSTEM", "")
 DISCORD_WEBHOOK_BD_OPPORTUNITIES = os.environ.get("DISCORD_WEBHOOK_BD_OPPORTUNITIES", "")
+DISCORD_WEBHOOK_GOVT_POLICY = os.environ.get("DISCORD_WEBHOOK_GOVT_POLICY", "")
 
 DISCORD_CHANNELS = {
     "rera_yelahanka":   DISCORD_WEBHOOK_RERA_YELAHANKA,
@@ -220,6 +221,7 @@ DISCORD_CHANNELS = {
     "intel":            DISCORD_WEBHOOK_INTEL,
     "system":           DISCORD_WEBHOOK_SYSTEM,
     "bd_opportunities": DISCORD_WEBHOOK_BD_OPPORTUNITIES,
+    "govt_policy_scout": DISCORD_WEBHOOK_GOVT_POLICY,
 }
 
 # ── INGEST ENGINE (Sprint 61) ─────────────────────────────────────────────────

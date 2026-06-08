@@ -33,9 +33,10 @@ class TestGate74:
             assert isinstance(results, list)
             assert len(results) == 5, "Should measure all 5 destinations"
 
-    def test_run_mobility_scout_handles_all_markets(self):
-        from scrapers.mobility_scout import run_mobility_scout, MobilityScout
+    def test_run_mobility_scout_handles_all_markets(self, monkeypatch):
+        from scrapers.mobility_scout import run_mobility_scout
 
+        monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "test_key")
         ok_resp = MagicMock()
         ok_resp.status_code = 200
         ok_resp.json.return_value = {
@@ -47,9 +48,10 @@ class TestGate74:
         mock_session.get.return_value = ok_resp
 
         with patch("utils.db.get_engine") as mock_eng, \
-             patch("scrapers.mobility_scout.requests.Session", return_value=mock_session), \
+             patch("scrapers.mobility_scout.requests.Session") as mock_session_cls, \
              patch("scrapers.mobility_scout.time.sleep"), \
              patch("scrapers.mobility_scout.scraper_runs_total"):
+            mock_session_cls.return_value = mock_session
             mock_conn = MagicMock()
             mock_eng.return_value.begin.return_value.__enter__.return_value = mock_conn
             run_mobility_scout()

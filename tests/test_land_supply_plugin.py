@@ -41,22 +41,35 @@ def test_land_supply_plugin_instantiates():
 def test_rera_phase_returns_records_for_seeded_market():
     from ingest.plugins.land_supply_plugin import LandSupplyPlugin
 
-    row = _Row(
-        record_id="abc-123",
-        project_name="Test Project",
-        developer_name="Test Builder",
-        total_units=100,
-        launch_date=None,
-        expected_completion_date=None,
-        status="registered",
-    )
-    engine, _ = _mock_engine_with_rows([row])
+    rows = [
+        _Row(
+            record_id="abc-123",
+            project_name="Test Project A",
+            developer_name="Test Builder",
+            total_units=100,
+            launch_date=None,
+            expected_completion_date=None,
+            status="registered",
+        ),
+        _Row(
+            record_id="def-456",
+            project_name="Test Project B",
+            developer_name="Another Builder",
+            total_units=250,
+            launch_date=None,
+            expected_completion_date=None,
+            status="pre-registration",
+        ),
+    ]
+    engine, _ = _mock_engine_with_rows(rows)
     with patch("ingest.plugins.land_supply_plugin.get_engine", return_value=engine):
         results = LandSupplyPlugin()._rera_pipeline_phase("Yelahanka")
 
-    assert len(results) == 1
+    assert len(results) == 2
     assert results[0].entity_type == "supply_pipeline"
     assert results[0].data["estimated_units"] == 100
+    assert results[1].data["estimated_units"] == 250
+    assert results[1].data["status"] == "pre-registration"
 
 
 def test_rera_phase_empty_market_returns_no_records():

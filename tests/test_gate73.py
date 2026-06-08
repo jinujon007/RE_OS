@@ -101,6 +101,12 @@ def test_gate73_timing_score_penalised_high_pipeline():
         f"High pipeline score {score_high} should be less than low pipeline score {score_low}"
     )
 
+    # Exact formula verification: mos=10.0 → score=1.0 (since <12).
+    # pressure=3000/500=6.0 (>3.0) → penalty=0.40 → final=1.0-0.40=0.60
+    assert score_high == 0.6, f"Expected 0.6 for 3000/500=6x pressure, got {score_high}"
+    # pressure=0/500=0 (<=1.0) → penalty=0.0 → final=1.0
+    assert score_low == 1.0, f"Expected 1.0 for zero pipeline, got {score_low}"
+
 
 def test_gate73_timing_score_no_penalty_low_pipeline():
     from intelligence.opportunity_engine import _timing_score
@@ -169,4 +175,23 @@ def test_gate73_market_supply_endpoint_returns_json():
                 headers={"X-API-Key": "test-api-key"},
             )
 
-        assert resp.status_code in (200, 500)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "records" in body
+        assert "total_pipeline_units" in body
+        assert "market" in body
+        assert body["market"] == "Yelahanka"
+        assert body["total_pipeline_units"] == 100
+        assert len(body["records"]) == 1
+
+
+def test_pipeline_supply_units_zero_when_table_empty():
+    """DemandSignals defaults pipeline_supply_units to 0 when no data loaded."""
+    from intelligence.demand_intel import DemandSignals
+    from datetime import datetime, timezone
+
+    ds = DemandSignals(
+        market="Yelahanka",
+        collected_at=datetime.now(timezone.utc).isoformat(),
+    )
+    assert ds.pipeline_supply_units == 0

@@ -16,6 +16,7 @@ from ingest.plugins.bbmp_plugin import BBMPPlugin
 from ingest.plugins.demand_plugin import DemandPlugin
 from ingest.plugins.gcc_plugin import GCCPlugin
 from ingest.plugins.land_supply_plugin import LandSupplyPlugin
+from ingest.plugins.govt_policy_plugin import GovtPolicyPlugin
 
 __all__ = [
     "RERAPlugin",
@@ -29,4 +30,5 @@ __all__ = [
     "DemandPlugin",
     "GCCPlugin",
     "LandSupplyPlugin",
+    "GovtPolicyPlugin",
 ]

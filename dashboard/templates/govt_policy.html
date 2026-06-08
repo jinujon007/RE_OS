@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Govt/Infra/Policy Scout - LLS</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0a0e1a; color: #c9d1d9;
+  font-family: 'Courier New', Courier, monospace; font-size: 14px;
+  min-height: 100vh; padding: 20px;
+}
+h1 { color: #58a6ff; font-size: 18px; margin-bottom: 16px; letter-spacing: 1px; }
+h2 { color: #f0a020; font-size: 14px; margin-bottom: 10px; }
+h3 { color: #58a6ff; font-size: 13px; margin-bottom: 6px; }
+.panel {
+  background: #0f1520; border: 1px solid #2a3a55;
+  padding: 16px; margin-bottom: 16px; max-width: 1200px;
+}
+.metric-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.metric-card {
+  background: #161b2e; border: 1px solid #2a3a55;
+  padding: 14px; min-width: 180px; flex: 1;
+}
+.metric-card .label { font-size: 11px; color: #8b949e; text-transform: uppercase; }
+.metric-card .value { font-size: 22px; font-weight: bold; margin-top: 4px; }
+.metric-card .value.green { color: #3fb950; }
+.metric-card .value.amber { color: #f0a020; }
+.metric-card .value.red { color: #f85149; }
+.metric-card .value.blue { color: #58a6ff; }
+.metric-card .sub { font-size: 11px; color: #8b949e; margin-top: 2px; }
+.score-display { font-size: 48px; font-weight: bold; text-align: center; padding: 20px; }
+.score-display .label { font-size: 12px; color: #8b949e; text-transform: uppercase; margin-top: 4px; }
+.score-display .score-bar { font-size: 14px; margin-top: 8px; letter-spacing: 2px; }
+.event-card {
+  background: #161b2e; border: 1px solid #2a3a55;
+  padding: 12px; margin-bottom: 8px;
+}
+.event-card .headline { color: #c9d1d9; font-size: 14px; margin-bottom: 4px; }
+.event-card .meta { font-size: 11px; color: #8b949e; display: flex; gap: 8px; flex-wrap: wrap; }
+.event-card .meta span { padding: 1px 6px; border-radius: 2px; }
+.meta-cat { background: #1a2540; }
+.meta-high { background: #0a1a0a; color: #3fb950; }
+.meta-emerging { background: #1a150a; color: #f0a020; }
+.meta-risk { background: #1a0a0a; color: #f85149; }
+table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+th { text-align: left; padding: 8px 12px; border-bottom: 1px solid #2a3a55; color: #8b949e; font-size: 11px; text-transform: uppercase; }
+td { padding: 8px 12px; border-bottom: 1px solid #1a2540; font-size: 12px; }
+tr:hover td { background: #1a2540; }
+.spinner { display: none; color: #8b949e; font-size: 13px; padding: 20px; text-align: center; }
+.spinner.active { display: block; }
+.digest-text { font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
+.filter-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.filter-bar select, .filter-bar input { background: #161b2e; border: 1px solid #2a3a55; color: #c9d1d9; padding: 6px 10px; font-size: 12px; font-family: inherit; }
+.filter-bar button { background: #2a3a55; border: 1px solid #3a5a85; color: #58a6ff; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; }
+.filter-bar button:hover { background: #3a5a85; }
+</style>
+</head>
+<body>
+<h1>North Bengaluru — Govt / Infrastructure / Policy Scout</h1>
+
+<div class="metric-row">
+  <div class="metric-card" id="score-card">
+    <div class="score-display">
+      <div id="nb-score">--</div>
+      <div class="label">North Bengaluru Infra Score</div>
+      <div class="score-bar" id="score-bar"></div>
+      <div class="sub" id="score-label">Loading...</div>
+    </div>
+  </div>
+  <div class="metric-card">
+    <div class="label">High Opportunity</div>
+    <div class="value green" id="high-count">--</div>
+    <div class="sub">signal_strength = high</div>
+  </div>
+  <div class="metric-card">
+    <div class="label">Emerging Signals</div>
+    <div class="value amber" id="emerging-count">--</div>
+    <div class="sub">signal_strength = emerging</div>
+  </div>
+  <div class="metric-card">
+    <div class="label">Risk Flags</div>
+    <div class="value red" id="risk-count">--</div>
+    <div class="sub">signal_strength = risk</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Top Infrastructure Events</h2>
+  <div id="infra-events">Loading...</div>
+</div>
+
+<div class="panel">
+  <h2>Top Policy Events</h2>
+  <div id="policy-events">Loading...</div>
+</div>
+
+<div class="panel">
+  <h2>Weekly Digest</h2>
+  <div class="digest-text" id="weekly-digest">Loading...</div>
+</div>
+
+<div class="panel">
+  <h2>All Events</h2>
+  <div class="filter-bar">
+    <select id="filter-category">
+      <option value="">All Categories</option>
+      <option value="infrastructure">Infrastructure</option>
+      <option value="govt_project">Govt Project</option>
+      <option value="policy">Policy</option>
+    </select>
+    <select id="filter-signal">
+      <option value="">All Signals</option>
+      <option value="high">High</option>
+      <option value="emerging">Emerging</option>
+      <option value="risk">Risk</option>
+    </select>
+    <button onclick="loadEvents()">Apply</button>
+  </div>
+  <div class="spinner" id="events-spinner">Loading events...</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Headline</th>
+        <th>Category</th>
+        <th>Signal</th>
+        <th>Impact</th>
+        <th>Stage</th>
+        <th>Action</th>
+        <th>Date</th>
+      </tr>
+    </thead>
+    <tbody id="events-table-body">
+      <tr><td colspan="7">Loading...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+async function loadNorthScore() {
+  try {
+    const res = await fetch('/api/govt/north-score');
+    const data = await res.json();
+    const score = data.north_bengaluru_score || 0;
+    document.getElementById('nb-score').textContent = score.toFixed(3);
+    document.getElementById('high-count').textContent = data.high_opportunity_count ?? '--';
+    document.getElementById('risk-count').textContent = data.risk_count ?? '--';
+    document.getElementById('emerging-count').textContent = '--';
+
+    const barLen = Math.min(Math.round(score * 10), 10);
+    document.getElementById('score-bar').textContent = '\u2588'.repeat(barLen) + '\u2591'.repeat(10 - barLen);
+
+    const labelEl = document.getElementById('score-label');
+    if (score > 0.7) {
+      labelEl.textContent = 'Strong Infrastructure Tailwind';
+      labelEl.style.color = '#3fb950';
+    } else if (score > 0.4) {
+      labelEl.textContent = 'Building Momentum';
+      labelEl.style.color = '#f0a020';
+    } else {
+      labelEl.textContent = 'Weak Pipeline';
+      labelEl.style.color = '#f85149';
+    }
+
+    if (data.top_infra_events && data.top_infra_events.length > 0) {
+      document.getElementById('infra-events').innerHTML = data.top_infra_events.map(e => renderEventCard(e)).join('');
+    } else {
+      document.getElementById('infra-events').innerHTML = '<div class="sub">No infrastructure events tracked</div>';
+    }
+    if (data.top_policy_events && data.top_policy_events.length > 0) {
+      document.getElementById('policy-events').innerHTML = data.top_policy_events.map(e => renderEventCard(e)).join('');
+    } else {
+      document.getElementById('policy-events').innerHTML = '<div class="sub">No policy events tracked</div>';
+    }
+  } catch (e) {
+    document.getElementById('nb-score').textContent = 'ERR';
+    document.getElementById('score-label').textContent = 'Failed to load: ' + e.message;
+  }
+}
+
+async function loadDigest() {
+  try {
+    const res = await fetch('/api/govt/digest');
+    const data = await res.json();
+    document.getElementById('weekly-digest').textContent = data.digest || 'No digest available';
+  } catch (e) {
+    document.getElementById('weekly-digest').textContent = 'Failed to load digest: ' + e.message;
+  }
+}
+
+async function loadEvents() {
+  const cat = document.getElementById('filter-category').value;
+  const signal = document.getElementById('filter-signal').value;
+  const spinner = document.getElementById('events-spinner');
+  spinner.classList.add('active');
+  try {
+    let url = '/api/govt/events?limit=50';
+    if (cat) url += '&category=' + encodeURIComponent(cat);
+    if (signal) url += '&signal=' + encodeURIComponent(signal);
+    const res = await fetch(url);
+    const data = await res.json();
+    const tbody = document.getElementById('events-table-body');
+    if (!data.events || data.events.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7">No events found</td></tr>';
+    } else {
+      tbody.innerHTML = data.events.map(e => {
+        const signalClass = e.signal_strength === 'high' ? 'meta-high' : (e.signal_strength === 'risk' ? 'meta-risk' : 'meta-emerging');
+        return `<tr>
+          <td>${e.headline}</td>
+          <td><span class="meta-cat">${e.category}</span></td>
+          <td><span class="${signalClass}">${e.signal_strength || '--'}</span></td>
+          <td>${e.impact_score ?? '--'}/10</td>
+          <td>${e.stage || '--'}</td>
+          <td>${e.actionability || '--'}</td>
+          <td>${e.published_date || '--'}</td>
+        </tr>`;
+      }).join('');
+    }
+  } catch (e) {
+    document.getElementById('events-table-body').innerHTML = '<tr><td colspan="7">Error: ' + e.message + '</td></tr>';
+  }
+  spinner.classList.remove('active');
+}
+
+function renderEventCard(e) {
+  const signalClass = e.signal_strength === 'high' ? 'meta-high' : (e.signal_strength === 'risk' ? 'meta-risk' : 'meta-emerging');
+  const inv = e.investment_cr ? '\u20B9' + Number(e.investment_cr).toLocaleString('en-IN') + ' Cr' : '';
+  const barLen = Math.min(e.impact_score || 0, 10);
+  const bar = '\u2588'.repeat(barLen) + '\u2591'.repeat(10 - barLen);
+  return `<div class="event-card">
+    <div class="headline">${e.headline}</div>
+    <div class="meta">
+      <span class="meta-cat">${e.category}${e.subcategory ? '/' + e.subcategory : ''}</span>
+      <span class="${signalClass}">${(e.signal_strength || '').toUpperCase()}</span>
+      ${e.stage ? '<span>' + e.stage + '</span>' : ''}
+      ${inv ? '<span>' + inv + '</span>' : ''}
+      <span>Impact ${bar} ${e.impact_score ?? '--'}/10</span>
+      <span>Action: ${e.actionability || '--'}</span>
+    </div>
+  </div>`;
+}
+
+loadNorthScore();
+loadDigest();
+loadEvents();
+</script>
+</body>
+</html>
