@@ -14,11 +14,17 @@ Pipeline steps:
   5. ShareholderRound — 4 agents in ThreadPoolExecutor (60s/agent), GO/NO-GO/CONDITIONAL/ABSTAIN verdicts
   6. Deals table entry — persist opportunity record
 
+Persistence:
+  Jobs are written to the evaluate_jobs table (migration 0035) at creation, on every
+  progress update, and at completion/failure.  The in-memory _jobs dict is a session
+  cache for fast polling during a run; on cache-miss get_evaluate_job() falls back to
+  the DB so results survive container restarts.
+
 Risk Register:
   | Risk | Mitigation |
   |------|------------|
   | Pipeline fails mid-way (e.g. BoardRoom OK, DealMemo crashes) | job.status='failed', error field populated, partial results still retrievable via get_evaluate_job |
-  | Container restart loses in-memory jobs | Acceptable for v1 — Telegram polling handles retry on 404; log warning on restart |
+  | Container restart loses in-memory jobs | DB fallback in get_evaluate_job() recovers completed/failed records |
   | IntelRegistry module failure | Each module isolated; partial IntelPackage still proceeds through pipeline |
   | DB transient during deal entry | Deal entry wrapped in single transaction; failure does not erase board results |
   | Overlapping evaluations for same survey | Each gets unique job_id; IntelRegistry cache (1hr TTL) shares results between overlapping calls |
@@ -73,6 +79,27 @@ class EvaluateJob:
             f"survey_no={self.survey_no!r}, market={self.market!r})"
         )
 
+    def to_dict(self) -> dict:
+        return {
+            "job_id": self.job_id,
+            "status": self.status,
+            "progress_msg": self.progress_msg,
+            "survey_no": self.survey_no,
+            "market": self.market,
+            "land_area_sqft": self.land_area_sqft,
+            "sell_psf": self.sell_psf,
+            "deal_type": self.deal_type,
+            "pitch": self.pitch,
+            "created_at": self.created_at,
+            "completed_at": self.completed_at,
+            "board_session": self.board_session,
+            "deal_memo": self.deal_memo,
+            "investor_brief": self.investor_brief,
+            "shareholder_round": self.shareholder_round,
+            "deal_id": self.deal_id,
+            "error": self.error,
+        }
+
 
 _jobs: dict[str, EvaluateJob] = {}
 _jobs_lock = threading.Lock()
@@ -81,6 +108,108 @@ _JOBS_MAX_COUNT = 1000
 _last_cleanup_ts: float = 0.0
 _CLEANUP_INTERVAL_S = 300
 
+
+# ── DB persistence helpers ────────────────────────────────────────────────────
+
+def _db_insert_job(job: EvaluateJob) -> None:
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(
+                text("""
+                INSERT INTO evaluate_jobs (
+                    job_id, status, survey_no, market, land_area_sqft, sell_psf,
+                    deal_type, pitch, created_at, progress_msg
+                ) VALUES (
+                    :job_id, :status, :survey_no, :market, :land_area_sqft, :sell_psf,
+                    :deal_type, :pitch, :created_at, :progress_msg
+                )
+                ON CONFLICT (job_id) DO NOTHING
+                """),
+                {
+                    "job_id": job.job_id,
+                    "status": job.status,
+                    "survey_no": job.survey_no,
+                    "market": job.market,
+                    "land_area_sqft": job.land_area_sqft,
+                    "sell_psf": job.sell_psf,
+                    "deal_type": job.deal_type,
+                    "pitch": job.pitch,
+                    "created_at": job.created_at,
+                    "progress_msg": job.progress_msg,
+                },
+            )
+    except Exception as exc:
+        logger.warning("[Evaluate] DB insert failed for job {}: {}", job.job_id[:8], exc)
+
+
+def _db_update_job(job: EvaluateJob) -> None:
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(
+                text("""
+                UPDATE evaluate_jobs SET
+                    status          = :status,
+                    progress_msg    = :progress_msg,
+                    completed_at    = :completed_at,
+                    board_session   = CAST(:board_session AS jsonb),
+                    deal_memo       = CAST(:deal_memo AS jsonb),
+                    investor_brief  = CAST(:investor_brief AS jsonb),
+                    shareholder_round = CAST(:shareholder_round AS jsonb),
+                    deal_id         = :deal_id,
+                    error           = :error
+                WHERE job_id = :job_id
+                """),
+                {
+                    "job_id": job.job_id,
+                    "status": job.status,
+                    "progress_msg": job.progress_msg,
+                    "completed_at": job.completed_at,
+                    "board_session": json.dumps(job.board_session) if job.board_session is not None else None,
+                    "deal_memo": json.dumps(job.deal_memo) if job.deal_memo is not None else None,
+                    "investor_brief": json.dumps(job.investor_brief) if job.investor_brief is not None else None,
+                    "shareholder_round": json.dumps(job.shareholder_round) if job.shareholder_round is not None else None,
+                    "deal_id": job.deal_id,
+                    "error": job.error,
+                },
+            )
+    except Exception as exc:
+        logger.warning("[Evaluate] DB update failed for job {}: {}", job.job_id[:8], exc)
+
+
+def _db_fetch_job(job_id: str) -> dict | None:
+    try:
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text("SELECT * FROM evaluate_jobs WHERE job_id = :job_id"),
+                {"job_id": job_id},
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "job_id": str(row.job_id),
+                "status": row.status,
+                "progress_msg": row.progress_msg or "",
+                "survey_no": row.survey_no,
+                "market": row.market,
+                "land_area_sqft": float(row.land_area_sqft),
+                "sell_psf": float(row.sell_psf),
+                "deal_type": row.deal_type,
+                "pitch": row.pitch or "",
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+                "board_session": row.board_session,
+                "deal_memo": row.deal_memo,
+                "investor_brief": row.investor_brief,
+                "shareholder_round": row.shareholder_round,
+                "deal_id": str(row.deal_id) if row.deal_id else None,
+                "error": row.error,
+            }
+    except Exception as exc:
+        logger.warning("[Evaluate] DB fetch failed for job {}: {}", job_id[:8], exc)
+        return None
+
+
+# ── In-memory helpers ─────────────────────────────────────────────────────────
 
 def _periodic_cleanup() -> None:
     global _last_cleanup_ts
@@ -99,7 +228,7 @@ def _periodic_cleanup() -> None:
         for jid in stale:
             del _jobs[jid]
         if stale:
-            logger.info("[Evaluate] cleaned {} stale jobs (retained {})", len(stale), len(_jobs))
+            logger.info("[Evaluate] cleaned {} stale jobs from cache (retained {})", len(stale), len(_jobs))
 
 
 def _get_market_id(market: str) -> str | None:
@@ -194,7 +323,7 @@ def _create_deal_entry(
 
 def run_shareholder_round(pkg: IntelPackage, deal_summary: str = "") -> list[dict]:
     """Run all 4 shareholder agents in parallel. 60s timeout per agent.
-    
+
     Each shareholder returns: name, verdict (GO|NO-GO|CONDITIONAL|ABSTAIN),
     key_question, response.
     """
@@ -354,6 +483,7 @@ def _run_pipeline(
                 job.investor_brief = brief
                 job.shareholder_round = shareholder_round
                 job.deal_id = deal_id
+            _db_update_job(job)
 
         elapsed = _time_mod.time() - t0
         logger.info("[Evaluate] {} complete | deal={} | {}memos/{}briefs | {:.1f}s",
@@ -376,6 +506,7 @@ def _update_job(job_id: str, status: str, msg: str = "", error: str | None = Non
                 job.error = error
             if status in ("complete", "failed"):
                 job.completed_at = datetime.now(timezone.utc).isoformat()
+        _db_update_job(job)
 
 
 def _elapsed_since(job_id: str) -> float:
@@ -414,6 +545,7 @@ def start_evaluate(
     )
     with _jobs_lock:
         _jobs[job_id] = job
+    _db_insert_job(job)
 
     t = threading.Thread(
         target=_run_pipeline,
@@ -436,24 +568,7 @@ def get_evaluate_job(job_id: str) -> dict | None:
     _periodic_cleanup()
     with _jobs_lock:
         job = _jobs.get(job_id)
-        if not job:
-            return None
-        return {
-            "job_id": job.job_id,
-            "status": job.status,
-            "progress_msg": job.progress_msg,
-            "survey_no": job.survey_no,
-            "market": job.market,
-            "land_area_sqft": job.land_area_sqft,
-            "sell_psf": job.sell_psf,
-            "deal_type": job.deal_type,
-            "pitch": job.pitch,
-            "created_at": job.created_at,
-            "completed_at": job.completed_at,
-            "board_session": job.board_session,
-            "deal_memo": job.deal_memo,
-            "investor_brief": job.investor_brief,
-            "shareholder_round": job.shareholder_round,
-            "deal_id": job.deal_id,
-            "error": job.error,
-        }
+        if job:
+            return job.to_dict()
+    # Cache miss — fall back to DB (handles container restart)
+    return _db_fetch_job(job_id)
