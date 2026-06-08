@@ -42,6 +42,7 @@ x-agent-volumes: &agent-volumes
   - hf_cache:/root/.cache/huggingface
   - chroma_data:/app/data/chroma
   - re_os_backups:/app/backups
+  - "D:\\Brain\\JINU JOSHI\\03 LLS\\01 Wiki\\markets\\bangalore:/app/obsidian_sync"
 
 services:
 
