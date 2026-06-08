@@ -26,7 +26,7 @@ scrapling[fetchers]>=0.4.0
 
 # Task queue
 redis==7.4.0
-rq==1.16.1
+rq==2.9.1
 
 # Scheduling
 apscheduler==3.11.2
