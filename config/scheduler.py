@@ -21,7 +21,7 @@ Schedule (post-Sprint-79):
 - Monday 03:30 UTC — Memory conflict detection (Discord alert)
 - Monday 03:45 IST — BERTScore quality evaluation
 - Monday 04:00 IST — Weekly memory digest (top-5 facts per market → Discord)
-- Sunday 07:00 IST — PSF Forecast (LGBM walk-forward validation)
+- Monday 05:00 UTC — PSF Forecast update (numpy linear trend, GATE-85)
 - 1st of month 04:00 UTC — Monthly CEO letter (PerformanceDigest + agent_runs analysis → CEO letter)
 """
 
@@ -667,25 +667,74 @@ def run_opportunity_scoring():
         logger.warning("[Scheduler] Opportunity scoring failed after {:.1f}s: {}", elapsed, exc)
 
 
-def run_psf_forecast():
-    """Weekly PSF forecast for all markets. Discord alert if MAPE >15%.
-    Runs Sunday 07:00 IST."""
+def run_psf_forecast_update():
+    """Weekly PSF forecast update — Monday 05:00 UTC.
+    Forecasts each market for horizons [3, 6, 12] and upserts to market_forecasts.
+    Sends Discord digest with per-market trend summary."""
     from utils.psf_forecaster import PSFForecaster
+    from sqlalchemy import text as _text
+    from datetime import date
 
+    results = []
     for market in TARGET_MARKETS:
         try:
             forecaster = PSFForecaster()
-            result = forecaster.train(market)
-            if result.status == "skipped":
-                logger.info("[Scheduler] PSF forecast skipped for {}: {}",
-                           market, result.error or "insufficient data")
-                continue
+            result = forecaster.forecast(market)
+            results.append(result)
 
-            logger.info("[Scheduler] PSF forecast for {}: direction={}, next_3mo={:.0f}, MAPE={}",
-                       market, result.direction, result.next_3mo_avg or 0,
-                       f"{result.mape:.1f}%" if result.mape else "N/A")
+            if result.status == "ok":
+                today = date.today()
+                upserts = []
+                for horizon in [3, 6, 12]:
+                    psf_val = getattr(result, f"forecast_{horizon}m", 0)
+                    conf_low = getattr(result, f"conf_low_{horizon}m", None) if horizon in (3, 6, 12) else None
+                    conf_high = getattr(result, f"conf_high_{horizon}m", None) if horizon in (3, 6, 12) else None
+                    upserts.append({
+                        "market": market, "fdate": today, "horizon": horizon,
+                        "current_psf": result.current_psf,
+                        "forecast_psf": psf_val,
+                        "conf_low": conf_low, "conf_high": conf_high,
+                        "trend": result.trend_direction,
+                        "slope": result.slope_pct_per_month,
+                        "points": result.data_points, "mae": result.mae_pct,
+                    })
+                with get_engine().begin() as conn:
+                    for u in upserts:
+                        conn.execute(
+                            _text("""
+                                INSERT INTO market_forecasts
+                                    (market, forecast_date, horizon_months, current_psf, forecast_psf,
+                                     conf_low, conf_high, trend_direction, slope_pct_per_month,
+                                     data_points, mae_pct, model_version)
+                                VALUES
+                                    (:market, :fdate, :horizon, :current_psf, :forecast_psf,
+                                     :conf_low, :conf_high, :trend, :slope,
+                                     :points, :mae, 'linear_v1')
+                                ON CONFLICT (market, forecast_date, horizon_months)
+                                DO UPDATE SET
+                                    forecast_psf = EXCLUDED.forecast_psf,
+                                    conf_low = EXCLUDED.conf_low,
+                                    conf_high = EXCLUDED.conf_high,
+                                    trend_direction = EXCLUDED.trend_direction,
+                                    slope_pct_per_month = EXCLUDED.slope_pct_per_month,
+                                    data_points = EXCLUDED.data_points,
+                                    mae_pct = EXCLUDED.mae_pct
+                            """),
+                            u,
+                        )
+                logger.info("[Scheduler] PSF forecast for {}: trend={}, 6m={}, MAE={:.1f}%",
+                           market, result.trend_direction, result.forecast_6m, result.mae_pct)
+            else:
+                logger.warning("[Scheduler] PSF forecast skipped for {}: status={}", market, result.status)
         except Exception as exc:
             logger.warning("[Scheduler] PSF forecast failed for {}: {}", market, exc)
+
+    if results:
+        try:
+            from utils.discord_notifier import send_forecast_digest
+            send_forecast_digest(results)
+        except Exception as exc:
+            logger.warning("[Scheduler] PSF forecast digest failed: {}", exc)
 
 
 def run_compliance_check():
@@ -1721,12 +1770,12 @@ if __name__ == "__main__":
         misfire_grace_time=3600,
     )
 
-    # Weekly PSF forecast — Sunday 07:00 IST (T-765)
+    # Weekly PSF forecast — Monday 05:00 UTC (GATE-85, T-1111)
     scheduler.add_job(
-        lambda: _safe_job(run_psf_forecast, "psf_forecast"),
-        CronTrigger(day_of_week="sun", hour=7, minute=0),
-        id="psf_forecast",
-        name="Weekly PSF Forecast (LGBM)",
+        lambda: _safe_job(run_psf_forecast_update, "psf_forecast_update"),
+        CronTrigger(day_of_week="mon", hour=5, minute=0),
+        id="psf_forecast_update",
+        name="Weekly PSF Forecast Update (numpy linear trend)",
         misfire_grace_time=3600,
     )
 

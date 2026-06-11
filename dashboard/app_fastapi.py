@@ -4748,6 +4748,85 @@ async def market_supply(
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+@app.get("/api/market/forecast/{market}", tags=["Market"],
+         summary="PSF forecast for a market (3/6/12-month horizons)")
+@limiter.limit("30/hour")
+async def market_forecast(
+    market: str,
+    request: Request = None,
+):
+    """Return latest PSF forecast from market_forecasts table.
+    Falls back to on-demand PSFForecaster call if no rows exist."""
+    from utils.psf_forecaster import PSFForecaster
+    from config.settings import TARGET_MARKETS as _VALID_MARKETS
+    market = (market or "").strip()
+    if not market:
+        return JSONResponse({"error": "market is required"}, status_code=400)
+    valid = [m.strip().lower() for m in _VALID_MARKETS]
+    if market.lower() not in valid:
+        return JSONResponse(
+            {"error": f"Unknown market '{market}'. Valid: {sorted(set(m.strip() for m in _VALID_MARKETS))}"},
+            status_code=400,
+        )
+    try:
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text("""
+                    SELECT horizon_months, current_psf, forecast_psf,
+                           conf_low, conf_high, trend_direction,
+                           slope_pct_per_month, data_points, mae_pct,
+                           model_version, forecast_date
+                    FROM market_forecasts
+                    WHERE market ILIKE :market
+                    ORDER BY forecast_date DESC, horizon_months
+                    LIMIT 3
+                """),
+                {"market": f"%{market}%"},
+            ).fetchall()
+
+        if rows:
+            best = rows[0]
+            resp = {
+                "market": market,
+                "as_of": str(best.forecast_date) if best.forecast_date else "",
+                "trend_direction": best.trend_direction or "unknown",
+                "current_psf": float(best.current_psf) if best.current_psf else 0,
+                "slope_pct_per_month": float(best.slope_pct_per_month) if best.slope_pct_per_month else 0,
+                "data_points": best.data_points or 0,
+                "mae_pct": float(best.mae_pct) if best.mae_pct else 0,
+                "model_version": best.model_version or "linear_v1",
+            }
+            for r in rows:
+                h = int(r.horizon_months)
+                resp[f"forecast_{h}m"] = float(r.forecast_psf) if r.forecast_psf else 0
+                resp[f"conf_low_{h}m"] = float(r.conf_low) if r.conf_low else 0
+                resp[f"conf_high_{h}m"] = float(r.conf_high) if r.conf_high else 0
+            return resp
+
+        fallback = PSFForecaster().forecast(market)
+        return {
+            "market": fallback.market,
+            "as_of": fallback.as_of,
+            "trend_direction": fallback.trend_direction,
+            "current_psf": fallback.current_psf,
+            "forecast_3m": fallback.forecast_3m,
+            "forecast_6m": fallback.forecast_6m,
+            "forecast_12m": fallback.forecast_12m,
+            "conf_low_3m": fallback.conf_low_3m,
+            "conf_high_3m": fallback.conf_high_3m,
+            "conf_low_6m": fallback.conf_low_6m,
+            "conf_high_6m": fallback.conf_high_6m,
+            "conf_low_12m": fallback.conf_low_12m,
+            "conf_high_12m": fallback.conf_high_12m,
+            "mae_pct": fallback.mae_pct,
+            "data_points": fallback.data_points,
+            "model_version": fallback.model_version,
+        }
+    except Exception as exc:
+        logger.warning("[API] /api/market/forecast/{} failed: {}", market, exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 @app.post("/api/gcc/events")
 async def gcc_create_event(request: Request):
     """Manually ingest a single GCC event.

@@ -661,6 +661,38 @@ def format_monthly_digest(results: list) -> str:
     return msg
 
 
+def format_forecast_digest(results: list) -> str:
+    """Format PSF forecast digest — one line per market, ≤300 chars total."""
+    from loguru import logger as _log
+    lines = []
+    for r in results:
+        try:
+            if hasattr(r, "status") and r.status == "ok":
+                lines.append(
+                    f"{r.market}: {r.trend_direction} | "
+                    f"₹{int(r.current_psf):,} → ₹{int(r.forecast_6m):,} (6m) | "
+                    f"MAE {r.mae_pct:.1f}%"
+                )
+            else:
+                direction = getattr(r, "trend_direction", "unknown")
+                cur = getattr(r, "current_psf", 0)
+                lines.append(f"{r.market}: {direction} | ₹{int(cur):,} (insufficient data)")
+        except Exception as exc:
+            _log.warning("[Discord] format_forecast_digest item failed: {}", exc)
+    msg = "\n".join(lines)
+    return msg[:297] + "…" if len(msg) > 300 else msg
+
+
+def send_forecast_digest(results: list) -> None:
+    """Send PSF forecast digest to intel_reports channel."""
+    from loguru import logger as _log
+    try:
+        msg = format_forecast_digest(results)
+        send("intel_reports", "PSF Forecast Update", msg, COLOR_BLUE)
+    except Exception as exc:
+        _log.warning("[Discord] send_forecast_digest failed: {}", exc)
+
+
 def send_weekly_digest(results: list) -> None:
     """Send weekly digest — one embed per market to intel_reports channel."""
     from loguru import logger as _log

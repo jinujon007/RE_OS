@@ -455,21 +455,23 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                 try:
                     from utils.psf_forecaster import PSFForecaster
                     fc = PSFForecaster()
-                    forecast = fc.predict(market_safe)
-                    if forecast and len(forecast) >= 3:
-                        psf_now = forecast[0].predicted_psf
-                        psf_1m = forecast[1].predicted_psf if len(forecast) > 1 else psf_now
-                        psf_3m = forecast[2].predicted_psf if len(forecast) > 2 else psf_now
-                        direction = "up" if psf_3m > psf_now else ("down" if psf_3m < psf_now else "stable")
+                    f_result = fc.forecast(market_safe)
+                    if f_result.status == "ok":
                         irr_context += (
-                            f"\n\n[PSF FORECAST — {market_safe}]\n"
-                            f"Current PSF: ₹{psf_now:,.0f} | "
-                            f"1-month: ₹{psf_1m:,.0f} | "
-                            f"3-month: ₹{psf_3m:,.0f} | "
-                            f"Direction: {direction}\n"
+                            f"\n\nPSF FORECAST (6-month): Current ₹{f_result.current_psf:,.0f}. "
+                            f"Trend: {f_result.trend_direction}. "
+                            f"Forecast: ₹{f_result.forecast_6m:,} ±{f_result.error_range_6m:,} "
+                            f"(model MAE: {f_result.mae_pct:.1f}%). "
+                            f"Factor this into feasibility — if trend is falling, "
+                            f"IRR sensitivity to PSF is elevated.\n"
                         )
-                except Exception:
-                    logger.debug("[board_room] PSF forecast lookup failed for %s", market_safe)
+                    else:
+                        irr_context += (
+                            "\n\nPSF FORECAST: Insufficient data for trend projection "
+                            "— use current market PSF as static estimate.\n"
+                        )
+                except Exception as exc:
+                    logger.debug("[board_room] PSF forecast lookup failed for %s: %s", market_safe, exc)
             params = _extract_pitch_params(pitch)
             if params["area_sqft"] is not None and params["psf"] is not None:
                 try:

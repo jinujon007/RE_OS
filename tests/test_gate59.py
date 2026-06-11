@@ -9,11 +9,12 @@ def test_forecaster_skipped_for_insufficient_data():
     with patch("utils.db.get_engine") as mock_eng:
         mock_conn = MagicMock()
         mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
-        mock_conn.execute.return_value.scalar.return_value = 3
-        result = PSFForecaster().train("Yelahanka")
-    assert result.status == "skipped"
-    assert result.months_available == 3
-    assert "insufficient_data" in (result.error or "")
+        mock_conn.execute.return_value.fetchall.return_value = [
+            (__import__("datetime").datetime(2025, 1, 1), 6000.0),
+        ]
+        result = PSFForecaster().forecast("Yelahanka")
+    assert result.status == "insufficient_data"
+    assert result.data_points == 1
 
 
 def test_deal_pipeline_discord_fires_for_loi():

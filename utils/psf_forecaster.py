@@ -1,250 +1,189 @@
 """
-RE_OS — PSF Forecaster (Tier 3 — PSF Forecasting)
-mlforecast + LightGBM monthly PSF forecasting with walk-forward validation.
-Requires >=6 months of project_snapshots data.
-Gracefully degrades when data insufficient.
+RE_OS — PSF Forecaster (Sprint 85, GATE-85)
+numpy-based linear trend forecaster for monthly median PSF.
+No new dependencies — uses numpy.polyfit.
 """
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from loguru import logger
 
-__all__ = ["ForecastResult", "PSFForecaster", "_send_mape_alert", "_MAPE_THRESHOLD"]
+import numpy as np
 
 
-_MAPE_THRESHOLD = 15.0
-
-
-def _send_mape_alert(market: str, mape: float, direction: str, next_3mo_avg: float | None) -> None:
-    if mape > _MAPE_THRESHOLD:
-        try:
-            from utils.discord_notifier import send
-            next_str = f"₹{next_3mo_avg:,.0f}" if next_3mo_avg is not None else "N/A"
-            send("bd_opportunities",
-                 f"PSF Forecast Warning — {market}",
-                 f"MAPE of {mape:.1f}% exceeds 15% threshold. "
-                 f"Direction: {direction}. "
-                 f"Next 3mo avg: {next_str}. "
-                 f"Recommendation: review forecast inputs, check data quality.")
-        except Exception as exc:
-            logger.warning("[PSFForecaster] MAPE alert failed: {}", exc)
+__all__ = ["ForecastResult", "PSFForecaster"]
 
 
 @dataclass
 class ForecastResult:
     market: str = ""
-    forecast_months: list[dict] = None
-    mape: Optional[float] = None
-    last_observed_psf: Optional[float] = None
-    next_3mo_avg: Optional[float] = None
-    direction: str = "stable"
-    n_observations: int = 0
-    error: Optional[str] = None
-    trained_at: str = ""
+    as_of: str = ""
+    data_points: int = 0
+    trend_direction: str = "flat"
+    slope_pct_per_month: float = 0.0
+    current_psf: float = 0.0
+    forecast_3m: float = 0.0
+    forecast_6m: float = 0.0
+    forecast_12m: float = 0.0
+    conf_low_3m: float = 0.0
+    conf_high_3m: float = 0.0
+    conf_low_6m: float = 0.0
+    conf_high_6m: float = 0.0
+    conf_low_12m: float = 0.0
+    conf_high_12m: float = 0.0
+    mae_pct: float = 0.0
+    model_version: str = "linear_v1"
     status: str = "ok"
-    months_available: int = 0
-    
-    def __post_init__(self):
-        if self.forecast_months is None:
-            self.forecast_months = []
+
+    @property
+    def error_range_6m(self) -> int:
+        return int(abs(self.conf_high_6m - self.conf_low_6m) / 2) if self.conf_high_6m or self.conf_low_6m else 0
 
 
 class PSFForecaster:
-    """Train and predict monthly PSF trends using mlforecast + LightGBM.
-    
-    Requires >=6 monthly data points. Falls back to simple moving average
-    when mlforecast/LightGBM unavailable or data insufficient.
+    """Lightweight monthly PSF forecaster using numpy.polyfit.
+
+    Requires >=4 monthly data points. Uses linear trend + sigma confidence interval.
+    If >=12 months: applies 3-point centered moving average before trend fit.
+    Walk-forward MAE: 1-step-ahead prediction for last 3 months.
+
+    Retention: market_forecasts rows should be pruned after 52 weeks
+    (1 year of weekly forecasts = 156 rows per market).
     """
-    
-    _MIN_OBSERVATIONS = 6
-    _FORECAST_HORIZON = 3
-    
-    def train(self, market: str, force: bool = False) -> ForecastResult:
-        """Train a forecast model for a market and predict next 3 months.
-        
-        Args:
-            market: Market name.
-            force: If True, train even if less than MIN_OBSERVATIONS.
-            
-        Returns:
-            ForecastResult with predictions or fallback MA.
-        """
-        result = ForecastResult(market=market, trained_at=datetime.now(timezone.utc).isoformat())
-        
+
+    _MIN_OBS = 4
+    _SMOOTH_THRESHOLD = 12
+    _TREND_PCT_THRESHOLD = 0.5
+    _CONF_SIGMA_MULTIPLIER = 1.5
+    _WF_HOLDOUT = 3
+
+    def _load_monthly_series(self, market: str) -> list[tuple[datetime, float]]:
+        from utils.db import get_engine
+        from sqlalchemy import text
+
         try:
-            from utils.db import get_engine
-            from sqlalchemy import text
-            
             with get_engine().connect() as conn:
-                months_row = conn.execute(
-                    text("""
-                        SELECT COUNT(DISTINCT DATE_TRUNC('month', snapshot_date))
-                        FROM project_snapshots ps
-                        JOIN micro_markets m ON m.id = ps.micro_market_id
-                        WHERE m.name ILIKE :m
-                    """),
-                    {"m": f"%{market}%"},
-                ).scalar() or 0
-            result.months_available = months_row
-            
-            if months_row < self._MIN_OBSERVATIONS and not force:
-                result.status = "skipped"
-                result.error = f"insufficient_data: {months_row}/{self._MIN_OBSERVATIONS} months"
-                logger.warning(
-                    "[PSFForecaster] Skipped for {} — only {}/{} months of snapshots available",
-                    market, months_row, self._MIN_OBSERVATIONS,
-                )
-                return result
-            
-            with get_engine().connect() as conn:
+                mm_id = conn.execute(
+                    text("SELECT id FROM micro_markets WHERE name = :market"),
+                    {"market": market},
+                ).scalar()
+                if mm_id is None:
+                    logger.warning("[PSFForecaster] Unknown market: {}", market)
+                    return []
                 rows = conn.execute(
                     text("""
                         SELECT DATE_TRUNC('month', snapshot_date) AS month,
-                               ROUND(AVG(avg_psf)::numeric, 0) AS avg_psf
-                        FROM project_snapshots ps
-                        JOIN micro_markets m ON m.id = ps.micro_market_id
-                        WHERE m.name ILIKE :m AND ps.avg_psf IS NOT NULL
+                               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_min_psf) AS median_psf
+                        FROM project_snapshots
+                        WHERE micro_market_id = :mm_id AND price_min_psf > 1000
                         GROUP BY DATE_TRUNC('month', snapshot_date)
                         ORDER BY month
                     """),
-                    {"m": f"%{market}%"},
+                    {"mm_id": mm_id},
                 ).fetchall()
-            
-            import pandas as pd
-            import numpy as np
-            
-            df = pd.DataFrame([
-                {"ds": r[0], "y": float(r[1])}
-                for r in rows
-                if r[0] is not None and r[1] is not None
-            ])
-            # Guard: drop NaN/inf in target before training
-            df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=["y"])
-            
-            result.n_observations = len(df)
-            result.last_observed_psf = float(df["y"].iloc[-1]) if not df.empty else None
-            
-            if len(df) < self._MIN_OBSERVATIONS:
-                # Fallback: 3-month moving average
-                ma = df["y"].rolling(window=min(3, len(df))).mean().iloc[-1]
-                result.forecast_months = [
-                    {"month": (datetime.now() + timedelta(days=30 * i)).strftime("%Y-%m"),
-                     "predicted_psf": round(float(ma), 2)}
-                    for i in range(1, self._FORECAST_HORIZON + 1)
-                ]
-                result.direction = "stable"
-                logger.info("[PSFForecaster] {}: using MA fallback (n={})", market, len(df))
-                return result
-            
-            try:
-                from mlforecast import MLForecast
-                from lightgbm import LGBMRegressor
-                
-                fcst = MLForecast(
-                    models={"lgbm": LGBMRegressor(verbose=0, silent=True)},
-                    freq="MS",
-                    lags=[1, 2, 3, 6],
-                    date_features=["month", "quarter"],
-                )
-                
-                fcst.fit(df)
-                predictions = fcst.predict(self._FORECAST_HORIZON)
-                
-                for i, (_, row) in enumerate(predictions.iterrows()):
-                    raw_pred = float(row["lgbm"])
-                    if np.isnan(raw_pred) or np.isinf(raw_pred):
-                        raw_pred = result.last_observed_psf or 5000.0
-                    raw_pred = max(500.0, min(raw_pred, 50000.0))
-                    result.forecast_months.append({
-                        "month": row.name.strftime("%Y-%m") if hasattr(row.name, "strftime") else str(row.name)[:7],
-                        "predicted_psf": round(raw_pred, 2),
-                    })
-                
-                # Walk-forward validation
-                wf_result = self.walk_forward_validate(df)
-                result.mape = wf_result.get("mape")
-                
-                # Direction
-                if len(result.forecast_months) >= 2:
-                    first = result.forecast_months[0]["predicted_psf"]
-                    last = result.forecast_months[-1]["predicted_psf"]
-                    if last > first * 1.03:
-                        result.direction = "up"
-                    elif last < first * 0.97:
-                        result.direction = "down"
-                    else:
-                        result.direction = "stable"
-                
-                # Next 3mo avg
-                if result.forecast_months:
-                    result.next_3mo_avg = round(
-                        sum(m["predicted_psf"] for m in result.forecast_months) / len(result.forecast_months), 2
-                    )
-
-            except ImportError:
-                logger.debug("[PSFForecaster] mlforecast/LightGBM unavailable — using MA fallback (n={})", len(df))
-                ma = df["y"].rolling(window=3).mean().iloc[-1] if len(df) >= 3 else df["y"].mean()
-                result.forecast_months = [
-                    {"month": (datetime.now() + timedelta(days=30 * i)).strftime("%Y-%m"),
-                     "predicted_psf": round(float(ma), 2)}
-                    for i in range(1, self._FORECAST_HORIZON + 1)
-                ]
-                result.direction = "stable"
-
-            if result.mape is not None:
-                _send_mape_alert(market, result.mape, result.direction, result.next_3mo_avg)
-
-            logger.info("[PSFForecaster] {}: trained (n={}, MAPE={}, direction={})",
-                       market, len(df), f"{result.mape:.1f}%" if result.mape else "N/A", result.direction)
-            
+            return [(r[0], float(r[1])) for r in rows if r[0] is not None and r[1] is not None]
         except Exception as exc:
-            logger.warning("[PSFForecaster] Failed for {}: {}", market, exc)
-            result.error = str(exc)
-        
-        return result
-    
-    def walk_forward_validate(self, df) -> dict:
-        """Walk-forward validation: train T-6mo → validate T-3mo → test T.
-        
-        Returns:
-            dict with mape (float or None), n_windows.
+            logger.warning("[PSFForecaster] _load_monthly_series failed for {}: {}", market, exc)
+            return []
+
+    def forecast(self, market: str) -> ForecastResult:
+        """Generate PSF forecast for a market.
+
+        Steps:
+        1. Load monthly median PSF series from project_snapshots (PERCENTILE_CONT).
+        2. If <4 points: return insufficient_data (all forecasts = current_psf).
+        3. If >=12 points: apply 3-point centered moving average to smooth seasonality.
+        4. Fit linear trend via numpy.polyfit(x, y, deg=1).
+        5. Project 3/6/12 months forward from last observation.
+        6. Compute confidence interval: sigma * 1.5 around each projection (clamped >= 0).
+        7. Walk-forward MAE: hold out last 3 months, 1-step-ahead re-fitting.
+
+        Returns ForecastResult with status 'ok', 'insufficient_data', or 'error'.
+        Never raises — all exceptions caught and logged.
         """
+        result = ForecastResult(
+            market=market,
+            as_of=datetime.now(timezone.utc).isoformat(),
+        )
+
         try:
-            import pandas as pd
-            import numpy as np
-            from mlforecast import MLForecast
-            from lightgbm import LGBMRegressor
-            
-            if len(df) < 9:
-                return {"mape": None, "n_windows": 0, "note": "need ≥9 months"}
-            
-            errors = []
-            for i in range(6, len(df) - 3, 3):
-                train = df.iloc[:i]
-                test = df.iloc[i:i+3]
-                
-                if len(train) < 6 or len(test) < 1:
-                    continue
-                
-                fcst = MLForecast(
-                    models={"lgbm": LGBMRegressor(verbose=0, silent=True)},
-                    freq="MS",
-                    lags=[1, 2, 3],
-                )
-                fcst.fit(train)
-                preds = fcst.predict(len(test))
-                
-                for j, (_, pred_row) in enumerate(preds.iterrows()):
-                    if j < len(test):
-                        actual = test.iloc[j]["y"]
-                        predicted = pred_row["lgbm"]
-                        if actual and actual > 0:
-                            ape = abs(actual - predicted) / actual * 100
-                            errors.append(ape)
-            
-            if errors:
-                return {"mape": round(float(np.mean(errors)), 2), "n_windows": len(errors)}
-            return {"mape": None, "n_windows": 0}
+            series = self._load_monthly_series(market)
+            result.data_points = len(series)
+
+            if len(series) < self._MIN_OBS:
+                result.status = "insufficient_data"
+                result.current_psf = round(float(series[-1][1])) if series else 0.0
+                result.forecast_3m = result.current_psf
+                result.forecast_6m = result.current_psf
+                result.forecast_12m = result.current_psf
+                return result
+
+            raw_y = np.array([v for _, v in series], dtype=float)
+            result.current_psf = round(float(raw_y[-1]))
+
+            if len(raw_y) >= self._SMOOTH_THRESHOLD:
+                y = np.convolve(raw_y, [1/3, 1/3, 1/3], mode="valid")
+                x = np.arange(1, len(y) + 1, dtype=float)
+                last_x = float(x[-1])
+                raw_used = raw_y  # keep raw for walk-forward
+            else:
+                y = raw_y
+                x = np.arange(len(y), dtype=float)
+                last_x = float(len(y) - 1)
+                raw_used = y
+
+            coeffs = np.polyfit(x, y, deg=1)
+            slope, intercept = coeffs
+
+            mean_y = float(np.mean(y))
+            slope_pct = (slope / mean_y * 100) if mean_y > 0 else 0.0
+            result.slope_pct_per_month = round(float(slope_pct), 4)
+
+            if slope_pct > self._TREND_PCT_THRESHOLD:
+                result.trend_direction = "rising"
+            elif slope_pct < -self._TREND_PCT_THRESHOLD:
+                result.trend_direction = "falling"
+            else:
+                result.trend_direction = "flat"
+
+            def project(n_months):
+                return float(slope * (last_x + n_months) + intercept)
+
+            result.forecast_3m = round(project(3))
+            result.forecast_6m = round(project(6))
+            result.forecast_12m = round(project(12))
+
+            y_fitted = slope * x + intercept
+            sigma = float(np.std(y - y_fitted))
+
+            for horizon, attr_low, attr_high in [
+                (3, "conf_low_3m", "conf_high_3m"),
+                (6, "conf_low_6m", "conf_high_6m"),
+                (12, "conf_low_12m", "conf_high_12m"),
+            ]:
+                f_val = getattr(result, f"forecast_{horizon}m", 0)
+                setattr(result, attr_low, round(max(0, f_val - self._CONF_SIGMA_MULTIPLIER * sigma)))
+                setattr(result, attr_high, round(f_val + self._CONF_SIGMA_MULTIPLIER * sigma))
+
+            # Walk-forward MAE: 1-step-ahead for last 3 months of raw data
+            # Uses raw (unsmoothed) y to reflect real forecast error
+            if len(raw_used) >= self._MIN_OBS + self._WF_HOLDOUT:
+                errors = []
+                n = len(raw_used)
+                wf_x = np.arange(n, dtype=float)
+                for i in range(n - self._WF_HOLDOUT, n):
+                    train_x = wf_x[:i]
+                    train_y = raw_used[:i]
+                    wf_coeffs = np.polyfit(train_x, train_y, deg=1)
+                    pred = float(wf_coeffs[0] * wf_x[i] + wf_coeffs[1])
+                    actual = float(raw_used[i])
+                    if actual > 0:
+                        errors.append(abs(pred - actual) / actual * 100)
+                result.mae_pct = round(float(np.mean(errors)), 2) if errors else 0.0
+
+            result.status = "ok"
+
         except Exception as exc:
-            logger.debug("[PSFForecaster] Walk-forward failed: {}", exc)
-            return {"mape": None, "n_windows": 0, "error": str(exc)}
+            logger.warning("[PSFForecaster] forecast failed for {}: {}", market, exc)
+            result.status = "error"
+
+        return result
