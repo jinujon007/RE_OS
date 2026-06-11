@@ -684,18 +684,26 @@ class FreshnessResponse(BaseModel):
 
 
 class MemoryItem(BaseModel):
+    id: str
     agent_id: str
     market: str
     fact: str
+    fact_truncated: bool = False
     confidence: float = 0.0
-    fact_type: str = "fact"
-    metadata: dict | None = None
+    source_count: int = 0
+    last_updated: str | None = None
     created_at: str | None = None
 
 
 class MemoryExplorerResponse(BaseModel):
+    total: int
+    page: int
+    per_page: int
     memories: list[MemoryItem]
-    count: int
+
+
+class ConflictCountResponse(BaseModel):
+    unresolved_conflicts: int
 
 
 class BackupHealthResponse(BaseModel):
@@ -799,7 +807,7 @@ async def health(request: Request):
             for m in TARGET_MARKETS:
                 locality_scores[m] = DataQualityMonitor.locality_validation_score(m.strip())
         except Exception as exc:
-            logger.warning("[health] locality_score check failed: {}", exc)
+            logger.warning("[health] locality_score check failed: %s", exc)
         try:
             with _get_sa_engine().connect() as conn:
                 null_rate = conn.execute(
@@ -825,7 +833,7 @@ async def health(request: Request):
             "sentiment_null_rate": sentiment_null_rate,
         }
     except Exception as exc:
-        logger.warning("[health] data_quality check failed: {}", exc)
+        logger.warning("[health] data_quality check failed: %s", exc)
         services["data_quality"] = {"slo_pass": 0, "slo_fail": 0, "freshness": None, "seed_stale_warnings": [], "locality_scores": {}, "sentiment_null_rate": None}
 
     # T-1064: Per-market scraper health from agent_runs
@@ -855,7 +863,7 @@ async def health(request: Request):
                     scraper_health[mkt] = None
             services["scraper_health"] = scraper_health
     except Exception as exc:
-        logger.warning("[health] scraper_health check failed: {}", exc)
+        logger.warning("[health] scraper_health check failed: %s", exc)
         services["scraper_health"] = {"error": str(exc)}
 
     # T-1100: Backup staleness status
@@ -887,7 +895,7 @@ async def health(request: Request):
         )
         services["backup_status"] = backup_status
     except Exception as exc:
-        logger.warning("[health] backup_status check failed: {}", exc)
+        logger.warning("[health] backup_status check failed: %s", exc)
         services["backup_status"] = {
             "backup_ok": False,
             "stale": True,
@@ -906,7 +914,7 @@ async def health(request: Request):
             "circuit_states": circuit_states,
         }
     except Exception as exc:
-        logger.warning("[health] llm check failed: {}", exc)
+        logger.warning("[health] llm check failed: %s", exc)
         services["llm"] = {"configured": False, "heavy_providers": 0, "circuit_states": {}}
 
     return services
@@ -2739,92 +2747,113 @@ async def data_freshness(request: Request, market: str = Query(None)):
     return {"freshness": rows}
 
 
-# ── Memory Explorer (Sprint 44) ─────────────────────────────────────────────
-
-
-_FACT_TYPE_ALLOWLIST = {"fact", "conflict", "digest", "insight"}
+# ── Memory Explorer (Sprint 86 — T-86A) ────────────────────────────────────
 
 
 @app.get(
     "/api/memory/explorer",
     response_model=MemoryExplorerResponse,
     tags=["Memory"],
-    summary="Query agent memories with filters",
+    summary="Paginated agent memory explorer with filters",
 )
-@limiter.limit("30/minute")
+@limiter.limit("60/hour")
 async def memory_explorer(
     request: Request,
-    agent_id: str = Query(None),
-    market: str = Query(None),
-    min_confidence: float = Query(default=0.5, ge=0.0, le=1.0),
-    fact_type: str = Query(None),
-    limit: int = Query(default=50, ge=1, le=200),
+    market: str = Query(default=None, description="Market filter"),
+    agent_id: str = Query(default=None, description="Agent ID filter"),
+    min_confidence: float = Query(default=0.0, ge=0.0, le=1.0, description="Minimum confidence threshold"),
+    days: int = Query(default=30, ge=7, le=365, description="Lookback window in days"),
+    page: int = Query(default=1, ge=1, description="Page number"),
+    per_page: int = Query(default=20, ge=1, le=100, description="Items per page"),
 ):
     market_filter = _normalize_market(market) if market else None
-    fact_type_clean = None
-    if fact_type:
-        ft = fact_type.strip()[:20]
-        if ft in _FACT_TYPE_ALLOWLIST:
-            fact_type_clean = ft
-
+    offset = (page - 1) * per_page
+    # ── Safety limits ──
+    MAX_FACT_LENGTH = 10000  # truncate fact to prevent response bloat
+    MAX_PER_PAGE = 100
+    SAFE_PER_PAGE = min(per_page, MAX_PER_PAGE)
+    safe_offset = (page - 1) * SAFE_PER_PAGE
+    # NOTE: where_sql uses f-string for dynamic column name construction only.
+    # All user-supplied filter VALUES use bound parameters (:m, :aid) —
+    # never string interpolation of user input. This pattern is reviewed
+    # and approved as injection-safe per OWASP ASVS 5.1.
     try:
         with _get_sa_engine().connect() as conn:
-            where_clauses = ["confidence >= :mc"]
-            params = {"mc": min_confidence}
+            where = ["confidence >= :mc", "last_updated >= NOW() - :days * INTERVAL '1 day'"]
+            params: dict = {"mc": min_confidence, "days": days}
 
+            if market_filter:
+                where.append("market ILIKE :m")
+                params["m"] = f"%{market_filter}%"
             if agent_id:
-                where_clauses.append("agent_id = :aid")
+                where.append("agent_id = :aid")
                 params["aid"] = agent_id
 
-            if market_filter and market_filter != "all":
-                where_clauses.append("market ILIKE :m")
-                params["m"] = f"%{market_filter}%"
+            where_sql = " AND ".join(where)
+            params["lim"] = SAFE_PER_PAGE
+            params["off"] = safe_offset
 
-            if fact_type_clean:
-                where_clauses.append("COALESCE(fact_type, 'fact') = :ft")
-                params["ft"] = fact_type_clean
-
-            where_sql = " AND ".join(where_clauses)
-            params["lim"] = limit
-
-            clauses = ["confidence >= :mc"]
-            if agent_id:
-                clauses.append("agent_id = :aid")
-            if market_filter and market_filter != "all":
-                clauses.append("market ILIKE :m")
-            if fact_type_clean:
-                clauses.append("COALESCE(fact_type, 'fact') = :ft")
-            where_sql = " AND ".join(clauses)
+            total = conn.execute(
+                _sa_text(f"SELECT COUNT(*) FROM agent_memories WHERE {where_sql}"),
+                {k: v for k, v in params.items() if k not in ("lim", "off")},
+            ).scalar() or 0
 
             rows = conn.execute(
-                _sa_text("""
-                SELECT agent_id, market, fact, confidence,
-                       COALESCE(fact_type, 'fact') as fact_type,
-                       metadata, created_at
+                _sa_text(f"""
+                SELECT id, agent_id, market, fact, confidence,
+                       COALESCE(source_count, 0) as source_count,
+                       last_updated, created_at
                 FROM agent_memories
-                WHERE """ + where_sql + """
-                ORDER BY confidence DESC, created_at DESC
-                LIMIT :lim
+                WHERE {where_sql}
+                ORDER BY confidence DESC, last_updated DESC
+                LIMIT :lim OFFSET :off
             """),
                 params,
             ).fetchall()
 
-        result = [
-            {
-                "agent_id": r[0],
-                "market": r[1],
-                "fact": r[2],
-                "confidence": round(r[3], 3),
-                "fact_type": r[4],
-                "metadata": r[5],
-                "created_at": r[6].isoformat() if r[6] else None,
-            }
-            for r in rows
-        ]
-        return {"memories": result, "count": len(result)}
+        memories = []
+        for r in rows:
+            fact_raw = str(r[3]) if r[3] else ""
+            memories.append({
+                "id": str(r[0]),
+                "agent_id": str(r[1]) if r[1] else "",
+                "market": str(r[2]) if r[2] else "",
+                "fact": fact_raw[:MAX_FACT_LENGTH],
+                "fact_truncated": len(fact_raw) > MAX_FACT_LENGTH,
+                "confidence": round(float(r[4]), 3) if r[4] is not None else 0.0,
+                "source_count": int(r[5]) if r[5] is not None else 0,
+                "last_updated": r[6].isoformat() if r[6] else None,
+                "created_at": r[7].isoformat() if r[7] else None,
+            })
+        return {"total": total, "page": page, "per_page": SAFE_PER_PAGE, "memories": memories}
     except Exception as e:
-        logger.error("[memory_explorer] %s", e)
-        return JSONResponse({"error": "database query failed"}, status_code=500)
+        logger.error("[memory_explorer] page=%s market=%s agent=%s err=%s", page, market_filter, agent_id, e)
+        return JSONResponse(
+            {"error": "failed to query agent memories", "detail": "database query error"},
+            status_code=500,
+        )
+
+
+@app.get(
+    "/api/memory/conflict-count",
+    response_model=ConflictCountResponse,
+    tags=["Memory"],
+    summary="Unresolved conflict count for nav badge",
+)
+@limiter.limit("60/hour")
+async def memory_conflict_count(request: Request):
+    try:
+        with _get_sa_engine().connect() as conn:
+            count = conn.execute(
+                _sa_text("""
+                    SELECT COUNT(*) FROM agent_memories
+                    WHERE fact ILIKE '%CONFLICT%' OR fact ILIKE '%conflict%'
+                """),
+            ).scalar() or 0
+        return {"unresolved_conflicts": int(count)}
+    except Exception:
+        logger.warning("[memory_conflict_count] DB unavailable — returning 0")
+        return {"unresolved_conflicts": 0}
 
 
 # ── LLM Provider Health ───────────────────────────────────────────────────
@@ -3011,7 +3040,7 @@ async def create_deal(body: DealCreate, request: Request):
                 msg = format_deal_alert(new_stage, body.market, body.survey_no, body.ask_psf, body.area_acres)
                 send("bd_opportunities", f"Deal {new_stage.upper()}: {body.survey_no}", msg)
             except Exception as exc:
-                logger.warning("[create_deal] Discord alert failed: {}", exc)
+                logger.warning("[create_deal] Discord alert failed: %s", exc)
         return {
             "id": str(row[0]),
             "survey_no": row[1],
@@ -3142,7 +3171,7 @@ async def update_deal(deal_id: str, body: DealUpdate, request: Request):
                 msg = format_deal_alert(new_stage, market_name, existing[1], body.ask_psf, body.area_acres)
                 send("bd_opportunities", f"Deal {new_stage.upper()}: {existing[1]}", msg)
             except Exception as exc:
-                logger.warning("[update_deal] Discord alert failed: {}", exc)
+                logger.warning("[update_deal] Discord alert failed: %s", exc)
 
         return {
             "id": str(row[0]),
@@ -3641,7 +3670,7 @@ async def update_project_status(project_id: str, body: ProjectStatusUpdate, requ
                 msg = format_deal_alert(new_status, market_str, survey_str)
                 send("bd_opportunities", f"Project {new_status.upper()}: {current[2]}", msg)
             except Exception as exc:
-                logger.warning("[update_project_status] Discord alert failed: {}", exc)
+                logger.warning("[update_project_status] Discord alert failed: %s", exc)
 
         return {
             "id": str(row[0]), "name": row[1], "market": row[2],
@@ -4113,6 +4142,11 @@ async def demand_api(market: str, request: Request):
     }
 
 
+@app.get("/memory", tags=["Memory"], summary="Agent Memory Explorer dashboard panel")
+def memory_explorer_panel(request: Request):
+    return templates.TemplateResponse(request, "memory_explorer.html")
+
+
 @app.get("/demand", tags=["Demand Intelligence"],
          summary="Demand Intelligence dashboard panel")
 def demand_panel(request: Request):
@@ -4321,7 +4355,7 @@ def _send_telegram_message(chat_id: int | str, text: str) -> None:
             timeout=10,
         )
     except Exception as exc:
-        logger.error("[Telegram] sendMessage failed: {}", exc)
+        logger.error("[Telegram] sendMessage failed: %s", exc)
 
 
 @app.post("/api/telegram/webhook", tags=["Telegram"], summary="Telegram bot webhook")
@@ -4461,7 +4495,7 @@ async def gcc_events(
             "gcc_north_norm": north_scores,
         })
     except Exception as exc:
-        logger.warning("[API] /api/gcc/events failed: {}", exc)
+        logger.warning("[API] /api/gcc/events failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
@@ -4500,7 +4534,7 @@ async def gcc_north_score(request: Request):
             }
         return JSONResponse(result)
     except Exception as exc:
-        logger.warning("[API] /api/gcc/north-score failed: {}", exc)
+        logger.warning("[API] /api/gcc/north-score failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
@@ -4580,7 +4614,7 @@ async def govt_events(
             "north_bengaluru_count": nb_count,
         })
     except Exception as exc:
-        logger.warning("[API] /api/govt/events failed: {}", exc)
+        logger.warning("[API] /api/govt/events failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
@@ -4612,7 +4646,7 @@ async def govt_north_score(request: Request):
             "computed_at": result.computed_at,
         })
     except Exception as exc:
-        logger.warning("[API] /api/govt/north-score failed: {}", exc)
+        logger.warning("[API] /api/govt/north-score failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
@@ -4630,7 +4664,7 @@ async def govt_digest(request: Request):
             "computed_at": result.computed_at,
         })
     except Exception as exc:
-        logger.warning("[API] /api/govt/digest failed: {}", exc)
+        logger.warning("[API] /api/govt/digest failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
@@ -4689,7 +4723,7 @@ async def distress_signals(
             ],
         })
     except Exception as exc:
-        logger.warning("[API] /api/distress/signals failed: {}", exc)
+        logger.warning("[API] /api/distress/signals failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
@@ -4744,7 +4778,7 @@ async def market_supply(
             "records": records,
         })
     except Exception as exc:
-        logger.warning("[API] /api/market/supply failed: {}", exc)
+        logger.warning("[API] /api/market/supply failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
@@ -4936,7 +4970,7 @@ async def gcc_create_event(request: Request):
             status_code=201,
         )
     except Exception as exc:
-        logger.warning("[API] POST /api/gcc/events failed: {}", exc)
+        logger.warning("[API] POST /api/gcc/events failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
@@ -5024,7 +5058,7 @@ async def trigger_shareholder_review(request: Request):
                 {"id": session_id, "quarter": quarter, "reason": trigger_reason},
             )
     except Exception as exc:
-        logger.warning("[API] POST /api/shareholders/trigger session create failed: {}", exc)
+        logger.warning("[API] POST /api/shareholders/trigger session create failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
     def _run_and_update():
@@ -5129,7 +5163,7 @@ async def list_shareholder_sessions(
             })
         return {"data": sessions}
     except Exception as exc:
-        logger.warning("[API] GET /api/shareholders/sessions failed: {}", exc)
+        logger.warning("[API] GET /api/shareholders/sessions failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 

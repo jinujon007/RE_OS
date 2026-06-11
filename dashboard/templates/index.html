@@ -904,7 +904,8 @@ body {
 <span class="last-updated" id="last-updated">UPDATED —</span>
    <button onclick="window.open('/static/kepler_map.html','_blank')" style="background:#1a2235;border:1px solid #2a3a55;color:#58a6ff;padding:4px 8px;font-size:8px;cursor:pointer;border-radius:4px;font-family:'Press Start 2P',cursive;">MAP</button>
    <span class="clock" id="clock"></span>
-   <span class="conflict-badge no-conflicts" id="conflict-badge" onclick="openConflictPanel()">⚠ <span id="conflict-count">0</span> CONFLICTS</span>
+   <span class="conflict-badge no-conflicts" id="conflict-badge" onclick="openConflictPanel()" role="status" aria-live="polite" aria-label="Unresolved agent memory conflicts">⚠ <span id="conflict-count">0</span> CONFLICTS</span>
+   <button onclick="window.open('/memory','_blank')" style="background:#1a2235;border:1px solid #2a3a55;color:#58a6ff;padding:4px 8px;font-size:8px;cursor:pointer;border-radius:4px;font-family:'Press Start 2P',cursive;">MEMORY</button>
   </div>
 
 <!-- ── MAIN GRID ── -->
@@ -1294,75 +1295,9 @@ body {
        <div id="intel-search-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
        <div id="intel-search-spinner" style="display:none;color:#58a6ff;font-size:8px;margin-top:4px;">⟳ Searching...</div>
      </div>
-      <div id="legal-brief-market" style="color:#9b7ec7;font-family:'Press Start 2P',cursive;font-size:7px;margin-bottom:6px;"></div>
-      <div style="display:flex;gap:6px;margin-bottom:4px;">
-        <span id="legal-brief-badge" style="display:none;padding:2px 6px;border-radius:3px;font-size:7px;font-weight:bold;"></span>
-      </div>
-      <div id="legal-brief-content" style="font-size:9px;color:#c9d1d9;line-height:1.5;max-height:200px;overflow-y:auto;white-space:pre-wrap;"></div>
-      <div id="legal-brief-meta" style="color:#484f58;font-size:7px;margin-top:2px;"></div>
-      <div id="legal-brief-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
-      <div id="legal-brief-spinner" style="display:none;color:#9b7ec7;font-size:9px;margin-top:4px;">⟳ Loading legal data...</div>
-    </div>
 
-<div class="infra-section">
-       <div class="infra-title">INTEL SEARCH</div>
-       <div style="display:flex;gap:4px;margin-bottom:6px;">
-         <input id="intel-search-q" type="text" placeholder="e.g. Yelahanka PSF trend 2026"
-           style="flex:1;background:#0f1520;border:1px solid #2a3a55;color:#c9d1d9;padding:5px 8px;font-family:'Courier New',monospace;font-size:10px;border-radius:4px;"
-           onkeydown="if(event.key==='Enter')runIntelSearch()">
-         <select id="intel-search-market" style="background:#0f1520;border:1px solid #2a3a55;color:#8b949e;padding:4px;font-family:'Courier New',monospace;font-size:9px;border-radius:4px;">
-           <option value="">All</option>
-           <option value="yelahanka">Yelahanka</option>
-           <option value="devanahalli">Devanahalli</option>
-           <option value="hebbal">Hebbal</option>
-         </select>
-         <button onclick="runIntelSearch()" style="background:#1a2235;border:1px solid #2a3a55;color:#58a6ff;padding:5px 10px;font-size:9px;cursor:pointer;border-radius:4px;">SEARCH</button>
-         <button onclick="clearIntelSearch()" style="background:#1a1010;border:1px solid #484f58;color:#6b7280;padding:5px 6px;font-size:9px;cursor:pointer;border-radius:4px;">✕</button>
-       </div>
-       <div id="intel-search-results" style="max-height:220px;overflow-y:auto;"></div>
-       <div id="intel-search-status" style="color:#6b7280;font-size:8px;margin-top:4px;"></div>
-       <div id="intel-search-spinner" style="display:none;color:#58a6ff;font-size:8px;margin-top:4px;">⟳ Searching...</div>
-     </div>
 
-     <!-- ── Memory Explorer Panel (T-807) ── -->
-     <div class="infra-section" id="memory-explorer-section">
-       <div class="infra-title">MEMORY EXPLORER
-         <button class="db-explorer-refresh" onclick="pollMemoryExplorer()" title="Refresh">⟳</button>
-       </div>
-       <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;">
-         <select id="memory-agent-filter" style="flex:1;background:#0f1520;border:1px solid #2a3a55;color:#c9d1d9;padding:4px;font-family:'Courier New',monospace;font-size:9px;border-radius:4px;">
-           <option value="">All Agents</option>
-           <option value="ceo">CEO</option>
-           <option value="analyst">Analyst</option>
-           <option value="scraper">Scout</option>
-           <option value="_memory_system_">Conflict Detector</option>
-         </select>
-         <select id="memory-market-filter" style="flex:1;background:#0f1520;border:1px solid #2a3a55;color:#c9d1d9;padding:4px;font-family:'Courier New',monospace;font-size:9px;border-radius:4px;">
-           <option value="">All Markets</option>
-           <option value="yelahanka">Yelahanka</option>
-           <option value="devanahalli">Devanahalli</option>
-           <option value="hebbal">Hebbal</option>
-         </select>
-         <input id="memory-confidence-filter" type="number" min="0" max="1" step="0.1" value="0.5"
-           style="width:60px;background:#0f1520;border:1px solid #2a3a55;color:#c9d1d9;padding:4px;font-family:'Courier New',monospace;font-size:9px;border-radius:4px;"
-           title="Min confidence">
-       </div>
-       <div id="memory-explorer-status" style="color:#6b7280;font-size:8px;margin-bottom:4px;"></div>
-       <div style="max-height:200px;overflow-y:auto;border:1px solid #1a2235;border-radius:4px;">
-         <table style="width:100%;border-collapse:collapse;font-size:8px;">
-           <thead>
-             <tr style="color:#484f58;border-bottom:1px solid #2a3a55;position:sticky;top:0;background:#0f1520;">
-               <th style="text-align:left;padding:4px;">Agent</th>
-               <th style="text-align:left;padding:4px;">Market</th>
-               <th style="text-align:left;padding:4px;">Fact</th>
-               <th style="text-align:center;padding:4px;">Confidence</th>
-               <th style="text-align:center;padding:4px;">Date</th>
-             </tr>
-           </thead>
-           <tbody id="memory-explorer-tbody"></tbody>
-         </table>
-       </div>
-     </div>
+
 
      <!-- ── Alerts Panel (T-808 conflict badge) ── -->
      <div class="infra-section">
@@ -3084,8 +3019,8 @@ async function pollConflictBadge() {
   if (!badge) return;
   
   try {
-    const data = await fetch('/api/memory/explorer?fact_type=conflict').then(r => r.json()).catch(() => ({memories: []}));
-    const count = (data && data.memories ? data.memories.length : 0);
+    const data = await fetch('/api/memory/conflict-count').then(r => r.json()).catch(() => ({unresolved_conflicts: 0}));
+    const count = (data && data.unresolved_conflicts != null ? data.unresolved_conflicts : 0);
     countEl.textContent = count;
     badge.className = count > 0 ? 'conflict-badge has-conflicts' : 'conflict-badge no-conflicts';
   } catch (e) {
@@ -3094,13 +3029,10 @@ async function pollConflictBadge() {
 }
 
 pollConflictBadge();
-setInterval(pollConflictBadge, 60000);
+setInterval(pollConflictBadge, 300000); // 5 min
 
 function openConflictPanel() {
-  // Filter memory explorer to show only conflicts
-  const agentFilter = document.getElementById('memory-agent-filter');
-  if (agentFilter) agentFilter.value = '_memory_system_';
-  pollMemoryExplorer();
+  window.open('/memory', '_blank');
 }
 
 </script>

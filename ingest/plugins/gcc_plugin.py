@@ -20,6 +20,7 @@ Scoring (mirrors GCC Demand Scout spec):
 North Bengaluru corridor → impact_score mapping:
     Stored at ingestion time per event. GCCIntel reads stored values.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -38,51 +39,51 @@ __all__ = ["GCCPlugin"]
 
 _CORRIDOR_NB_IMPACT: dict[str, float] = {
     "kiadb_aerospace_park": 1.00,
-    "devanahalli_nh44":     1.00,
-    "yelahanka_jakkur":     1.00,
-    "manyata_tech_park":    0.90,
-    "hebbal_orn_north":     0.85,
-    "nagawara_hm_tech":     0.75,
-    "thanisandra_strr":     0.65,
-    "whitefield":           0.10,
-    "orr_south":            0.12,
-    "electronic_city":      0.05,
-    "koramangala":          0.10,
+    "devanahalli_nh44": 1.00,
+    "yelahanka_jakkur": 1.00,
+    "manyata_tech_park": 0.90,
+    "hebbal_orn_north": 0.85,
+    "nagawara_hm_tech": 0.75,
+    "thanisandra_strr": 0.65,
+    "whitefield": 0.10,
+    "orr_south": 0.12,
+    "electronic_city": 0.05,
+    "koramangala": 0.10,
 }
 
 # Location keyword → corridor slug
 _LOCATION_TO_CORRIDOR: dict[str, str] = {
-    "aerospace":        "kiadb_aerospace_park",
-    "bagalur":          "kiadb_aerospace_park",
-    "kiadb aerospace":  "kiadb_aerospace_park",
-    "devanahalli":      "devanahalli_nh44",
-    "nh-44":            "devanahalli_nh44",
-    "nh 44":            "devanahalli_nh44",
-    "yelahanka":        "yelahanka_jakkur",
-    "jakkur":           "yelahanka_jakkur",
-    "manyata":          "manyata_tech_park",
-    "nagavara":         "manyata_tech_park",
-    "hebbal":           "hebbal_orn_north",
-    "thanisandra":      "thanisandra_strr",
-    "nagawara":         "nagawara_hm_tech",
-    "whitefield":       "whitefield",
-    "sarjapur":         "orr_south",
-    "bellandur":        "orr_south",
-    "electronic city":  "electronic_city",
-    "koramangala":      "koramangala",
+    "aerospace": "kiadb_aerospace_park",
+    "bagalur": "kiadb_aerospace_park",
+    "kiadb aerospace": "kiadb_aerospace_park",
+    "devanahalli": "devanahalli_nh44",
+    "nh-44": "devanahalli_nh44",
+    "nh 44": "devanahalli_nh44",
+    "yelahanka": "yelahanka_jakkur",
+    "jakkur": "yelahanka_jakkur",
+    "manyata": "manyata_tech_park",
+    "nagavara": "manyata_tech_park",
+    "hebbal": "hebbal_orn_north",
+    "thanisandra": "thanisandra_strr",
+    "nagawara": "nagawara_hm_tech",
+    "whitefield": "whitefield",
+    "sarjapur": "orr_south",
+    "bellandur": "orr_south",
+    "electronic city": "electronic_city",
+    "koramangala": "koramangala",
 }
 
 # ── Scoring multipliers ───────────────────────────────────────────────────────
 
 _ENTRANT_MULT = {
-    "NEW":           1.0,
-    "EXPANSION":     0.5,
-    "RELOCATION":    0.7,
+    "NEW": 1.0,
+    "EXPANSION": 0.5,
+    "RELOCATION": 0.7,
     "CONSOLIDATION": -0.3,
 }
 _WFH_DISCOUNT = {
-    "FULL_OFFICE":     1.0,
-    "HYBRID":          0.65,
+    "FULL_OFFICE": 1.0,
+    "HYBRID": 0.65,
     "REMOTE_FRIENDLY": 0.25,
 }
 _MATURITY_WEIGHT = {1: 0.90, 2: 0.70, 3: 0.50, 4: 0.25}
@@ -330,13 +331,20 @@ _SEED_EVENTS: list[dict[str, Any]] = [
 # ── News scan keywords for GCC detection ─────────────────────────────────────
 
 _GCC_KEYWORDS = [
-    "global capability centre", "global capability center",
-    "gcc", "captive centre", "captive center",
-    "engineering centre", "engineering center",
-    "r&d centre", "r&d center",
-    "technology campus", "tech hub",
+    "global capability centre",
+    "global capability center",
+    "gcc",
+    "captive centre",
+    "captive center",
+    "engineering centre",
+    "engineering center",
+    "r&d centre",
+    "r&d center",
+    "technology campus",
+    "tech hub",
     "semiconductor design",
-    "ai centre", "ai center",
+    "ai centre",
+    "ai center",
 ]
 
 
@@ -441,13 +449,15 @@ class GCCPlugin(DataPlugin):
                 "discord_alert_fired": False,
             }
 
-            records.append(ParsedRecord(
-                entity_type="gcc_event",
-                source_id=f"gcc_seed_{cid}",
-                market=market,
-                data=data,
-                confidence=0.9,
-            ))
+            records.append(
+                ParsedRecord(
+                    entity_type="gcc_event",
+                    source_id=f"gcc_seed_{cid}",
+                    market=market,
+                    data=data,
+                    confidence=0.9,
+                )
+            )
 
         # Source 2: news_articles scan
         news_records = self._scan_news_articles(market, existing)
@@ -464,6 +474,7 @@ class GCCPlugin(DataPlugin):
 
     def validate(self, record: ParsedRecord) -> "ValidationResult":  # type: ignore[name-defined]
         from ingest.base import ValidationResult
+
         errors = []
         if not record.data.get("canonical_id"):
             errors.append("canonical_id required")
@@ -480,6 +491,7 @@ class GCCPlugin(DataPlugin):
         try:
             from utils.db import get_engine
             from sqlalchemy import text
+
             with get_engine(pool_size=1, max_overflow=0).connect() as conn:
                 rows = conn.execute(
                     text("SELECT canonical_id FROM gcc_events")
@@ -561,9 +573,7 @@ class GCCPlugin(DataPlugin):
 
                 # Quick dedup: use article title + published month as key
                 pub_str = str(published_at)[:7] if published_at else "2025-01"
-                cid = _make_canonical_id(
-                    title[:60], "Bengaluru", pub_str
-                )
+                cid = _make_canonical_id(title[:60], "Bengaluru", pub_str)
                 if cid in existing:
                     continue
 
@@ -584,13 +594,15 @@ class GCCPlugin(DataPlugin):
                 evt["estimated_demand_units"] = self._estimate_demand_units(evt)
                 evt["discord_alert_fired"] = False
 
-                records.append(ParsedRecord(
-                    entity_type="gcc_event",
-                    source_id=f"gcc_news_{cid}",
-                    market=market,
-                    data=evt,
-                    confidence=0.6,
-                ))
+                records.append(
+                    ParsedRecord(
+                        entity_type="gcc_event",
+                        source_id=f"gcc_news_{cid}",
+                        market=market,
+                        data=evt,
+                        confidence=0.6,
+                    )
+                )
 
         except Exception as exc:
             logger.debug("[GCCPlugin] news scan failed: {}", exc)
@@ -629,7 +641,10 @@ class GCCPlugin(DataPlugin):
                     pass
 
         # Classify entrant type
-        if any(kw in text_lower for kw in ["first india", "first bengaluru", "new gcc", "launch"]):
+        if any(
+            kw in text_lower
+            for kw in ["first india", "first bengaluru", "new gcc", "launch"]
+        ):
             entrant_type = "NEW"
         elif any(kw in text_lower for kw in ["expand", "addition", "more", "grow"]):
             entrant_type = "EXPANSION"

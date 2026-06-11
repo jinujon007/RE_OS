@@ -7,6 +7,7 @@ demand_score_v2 as a 5th component (gcc_north_norm × 0.15).
 Migration chain:
     0029_lls_portfolio + 0029_operations (merge) -> 0030_gcc_events
 """
+
 from typing import Sequence, Tuple, Union
 from alembic import op
 import sqlalchemy as sa
@@ -38,16 +39,13 @@ def upgrade():
         ),
         # Dedup key: slugify(company + location + announced_year_month)
         sa.Column("canonical_id", sa.VARCHAR(200), nullable=False),
-
         # Company identity
         sa.Column("company", sa.VARCHAR(200), nullable=False),
         sa.Column("sector", sa.VARCHAR(100), nullable=True),
         sa.Column("country_of_origin", sa.VARCHAR(100), nullable=True),
-
         # Location + corridor
         sa.Column("bengaluru_location", sa.VARCHAR(200), nullable=True),
         sa.Column("nearest_corridor", sa.VARCHAR(100), nullable=True),
-
         # Classification tags (three mandatory)
         sa.Column("entrant_type", sa.VARCHAR(20), nullable=True),
         sa.Column("work_model", sa.VARCHAR(20), nullable=True),
@@ -62,41 +60,34 @@ def upgrade():
             server_default=sa.text("FALSE"),
             nullable=False,
         ),
-
         # Impact scores
         sa.Column(
             "north_bengaluru_impact_score",
             sa.Numeric(4, 2),
             nullable=True,
         ),
-
         # Deal metrics
         sa.Column("investment_cr", sa.Numeric(12, 2), nullable=True),
         sa.Column("planned_headcount", sa.Integer(), nullable=True),
         sa.Column("headcount_timeline_months", sa.Integer(), nullable=True),
         sa.Column("median_ctc_l", sa.Numeric(8, 2), nullable=True),
         sa.Column("office_sqft", sa.Integer(), nullable=True),
-
         # Sub-scores (0–10 each)
         sa.Column("demand_creation_score", sa.SmallInteger(), nullable=True),
         sa.Column("residential_impact_score", sa.SmallInteger(), nullable=True),
         sa.Column("appreciation_impact_score", sa.SmallInteger(), nullable=True),
         sa.Column("rental_impact_score", sa.SmallInteger(), nullable=True),
-
         # Composite score (can be negative for CONSOLIDATION events)
         sa.Column("gcc_signal_score", sa.Numeric(5, 2), nullable=True),
-
         # Demand classification
         sa.Column("primary_housing_segment", sa.VARCHAR(50), nullable=True),
         sa.Column("time_horizon", sa.VARCHAR(10), nullable=True),
         sa.Column("estimated_demand_units", sa.Integer(), nullable=True),
-
         # Source provenance
         sa.Column("source_url", sa.VARCHAR(500), nullable=True),
         sa.Column("source_name", sa.VARCHAR(100), nullable=True),
         sa.Column("source_reliability", sa.VARCHAR(20), nullable=True),
         sa.Column("announced_at", sa.Date(), nullable=True),
-
         # Alert tracking
         sa.Column(
             "discord_alert_fired",
@@ -104,7 +95,6 @@ def upgrade():
             server_default=sa.text("FALSE"),
             nullable=False,
         ),
-
         # Timestamps
         sa.Column(
             "created_at",
@@ -118,7 +108,6 @@ def upgrade():
             server_default=sa.text("NOW()"),
             nullable=False,
         ),
-
         # Constraints
         sa.UniqueConstraint("canonical_id", name="uq_gcc_events_canonical_id"),
         sa.CheckConstraint(

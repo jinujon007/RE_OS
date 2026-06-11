@@ -1,5 +1,5 @@
 # RE_OS — Virtual Real Estate Office: Vision & Roadmap
-**v1.4 — 2026-06-01 | Owner: Jinu Joshi | LLS**
+**v1.5 — 2026-06-11 | Owner: Jinu Joshi | LLS**
 
 ---
 
@@ -33,13 +33,13 @@ The output of every agent feeds the institutional knowledge base. Nothing is los
 | Dashboard Flask backend | ✅ Live — /api/health, port 8050 | `dashboard/app.py` |
 | Dashboard UI | ✅ Live — Org Chart, Intel Board, Task Board, Log Stream, Board Room, Sentinel, Pipeline Control, DB Explorer, Live Feed | `dashboard/templates/` |
 | Board Room crew | ✅ Live — 5 dept heads (BD/Finance/Engineering/Ops/Legal), action extraction, approval UI | `crews/board_room.py` |
-| Agent Memory layer | ✅ Live — read/write/decay/confidence, weekly decay job, pipeline injection | `utils/agent_memory.py` |
+| Agent Memory layer | ✅ Live — read/write/decay/confidence, weekly decay job, pipeline injection, Memory Explorer panel, conflict badge | `utils/agent_memory.py`, `dashboard/templates/memory_explorer.html` |
 | Parser Agent | 🔵 Standalone only | `agents/parser_agent.py` |
 | Organizer Agent | 🗑️ Removed — replaced by `utils/db_organizer.py` | — |
 | 3-market pipeline | ✅ Live — Yelahanka, Devanahalli, Hebbal | `crews/market_intel_crew.py` |
 | Enterprise tests + CI | ✅ Live — pytest, ruff, .github/workflows | `tests/` |
 
-**Status as of 2026-06-01:** Phase 1–5 complete. Phase 6 (Finance Dept) complete — IRR model, Feasibility Analyst tool, Finance Head agent, Board Room auto-IRR, Dashboard Finance panel all live. GATE-13 PASSED. Pipeline has run 35+ times across 3 markets. Devanahalli has 317 live RERA projects.
+**Status as of 2026-06-11:** All 14 phases complete. GATE-87 LAUNCH GATE PASSED — 6/6 assertions. 87 gates total. RE_OS declared production-ready. 33 scheduler jobs registered. Pipeline runs across Yelahanka, Devanahalli, Hebbal. 1,824+ unit tests green.
 
 ---
 
@@ -246,7 +246,7 @@ One web app. Two modes. One source of truth for everything happening in the offi
 ### Phase 4 — Agent Memory Layer
 **Goal:** Every agent remembers what it has learned. Intel compounds. Conflicts are flagged.
 **Effort:** 3–4 sessions
-**Status:** 🟡 MOSTLY COMPLETE — core memory engine live; Memory Explorer dashboard panel + conflict detection deferred (P4.6/P4.8/P4.9)
+**Status:** ✅ COMPLETE — Memory Explorer panel live at /memory, conflict badge in nav, GATE-86 ✅ 2026-06-11
 
 **Tasks:**
 - [x] P4.1 — DB: `agent_memories` table with UNIQUE(agent_id, market, fact) constraint, row cap 500/agent+market — in Alembic baseline + T-297
@@ -256,8 +256,8 @@ One web app. Two modes. One source of truth for everything happening in the offi
 - [x] P4.5 — Auto-promote: 3+ scouts confirm same claim → confidence promoted to 0.9, flagged as high-confidence
 - [ ] P4.6 — Conflict detection: two sources give contradictory values for same metric → flagged for Jinu review
 - [ ] P4.7 — Weekly digest generator: top 5 new high-confidence facts per micro-market
-- [ ] P4.8 — Dashboard: Memory Explorer panel (filter by agent, market, confidence)
-- [ ] P4.9 — Dashboard: Conflict alert badge (new conflicts since last login)
+- [x] P4.8 — Dashboard: Memory Explorer panel (filter by agent, market, confidence) — GATE-86 ✅ 2026-06-11
+- [x] P4.9 — Dashboard: Conflict alert badge (new conflicts since last login) — GATE-86 ✅ 2026-06-11
 - [ ] P4.10 — Obsidian sync (optional): write weekly digest to `D:\Brain\JINU JOSHI\03 LLS\01 Wiki\markets\`
 
 **Definition of done:** Core engine complete (memory read/write/decay/confidence). Memory Explorer UI panel deferred to Phase 4.5.
