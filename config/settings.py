@@ -286,5 +286,13 @@ PORTAL_SCOUT_MIN_LISTINGS_CANARY: int = 10
 # If the gazette year is more than this many months old, flag as stale
 GV_FRESHNESS_WARN_MONTHS: int = 18
 
+# ── DATA FLOOR MARKETS (Sprint 89 — GATE-89) ─────────────────────────────────
+# Minimum live (non-seed) RERA records per market before alerting via Discord.
+DATA_FLOOR_MARKETS: dict[str, int] = {
+    "Yelahanka": 50,
+    "Devanahalli": 100,
+    "Hebbal": 200,
+}
+
 # ── AGENT RUN STATUSES ────────────────────────────────────────────────────────
 AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]

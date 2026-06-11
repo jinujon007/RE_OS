@@ -37,6 +37,7 @@ from sqlalchemy import text
 from utils.db import get_engine
 from utils.scheduler_helpers import safe_job as _safe_job
 from scrapers.mobility_scout import run_mobility_scout
+from utils.alembic_check import run_alembic_check
 
 
 def _send_rera_alert(market: str, job_start) -> None:
@@ -1647,6 +1648,44 @@ def run_bhoomi_auto_survey(market: str = ""):
             mkt, checked, len(rows), " (429)" if skipped_429 else "")
 
 
+def run_data_floor_check():
+    """Daily data floor check — 06:30 IST = 01:00 UTC.
+    Alerts Discord via send_ops_alert if any market's live RERA count
+    drops below its configured floor. Logs outcome to agent_runs."""
+    from config.settings import DATA_FLOOR_MARKETS
+    from utils.data_quality_monitor import check_live_data_floor
+
+    logger.info("[Scheduler] Data floor check starting")
+    all_ok = True
+    for market, floor in DATA_FLOOR_MARKETS.items():
+        try:
+            ok = check_live_data_floor(market, floor=floor)
+            if ok:
+                logger.info("[Scheduler] Data floor {}: OK (floor={})", market, floor)
+            else:
+                logger.warning("[Scheduler] Data floor {}: BREACH (floor={})", market, floor)
+                all_ok = False
+        except Exception as exc:
+            logger.warning("[Scheduler] Data floor check failed for {}: {}", market, exc)
+            all_ok = False
+
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO agent_runs
+                        (agent_name, micro_market, event_type, status, notes)
+                    VALUES ('data_floor_monitor', 'system', 'data_floor_check', :status, :notes)
+                """),
+                {
+                    "status": "success" if all_ok else "warning",
+                    "notes": f"checked {len(DATA_FLOOR_MARKETS)} markets; all_ok={all_ok}",
+                },
+            )
+    except Exception as exc:
+        logger.warning("[Scheduler] Failed to log data floor check: {}", exc)
+
+
 if __name__ == "__main__":
     logger.add("logs/scheduler.log", rotation="50 MB")
     os.makedirs("logs", exist_ok=True)
@@ -1961,6 +2000,25 @@ if __name__ == "__main__":
         misfire_grace_time=7200,
     )
 
+    # Weekly alembic check — Sunday 03:00 UTC (GATE-88, T-1122)
+    scheduler.add_job(
+        lambda: _safe_job(run_alembic_check, "alembic_weekly_check"),
+        CronTrigger(day_of_week="sun", hour=3, minute=0, timezone="UTC"),
+        id="alembic_weekly_check",
+        name="Weekly Alembic Check (schema drift detection)",
+        misfire_grace_time=3600,
+        replace_existing=True,
+    )
+
+    # Daily data floor check — 01:00 UTC = 06:30 IST (GATE-89, T-1128)
+    scheduler.add_job(
+        lambda: _safe_job(run_data_floor_check, "data_floor_check"),
+        CronTrigger(hour=1, minute=0, timezone="UTC"),
+        id="data_floor_check",
+        name="Daily Data Floor Check (Discord alert on live RERA breach)",
+        misfire_grace_time=3600,
+    )
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
     logger.info("  01:00 AM IST — Daily pg_dump backup [T-904]")
@@ -1993,6 +2051,7 @@ if __name__ == "__main__":
     logger.info("  Monday 07:00 IST — Weekly intel digest (PSF delta + RERA + competitive) → Discord intel_reports [T-1057]")
     logger.info("  1st of month 07:30 IST — Monthly intel digest (MoM PSF + absorption + LLM synthesis) → Discord [T-1057]")
     logger.info("  Daily 09:00 IST — Bhoomi auto-survey from RERA survey numbers (T-1080)")
+    logger.info("  06:30 IST daily — Data floor check (Discord alert on live RERA breach) [T-1128]")
     logger.info(f"Active jobs: {[j.id for j in scheduler.get_jobs()]}")
 
     scheduler.start()

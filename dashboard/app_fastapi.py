@@ -180,6 +180,7 @@ _READ_ONLY_PATHS = frozenset(
         "/api/registry",
         "/api/opportunity/queue",
         "/api/health/backup",
+        "/api/scheduler/health",
         "/api/competitive/pulse",
         "/api/portfolio",
         "/api/portfolio/summary",
@@ -199,6 +200,7 @@ _READ_ONLY_PREFIXES = (
     "/api/memory/",
     "/api/demand/",
     "/api/distress/",
+    "/api/scraper/",
 )
 
 
@@ -711,6 +713,23 @@ class BackupHealthResponse(BaseModel):
     status: str
 
 
+class ProvenanceMarketInfo(BaseModel):
+    total: int
+    live: int
+    seed: int
+    manual: int = 0
+    live_pct: float
+    guidance: str = ""
+
+
+class ScraperReliabilityInfo(BaseModel):
+    scraper: str
+    runs: int
+    successes: int
+    reliability_score: float
+    last_run: str | None = None
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 
@@ -970,7 +989,10 @@ async def board_session_create(request: Request):
             {"error": "invalid market - must be Yelahanka, Devanahalli, or Hebbal"},
             status_code=400,
         )
+    t0 = time.perf_counter()
     result = run_board_session(pitch, market)
+    elapsed = time.perf_counter() - t0
+    result["response_time_s"] = round(elapsed, 2)
     return result
 
 
@@ -2925,6 +2947,152 @@ async def health_backup(request: Request):
         return {"last_backup": None, "status": "never_run"}
 
 
+# ── Data Provenance (T-1126) ──────────────────────────────────────────
+
+
+@app.get(
+    "/api/data/provenance",
+    response_model=dict[str, ProvenanceMarketInfo],
+    tags=["Data Quality"],
+    summary="Data provenance breakdown per market (live vs seed)",
+)
+@limiter.limit("60/hour")
+async def data_provenance(
+    request: Request,
+    market: str = Query(default=None, description="Optional market filter"),
+):
+    try:
+        with _get_sa_engine().connect() as conn:
+            where = []
+            params: dict = {}
+            if market:
+                where.append("mm.name ILIKE :mkt")
+                params["mkt"] = f"%{market}%"
+            where_clause = (" WHERE " + " AND ".join(where)) if where else ""
+            rows = conn.execute(_sa_text(f"""
+                SELECT mm.name, rp.data_source, COUNT(*) as cnt
+                FROM rera_projects rp
+                JOIN micro_markets mm ON mm.id = rp.micro_market_id
+                {where_clause}
+                GROUP BY mm.name, rp.data_source
+                ORDER BY mm.name
+            """), params).fetchall()
+
+        markets: dict[str, dict] = {}
+        for row in rows:
+            mkt = str(row[0]) if row[0] else "Unknown"
+            ds = str(row[1]) if row[1] else "seed_estimated"
+            cnt = int(row[2]) if row[2] else 0
+            if mkt not in markets:
+                markets[mkt] = {"total": 0, "live": 0, "seed": 0, "manual": 0, "live_pct": 0.0}
+            markets[mkt]["total"] += cnt
+            if ds == "portal_scraped":
+                markets[mkt]["live"] += cnt
+            elif ds == "manual_entry":
+                markets[mkt]["manual"] += cnt
+            else:
+                markets[mkt]["seed"] += cnt
+
+        for data in markets.values():
+            total = data["total"]
+            live = data["live"]
+            data["live_pct"] = round((live / total) * 100, 1) if total > 0 else 0.0
+            if data["live_pct"] < 30:
+                data["guidance"] = "Run RERA scraper — live data below 30% threshold"
+            elif data["live_pct"] < 70:
+                data["guidance"] = "Monitor — live data moderate, continue scraping"
+            else:
+                data["guidance"] = "Healthy — live data above 70%"
+
+        if market and not markets:
+            return {market: {"total": 0, "live": 0, "seed": 0, "manual": 0, "live_pct": 0.0, "guidance": "No data for this market"}}
+
+        return markets
+    except Exception as e:
+        logger.error("[data_provenance] err=%s", e)
+        return JSONResponse({"error": "failed to query data provenance"}, status_code=500)
+
+
+# ── Scheduler Health (R6 — T-1125) ────────────────────────────────────
+
+
+@app.get(
+    "/api/scheduler/health",
+    tags=["Health"],
+    summary="Scheduler job health — last run status per job ID (7d window)",
+)
+@limiter.limit("30/minute")
+async def scheduler_health(request: Request):
+    try:
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text("""
+                    SELECT agent_name, event_type, status, started_at, completed_at,
+                           CASE WHEN started_at > NOW() - INTERVAL '24 hours' THEN 1 ELSE 0 END AS in_last_24h
+                    FROM agent_runs
+                    WHERE started_at > NOW() - INTERVAL '7 days'
+                    ORDER BY started_at DESC
+                    LIMIT 500
+                """)
+            ).fetchall()
+        jobs: dict[str, dict] = {}
+        for r in rows:
+            jid = str(r[0]) if r[0] else "unknown"
+            if jid not in jobs:
+                jobs[jid] = {
+                    "job_id": jid,
+                    "event_type": r[1],
+                    "last_status": r[2],
+                    "last_run": r[3].isoformat() if r[3] else None,
+                    "completed_at": r[4].isoformat() if r[4] else None,
+                    "last_24h_passes": 0,
+                    "last_24h_failures": 0,
+                }
+            if r[5]:  # in_last_24h
+                status = r[2]
+                if status == "success":
+                    jobs[jid]["last_24h_passes"] += 1
+                elif status in ("failed", "error"):
+                    jobs[jid]["last_24h_failures"] += 1
+        return {
+            "jobs": sorted(jobs.values(), key=lambda j: j["last_run"] or "", reverse=True),
+            "total_jobs": len(jobs),
+        }
+    except Exception as e:
+        logger.error("[scheduler_health] %s", e)
+        return JSONResponse({"error": "database query failed"}, status_code=500)
+
+
+# ── Scraper Reliability (T-1127) ──────────────────────────────────────
+
+
+@app.get(
+    "/api/scraper/reliability",
+    response_model=dict[str, ScraperReliabilityInfo],
+    tags=["Data Quality"],
+    summary="Scraper reliability scores for all scouts",
+)
+@limiter.limit("60/hour")
+async def scraper_reliability(request: Request, days: int = Query(default=30, ge=1, le=365)):
+    try:
+        from config.scraper_registry import SCRAPER_NAMES
+        from utils.scraper_reliability import compute_scraper_reliability
+
+        results = []
+        for name in SCRAPER_NAMES:
+            try:
+                result = compute_scraper_reliability(name, days=days)
+                results.append(result)
+            except Exception as exc:
+                logger.warning("[scraper_reliability] %s: %s", name, exc)
+                results.append({"scraper": name, "runs": 0, "successes": 0, "reliability_score": 0.0, "last_run": None})
+
+        return {r["scraper"]: r for r in results}
+    except Exception as e:
+        logger.error("[scraper_reliability] err=%s", e)
+        return JSONResponse({"error": "failed to query scraper reliability"}, status_code=500)
+
+
 # ── Competitive Intelligence Pulse (T-974) ──────────────────────────────
 
 _pulse_cache: OrderedDict[str, tuple[float, dict]] = OrderedDict()
@@ -4145,6 +4313,11 @@ async def demand_api(market: str, request: Request):
 @app.get("/memory", tags=["Memory"], summary="Agent Memory Explorer dashboard panel")
 def memory_explorer_panel(request: Request):
     return templates.TemplateResponse(request, "memory_explorer.html")
+
+
+@app.get("/data-quality", tags=["Data Quality"], summary="Data Quality dashboard panel")
+def data_quality_panel(request: Request):
+    return templates.TemplateResponse(request, "data_quality.html")
 
 
 @app.get("/demand", tags=["Demand Intelligence"],

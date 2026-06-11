@@ -121,3 +121,151 @@ def test_memory_panel_route_returns_200():
     assert r.status_code == 200
     assert "text/html" in r.headers.get("content-type", "")
     assert "AGENT MEMORY EXPLORER" in r.text
+
+
+# ── Data Provenance (T-1126) ──
+
+
+@pytest.fixture
+def mock_provenance_db():
+    from unittest.mock import MagicMock, patch
+    mock_row1 = MagicMock()
+    mock_row1.__getitem__.side_effect = lambda idx: ["Yelahanka", "portal_scraped", 100][idx]
+    mock_row2 = MagicMock()
+    mock_row2.__getitem__.side_effect = lambda idx: ["Yelahanka", "seed_estimated", 50][idx]
+    mock_row3 = MagicMock()
+    mock_row3.__getitem__.side_effect = lambda idx: ["Devanahalli", "portal_scraped", 200][idx]
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchall.return_value = [mock_row1, mock_row2, mock_row3]
+    mock_engine = MagicMock()
+    mock_engine.connect.return_value.__enter__.return_value = mock_conn
+    with patch("dashboard.app_fastapi._get_sa_engine", return_value=mock_engine):
+        yield
+
+
+def test_provenance_endpoint_returns_200(mock_provenance_db):
+    r = client.get("/api/data/provenance")
+    assert r.status_code == 200
+    body = r.json()
+    assert "Yelahanka" in body
+    assert "Devanahalli" in body
+
+
+def test_provenance_has_all_markets(mock_provenance_db):
+    r = client.get("/api/data/provenance")
+    assert r.status_code == 200
+    body = r.json()
+    assert "Yelahanka" in body
+    assert "Devanahalli" in body
+    yel = body["Yelahanka"]
+    assert "total" in yel
+    assert "live" in yel
+    assert "seed" in yel
+    assert "live_pct" in yel
+    assert "guidance" in yel
+
+
+def test_live_pct_is_float_between_0_and_100(mock_provenance_db):
+    r = client.get("/api/data/provenance")
+    assert r.status_code == 200
+    body = r.json()
+    for market_data in body.values():
+        assert isinstance(market_data["live_pct"], float)
+        assert 0.0 <= market_data["live_pct"] <= 100.0
+
+
+def test_provenance_computed_values(mock_provenance_db):
+    """Assert live_pct is correctly computed: Yelahanka=66.7%, Devanahalli=100%."""
+    r = client.get("/api/data/provenance")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["Yelahanka"]["live_pct"] == 66.7
+    assert body["Devanahalli"]["live_pct"] == 100.0
+    assert body["Yelahanka"]["total"] == 150
+    assert body["Yelahanka"]["live"] == 100
+    assert body["Yelahanka"]["seed"] == 50
+    assert body["Devanahalli"]["total"] == 200
+    assert body["Devanahalli"]["live"] == 200
+
+
+def test_provenance_market_filter():
+    """Test optional market filter. We mock only Yelahanka data."""
+    from unittest.mock import MagicMock, patch
+    mock_row = MagicMock()
+    mock_row.__getitem__.side_effect = lambda idx: ["Yelahanka", "portal_scraped", 100][idx]
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchall.return_value = [mock_row]
+    mock_engine = MagicMock()
+    mock_engine.connect.return_value.__enter__.return_value = mock_conn
+    with patch("dashboard.app_fastapi._get_sa_engine", return_value=mock_engine):
+        r = client.get("/api/data/provenance?market=Yelahanka")
+    assert r.status_code == 200
+    body = r.json()
+    assert "Yelahanka" in body
+    assert len(body) == 1
+
+
+# ── Scraper Reliability (T-1127) ──
+
+
+@pytest.fixture
+def mock_reliability_db():
+    from unittest.mock import MagicMock, patch
+    mock_row = MagicMock()
+    mock_row.__getitem__.side_effect = lambda idx: [10, 8, "2026-06-11 06:00:00"][idx]
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchone.return_value = mock_row
+    mock_engine = MagicMock()
+    mock_engine.connect.return_value.__enter__.return_value = mock_conn
+    with patch("utils.scraper_reliability.get_engine", return_value=mock_engine):
+        yield
+
+
+def test_reliability_endpoint_returns_200(mock_reliability_db):
+    r = client.get("/api/scraper/reliability")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) > 0
+
+
+def test_reliability_has_all_scrapers(mock_reliability_db):
+    from config.scraper_registry import SCRAPER_NAMES
+    r = client.get("/api/scraper/reliability")
+    assert r.status_code == 200
+    body = r.json()
+    for scraper in SCRAPER_NAMES:
+        assert scraper in body, f"Missing scraper: {scraper}"
+        s = body[scraper]
+        assert "runs" in s
+        assert "successes" in s
+        assert "reliability_score" in s
+        assert "last_run" in s
+
+
+def test_reliability_computed_values(mock_reliability_db):
+    """Assert reliability_score is correctly computed: 8/10 = 0.8."""
+    from config.scraper_registry import SCRAPER_NAMES
+    r = client.get("/api/scraper/reliability")
+    assert r.status_code == 200
+    body = r.json()
+    for scraper in SCRAPER_NAMES:
+        s = body[scraper]
+        assert s["runs"] == 10
+        assert s["successes"] == 8
+        assert s["reliability_score"] == 0.8
+
+
+def test_reliability_zero_runs_returns_zero_score():
+    from unittest.mock import MagicMock, patch
+    mock_row = MagicMock()
+    mock_row.__getitem__.side_effect = lambda idx: [0, 0, None][idx]
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchone.return_value = mock_row
+    mock_engine = MagicMock()
+    mock_engine.connect.return_value.__enter__.return_value = mock_conn
+    with patch("utils.scraper_reliability.get_engine", return_value=mock_engine):
+        from utils.scraper_reliability import compute_scraper_reliability
+        result = compute_scraper_reliability("nonexistent_scraper")
+        assert result["runs"] == 0
+        assert result["reliability_score"] == 0.0
+        assert result["last_run"] is None

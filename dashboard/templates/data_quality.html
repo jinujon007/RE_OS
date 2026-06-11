@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+<title>Data Quality — LLS</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0a0e1a; color: #c9d1d9;
+  font-family: 'Courier New', Courier, monospace; font-size: 14px;
+  min-height: 100vh; padding: 20px;
+}
+h1 { color: #58a6ff; font-size: 18px; margin-bottom: 4px; letter-spacing: 1px; }
+.subtitle { color: #6b7280; font-size: 11px; margin-bottom: 20px; }
+.panel {
+  background: #0f1520; border: 1px solid #2a3a55;
+  padding: 16px; margin-bottom: 16px; max-width: 1400px;
+}
+.panel h2 { color: #f0a020; font-size: 14px; margin-bottom: 12px; }
+table { width: 100%; border-collapse: collapse; }
+th {
+  text-align: left; padding: 8px 12px; border-bottom: 1px solid #2a3a55;
+  color: #8b949e; font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+  position: sticky; top: 0; background: #0f1520; z-index: 1;
+}
+td {
+  padding: 8px 12px; border-bottom: 1px solid #1a2540; font-size: 12px;
+}
+tr:hover td { background: #1a2540; }
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 3px;
+  font-size: 11px; font-weight: bold;
+}
+.badge.green { background: #0f2a0f; color: #3fb950; }
+.badge.amber { background: #2a1f0f; color: #f0a020; }
+.badge.red { background: #2a0f0f; color: #f85149; }
+.progress-bar {
+  height: 16px; border-radius: 3px; overflow: hidden;
+  background: #1a2540; min-width: 100px;
+}
+.progress-fill {
+  height: 100%; transition: width 0.3s ease;
+}
+.progress-fill.green { background: #3fb950; }
+.progress-fill.amber { background: #f0a020; }
+.progress-fill.red { background: #f85149; }
+.status-dot {
+  display: inline-block; width: 12px; height: 12px;
+  border-radius: 50%; margin-right: 6px; vertical-align: middle;
+}
+.status-dot.green { background: #3fb950; }
+.status-dot.amber { background: #f0a020; }
+.status-dot.red { background: #f85149; }
+.guidance-text { font-size: 11px; color: #8b949e; font-style: italic; margin-top: 8px; }
+.last-updated { color: #6b7280; font-size: 10px; margin-top: 12px; }
+@keyframes pulse-skeleton {
+  0% { opacity: 0.3; }
+  50% { opacity: 0.6; }
+  100% { opacity: 0.3; }
+}
+.skeleton td {
+  height: 32px;
+  animation: pulse-skeleton 1.5s ease-in-out infinite;
+}
+.skeleton td:first-child::before {
+  content: "\00a0\00a0\00a0\00a0\00a0\00a0\00a0\00a0\00a0\00a0";
+  background: #1a2540;
+  display: inline-block;
+  height: 12px;
+  border-radius: 2px;
+}
+.retry-btn {
+  background: #161b2e; border: 1px solid #2a3a55; color: #58a6ff;
+  padding: 4px 10px; font-family: inherit; font-size: 10px;
+  cursor: pointer; border-radius: 3px; margin-left: 8px;
+}
+.retry-btn:hover { background: #1a2540; border-color: #58a6ff; }
+tr.error-row td { color: #f85149; font-style: italic; }
+</style>
+</head>
+<body>
+<h1># Data Quality Dashboard</h1>
+<p class="subtitle">Live vs seed data provenance, scraper reliability, and data floor status</p>
+
+<div id="provenance-panel" class="panel">
+  <h2>Data Provenance</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Market</th>
+        <th>Total</th>
+        <th>Live</th>
+        <th>Seed</th>
+        <th>Live %</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody id="provenance-body" aria-live="polite">
+      <tr class="skeleton"><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr class="skeleton"><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr class="skeleton"><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    </tbody>
+  </table>
+  <div id="provenance-guidance" class="guidance-text"></div>
+</div>
+
+<div id="reliability-panel" class="panel">
+  <h2>Scraper Reliability (last 30 days)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Scraper</th>
+        <th>Runs</th>
+        <th>Successes</th>
+        <th>Reliability</th>
+      </tr>
+    </thead>
+    <tbody id="reliability-body" aria-live="polite">
+      <tr class="skeleton"><td></td><td></td><td></td><td></td></tr>
+      <tr class="skeleton"><td></td><td></td><td></td><td></td></tr>
+      <tr class="skeleton"><td></td><td></td><td></td><td></td></tr>
+      <tr class="skeleton"><td></td><td></td><td></td><td></td></tr>
+      <tr class="skeleton"><td></td><td></td><td></td><td></td></tr>
+      <tr class="skeleton"><td></td><td></td><td></td><td></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div id="floor-panel" class="panel">
+  <h2>Data Floor Status</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Market</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody id="floor-body" aria-live="polite">
+      <tr class="skeleton"><td></td><td></td></tr>
+      <tr class="skeleton"><td></td><td></td></tr>
+      <tr class="skeleton"><td></td><td></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="last-updated" id="last-updated">Loading...</p>
+
+<script>
+const RETRY_DELAYS = [1000, 3000, 5000];
+
+function getLivePctClass(pct) {
+  if (pct >= 70) return 'green';
+  if (pct >= 40) return 'amber';
+  return 'red';
+}
+
+function getReliabilityClass(score) {
+  if (score >= 0.8) return 'green';
+  if (score >= 0.5) return 'amber';
+  return 'red';
+}
+
+function getFloorStatus(live, floor) {
+  if (live >= floor) return { cls: 'green', label: 'OK' };
+  if (live >= floor * 0.5) return { cls: 'amber', label: 'WARNING' };
+  return { cls: 'red', label: 'BREACH' };
+}
+
+function getGuidance(market, info) {
+  if (info.live_pct < 30) return `${market}: Live data critically low (${info.live_pct}%). Trigger RERA scraper.`;
+  if (info.live_pct < 70) return `${market}: Moderate coverage (${info.live_pct}%). Continue monitoring.`;
+  return `${market}: Healthy coverage (${info.live_pct}%).`;
+}
+
+function showSkeleton(id, count, cols) {
+  const tbody = document.getElementById(id);
+  tbody.innerHTML = '';
+  for (let i = 0; i < count; i++) {
+    const tr = document.createElement('tr');
+    tr.className = 'skeleton';
+    let cells = '';
+    for (let j = 0; j < cols; j++) cells += '<td></td>';
+    tr.innerHTML = cells;
+    tbody.appendChild(tr);
+  }
+}
+
+function showError(id, cols, msg) {
+  const tbody = document.getElementById(id);
+  tbody.innerHTML = `<tr class="error-row"><td colspan="${cols}" role="status">${msg}</td></tr>`;
+}
+
+function buildGuidance(guidanceEl, entries) {
+  const lines = [];
+  for (const [market, info] of entries) {
+    lines.push(getGuidance(market, info));
+  }
+  guidanceEl.textContent = lines.join(' ');
+}
+
+async function fetchWithRetry(url, retries) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return await resp.json();
+    } catch (e) {
+      if (i < retries - 1) await new Promise(r => setTimeout(r, RETRY_DELAYS[i]));
+      else throw e;
+    }
+  }
+}
+
+async function loadProvenance() {
+  const tbody = document.getElementById('provenance-body');
+  const guidanceEl = document.getElementById('provenance-guidance');
+  try {
+    const data = await fetchWithRetry('/api/data/provenance', 3);
+    const entries = Object.entries(data);
+    tbody.innerHTML = '';
+    for (const [market, info] of entries) {
+      const cls = getLivePctClass(info.live_pct);
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${market}</td>
+        <td>${info.total}</td>
+        <td>${info.live}</td>
+        <td>${info.seed}</td>
+        <td><span class="badge ${cls}">${info.live_pct}%</span></td>
+        <td><span class="badge ${cls}">${info.guidance ? 'Review' : 'OK'}</span></td>
+      `;
+      tbody.appendChild(tr);
+    }
+    buildGuidance(guidanceEl, entries);
+  } catch (e) {
+    showError('provenance-body', 6, 'Failed to load provenance data. <button class="retry-btn" onclick="loadProvenance()">Retry</button>');
+    guidanceEl.textContent = '';
+  }
+}
+
+async function loadReliability() {
+  const tbody = document.getElementById('reliability-body');
+  try {
+    const data = await fetchWithRetry('/api/scraper/reliability', 3);
+    const entries = Object.entries(data);
+    tbody.innerHTML = '';
+    for (const [scraper, info] of entries) {
+      const pct = (info.reliability_score * 100).toFixed(0);
+      const cls = getReliabilityClass(info.reliability_score);
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${scraper}</td>
+        <td>${info.runs}</td>
+        <td>${info.successes}</td>
+        <td>
+          <div class="progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="${scraper} reliability ${pct}%">
+            <div class="progress-fill ${cls}" style="width: ${pct}%"></div>
+          </div>
+          ${pct}%
+        </td>
+      `;
+      tbody.appendChild(tr);
+    }
+  } catch (e) {
+    showError('reliability-body', 4, 'Failed to load reliability data. <button class="retry-btn" onclick="loadReliability()">Retry</button>');
+  }
+}
+
+async function loadFloorStatus() {
+  const tbody = document.getElementById('floor-body');
+  try {
+    const data = await fetchWithRetry('/api/data/provenance', 3);
+    const entries = Object.entries(data);
+    tbody.innerHTML = '';
+    const FLOORS = { Yelahanka: 50, Devanahalli: 100, Hebbal: 200 };
+    for (const [market, info] of entries) {
+      const floor = FLOORS[market] || 50;
+      const status = getFloorStatus(info.live, floor);
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${market}</td>
+        <td><span class="status-dot ${status.cls}"></span>${status.label}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+  } catch (e) {
+    showError('floor-body', 2, 'Failed to load floor status. <button class="retry-btn" onclick="loadFloorStatus()">Retry</button>');
+  }
+}
+
+function updateTimestamp() {
+  const now = new Date();
+  const iso = now.toISOString().replace('T', ' ').replace(/\.\d+Z/, '+00:00');
+  document.getElementById('last-updated').textContent = `Last updated: ${iso}`;
+}
+
+async function refreshAll() {
+  await Promise.allSettled([loadProvenance(), loadReliability(), loadFloorStatus()]);
+  updateTimestamp();
+}
+
+refreshAll();
+setInterval(refreshAll, 300000);
+</script>
+</body>
+</html>

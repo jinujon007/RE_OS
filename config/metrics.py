@@ -3,6 +3,14 @@
 from prometheus_client import Counter, Histogram
 
 
+board_session_duration_seconds = Histogram(
+    "board_session_duration_seconds",
+    "Wall-clock duration of board sessions (pending → complete)",
+    ["market", "status"],
+    buckets=(10, 30, 60, 120, 300, 600, 1800, float("inf")),
+)
+
+
 pipeline_runs_total = Counter(
     "pipeline_runs_total",
     "Total number of pipeline runs",

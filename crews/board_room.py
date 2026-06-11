@@ -725,7 +725,7 @@ def _to_uuid(s: str):
     return UUID(s)
 
 
-def _create_session_row(session_id: str, pitch: str, market: Optional[str]) -> bool:
+def _create_session_row(session_id: str, pitch: str, market: Optional[str], response_time_s: Optional[float] = None) -> bool:
     """Insert a pending session row into board_sessions. Non-fatal on failure.
 
     Schema: pitch_text, individual dept columns, no JSONB transcript.
@@ -736,15 +736,16 @@ def _create_session_row(session_id: str, pitch: str, market: Optional[str]) -> b
             conn.execute(
                 text("""
                 INSERT INTO board_sessions (
-                    session_id, pitch_text, market, status, initiated_by, created_at
+                    session_id, pitch_text, market, status, initiated_by, created_at, response_time_s
                 ) VALUES (
-                    :session_id, :pitch_text, :market, 'pending', 'ceo', NOW()
+                    :session_id, :pitch_text, :market, 'pending', 'ceo', NOW(), :response_time_s
                 )
                 """),
                 {
                     "session_id": _to_uuid(session_id),
                     "pitch_text": pitch,
                     "market": market or "",
+                    "response_time_s": response_time_s,
                 },
             )
         return True
@@ -759,6 +760,7 @@ def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
     transcript dict keys: status, responses (bd/finance/engineering/ops/legal),
     actions (list), ceo_decomposition (optional).
     Sets completed_at only on terminal states (complete/failed).
+    Computes response_time_s as wall-clock duration from created_at to NOW() on completion.
     """
     is_terminal = status in ("complete", "failed")
     responses = transcript.get("responses", {})
@@ -780,7 +782,10 @@ def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
                     ops_response         = :ops,
                     legal_response       = :legal,
                     ceo_synthesis        = :ceo_synthesis,
-                    completed_at         = CASE WHEN :is_terminal THEN NOW() ELSE completed_at END
+                    completed_at         = CASE WHEN :is_terminal THEN NOW() ELSE completed_at END,
+                    response_time_s      = CASE WHEN :is_terminal
+                                               THEN EXTRACT(EPOCH FROM (NOW() - created_at))
+                                               ELSE response_time_s END
                 WHERE session_id = :session_id
                 """),
                 {
@@ -795,6 +800,22 @@ def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
                     "is_terminal": is_terminal,
                 },
             )
+        if is_terminal:
+            try:
+                from config.metrics import board_session_duration_seconds
+                market_val = conn.execute(
+                    text("SELECT market FROM board_sessions WHERE session_id = :sid"),
+                    {"sid": _to_uuid(session_id)},
+                ).scalar() or "unknown"
+                duration = conn.execute(
+                    text("SELECT EXTRACT(EPOCH FROM (NOW() - created_at)) FROM board_sessions WHERE session_id = :sid"),
+                    {"sid": _to_uuid(session_id)},
+                ).scalar() or 0
+                board_session_duration_seconds.labels(
+                    market=market_val, status=status
+                ).observe(float(duration))
+            except Exception:
+                pass
         return True
     except Exception as exc:
         logger.warning(f"board_room: failed to update session row {session_id}: {exc}")
@@ -996,7 +1017,7 @@ def get_board_session(session_id: str) -> Optional[dict]:
                 SELECT session_id, pitch_text, market, status,
                        bd_response, finance_response, engineering_response,
                        ops_response, legal_response, ceo_synthesis,
-                       created_at, completed_at
+                       created_at, completed_at, response_time_s
                 FROM board_sessions
                 WHERE session_id = :session_id
                 """),
@@ -1038,6 +1059,7 @@ def get_board_session(session_id: str) -> Optional[dict]:
                 "transcript": transcript,
                 "created_at": str(row["created_at"]),
                 "completed_at": str(row["completed_at"]) if row["completed_at"] else None,
+                "response_time_s": float(row["response_time_s"]) if row["response_time_s"] is not None else None,
             }
     except Exception as exc:
         logger.warning(f"board_room: get_board_session failed for {session_id}: {exc}")
