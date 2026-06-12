@@ -39,6 +39,8 @@ from utils.db import get_engine
 from utils.scheduler_helpers import safe_job as _safe_job
 from scrapers.mobility_scout import run_mobility_scout
 from utils.alembic_check import run_alembic_check
+from utils.parcel_linker import run_parcel_linker_nightly
+from utils.assembly_detector import run_assembly_detection
 
 
 def _send_rera_alert(market: str, job_start) -> None:
@@ -1687,18 +1689,6 @@ def run_data_floor_check():
         logger.warning("[Scheduler] Failed to log data floor check: {}", exc)
 
 
-if __name__ == "__main__":
-    logger.add("logs/scheduler.log", rotation="50 MB")
-    os.makedirs("logs", exist_ok=True)
-
-    # Startup guard: ensure output directories exist for every market
-    # Prevents permission denied / checkpoint write failures at runtime
-    for market in TARGET_MARKETS:
-        slug = market.lower().replace(" ", "_")
-        os.makedirs(os.path.join("outputs", slug, "checkpoints"), exist_ok=True)
-        logger.info(f"Scheduler: ensured output dir for {market}")
-
-
 def run_kaveri_deeds_weekly():
     """Weekly Kaveri deed extraction — Sunday 03:00 IST.
 
@@ -1748,6 +1738,17 @@ def run_kaveri_deeds_weekly():
     except Exception as exc:
         logger.warning("[Scheduler] Kaveri deeds Discord alert failed: {}", exc)
 
+
+if __name__ == "__main__":
+    logger.add("logs/scheduler.log", rotation="50 MB")
+    os.makedirs("logs", exist_ok=True)
+
+    # Startup guard: ensure output directories exist for every market
+    # Prevents permission denied / checkpoint write failures at runtime
+    for market in TARGET_MARKETS:
+        slug = market.lower().replace(" ", "_")
+        os.makedirs(os.path.join("outputs", slug, "checkpoints"), exist_ok=True)
+        logger.info(f"Scheduler: ensured output dir for {market}")
 
     scheduler = BlockingScheduler(timezone="Asia/Kolkata")
 
@@ -2086,6 +2087,25 @@ def run_kaveri_deeds_weekly():
         misfire_grace_time=7200,
     )
 
+    # Nightly parcel linker — 02:30 IST (GATE-92, T-1142)
+    scheduler.add_job(
+        lambda: _safe_job(run_parcel_linker_nightly, "parcel_linker_nightly"),
+        CronTrigger(hour=2, minute=30),
+        id="parcel_linker_nightly",
+        name="Nightly Parcel Linker (scan survey_no → parcels upsert)",
+        misfire_grace_time=3600,
+    )
+
+    # Weekly assembly detection — Sunday 03:30 IST (30 min buffer after kaveri_deeds_weekly)
+    # 30-min gap ensures deed extraction completes before assembly detection scans new deeds.
+    scheduler.add_job(
+        lambda: _safe_job(run_assembly_detection, "assembly_detection"),
+        CronTrigger(day_of_week="sun", hour=3, minute=30),
+        id="assembly_detection",
+        name="Weekly Land Assembly Detection (after Kaveri deed extraction)",
+        misfire_grace_time=7200,
+    )
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
     logger.info("  01:00 AM IST — Daily pg_dump backup [T-904]")
@@ -2122,6 +2142,8 @@ def run_kaveri_deeds_weekly():
     logger.info("  Daily 09:00 IST — Bhoomi auto-survey from RERA survey numbers (T-1080)")
     logger.info("  06:30 IST daily — Data floor check (Discord alert on live RERA breach) [T-1128]")
     logger.info("  Sunday 03:00 IST — Kaveri deed weekly extraction (inbox + live → Discord) [T-1139]")
+    logger.info("  02:30 IST nightly — Parcel linker (survey_no → parcels) [T-1142]")
+    logger.info("  Sunday 03:30 IST — Land assembly detection (30 min buffer after deed extraction) [T-1143]")
     logger.info(f"Active jobs: {[j.id for j in scheduler.get_jobs()]}")
 
     scheduler.start()

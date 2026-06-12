@@ -99,3 +99,27 @@ docker exec re_os_agents pytest tests/test_gate91.py -v
 - Integration criterion blocked by Docker daemon issue, not implementation.
 - Jinu sign-off required to fully close GATE-91.
 - Full pass: run pending Docker commands above + place ≥200 rows worth of EC PDFs in inbox.
+
+## 2026-06-12 Integration Run (first run against real PDFs)
+
+Docker restored. All pending commands executed. Results:
+
+| Step | Result |
+|------|--------|
+| `alembic upgrade head` | ✅ Head at 0056 (after fixing duplicate `idx_parcels_village` in 0055 — see incident postmortem) |
+| Inbox parse (3 EC PDFs) | 🟡 3 records parsed (1/PDF), checkpoint written |
+| Plugin → `registered_transactions` | ❌ **0 written, 3 failed `doc_no required`** |
+| Row count | 0 |
+
+**Root cause — parser does not match real EC Form 15 format.** The 19 unit tests used synthetic fixtures. Real format findings (from `samples/3.pdf`, which contains **2 transactions**, not 1):
+
+1. EC is a 9-column table, one row per transaction; doc_no is column 9 (`BYP-1-14551-2022-23` pattern) — parser never extracts it → validation rejects every record.
+2. Village/hobli are inside the property-description cell (`Index-II Village: Venkatala`), not the header (header fields blank, survey masked `3*XX`).
+3. Rows span pages — continuation stitching required.
+4. Kannada party names come out as `(cid:###)` garbage with raw text extraction.
+5. **EC contains non-sale deeds** (Surrender of Lease @ ₹1, Discharge Deed @ ₹20L in 3.pdf). PSF/spread must filter to sale-type deeds — otherwise the spread metric is poisoned by ₹1 considerations.
+6. Secondary defect: oversized fallback `source_id` (31K chars) overflows `ingest_log.source_id` varchar(100).
+
+**Fix tasks:** T-1156 (parser rebuild vs real format, hard success criterion on 3.pdf), T-1157 (source_id truncation + SALE_DEED_TYPES filter) — TASK_QUEUE Sprint 91.5.
+
+**GATE-91 remains CONDITIONAL.** The integration criterion did its job: code-level tests were green while the pipeline produced zero usable truth. Do not relax integration criteria on future gates.

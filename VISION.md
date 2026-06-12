@@ -1,15 +1,26 @@
-# RE_OS — Virtual Real Estate Office: Vision & Roadmap
-**v2.0 — 2026-06-12 | Owner: Jinu Joshi | LLS | GATE-90 ✅ — V2.0 Operations Baseline declared**
+# RE_OS — Corridor Prediction Engine: Vision & Roadmap
+**v3.0 — 2026-06-12 | Owner: Jinu Joshi | LLS | Supersedes v2.0 "Virtual Real Estate Office" (kept below as historical appendix)**
+**Source: (CAI) TRANSFORMATION_AUDIT.md + (CAI) TRANSFORMATION_AUDIT_V2.md**
 
 ---
 
-## The Vision
+## The Vision (v3)
 
-RE_OS becomes a complete Virtual Real Estate Office — a living org chart where every department runs autonomously, reports up the chain, and executes on instructions from Jinu via a Mission Control web interface.
+**RE_OS knows every parcel, every deed, every tender, and every hiring wave in North Bengaluru — and tells a developer where land will appreciate 24 months before the market prices it in, with every claim traceable to a government record and every prediction on a falsifiable ledger.**
 
-The analogy: you own the company. You don't do the work. You set direction, approve decisions, read outcomes — and hire new people when the work demands it. Every employee (agent) has a role, a memory, a reporting line, and a personality. The org chart grows as you grow. You can address one agent directly, call a board meeting, or post a job opening — and a new specialist joins the team within minutes, no code changes needed.
+The product is being right about land early, with receipts. Not a simulated company — the v2 org-chart era built permanent assets (gate culture, migration discipline, LLM cost routing, 36-job scheduler) and is now retired as a vision. The org-sim agents are frozen; the machinery serves one job: **land-stage intelligence**.
 
-The output of every agent feeds the institutional knowledge base. Nothing is lost. Nothing is filed and forgotten. Intelligence compounds.
+The wedge (V2 audit, corrected): registered-deed data for urban Bengaluru is already a contested market (Zapkey, CRE Matrix, Propstack). The empty seat is **land-stage, pre-RERA, agri-parcel intelligence fused with leading indicators** — deeds + RTC chains + DC conversions + tenders + gazette LA notifications + GCC hiring gradients, joined at the parcel, scored deterministically, backtested before believed.
+
+Three layers, built in order:
+
+1. **Truth layer** — registered transactions (Kaveri EC/deed pipeline), parcels as first-class entities, guidance values, RERA filings. *Status: in build — Sprints 91–92.*
+2. **Leading-indicator layer** — eProcurement tenders, gazette LA notifications, DC conversions, GCC hiring snapshots, assembly detection. Alert at "tender published" while the market reacts at "construction visible." *Status: Sprints 93–94.*
+3. **Prediction layer** — deterministic corridor scorer (no LLM in the scoring path), backtested against realized appreciation, every forecast logged to the prediction ledger with a check date and a public hit-rate. *Status: Sprint 95+, gated on truth-layer depth.*
+
+First customer: LLS. First proof: one land deal sourced or killed correctly, recorded in the decision journal (`docs/decision_journal.md`). Commercialization (corridor reports → retainers → platform) only after a backtested track record exists — per audit §9/§10.
+
+**Kill criteria are part of the vision** (V2 audit §8): if deed acquisition can't scale by 2026-08-15, pivot the truth source; if the scorer can't beat distance-to-airport by ≥20%, kill the prediction claim and keep the monitoring product; if no LLS decision is influenced by 2026-12-31, the product hypothesis fails regardless of engineering quality.
 
 ---
 
@@ -42,6 +53,12 @@ The output of every agent feeds the institutional knowledge base. Nothing is los
 **Status as of 2026-06-11:** All 14 phases complete. GATE-87 LAUNCH GATE PASSED — 6/6 assertions. 87 gates total. RE_OS declared production-ready. 33 scheduler jobs registered. Pipeline runs across Yelahanka, Devanahalli, Hebbal. 1,824+ unit tests green.
 
 ---
+
+---
+
+# APPENDIX — v2.0 "Virtual Real Estate Office" Vision (HISTORICAL)
+
+> Everything below this line is the completed v2 era (all 14 phases done, GATE-87 launch declared, GATE-90 operations baseline). It is preserved as the build record. It is **not** the current direction — see "The Vision (v3)" above. Org-sim components (PR/social/shareholder/runbook agents) are frozen per the Sprint 91 scheduler diet.
 
 ## Target Architecture
 
@@ -694,4 +711,4 @@ This is not a tool. This is the institutional brain of LLS. Every decision it ma
 
 ---
 
-*This document is the master plan. It is updated by Claude and Cline after each session. Phase status, task completion, and open decisions are live. If this document is stale, the project is off track.*
+*End of historical appendix. The live vision is "The Vision (v3)" at the top of this file. Maintained by Claude (architect); execution specs live in TASK_QUEUE.md. If the top section is stale, the project is off track.*
