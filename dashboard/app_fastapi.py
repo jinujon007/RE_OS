@@ -189,6 +189,7 @@ _READ_ONLY_PATHS = frozenset(
         "/api/digest/weekly",
         "/api/digest/monthly",
         "/optimizer",
+        "/api/ops/v2-readiness",
     }
 )
 _READ_ONLY_PREFIXES = (
@@ -5442,6 +5443,214 @@ async def digest_panel(request: Request):
     except Exception as exc:
         logger.error("[digest_panel] %s", exc)
         return JSONResponse({"error": "template not found"}, status_code=500)
+
+
+# ── V2 Dashboard Panel ────────────────────────────────────────────────────────
+
+
+@app.get("/ops/v2", response_class=HTMLResponse, tags=["Pages"], summary="V2.0 Operations Readiness panel")
+async def v2_panel(request: Request):
+    try:
+        return templates.TemplateResponse(request, "v2_readiness.html")
+    except Exception as exc:
+        logger.error("[v2_panel] %s", exc)
+        return JSONResponse({"error": "template not found"}, status_code=500)
+
+
+# ── V2 Pydantic Models ────────────────────────────────────────────────────────
+
+
+class V2ReadinessResponse(BaseModel):
+    v2_ready: bool
+    scheduler_days_running: int
+    scheduler_success_rate: float
+    discord_digest_count: int
+    live_rera_growth: bool
+    board_room_avg_response_s: float | None = None
+
+    model_config = {"extra": "forbid", "frozen": True}
+
+
+class V2DeclareResponse(BaseModel):
+    declared: bool
+    date: str | None = None
+
+    model_config = {"extra": "forbid", "frozen": True}
+
+
+class V2DeclareErrorResponse(BaseModel):
+    error: str
+    readiness: V2ReadinessResponse | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+# ── V2 Readiness ──────────────────────────────────────────────────────────────
+
+
+_DECLARE_FACT = "RE_OS V2.0 declared"
+
+
+def _compute_v2_readiness(conn) -> V2ReadinessResponse:
+    """Compute the 5 live readiness metrics and return a V2ReadinessResponse.
+
+    v2_ready = True when all three hard criteria are met:
+      - scheduler_success_rate >= 0.8
+      - scheduler_days_running >= 7
+      - discord_digest_count >= 1
+    """
+    with db_query_duration_seconds.labels(query_name="v2_scheduler_days").time():
+        # 30-day lookback: a 7-day window caps EXTRACT(DAY ...) at 6,
+        # making the >= 7 readiness criterion unreachable.
+        days_row = conn.execute(_sa_text("""
+            SELECT
+                CASE WHEN COUNT(*) = 0 THEN 0
+                     ELSE EXTRACT(DAY FROM NOW() - MIN(created_at))::int
+                END
+            FROM agent_runs
+            WHERE created_at > NOW() - INTERVAL '30 days'
+        """)).fetchone()
+        scheduler_days_running = days_row[0] if days_row else 0
+
+    with db_query_duration_seconds.labels(query_name="v2_success_rate").time():
+        rate_row = conn.execute(_sa_text("""
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successes
+            FROM agent_runs
+            WHERE created_at > NOW() - INTERVAL '7 days'
+        """)).fetchone()
+        total_runs = rate_row[0] if rate_row else 0
+        successes = rate_row[1] if rate_row else 0
+        scheduler_success_rate = round(successes / total_runs, 4) if total_runs > 0 else 0.0
+
+    with db_query_duration_seconds.labels(query_name="v2_digest_count").time():
+        digest_row = conn.execute(_sa_text("""
+            SELECT COUNT(*)
+            FROM alerts
+            WHERE alert_type ILIKE '%digest%'
+              AND created_at > NOW() - INTERVAL '7 days'
+        """)).fetchone()
+        discord_digest_count = digest_row[0] if digest_row else 0
+
+    with db_query_duration_seconds.labels(query_name="v2_live_growth").time():
+        growth_row = conn.execute(_sa_text("""
+            WITH live_counts_7d_ago AS (
+                SELECT mm.name, rp.data_source, COUNT(*) AS cnt
+                FROM rera_projects rp
+                JOIN micro_markets mm ON mm.id = rp.micro_market_id
+                WHERE rp.data_source != 'seed_estimated'
+                  AND rp.created_at <= NOW() - INTERVAL '7 days'
+                GROUP BY mm.name, rp.data_source
+            ),
+            current_live_counts AS (
+                SELECT mm.name, COUNT(*) AS cnt
+                FROM rera_projects rp
+                JOIN micro_markets mm ON mm.id = rp.micro_market_id
+                WHERE rp.data_source != 'seed_estimated'
+                GROUP BY mm.name
+            )
+            SELECT
+                CASE
+                    WHEN NOT EXISTS (SELECT 1 FROM current_live_counts) THEN TRUE
+                    WHEN NOT EXISTS (SELECT 1 FROM live_counts_7d_ago) THEN TRUE
+                    WHEN EXISTS (
+                        SELECT 1 FROM current_live_counts cl
+                        LEFT JOIN live_counts_7d_ago old ON old.name = cl.name
+                        WHERE cl.cnt > COALESCE(old.cnt, 0)
+                    ) THEN TRUE
+                    ELSE FALSE
+                END
+        """)).fetchone()
+        live_rera_growth = growth_row[0] if growth_row else True
+
+    with db_query_duration_seconds.labels(query_name="v2_br_response").time():
+        br_row = conn.execute(_sa_text("""
+            SELECT AVG(response_time_s)
+            FROM board_sessions
+            WHERE completed_at IS NOT NULL
+              AND created_at > NOW() - INTERVAL '7 days'
+        """)).fetchone()
+        board_room_avg_response_s = (
+            round(float(br_row[0]), 2) if br_row and br_row[0] is not None else None
+        )
+
+    v2_ready = (
+        scheduler_success_rate >= 0.8
+        and scheduler_days_running >= 7
+        and discord_digest_count >= 1
+    )
+
+    return V2ReadinessResponse(
+        v2_ready=v2_ready,
+        scheduler_days_running=scheduler_days_running,
+        scheduler_success_rate=scheduler_success_rate,
+        discord_digest_count=discord_digest_count,
+        live_rera_growth=live_rera_growth,
+        board_room_avg_response_s=board_room_avg_response_s,
+    )
+
+
+@app.get("/api/ops/v2-readiness", response_model=V2ReadinessResponse,
+         tags=["Operations"], summary="V2.0 readiness check — 5 live metrics")
+@limiter.limit("60/hour")
+async def v2_readiness(request: Request):
+    try:
+        with _get_sa_engine().connect() as conn:
+            return _compute_v2_readiness(conn)
+    except Exception as exc:
+        logger.error("[v2_readiness] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/ops/v2-declare", response_model=V2DeclareResponse,
+          tags=["Operations"], summary="Declare V2.0 when readiness criteria are met")
+@limiter.limit("10/hour")
+async def v2_declare(request: Request):
+    if not _is_run_api_authorized(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    try:
+        with _get_sa_engine().begin() as conn:
+            existing = conn.execute(_sa_text("""
+                SELECT created_at FROM agent_memories
+                WHERE agent_id = 'system'
+                  AND market = 'system'
+                  AND fact = :fact
+                ORDER BY created_at DESC LIMIT 1
+            """), {"fact": _DECLARE_FACT}).fetchone()
+            if existing:
+                date_str = existing[0].isoformat() if existing[0] else None
+                return V2DeclareResponse(declared=True, date=date_str)
+
+            readiness = _compute_v2_readiness(conn)
+            if not readiness.v2_ready:
+                return JSONResponse(
+                    {"error": "V2 criteria not yet met", "readiness": readiness.model_dump()},
+                    status_code=400,
+                )
+
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            date_str = now.isoformat()
+
+            conn.execute(_sa_text("""
+                INSERT INTO agent_memories (agent_id, market, fact, confidence, created_at)
+                VALUES ('system', 'system', :fact, 1.0, NOW())
+                ON CONFLICT (agent_id, market, fact) DO NOTHING
+            """), {"fact": _DECLARE_FACT})
+
+            from utils.discord_notifier import send_ops_alert
+            send_ops_alert(
+                "V2_DECLARED",
+                f"RE_OS V2.0 declared ✅ — {date_str}. "
+                f"{readiness.scheduler_days_running} days live. "
+                f"{readiness.discord_digest_count} weekly digests delivered.",
+            )
+
+            return V2DeclareResponse(declared=True, date=date_str)
+    except Exception as exc:
+        logger.error("[v2_declare] %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 if __name__ == "__main__":

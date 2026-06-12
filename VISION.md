@@ -1,5 +1,5 @@
 # RE_OS — Virtual Real Estate Office: Vision & Roadmap
-**v1.5 — 2026-06-11 | Owner: Jinu Joshi | LLS**
+**v2.0 — 2026-06-12 | Owner: Jinu Joshi | LLS | GATE-90 ✅ — V2.0 Operations Baseline declared**
 
 ---
 
