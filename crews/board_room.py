@@ -472,6 +472,15 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                         )
                 except Exception as exc:
                     logger.debug("[board_room] PSF forecast lookup failed for %s: %s", market_safe, exc)
+
+            # Registered-vs-ask spread injection (T-1138)
+            try:
+                from utils.psf_truth import compute_psf_spread
+                spread_result = compute_psf_spread(market_safe, window_days=180)
+                irr_context += "\n\n" + spread_result.one_line_summary() + "\n"
+            except Exception as exc:
+                logger.debug("[board_room] PSF spread lookup failed for %s: %s", market_safe, exc)
+
             params = _extract_pitch_params(pitch)
             if params["area_sqft"] is not None and params["psf"] is not None:
                 try:

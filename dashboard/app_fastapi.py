@@ -5035,6 +5035,36 @@ async def market_forecast(
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+@app.get("/api/market/spread/{market}", tags=["Market"],
+         response_model=None,
+         summary="Registered-vs-ask PSF spread for a market")
+@limiter.limit("60/hour")
+async def market_spread(
+    market: str,
+    request: Request = None,
+    window_days: int = 180,
+):
+    """Return registered-vs-ask PSF spread from registered_transactions."""
+    from utils.psf_truth import compute_psf_spread, SpreadResponse
+    from config.settings import TARGET_MARKETS as _VALID_MARKETS
+    market = (market or "").strip()
+    if not market:
+        return JSONResponse({"error": "market is required"}, status_code=400)
+    valid = [m.strip().lower() for m in _VALID_MARKETS]
+    if market.lower() not in valid:
+        return JSONResponse(
+            {"error": f"Unknown market '{market}'. Valid: {sorted(set(m.strip() for m in _VALID_MARKETS))}"},
+            status_code=400,
+        )
+    try:
+        window_days = max(30, min(window_days, 365))
+        result = compute_psf_spread(market, window_days=window_days)
+        return JSONResponse(result.to_dict())
+    except Exception as exc:
+        logger.warning("[API] /api/market/spread/{} failed: {}", market, exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 @app.post("/api/gcc/events")
 async def gcc_create_event(request: Request):
     """Manually ingest a single GCC event.

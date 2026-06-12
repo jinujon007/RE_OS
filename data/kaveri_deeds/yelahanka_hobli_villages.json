@@ -1,0 +1,135 @@
+{
+  "hobli": "Yalahanka Hobli",
+  "kaveri_spelling": "Yalahanka",
+  "taluk": "Bengaluru North",
+  "district": "Bengaluru Urban",
+  "source": "zen-citizen/scraps — Kaveri jurisdiction scraper (github.com/zen-citizen/scraps)",
+  "total_villages": 25,
+  "villages": [
+    {
+      "name": "Amani Marasandra",
+      "code": 26152,
+      "is_urban": false
+    },
+    {
+      "name": "Amanikere",
+      "code": 26138,
+      "is_urban": false
+    },
+    {
+      "name": "Arkavathi Layout",
+      "code": 36936,
+      "is_urban": false
+    },
+    {
+      "name": "Challahalli",
+      "code": 26302,
+      "is_urban": false
+    },
+    {
+      "name": "Chikkanahalli",
+      "code": 26297,
+      "is_urban": false
+    },
+    {
+      "name": "Chikkanayakanahalli",
+      "code": 26349,
+      "is_urban": false
+    },
+    {
+      "name": "Chowdeshwari  Layout",
+      "code": 26120,
+      "is_urban": false
+    },
+    {
+      "name": "Commercial Street",
+      "code": 26118,
+      "is_urban": false
+    },
+    {
+      "name": "Dasenahalli",
+      "code": 26512,
+      "is_urban": false
+    },
+    {
+      "name": "Gasti Kampanahalli",
+      "code": 26119,
+      "is_urban": false
+    },
+    {
+      "name": "Guddadahalli",
+      "code": 26274,
+      "is_urban": false
+    },
+    {
+      "name": "Jarakabande Kaval - Survey Numbers 60 to 76 and 100",
+      "code": 37035,
+      "is_urban": false
+    },
+    {
+      "name": "Judicial Layout  (Allalasandra Chikkabommasandra, Jakkur plantation)",
+      "code": 32441,
+      "is_urban": false
+    },
+    {
+      "name": "Kadubaranahalli",
+      "code": 26215,
+      "is_urban": false
+    },
+    {
+      "name": "Kamakshmamma Layout",
+      "code": 26117,
+      "is_urban": false
+    },
+    {
+      "name": "Linganahalli",
+      "code": 26616,
+      "is_urban": false
+    },
+    {
+      "name": "M.S. Palya (Jarakabande Kaval Part -3 )",
+      "code": 26459,
+      "is_urban": false
+    },
+    {
+      "name": "Maruthi Nagara",
+      "code": 26129,
+      "is_urban": false
+    },
+    {
+      "name": "Nagenahalli",
+      "code": 26518,
+      "is_urban": false
+    },
+    {
+      "name": "Other Areas",
+      "code": 35852,
+      "is_urban": false
+    },
+    {
+      "name": "Rajiv Gandhi Nagara (N.T.I. Layout) Kodigehalli Kothihosahalli Byatarayanapura",
+      "code": 32440,
+      "is_urban": false
+    },
+    {
+      "name": "Sahakara Nagar (Kodigehalli Kothihosahalli, Byatarayanapura.)",
+      "code": 32433,
+      "is_urban": false
+    },
+    {
+      "name": "Sahakaranagara ( Kodigehalli Kothihosahalli, Byatarayanapura) G Block",
+      "code": 32439,
+      "is_urban": false
+    },
+    {
+      "name": "Yalahanka Old Town",
+      "code": 26130,
+      "is_urban": false
+    },
+    {
+      "name": "Yalahanka Satillite Town",
+      "code": 26132,
+      "is_urban": false
+    }
+  ]
+}

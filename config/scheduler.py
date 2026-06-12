@@ -3,7 +3,7 @@ RE_OS — Scheduler
 ──────────────────
 Runs the agent crew on schedule. Runs inside Docker as a separate service.
 
-Schedule (post-Sprint-79):
+Schedule (post-Sprint-91, diet active):
 - 04:00 AM IST — Daily pg_dump backup via DBBackup (Sprint 83, GATE-83)
 - 02:00 AM IST — Unified Ingest Engine (all scrapers via DataPlugin adapters)
 - 03:00 AM IST — Opportunity scoring (GATE-47 — survey scoring + Discord alert)
@@ -22,7 +22,8 @@ Schedule (post-Sprint-79):
 - Monday 03:45 IST — BERTScore quality evaluation
 - Monday 04:00 IST — Weekly memory digest (top-5 facts per market → Discord)
 - Monday 05:00 UTC — PSF Forecast update (numpy linear trend, GATE-85)
-- 1st of month 04:00 UTC — Monthly CEO letter (PerformanceDigest + agent_runs analysis → CEO letter)
+- Sunday 03:00 IST — Kaveri deed weekly extraction (inbox + live → Discord summary, GATE-91)
+- 🧊 PR brief, process audit, CEO letter frozen by default (SCHEDULER_ENABLE_ORG_SIM=False)
 """
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -32,7 +33,7 @@ import os
 import sys
 import threading
 
-from config.settings import TARGET_MARKETS
+from config.settings import TARGET_MARKETS, SCHEDULER_ENABLE_ORG_SIM
 from sqlalchemy import text
 from utils.db import get_engine
 from utils.scheduler_helpers import safe_job as _safe_job
@@ -484,7 +485,7 @@ def run_ingest_engine():
     from ingest.plugins import (
         RERAPlugin, IGRPlugin, KaveriBhoomiPlugin,
         PortalPlugin, DeveloperPlugin, NewsPlugin,
-        DistressedPlugin, BBMPPlugin,
+        DistressedPlugin, BBMPPlugin, KaveriDeedsPlugin,
     )
     from config.settings import PLUGIN_SCHEDULES, TARGET_MARKETS
 
@@ -511,7 +512,7 @@ def run_ingest_engine():
     all_plugins = [
         RERAPlugin(), IGRPlugin(), KaveriBhoomiPlugin(),
         PortalPlugin(), DeveloperPlugin(), NewsPlugin(),
-        DistressedPlugin(), BBMPPlugin(),
+        DistressedPlugin(), BBMPPlugin(), KaveriDeedsPlugin(),
     ]
     for p in all_plugins:
         if _plugin_should_run(p.plugin_id):
@@ -1697,6 +1698,57 @@ if __name__ == "__main__":
         os.makedirs(os.path.join("outputs", slug, "checkpoints"), exist_ok=True)
         logger.info(f"Scheduler: ensured output dir for {market}")
 
+
+def run_kaveri_deeds_weekly():
+    """Weekly Kaveri deed extraction — Sunday 03:00 IST.
+
+    Runs inbox mode always, attempts live mode, sends Discord summary.
+    """
+    from scrapers.kaveri_deeds import run_inbox_mode, run_live_mode, read_latest_checkpoint
+
+    logger.info("[Scheduler] Kaveri deeds weekly extraction starting")
+
+    inbox_records = run_inbox_mode()
+    live_records = run_live_mode()
+    total = len(inbox_records) + len(live_records)
+
+    # Count deeds with PSF
+    psf_count = sum(
+        1 for r in (inbox_records + live_records) if r.get("psf") is not None
+    )
+
+    summary = (
+        f"KAVERI DEEDS WEEKLY: {total} new deeds extracted "
+        f"({len(inbox_records)} inbox, {len(live_records)} live). "
+        f"{psf_count} have computed PSF."
+    )
+    logger.info(summary)
+
+    # Log to agent_runs for observability
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO agent_runs
+                        (agent_name, micro_market, event_type, status, notes)
+                    VALUES ('kaveri_deeds_weekly', 'system', 'kaveri_deeds_weekly',
+                            :status, :notes)
+                """),
+                {
+                    "status": "success" if total > 0 else "completed",
+                    "notes": summary,
+                },
+            )
+    except Exception as exc:
+        logger.warning("[Scheduler] Failed to log kaveri_deeds_weekly run: {}", exc)
+
+    try:
+        from utils.discord_notifier import send_ops_alert
+        send_ops_alert("KAVERI_DEEDS_WEEKLY", summary)
+    except Exception as exc:
+        logger.warning("[Scheduler] Kaveri deeds Discord alert failed: {}", exc)
+
+
     scheduler = BlockingScheduler(timezone="Asia/Kolkata")
 
     # Unified Ingest Engine — replaces 6 separate cron jobs
@@ -1892,22 +1944,26 @@ if __name__ == "__main__":
     )
 
     # Weekly PR brief digest — Monday 02:00 UTC ≈ 07:30 IST (Sprint 59, T-999)
-    scheduler.add_job(
-        lambda: _safe_job(weekly_pr_brief, "weekly_pr_brief"),
-        CronTrigger(day_of_week="mon", hour=2, minute=0, timezone="UTC"),
-        id="weekly_pr_brief",
-        name="Monday PR Brief Digest (Brand Mentions + LinkedIn)",
-        misfire_grace_time=3600,
-    )
+    # Gated by SCHEDULER_ENABLE_ORG_SIM (Sprint 91 diet — GATE-91)
+    if SCHEDULER_ENABLE_ORG_SIM:
+        scheduler.add_job(
+            lambda: _safe_job(weekly_pr_brief, "weekly_pr_brief"),
+            CronTrigger(day_of_week="mon", hour=2, minute=0, timezone="UTC"),
+            id="weekly_pr_brief",
+            name="Monday PR Brief Digest (Brand Mentions + LinkedIn)",
+            misfire_grace_time=3600,
+        )
 
     # Weekly process audit — Sunday 03:00 UTC (Sprint 61, T-1011)
-    scheduler.add_job(
-        lambda: _safe_job(weekly_process_audit, "weekly_process_audit"),
-        CronTrigger(day_of_week="sun", hour=3, minute=0, timezone="UTC"),
-        id="weekly_process_audit",
-        name="Weekly Process Audit (LogAnalyst → Optimizer → Runbook)",
-        misfire_grace_time=7200,
-    )
+    # Gated by SCHEDULER_ENABLE_ORG_SIM (Sprint 91 diet — GATE-91)
+    if SCHEDULER_ENABLE_ORG_SIM:
+        scheduler.add_job(
+            lambda: _safe_job(weekly_process_audit, "weekly_process_audit"),
+            CronTrigger(day_of_week="sun", hour=3, minute=0, timezone="UTC"),
+            id="weekly_process_audit",
+            name="Weekly Process Audit (LogAnalyst → Optimizer → Runbook)",
+            misfire_grace_time=7200,
+        )
 
     # GCC daily scan — 08:00 IST = 02:30 UTC (Sprint 67 — GATE-71, T-1021)
     scheduler.add_job(
@@ -1956,13 +2012,15 @@ if __name__ == "__main__":
     )
 
     # Monthly CEO letter — 1st of month at 04:00 UTC (Sprint 62, T-1019)
-    scheduler.add_job(
-        lambda: _safe_job(monthly_ceo_letter, "monthly_ceo_letter"),
-        CronTrigger(day=1, hour=4, minute=0, timezone="UTC"),
-        id="monthly_ceo_letter",
-        name="Monthly CEO Letter (PerformanceDigest + agent_runs summary)",
-        misfire_grace_time=7200,
-    )
+    # Gated by SCHEDULER_ENABLE_ORG_SIM (Sprint 91 diet — GATE-91)
+    if SCHEDULER_ENABLE_ORG_SIM:
+        scheduler.add_job(
+            lambda: _safe_job(monthly_ceo_letter, "monthly_ceo_letter"),
+            CronTrigger(day=1, hour=4, minute=0, timezone="UTC"),
+            id="monthly_ceo_letter",
+            name="Monthly CEO Letter (PerformanceDigest + agent_runs summary)",
+            misfire_grace_time=7200,
+        )
 
     # Monthly mobility scout — 1st of month at 01:00 IST (Sprint 74, T-1039)
     scheduler.add_job(
@@ -2019,6 +2077,15 @@ if __name__ == "__main__":
         misfire_grace_time=3600,
     )
 
+    # Weekly Kaveri deed extraction — Sunday 03:00 IST (GATE-91, T-1139)
+    scheduler.add_job(
+        lambda: _safe_job(run_kaveri_deeds_weekly, "kaveri_deeds_weekly"),
+        CronTrigger(day_of_week="sun", hour=3, minute=0),
+        id="kaveri_deeds_weekly",
+        name="Weekly Kaveri Deed Extraction (inbox + live → Discord summary)",
+        misfire_grace_time=7200,
+    )
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
     logger.info("  01:00 AM IST — Daily pg_dump backup [T-904]")
@@ -2040,11 +2107,13 @@ if __name__ == "__main__":
     logger.info("  Monday 03:45 IST — BERTScore quality evaluation")
     logger.info("  Monday 04:00 IST — Weekly memory digest (top-5 facts)")
     logger.info("  Monday 06:30 IST — Competitive intel pulse digest [T-976]")
-    logger.info("  Monday 07:30 IST — PR brief digest (brand mentions + LinkedIn) [T-999]")
-    logger.info("  Sunday 08:30 IST — Process automation audit (LogAnalyst + Optimizer + Runbook) [T-1011]")
+    _frozen_tag = "🧊 FROZEN" if not SCHEDULER_ENABLE_ORG_SIM else ""
+    if _frozen_tag:
+        logger.info("  Monday 07:30 IST — PR brief digest (brand mentions + LinkedIn) [T-999] 🧊 FROZEN (GATE-91)")
+        logger.info("  Sunday 08:30 IST — Process automation audit (LogAnalyst + Optimizer + Runbook) [T-1011] 🧊 FROZEN (GATE-91)")
+        logger.info("  1st of month 09:30 IST — Monthly CEO letter (PerformanceDigest + agent_runs) [T-1019] 🧊 FROZEN (GATE-91)")
     logger.info("  Daily 08:00 IST — GCC daily scan (seed + news → L1/L2 alerts) [T-1021]")
     logger.info("  Monday 07:30 IST — GCC weekly digest (pipeline → Discord intel) [T-1022]")
-    logger.info("  1st of month 09:30 IST — Monthly CEO letter (PerformanceDigest + agent_runs) [T-1019]")
     logger.info("  1st of month 06:30 IST — Monthly mobility scout (accessibility_scores) [T-1039]")
     logger.info("  06:30 IST daily — Govt/Policy daily scan (events→Discord alerts) [T-1050]")
     logger.info("  Monday 08:00 IST — Govt/Policy weekly digest (north_bengaluru_score→Discord) [T-1050]")
@@ -2052,6 +2121,7 @@ if __name__ == "__main__":
     logger.info("  1st of month 07:30 IST — Monthly intel digest (MoM PSF + absorption + LLM synthesis) → Discord [T-1057]")
     logger.info("  Daily 09:00 IST — Bhoomi auto-survey from RERA survey numbers (T-1080)")
     logger.info("  06:30 IST daily — Data floor check (Discord alert on live RERA breach) [T-1128]")
+    logger.info("  Sunday 03:00 IST — Kaveri deed weekly extraction (inbox + live → Discord) [T-1139]")
     logger.info(f"Active jobs: {[j.id for j in scheduler.get_jobs()]}")
 
     scheduler.start()

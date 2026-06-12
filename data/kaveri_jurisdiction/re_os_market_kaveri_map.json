@@ -1,0 +1,4120 @@
+{
+  "Yelahanka": {
+    "kaveri_sro_district": "Gandhinagar",
+    "kaveri_taluk": "Yelahanka",
+    "kaveri_hobli": "Yalahanka Hobli",
+    "note": "Kaveri spells it Yalahanka, not Yelahanka",
+    "villages": [
+      {
+        "name": "Amanikere",
+        "code": 26138,
+        "is_urban": false
+      },
+      {
+        "name": "Amani Marasandra",
+        "code": 26152,
+        "is_urban": false
+      },
+      {
+        "name": "Arkavathi Layout",
+        "code": 36936,
+        "is_urban": false
+      },
+      {
+        "name": "Challahalli",
+        "code": 26302,
+        "is_urban": false
+      },
+      {
+        "name": "Chikkanahalli",
+        "code": 26297,
+        "is_urban": false
+      },
+      {
+        "name": "Chikkanayakanahalli",
+        "code": 26349,
+        "is_urban": false
+      },
+      {
+        "name": "Chowdeshwari  Layout",
+        "code": 26120,
+        "is_urban": false
+      },
+      {
+        "name": "Commercial Street",
+        "code": 26118,
+        "is_urban": false
+      },
+      {
+        "name": "Dasenahalli",
+        "code": 26512,
+        "is_urban": false
+      },
+      {
+        "name": "Gasti Kampanahalli",
+        "code": 26119,
+        "is_urban": false
+      },
+      {
+        "name": "Guddadahalli",
+        "code": 26274,
+        "is_urban": false
+      },
+      {
+        "name": "Jarakabande Kaval - Survey Numbers 60 to 76 and 100",
+        "code": 37035,
+        "is_urban": false
+      },
+      {
+        "name": "Judicial Layout  (Allalasandra Chikkabommasandra, Jakkur plantation)",
+        "code": 32441,
+        "is_urban": false
+      },
+      {
+        "name": "Kadubaranahalli",
+        "code": 26215,
+        "is_urban": false
+      },
+      {
+        "name": "Kamakshmamma Layout",
+        "code": 26117,
+        "is_urban": false
+      },
+      {
+        "name": "Linganahalli",
+        "code": 26616,
+        "is_urban": false
+      },
+      {
+        "name": "Maruthi Nagara",
+        "code": 26129,
+        "is_urban": false
+      },
+      {
+        "name": "M.S. Palya (Jarakabande Kaval Part -3 )",
+        "code": 26459,
+        "is_urban": false
+      },
+      {
+        "name": "Nagenahalli",
+        "code": 26518,
+        "is_urban": false
+      },
+      {
+        "name": "Other Areas",
+        "code": 35852,
+        "is_urban": false
+      },
+      {
+        "name": "Rajiv Gandhi Nagara (N.T.I. Layout) Kodigehalli Kothihosahalli Byatarayanapura",
+        "code": 32440,
+        "is_urban": false
+      },
+      {
+        "name": "Sahakaranagara ( Kodigehalli Kothihosahalli, Byatarayanapura) G Block",
+        "code": 32439,
+        "is_urban": false
+      },
+      {
+        "name": "Sahakara Nagar (Kodigehalli Kothihosahalli, Byatarayanapura.)",
+        "code": 32433,
+        "is_urban": false
+      },
+      {
+        "name": "Yalahanka Old Town",
+        "code": 26130,
+        "is_urban": false
+      },
+      {
+        "name": "Yalahanka Satillite Town",
+        "code": 26132,
+        "is_urban": false
+      }
+    ]
+  },
+  "Devanahalli": {
+    "kaveri_sro_district": "Bangalore Rural",
+    "kaveri_taluk": "Devanahalli",
+    "kaveri_hoblis": [
+      "Chanarayanapatana Hobli",
+      "Devanahalli Town",
+      "Kasaba Hobli",
+      "Kundana Hobli",
+      "Vijayapura Hobli",
+      "Vijayapura Town"
+    ],
+    "all_hobli_villages": {
+      "Chanarayanapatana Hobli": [
+        {
+          "name": "Agalakote",
+          "code": 31154,
+          "is_urban": false
+        },
+        {
+          "name": "Agalakote",
+          "code": 31154,
+          "is_urban": false
+        },
+        {
+          "name": "Baladimmenahalli",
+          "code": 31354,
+          "is_urban": false
+        },
+        {
+          "name": "Baladimmenahalli",
+          "code": 31354,
+          "is_urban": false
+        },
+        {
+          "name": "Balepura",
+          "code": 31254,
+          "is_urban": false
+        },
+        {
+          "name": "Balepura",
+          "code": 31254,
+          "is_urban": false
+        },
+        {
+          "name": "Bettakote",
+          "code": 31279,
+          "is_urban": false
+        },
+        {
+          "name": "Bettakote",
+          "code": 31279,
+          "is_urban": false
+        },
+        {
+          "name": "Bettukote Amanikere",
+          "code": 31359,
+          "is_urban": false
+        },
+        {
+          "name": "Bettukote Amanikere",
+          "code": 31359,
+          "is_urban": false
+        },
+        {
+          "name": "Bhatra Marenahalli",
+          "code": 31256,
+          "is_urban": false
+        },
+        {
+          "name": "Bhatra Marenahalli",
+          "code": 31256,
+          "is_urban": false
+        },
+        {
+          "name": "Bidalapura",
+          "code": 31260,
+          "is_urban": false
+        },
+        {
+          "name": "Bidalapura",
+          "code": 31260,
+          "is_urban": false
+        },
+        {
+          "name": "Bidalapura Amanikere",
+          "code": 31266,
+          "is_urban": false
+        },
+        {
+          "name": "Bidalapura Amanikere",
+          "code": 31266,
+          "is_urban": false
+        },
+        {
+          "name": "Bidiganahalli",
+          "code": 31270,
+          "is_urban": false
+        },
+        {
+          "name": "Bidiganahalli",
+          "code": 31270,
+          "is_urban": false
+        },
+        {
+          "name": "Bommanahalli",
+          "code": 31283,
+          "is_urban": false
+        },
+        {
+          "name": "Bommanahalli",
+          "code": 31283,
+          "is_urban": false
+        },
+        {
+          "name": "Boodigere Amanikere",
+          "code": 31357,
+          "is_urban": false
+        },
+        {
+          "name": "Boodigere Amanikere",
+          "code": 31357,
+          "is_urban": false
+        },
+        {
+          "name": "Budigere",
+          "code": 31274,
+          "is_urban": false
+        },
+        {
+          "name": "Budigere",
+          "code": 31274,
+          "is_urban": false
+        },
+        {
+          "name": "Channahalli",
+          "code": 31192,
+          "is_urban": false
+        },
+        {
+          "name": "Channahalli",
+          "code": 31192,
+          "is_urban": false
+        },
+        {
+          "name": "Channarayapatana Amanikere",
+          "code": 31185,
+          "is_urban": false
+        },
+        {
+          "name": "Channarayapatana Amanikere",
+          "code": 31185,
+          "is_urban": false
+        },
+        {
+          "name": "Channarayapattana",
+          "code": 31347,
+          "is_urban": false
+        },
+        {
+          "name": "Channarayapattana",
+          "code": 31347,
+          "is_urban": false
+        },
+        {
+          "name": "Cheemachanahalli",
+          "code": 31197,
+          "is_urban": false
+        },
+        {
+          "name": "Cheemachanahalli",
+          "code": 31197,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkaramanahalli",
+          "code": 31190,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkaramanahalli",
+          "code": 31190,
+          "is_urban": false
+        },
+        {
+          "name": "Devanaykanahalli",
+          "code": 31219,
+          "is_urban": false
+        },
+        {
+          "name": "Devanaykanahalli",
+          "code": 31219,
+          "is_urban": false
+        },
+        {
+          "name": "Doddakurubarahalli",
+          "code": 31231,
+          "is_urban": false
+        },
+        {
+          "name": "Doddakurubarahalli",
+          "code": 31231,
+          "is_urban": false
+        },
+        {
+          "name": "Gangavara Chowdappanahalli",
+          "code": 31174,
+          "is_urban": false
+        },
+        {
+          "name": "Gangavara Chowdappanahalli",
+          "code": 31174,
+          "is_urban": false
+        },
+        {
+          "name": "Gokarebachanahalli",
+          "code": 31344,
+          "is_urban": false
+        },
+        {
+          "name": "Gokarebachanahalli",
+          "code": 31344,
+          "is_urban": false
+        },
+        {
+          "name": "Gopasandra",
+          "code": 31182,
+          "is_urban": false
+        },
+        {
+          "name": "Gopasandra",
+          "code": 31182,
+          "is_urban": false
+        },
+        {
+          "name": "Gummanahalli",
+          "code": 31178,
+          "is_urban": false
+        },
+        {
+          "name": "Gummanahalli",
+          "code": 31178,
+          "is_urban": false
+        },
+        {
+          "name": "Handrahalli",
+          "code": 31310,
+          "is_urban": false
+        },
+        {
+          "name": "Handrahalli",
+          "code": 31310,
+          "is_urban": false
+        },
+        {
+          "name": "Haralur",
+          "code": 31315,
+          "is_urban": false
+        },
+        {
+          "name": "Haralur",
+          "code": 31315,
+          "is_urban": false
+        },
+        {
+          "name": "Hirigenahalli",
+          "code": 31322,
+          "is_urban": false
+        },
+        {
+          "name": "Hirigenahalli",
+          "code": 31322,
+          "is_urban": false
+        },
+        {
+          "name": "Hosahalli(Chanarayanapatana Hobli)",
+          "code": 31327,
+          "is_urban": false
+        },
+        {
+          "name": "Hosahalli(Chanarayanapatana Hobli)",
+          "code": 31327,
+          "is_urban": false
+        },
+        {
+          "name": "Hydala",
+          "code": 31319,
+          "is_urban": false
+        },
+        {
+          "name": "Hydala",
+          "code": 31319,
+          "is_urban": false
+        },
+        {
+          "name": "Ibasapura",
+          "code": 31333,
+          "is_urban": false
+        },
+        {
+          "name": "Ibasapura",
+          "code": 31333,
+          "is_urban": false
+        },
+        {
+          "name": "Jonnahalli",
+          "code": 31202,
+          "is_urban": false
+        },
+        {
+          "name": "Jonnahalli",
+          "code": 31202,
+          "is_urban": false
+        },
+        {
+          "name": "Kachipura",
+          "code": 31167,
+          "is_urban": false
+        },
+        {
+          "name": "Kachipura",
+          "code": 31167,
+          "is_urban": false
+        },
+        {
+          "name": "Kaggalahalli",
+          "code": 31164,
+          "is_urban": false
+        },
+        {
+          "name": "Kaggalahalli",
+          "code": 31164,
+          "is_urban": false
+        },
+        {
+          "name": "Kavadadasarahalli",
+          "code": 31165,
+          "is_urban": false
+        },
+        {
+          "name": "Kavadadasarahalli",
+          "code": 31165,
+          "is_urban": false
+        },
+        {
+          "name": "Kommasandra (Chanarayanapatana Hobli)",
+          "code": 31172,
+          "is_urban": false
+        },
+        {
+          "name": "Kommasandra (Chanarayanapatana Hobli)",
+          "code": 31172,
+          "is_urban": false
+        },
+        {
+          "name": "Konaginabele",
+          "code": 31341,
+          "is_urban": false
+        },
+        {
+          "name": "Konaginabele",
+          "code": 31341,
+          "is_urban": false
+        },
+        {
+          "name": "Kondenahalli (Chanarayanapatana Hobli)",
+          "code": 31169,
+          "is_urban": false
+        },
+        {
+          "name": "Kondenahalli (Chanarayanapatana Hobli)",
+          "code": 31169,
+          "is_urban": false
+        },
+        {
+          "name": "Kotnatevur",
+          "code": 31336,
+          "is_urban": false
+        },
+        {
+          "name": "Kotnatevur",
+          "code": 31336,
+          "is_urban": false
+        },
+        {
+          "name": "Mallenahalli",
+          "code": 31294,
+          "is_urban": false
+        },
+        {
+          "name": "Mallenahalli",
+          "code": 31294,
+          "is_urban": false
+        },
+        {
+          "name": "Mallepura",
+          "code": 31298,
+          "is_urban": false
+        },
+        {
+          "name": "Mallepura",
+          "code": 31298,
+          "is_urban": false
+        },
+        {
+          "name": "Maradi Ani",
+          "code": 31290,
+          "is_urban": false
+        },
+        {
+          "name": "Maradi Ani",
+          "code": 31290,
+          "is_urban": false
+        },
+        {
+          "name": "Mottabarlu",
+          "code": 31289,
+          "is_urban": false
+        },
+        {
+          "name": "Mottabarlu",
+          "code": 31289,
+          "is_urban": false
+        },
+        {
+          "name": "Muddenahalli",
+          "code": 31300,
+          "is_urban": false
+        },
+        {
+          "name": "Muddenahalli",
+          "code": 31300,
+          "is_urban": false
+        },
+        {
+          "name": "Naganayakanahalli",
+          "code": 31240,
+          "is_urban": false
+        },
+        {
+          "name": "Naganayakanahalli",
+          "code": 31240,
+          "is_urban": false
+        },
+        {
+          "name": "Nallappanahalli",
+          "code": 31234,
+          "is_urban": false
+        },
+        {
+          "name": "Nallappanahalli",
+          "code": 31234,
+          "is_urban": false
+        },
+        {
+          "name": "Nallur",
+          "code": 31232,
+          "is_urban": false
+        },
+        {
+          "name": "Nallur",
+          "code": 31232,
+          "is_urban": false
+        },
+        {
+          "name": "Nallur Amarayi",
+          "code": 31238,
+          "is_urban": false
+        },
+        {
+          "name": "Nallur Amarayi",
+          "code": 31238,
+          "is_urban": false
+        },
+        {
+          "name": "Palya",
+          "code": 31247,
+          "is_urban": false
+        },
+        {
+          "name": "Palya",
+          "code": 31247,
+          "is_urban": false
+        },
+        {
+          "name": "Papanahalli",
+          "code": 31244,
+          "is_urban": false
+        },
+        {
+          "name": "Papanahalli",
+          "code": 31244,
+          "is_urban": false
+        },
+        {
+          "name": "Polanahalli",
+          "code": 31250,
+          "is_urban": false
+        },
+        {
+          "name": "Polanahalli",
+          "code": 31250,
+          "is_urban": false
+        },
+        {
+          "name": "Reddihalli",
+          "code": 31302,
+          "is_urban": false
+        },
+        {
+          "name": "Reddihalli",
+          "code": 31302,
+          "is_urban": false
+        },
+        {
+          "name": "Somathanahalli",
+          "code": 31305,
+          "is_urban": false
+        },
+        {
+          "name": "Somathanahalli",
+          "code": 31305,
+          "is_urban": false
+        },
+        {
+          "name": "S. Tellahalli",
+          "code": 31209,
+          "is_urban": false
+        },
+        {
+          "name": "S. Tellahalli",
+          "code": 31209,
+          "is_urban": false
+        },
+        {
+          "name": "Tellahalli Grama Agrahara",
+          "code": 31352,
+          "is_urban": false
+        },
+        {
+          "name": "Tellahalli Grama Agrahara",
+          "code": 31352,
+          "is_urban": false
+        },
+        {
+          "name": "Thammenahalli",
+          "code": 31205,
+          "is_urban": false
+        },
+        {
+          "name": "Thammenahalli",
+          "code": 31205,
+          "is_urban": false
+        },
+        {
+          "name": "Varadenahalli",
+          "code": 31366,
+          "is_urban": false
+        },
+        {
+          "name": "Varadenahalli",
+          "code": 31366,
+          "is_urban": false
+        },
+        {
+          "name": "Yaliyaru",
+          "code": 31363,
+          "is_urban": false
+        },
+        {
+          "name": "Yaliyaru",
+          "code": 31363,
+          "is_urban": false
+        }
+      ],
+      "Devanahalli Town": [
+        {
+          "name": "Division 1",
+          "code": 17933,
+          "is_urban": false
+        },
+        {
+          "name": "Division 1",
+          "code": 17933,
+          "is_urban": false
+        },
+        {
+          "name": "Division 2",
+          "code": 17934,
+          "is_urban": false
+        },
+        {
+          "name": "Division 2",
+          "code": 17934,
+          "is_urban": false
+        },
+        {
+          "name": "Division 3",
+          "code": 17935,
+          "is_urban": false
+        },
+        {
+          "name": "Division 3",
+          "code": 17935,
+          "is_urban": false
+        },
+        {
+          "name": "Division 4",
+          "code": 17936,
+          "is_urban": false
+        },
+        {
+          "name": "Division 4",
+          "code": 17936,
+          "is_urban": false
+        }
+      ],
+      "Kasaba Hobli": [
+        {
+          "name": "Agasarahalli",
+          "code": 23982,
+          "is_urban": false
+        },
+        {
+          "name": "Ananthapura",
+          "code": 23984,
+          "is_urban": false
+        },
+        {
+          "name": "Aralasandra",
+          "code": 23987,
+          "is_urban": false
+        },
+        {
+          "name": "Araledibba",
+          "code": 23983,
+          "is_urban": false
+        },
+        {
+          "name": "Arashinakunte",
+          "code": 23980,
+          "is_urban": false
+        },
+        {
+          "name": "Arjunabettahalli",
+          "code": 23981,
+          "is_urban": false
+        },
+        {
+          "name": "Avalakuppe",
+          "code": 23985,
+          "is_urban": false
+        },
+        {
+          "name": "Balaguruvanahalli",
+          "code": 27930,
+          "is_urban": false
+        },
+        {
+          "name": "Banasavadi",
+          "code": 27932,
+          "is_urban": false
+        },
+        {
+          "name": "Baradi",
+          "code": 27941,
+          "is_urban": false
+        },
+        {
+          "name": "Basavanahalli",
+          "code": 27929,
+          "is_urban": false
+        },
+        {
+          "name": "Bettahalli",
+          "code": 27943,
+          "is_urban": false
+        },
+        {
+          "name": "Bhattarahalli",
+          "code": 27936,
+          "is_urban": false
+        },
+        {
+          "name": "Bhusandra",
+          "code": 27939,
+          "is_urban": false
+        },
+        {
+          "name": "Bidanapalya",
+          "code": 27934,
+          "is_urban": false
+        },
+        {
+          "name": "Bolamaranahalli",
+          "code": 27933,
+          "is_urban": false
+        },
+        {
+          "name": "Bolamaranahalli",
+          "code": 27944,
+          "is_urban": false
+        },
+        {
+          "name": "Bommanahalli",
+          "code": 27947,
+          "is_urban": false
+        },
+        {
+          "name": "Boodihal",
+          "code": 27935,
+          "is_urban": false
+        },
+        {
+          "name": "Byadarahalli",
+          "code": 27937,
+          "is_urban": false
+        },
+        {
+          "name": "Byrasandra",
+          "code": 27940,
+          "is_urban": false
+        },
+        {
+          "name": "Byrashetty Halli",
+          "code": 27946,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkamaranahalli",
+          "code": 27914,
+          "is_urban": false
+        },
+        {
+          "name": "Chowdasandra",
+          "code": 27915,
+          "is_urban": false
+        },
+        {
+          "name": "Deganahalli",
+          "code": 27920,
+          "is_urban": false
+        },
+        {
+          "name": "Dodda Karenahalli",
+          "code": 27922,
+          "is_urban": false
+        },
+        {
+          "name": "Entaganahalli",
+          "code": 23989,
+          "is_urban": false
+        },
+        {
+          "name": "Erigenahalli",
+          "code": 23988,
+          "is_urban": false
+        },
+        {
+          "name": "Gandaragollipura",
+          "code": 24937,
+          "is_urban": false
+        },
+        {
+          "name": "Gangaadaranapalya",
+          "code": 24885,
+          "is_urban": false
+        },
+        {
+          "name": "Geddalahalli",
+          "code": 27884,
+          "is_urban": false
+        },
+        {
+          "name": "Gollahalli",
+          "code": 27900,
+          "is_urban": false
+        },
+        {
+          "name": "Goravanahalli",
+          "code": 27913,
+          "is_urban": false
+        },
+        {
+          "name": "Gorinabele",
+          "code": 24902,
+          "is_urban": false
+        },
+        {
+          "name": "Hajipalya",
+          "code": 27985,
+          "is_urban": false
+        },
+        {
+          "name": "Hanchipura",
+          "code": 27984,
+          "is_urban": false
+        },
+        {
+          "name": "Hanumanapalya",
+          "code": 27983,
+          "is_urban": false
+        },
+        {
+          "name": "Honnasandra",
+          "code": 27991,
+          "is_urban": false
+        },
+        {
+          "name": "Hosahalli(Kasaba Hobli)",
+          "code": 27990,
+          "is_urban": false
+        },
+        {
+          "name": "Hurulihalli",
+          "code": 27988,
+          "is_urban": false
+        },
+        {
+          "name": "Hyadalu",
+          "code": 27987,
+          "is_urban": false
+        },
+        {
+          "name": "Jakkasandra(Kasaba Hobli)",
+          "code": 27916,
+          "is_urban": false
+        },
+        {
+          "name": "Kadukarenahalli",
+          "code": 23993,
+          "is_urban": false
+        },
+        {
+          "name": "Kanagondanahalli",
+          "code": 23991,
+          "is_urban": false
+        },
+        {
+          "name": "Kanavanahalli",
+          "code": 23992,
+          "is_urban": false
+        },
+        {
+          "name": "Kempohalli",
+          "code": 23998,
+          "is_urban": false
+        },
+        {
+          "name": "Kenchanahalli",
+          "code": 24346,
+          "is_urban": false
+        },
+        {
+          "name": "K.G Krishnara",
+          "code": 24581,
+          "is_urban": false
+        },
+        {
+          "name": "Kodappanahalli",
+          "code": 24822,
+          "is_urban": false
+        },
+        {
+          "name": "Koneripura",
+          "code": 24664,
+          "is_urban": false
+        },
+        {
+          "name": "Koolipura",
+          "code": 23994,
+          "is_urban": false
+        },
+        {
+          "name": "Koratagere",
+          "code": 24727,
+          "is_urban": false
+        },
+        {
+          "name": "Kotnahalli",
+          "code": 24801,
+          "is_urban": false
+        },
+        {
+          "name": "Krishnarajapura",
+          "code": 23995,
+          "is_urban": false
+        },
+        {
+          "name": "Krishnarajapura(1)",
+          "code": 45101,
+          "is_urban": false
+        },
+        {
+          "name": "Kulume-Kempalinganahalli",
+          "code": 23996,
+          "is_urban": false
+        },
+        {
+          "name": "Lingenahalli",
+          "code": 27965,
+          "is_urban": false
+        },
+        {
+          "name": "Machonayakana Halli",
+          "code": 27956,
+          "is_urban": false
+        },
+        {
+          "name": "Mahadevapura",
+          "code": 27949,
+          "is_urban": false
+        },
+        {
+          "name": "Mallapura",
+          "code": 27948,
+          "is_urban": false
+        },
+        {
+          "name": "Mallarabanavadi",
+          "code": 27950,
+          "is_urban": false
+        },
+        {
+          "name": "Malonagathi Halli",
+          "code": 27955,
+          "is_urban": false
+        },
+        {
+          "name": "Manchenahalli",
+          "code": 27954,
+          "is_urban": false
+        },
+        {
+          "name": "Mandigere",
+          "code": 27951,
+          "is_urban": false
+        },
+        {
+          "name": "Mantanakurchi",
+          "code": 27953,
+          "is_urban": false
+        },
+        {
+          "name": "Marohalli",
+          "code": 27957,
+          "is_urban": false
+        },
+        {
+          "name": "Modalakote",
+          "code": 27952,
+          "is_urban": false
+        },
+        {
+          "name": "Mylanahalli",
+          "code": 27958,
+          "is_urban": false
+        },
+        {
+          "name": "Mylanahalli Becharak",
+          "code": 27960,
+          "is_urban": false
+        },
+        {
+          "name": "Naraseepalya",
+          "code": 27924,
+          "is_urban": false
+        },
+        {
+          "name": "Narasihma Palya J.",
+          "code": 27926,
+          "is_urban": false
+        },
+        {
+          "name": "Narasihma Palya K.",
+          "code": 27925,
+          "is_urban": false
+        },
+        {
+          "name": "Narayanarao Palya",
+          "code": 27928,
+          "is_urban": false
+        },
+        {
+          "name": "Nelamangala Village",
+          "code": 27923,
+          "is_urban": false
+        },
+        {
+          "name": "Seetharam Bhattara Palya",
+          "code": 27979,
+          "is_urban": false
+        },
+        {
+          "name": "Shrinivasapur K.G.",
+          "code": 27977,
+          "is_urban": false
+        },
+        {
+          "name": "Soladevanahalli",
+          "code": 27982,
+          "is_urban": false
+        },
+        {
+          "name": "T. Begooru",
+          "code": 27942,
+          "is_urban": false
+        },
+        {
+          "name": "Thirumalapura",
+          "code": 27918,
+          "is_urban": false
+        },
+        {
+          "name": "Thonachinakuppe",
+          "code": 27919,
+          "is_urban": false
+        },
+        {
+          "name": "Thyagadahalli",
+          "code": 27917,
+          "is_urban": false
+        },
+        {
+          "name": "Vabanayakana Halli",
+          "code": 27974,
+          "is_urban": false
+        },
+        {
+          "name": "Vaddarapalya",
+          "code": 27969,
+          "is_urban": false
+        },
+        {
+          "name": "Vajarahalli",
+          "code": 27970,
+          "is_urban": false
+        },
+        {
+          "name": "Veerananjeepura",
+          "code": 27967,
+          "is_urban": false
+        },
+        {
+          "name": "Veeraraghavana Palya",
+          "code": 27971,
+          "is_urban": false
+        },
+        {
+          "name": "Vishweshwarapura",
+          "code": 27973,
+          "is_urban": false
+        },
+        {
+          "name": "Yalachegere",
+          "code": 27963,
+          "is_urban": false
+        }
+      ],
+      "Kundana Hobli": [
+        {
+          "name": "Aluru Duddanahalli",
+          "code": 31183,
+          "is_urban": false
+        },
+        {
+          "name": "Aluru Duddanahalli",
+          "code": 31183,
+          "is_urban": false
+        },
+        {
+          "name": "Aradeshanahalli",
+          "code": 31171,
+          "is_urban": false
+        },
+        {
+          "name": "Aradeshanahalli",
+          "code": 31171,
+          "is_urban": false
+        },
+        {
+          "name": "Arasanahalli Peddanahalli",
+          "code": 31176,
+          "is_urban": false
+        },
+        {
+          "name": "Arasanahalli Peddanahalli",
+          "code": 31176,
+          "is_urban": false
+        },
+        {
+          "name": "Aruvanahalli",
+          "code": 31179,
+          "is_urban": false
+        },
+        {
+          "name": "Aruvanahalli",
+          "code": 31179,
+          "is_urban": false
+        },
+        {
+          "name": "Bachchahalli",
+          "code": 31233,
+          "is_urban": false
+        },
+        {
+          "name": "Bachchahalli",
+          "code": 31233,
+          "is_urban": false
+        },
+        {
+          "name": "Bannimangala",
+          "code": 31235,
+          "is_urban": false
+        },
+        {
+          "name": "Bannimangala",
+          "code": 31235,
+          "is_urban": false
+        },
+        {
+          "name": "Bannimangala Amanikere",
+          "code": 31239,
+          "is_urban": false
+        },
+        {
+          "name": "Bannimangala Amanikere",
+          "code": 31239,
+          "is_urban": false
+        },
+        {
+          "name": "Beerasandra",
+          "code": 31241,
+          "is_urban": false
+        },
+        {
+          "name": "Beerasandra",
+          "code": 31241,
+          "is_urban": false
+        },
+        {
+          "name": "Bettenahalli",
+          "code": 31246,
+          "is_urban": false
+        },
+        {
+          "name": "Bettenahalli",
+          "code": 31246,
+          "is_urban": false
+        },
+        {
+          "name": "Byadarahalli",
+          "code": 31337,
+          "is_urban": false
+        },
+        {
+          "name": "Byadarahalli",
+          "code": 31337,
+          "is_urban": false
+        },
+        {
+          "name": "Byradenahalli",
+          "code": 31243,
+          "is_urban": false
+        },
+        {
+          "name": "Byradenahalli",
+          "code": 31243,
+          "is_urban": false
+        },
+        {
+          "name": "Channa Kempanahalli",
+          "code": 31323,
+          "is_urban": false
+        },
+        {
+          "name": "Channa Kempanahalli",
+          "code": 31323,
+          "is_urban": false
+        },
+        {
+          "name": "Chapparadahalli",
+          "code": 31198,
+          "is_urban": false
+        },
+        {
+          "name": "Chapparadahalli",
+          "code": 31198,
+          "is_urban": false
+        },
+        {
+          "name": "Chikka Gollahalli",
+          "code": 31204,
+          "is_urban": false
+        },
+        {
+          "name": "Chikka Gollahalli",
+          "code": 31204,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkannana Hosahalli",
+          "code": 31201,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkannana Hosahalli",
+          "code": 31201,
+          "is_urban": false
+        },
+        {
+          "name": "Chikka Obanahalli",
+          "code": 31326,
+          "is_urban": false
+        },
+        {
+          "name": "Chikka Obanahalli",
+          "code": 31326,
+          "is_urban": false
+        },
+        {
+          "name": "Chowdanahalli",
+          "code": 31207,
+          "is_urban": false
+        },
+        {
+          "name": "Chowdanahalli",
+          "code": 31207,
+          "is_urban": false
+        },
+        {
+          "name": "Devaganahalli",
+          "code": 31224,
+          "is_urban": false
+        },
+        {
+          "name": "Devaganahalli",
+          "code": 31224,
+          "is_urban": false
+        },
+        {
+          "name": "Dodda Cheemanahalli",
+          "code": 31334,
+          "is_urban": false
+        },
+        {
+          "name": "Dodda Cheemanahalli",
+          "code": 31334,
+          "is_urban": false
+        },
+        {
+          "name": "Dodda Gollahalli",
+          "code": 31332,
+          "is_urban": false
+        },
+        {
+          "name": "Dodda Gollahalli",
+          "code": 31332,
+          "is_urban": false
+        },
+        {
+          "name": "Dyavarahalli",
+          "code": 31328,
+          "is_urban": false
+        },
+        {
+          "name": "Dyavarahalli",
+          "code": 31328,
+          "is_urban": false
+        },
+        {
+          "name": "Hegganahalli",
+          "code": 31351,
+          "is_urban": false
+        },
+        {
+          "name": "Hegganahalli",
+          "code": 31351,
+          "is_urban": false
+        },
+        {
+          "name": "Ilethore",
+          "code": 31272,
+          "is_urban": false
+        },
+        {
+          "name": "Ilethore",
+          "code": 31272,
+          "is_urban": false
+        },
+        {
+          "name": "Indrasanahalli",
+          "code": 31346,
+          "is_urban": false
+        },
+        {
+          "name": "Indrasanahalli",
+          "code": 31346,
+          "is_urban": false
+        },
+        {
+          "name": "Jalige",
+          "code": 31210,
+          "is_urban": false
+        },
+        {
+          "name": "Jalige",
+          "code": 31210,
+          "is_urban": false
+        },
+        {
+          "name": "Juttanahalli",
+          "code": 31211,
+          "is_urban": false
+        },
+        {
+          "name": "Juttanahalli",
+          "code": 31211,
+          "is_urban": false
+        },
+        {
+          "name": "Kamenahalli",
+          "code": 31184,
+          "is_urban": false
+        },
+        {
+          "name": "Kamenahalli",
+          "code": 31184,
+          "is_urban": false
+        },
+        {
+          "name": "Karahalli",
+          "code": 31309,
+          "is_urban": false
+        },
+        {
+          "name": "Karahalli",
+          "code": 31309,
+          "is_urban": false
+        },
+        {
+          "name": "Karahalli Amanikere",
+          "code": 31313,
+          "is_urban": false
+        },
+        {
+          "name": "Karahalli Amanikere",
+          "code": 31313,
+          "is_urban": false
+        },
+        {
+          "name": "Kempathimmanahalli",
+          "code": 31317,
+          "is_urban": false
+        },
+        {
+          "name": "Kempathimmanahalli",
+          "code": 31317,
+          "is_urban": false
+        },
+        {
+          "name": "Kottige Thimmanahalli",
+          "code": 31193,
+          "is_urban": false
+        },
+        {
+          "name": "Kottige Thimmanahalli",
+          "code": 31193,
+          "is_urban": false
+        },
+        {
+          "name": "Koyira",
+          "code": 31196,
+          "is_urban": false
+        },
+        {
+          "name": "Koyira",
+          "code": 31196,
+          "is_urban": false
+        },
+        {
+          "name": "Kundana",
+          "code": 31188,
+          "is_urban": false
+        },
+        {
+          "name": "Kundana",
+          "code": 31188,
+          "is_urban": false
+        },
+        {
+          "name": "Lingadheeragollahalli",
+          "code": 31282,
+          "is_urban": false
+        },
+        {
+          "name": "Lingadheeragollahalli",
+          "code": 31282,
+          "is_urban": false
+        },
+        {
+          "name": "Managondanahalli",
+          "code": 31248,
+          "is_urban": false
+        },
+        {
+          "name": "Managondanahalli",
+          "code": 31248,
+          "is_urban": false
+        },
+        {
+          "name": "Maragondanahalli",
+          "code": 31251,
+          "is_urban": false
+        },
+        {
+          "name": "Maragondanahalli",
+          "code": 31251,
+          "is_urban": false
+        },
+        {
+          "name": "Mayasandra",
+          "code": 31253,
+          "is_urban": false
+        },
+        {
+          "name": "Mayasandra",
+          "code": 31253,
+          "is_urban": false
+        },
+        {
+          "name": "Meesaganahalli",
+          "code": 31340,
+          "is_urban": false
+        },
+        {
+          "name": "Meesaganahalli",
+          "code": 31340,
+          "is_urban": false
+        },
+        {
+          "name": "Muddanayakanahalli",
+          "code": 31258,
+          "is_urban": false
+        },
+        {
+          "name": "Muddanayakanahalli",
+          "code": 31258,
+          "is_urban": false
+        },
+        {
+          "name": "Mudiganahalli",
+          "code": 31262,
+          "is_urban": false
+        },
+        {
+          "name": "Mudiganahalli",
+          "code": 31262,
+          "is_urban": false
+        },
+        {
+          "name": "Nagamangala",
+          "code": 31226,
+          "is_urban": false
+        },
+        {
+          "name": "Nagamangala",
+          "code": 31226,
+          "is_urban": false
+        },
+        {
+          "name": "Neraganahalli",
+          "code": 31228,
+          "is_urban": false
+        },
+        {
+          "name": "Neraganahalli",
+          "code": 31228,
+          "is_urban": false
+        },
+        {
+          "name": "Pandithapura",
+          "code": 31229,
+          "is_urban": false
+        },
+        {
+          "name": "Pandithapura",
+          "code": 31229,
+          "is_urban": false
+        },
+        {
+          "name": "Rabbanahalli",
+          "code": 31276,
+          "is_urban": false
+        },
+        {
+          "name": "Rabbanahalli",
+          "code": 31276,
+          "is_urban": false
+        },
+        {
+          "name": "Ramanathapura",
+          "code": 31280,
+          "is_urban": false
+        },
+        {
+          "name": "Ramanathapura",
+          "code": 31280,
+          "is_urban": false
+        },
+        {
+          "name": "Shyanappanahalli",
+          "code": 31295,
+          "is_urban": false
+        },
+        {
+          "name": "Shyanappanahalli",
+          "code": 31295,
+          "is_urban": false
+        },
+        {
+          "name": "Singrahalli",
+          "code": 31292,
+          "is_urban": false
+        },
+        {
+          "name": "Singrahalli",
+          "code": 31292,
+          "is_urban": false
+        },
+        {
+          "name": "Soluru",
+          "code": 31306,
+          "is_urban": false
+        },
+        {
+          "name": "Soluru",
+          "code": 31306,
+          "is_urban": false
+        },
+        {
+          "name": "Sonnenahalli",
+          "code": 31301,
+          "is_urban": false
+        },
+        {
+          "name": "Sonnenahalli",
+          "code": 31301,
+          "is_urban": false
+        },
+        {
+          "name": "Soolakunte",
+          "code": 31304,
+          "is_urban": false
+        },
+        {
+          "name": "Soolakunte",
+          "code": 31304,
+          "is_urban": false
+        },
+        {
+          "name": "Sunnaghatta",
+          "code": 31299,
+          "is_urban": false
+        },
+        {
+          "name": "Sunnaghatta",
+          "code": 31299,
+          "is_urban": false
+        },
+        {
+          "name": "Thindlu",
+          "code": 31216,
+          "is_urban": false
+        },
+        {
+          "name": "Thindlu",
+          "code": 31216,
+          "is_urban": false
+        },
+        {
+          "name": "Thylagere",
+          "code": 31220,
+          "is_urban": false
+        },
+        {
+          "name": "Thylagere",
+          "code": 31220,
+          "is_urban": false
+        },
+        {
+          "name": "Vajarahalli",
+          "code": 31284,
+          "is_urban": false
+        },
+        {
+          "name": "Vajarahalli",
+          "code": 31284,
+          "is_urban": false
+        },
+        {
+          "name": "Venkatapura",
+          "code": 31342,
+          "is_urban": false
+        },
+        {
+          "name": "Venkatapura",
+          "code": 31342,
+          "is_urban": false
+        },
+        {
+          "name": "Vishwanathapura",
+          "code": 31288,
+          "is_urban": false
+        },
+        {
+          "name": "Vishwanathapura",
+          "code": 31288,
+          "is_urban": false
+        },
+        {
+          "name": "Yarrappanahalli",
+          "code": 31264,
+          "is_urban": false
+        },
+        {
+          "name": "Yarrappanahalli",
+          "code": 31264,
+          "is_urban": false
+        }
+      ],
+      "Vijayapura Hobli": [
+        {
+          "name": "Battrenahalli",
+          "code": 31265,
+          "is_urban": false
+        },
+        {
+          "name": "Battrenahalli",
+          "code": 31265,
+          "is_urban": false
+        },
+        {
+          "name": "Bhingipura",
+          "code": 31261,
+          "is_urban": false
+        },
+        {
+          "name": "Bhingipura",
+          "code": 31261,
+          "is_urban": false
+        },
+        {
+          "name": "Bijjavara",
+          "code": 31271,
+          "is_urban": false
+        },
+        {
+          "name": "Bijjavara",
+          "code": 31271,
+          "is_urban": false
+        },
+        {
+          "name": "Budan Padiya",
+          "code": 31374,
+          "is_urban": false
+        },
+        {
+          "name": "Budan Padiya",
+          "code": 31374,
+          "is_urban": false
+        },
+        {
+          "name": "Bullahalli",
+          "code": 31377,
+          "is_urban": false
+        },
+        {
+          "name": "Bullahalli",
+          "code": 31377,
+          "is_urban": false
+        },
+        {
+          "name": "Byrapura",
+          "code": 31379,
+          "is_urban": false
+        },
+        {
+          "name": "Byrapura",
+          "code": 31379,
+          "is_urban": false
+        },
+        {
+          "name": "Chandenahalli",
+          "code": 31208,
+          "is_urban": false
+        },
+        {
+          "name": "Chandenahalli",
+          "code": 31208,
+          "is_urban": false
+        },
+        {
+          "name": "Channasandra",
+          "code": 31199,
+          "is_urban": false
+        },
+        {
+          "name": "Channasandra",
+          "code": 31199,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkanahalli",
+          "code": 31215,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkanahalli",
+          "code": 31215,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkathatha Mangala",
+          "code": 31203,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkathatha Mangala",
+          "code": 31203,
+          "is_urban": false
+        },
+        {
+          "name": "Chinavandahalli",
+          "code": 31378,
+          "is_urban": false
+        },
+        {
+          "name": "Chinavandahalli",
+          "code": 31378,
+          "is_urban": false
+        },
+        {
+          "name": "Chinnappanaykana Hosur",
+          "code": 31222,
+          "is_urban": false
+        },
+        {
+          "name": "Chinnappanaykana Hosur",
+          "code": 31222,
+          "is_urban": false
+        },
+        {
+          "name": "Dandiganahalli",
+          "code": 31242,
+          "is_urban": false
+        },
+        {
+          "name": "Dandiganahalli",
+          "code": 31242,
+          "is_urban": false
+        },
+        {
+          "name": "Dharmapura",
+          "code": 31361,
+          "is_urban": false
+        },
+        {
+          "name": "Dharmapura",
+          "code": 31361,
+          "is_urban": false
+        },
+        {
+          "name": "Dodda Muddenahalli",
+          "code": 31281,
+          "is_urban": false
+        },
+        {
+          "name": "Dodda Muddenahalli",
+          "code": 31281,
+          "is_urban": false
+        },
+        {
+          "name": "Doddasagarahalli",
+          "code": 31257,
+          "is_urban": false
+        },
+        {
+          "name": "Doddasagarahalli",
+          "code": 31257,
+          "is_urban": false
+        },
+        {
+          "name": "Doddathatha Mangala",
+          "code": 31249,
+          "is_urban": false
+        },
+        {
+          "name": "Doddathatha Mangala",
+          "code": 31249,
+          "is_urban": false
+        },
+        {
+          "name": "Erigenahalli",
+          "code": 31365,
+          "is_urban": false
+        },
+        {
+          "name": "Erigenahalli",
+          "code": 31365,
+          "is_urban": false
+        },
+        {
+          "name": "Gaddada Nagenahalli",
+          "code": 31170,
+          "is_urban": false
+        },
+        {
+          "name": "Gaddada Nagenahalli",
+          "code": 31170,
+          "is_urban": false
+        },
+        {
+          "name": "Gejjiguppa",
+          "code": 31177,
+          "is_urban": false
+        },
+        {
+          "name": "Gejjiguppa",
+          "code": 31177,
+          "is_urban": false
+        },
+        {
+          "name": "Gollahalli",
+          "code": 31194,
+          "is_urban": false
+        },
+        {
+          "name": "Gollahalli",
+          "code": 31194,
+          "is_urban": false
+        },
+        {
+          "name": "Gonoor",
+          "code": 31189,
+          "is_urban": false
+        },
+        {
+          "name": "Gonoor",
+          "code": 31189,
+          "is_urban": false
+        },
+        {
+          "name": "Gudlu Muddenahalli",
+          "code": 31181,
+          "is_urban": false
+        },
+        {
+          "name": "Gudlu Muddenahalli",
+          "code": 31181,
+          "is_urban": false
+        },
+        {
+          "name": "Guduvanahalli",
+          "code": 31173,
+          "is_urban": false
+        },
+        {
+          "name": "Guduvanahalli",
+          "code": 31173,
+          "is_urban": false
+        },
+        {
+          "name": "Gururayanu Hosur",
+          "code": 31186,
+          "is_urban": false
+        },
+        {
+          "name": "Gururayanu Hosur",
+          "code": 31186,
+          "is_urban": false
+        },
+        {
+          "name": "Haradipura",
+          "code": 31335,
+          "is_urban": false
+        },
+        {
+          "name": "Haradipura",
+          "code": 31335,
+          "is_urban": false
+        },
+        {
+          "name": "Haralur Nagenahalli",
+          "code": 31329,
+          "is_urban": false
+        },
+        {
+          "name": "Haralur Nagenahalli",
+          "code": 31329,
+          "is_urban": false
+        },
+        {
+          "name": "Harohalli",
+          "code": 31343,
+          "is_urban": false
+        },
+        {
+          "name": "Harohalli",
+          "code": 31343,
+          "is_urban": false
+        },
+        {
+          "name": "Holerahalli",
+          "code": 31355,
+          "is_urban": false
+        },
+        {
+          "name": "Holerahalli",
+          "code": 31355,
+          "is_urban": false
+        },
+        {
+          "name": "Hosahalli",
+          "code": 31362,
+          "is_urban": false
+        },
+        {
+          "name": "Hosahalli",
+          "code": 31362,
+          "is_urban": false
+        },
+        {
+          "name": "Hosahudya",
+          "code": 31368,
+          "is_urban": false
+        },
+        {
+          "name": "Hosahudya",
+          "code": 31368,
+          "is_urban": false
+        },
+        {
+          "name": "Hurulugurki",
+          "code": 31348,
+          "is_urban": false
+        },
+        {
+          "name": "Hurulugurki",
+          "code": 31348,
+          "is_urban": false
+        },
+        {
+          "name": "Kokkare Padiya",
+          "code": 31160,
+          "is_urban": false
+        },
+        {
+          "name": "Kokkare Padiya",
+          "code": 31160,
+          "is_urban": false
+        },
+        {
+          "name": "Kommasandra",
+          "code": 31166,
+          "is_urban": false
+        },
+        {
+          "name": "Kommasandra",
+          "code": 31166,
+          "is_urban": false
+        },
+        {
+          "name": "Kondenahalli",
+          "code": 31163,
+          "is_urban": false
+        },
+        {
+          "name": "Kondenahalli",
+          "code": 31163,
+          "is_urban": false
+        },
+        {
+          "name": "Koramangala",
+          "code": 31373,
+          "is_urban": false
+        },
+        {
+          "name": "Koramangala",
+          "code": 31373,
+          "is_urban": false
+        },
+        {
+          "name": "Maduguruki",
+          "code": 31287,
+          "is_urban": false
+        },
+        {
+          "name": "Maduguruki",
+          "code": 31287,
+          "is_urban": false
+        },
+        {
+          "name": "Mandibele",
+          "code": 31278,
+          "is_urban": false
+        },
+        {
+          "name": "Mandibele",
+          "code": 31278,
+          "is_urban": false
+        },
+        {
+          "name": "Mangasandra",
+          "code": 31275,
+          "is_urban": false
+        },
+        {
+          "name": "Mangasandra",
+          "code": 31275,
+          "is_urban": false
+        },
+        {
+          "name": "Narayanapura",
+          "code": 31252,
+          "is_urban": false
+        },
+        {
+          "name": "Narayanapura",
+          "code": 31252,
+          "is_urban": false
+        },
+        {
+          "name": "Pura",
+          "code": 31364,
+          "is_urban": false
+        },
+        {
+          "name": "Pura",
+          "code": 31364,
+          "is_urban": false
+        },
+        {
+          "name": "Ranganathapura",
+          "code": 31369,
+          "is_urban": false
+        },
+        {
+          "name": "Ranganathapura",
+          "code": 31369,
+          "is_urban": false
+        },
+        {
+          "name": "Sambaragidada Kavalu",
+          "code": 31372,
+          "is_urban": false
+        },
+        {
+          "name": "Sambaragidada Kavalu",
+          "code": 31372,
+          "is_urban": false
+        },
+        {
+          "name": "Shathakuntanahalli",
+          "code": 31320,
+          "is_urban": false
+        },
+        {
+          "name": "Shathakuntanahalli",
+          "code": 31320,
+          "is_urban": false
+        },
+        {
+          "name": "Shettyhalli",
+          "code": 31324,
+          "is_urban": false
+        },
+        {
+          "name": "Shettyhalli",
+          "code": 31324,
+          "is_urban": false
+        },
+        {
+          "name": "Thatamachanahalli Amanikere",
+          "code": 31225,
+          "is_urban": false
+        },
+        {
+          "name": "Thatamachanahalli Amanikere",
+          "code": 31225,
+          "is_urban": false
+        },
+        {
+          "name": "Thimma Halli",
+          "code": 31358,
+          "is_urban": false
+        },
+        {
+          "name": "Thimma Halli",
+          "code": 31358,
+          "is_urban": false
+        },
+        {
+          "name": "Thimmanahalli",
+          "code": 31236,
+          "is_urban": false
+        },
+        {
+          "name": "Thimmanahalli",
+          "code": 31236,
+          "is_urban": false
+        },
+        {
+          "name": "Venkatagiri Kote",
+          "code": 31307,
+          "is_urban": false
+        },
+        {
+          "name": "Venkatagiri Kote",
+          "code": 31307,
+          "is_urban": false
+        },
+        {
+          "name": "Venkatenahalli",
+          "code": 31314,
+          "is_urban": false
+        },
+        {
+          "name": "Venkatenahalli",
+          "code": 31314,
+          "is_urban": false
+        },
+        {
+          "name": "Vijayapura",
+          "code": 31297,
+          "is_urban": false
+        },
+        {
+          "name": "Vijayapura",
+          "code": 31297,
+          "is_urban": false
+        },
+        {
+          "name": "Vijayapurada Amanikere",
+          "code": 31303,
+          "is_urban": false
+        },
+        {
+          "name": "Vijayapurada Amanikere",
+          "code": 31303,
+          "is_urban": false
+        },
+        {
+          "name": "Yaluvalli",
+          "code": 31293,
+          "is_urban": false
+        },
+        {
+          "name": "Yaluvalli",
+          "code": 31293,
+          "is_urban": false
+        }
+      ],
+      "Vijayapura Town": [
+        {
+          "name": "Division 1(Vijayapura Town)",
+          "code": 18031,
+          "is_urban": false
+        },
+        {
+          "name": "Division 1(Vijayapura Town)",
+          "code": 18031,
+          "is_urban": false
+        },
+        {
+          "name": "Division 2 (Vijayapura Town)",
+          "code": 18034,
+          "is_urban": false
+        },
+        {
+          "name": "Division 2 (Vijayapura Town)",
+          "code": 18034,
+          "is_urban": false
+        },
+        {
+          "name": "Division 3 (Vijayapura Town)",
+          "code": 18036,
+          "is_urban": false
+        },
+        {
+          "name": "Division 3 (Vijayapura Town)",
+          "code": 18036,
+          "is_urban": false
+        },
+        {
+          "name": "Division 4 (Vijayapura Town)",
+          "code": 18037,
+          "is_urban": false
+        },
+        {
+          "name": "Division 4 (Vijayapura Town)",
+          "code": 18037,
+          "is_urban": false
+        },
+        {
+          "name": "Division 5",
+          "code": 18038,
+          "is_urban": false
+        },
+        {
+          "name": "Division 5",
+          "code": 18038,
+          "is_urban": false
+        }
+      ]
+    }
+  },
+  "Hebbal": {
+    "kaveri_sro_district": "Rajajinagar",
+    "kaveri_taluk": "Bangalore North",
+    "kaveri_hoblis": [
+      "Dasanapura Hobli",
+      "Dasanapura Hobli 1",
+      "Dasanapura Hobli 2",
+      "Dasanapura Hobli 3",
+      "Kasaba Hobli",
+      "Kasaba Hobli 1",
+      "Kasaba Hobli 2",
+      "Yeshwantapura Hobli",
+      "Yeshwantapura Hobli 1",
+      "Yeshwantapura Hobli 2"
+    ],
+    "note": "Hebbal is within Bangalore North taluk under Rajajinagar SRO",
+    "all_hobli_villages": {
+      "Dasanapura Hobli": [
+        {
+          "name": "Muniyappanapalya",
+          "code": 29081,
+          "is_urban": false
+        },
+        {
+          "name": "Muniyappanapalya",
+          "code": 29081,
+          "is_urban": false
+        }
+      ],
+      "Dasanapura Hobli 1": [
+        {
+          "name": "Adakamaranahalli",
+          "code": 14728,
+          "is_urban": false
+        },
+        {
+          "name": "Adakamaranahalli",
+          "code": 14728,
+          "is_urban": false
+        },
+        {
+          "name": "Agrahara Palya",
+          "code": 14719,
+          "is_urban": false
+        },
+        {
+          "name": "Agrahara Palya",
+          "code": 14719,
+          "is_urban": false
+        },
+        {
+          "name": "Aluru",
+          "code": 14743,
+          "is_urban": false
+        },
+        {
+          "name": "Aluru",
+          "code": 14743,
+          "is_urban": false
+        },
+        {
+          "name": "Betthanagere",
+          "code": 28842,
+          "is_urban": false
+        },
+        {
+          "name": "Betthanagere",
+          "code": 28842,
+          "is_urban": false
+        },
+        {
+          "name": "Bommashettihalli",
+          "code": 28861,
+          "is_urban": false
+        },
+        {
+          "name": "Bommashettihalli",
+          "code": 28861,
+          "is_urban": false
+        },
+        {
+          "name": "Dasanapur",
+          "code": 28790,
+          "is_urban": false
+        },
+        {
+          "name": "Dasanapur",
+          "code": 28790,
+          "is_urban": false
+        },
+        {
+          "name": "Gopalapura",
+          "code": 14838,
+          "is_urban": false
+        },
+        {
+          "name": "Gopalapura",
+          "code": 14838,
+          "is_urban": false
+        },
+        {
+          "name": "Govindapura",
+          "code": 14844,
+          "is_urban": false
+        },
+        {
+          "name": "Govindapura",
+          "code": 14844,
+          "is_urban": false
+        },
+        {
+          "name": "Harokyathanahalli",
+          "code": 28995,
+          "is_urban": false
+        },
+        {
+          "name": "Harokyathanahalli",
+          "code": 28995,
+          "is_urban": false
+        },
+        {
+          "name": "Heggadadevanapura",
+          "code": 29074,
+          "is_urban": false
+        },
+        {
+          "name": "Heggadadevanapura",
+          "code": 29074,
+          "is_urban": false
+        },
+        {
+          "name": "Honnasandra",
+          "code": 28828,
+          "is_urban": false
+        },
+        {
+          "name": "Honnasandra",
+          "code": 28828,
+          "is_urban": false
+        },
+        {
+          "name": "Hosahalli  Palya",
+          "code": 28834,
+          "is_urban": false
+        },
+        {
+          "name": "Hosahalli  Palya",
+          "code": 28834,
+          "is_urban": false
+        },
+        {
+          "name": "Hucchanapalya",
+          "code": 29009,
+          "is_urban": false
+        },
+        {
+          "name": "Hucchanapalya",
+          "code": 29009,
+          "is_urban": false
+        },
+        {
+          "name": "Huskooru",
+          "code": 29061,
+          "is_urban": false
+        },
+        {
+          "name": "Huskooru",
+          "code": 29061,
+          "is_urban": false
+        },
+        {
+          "name": "Kodipalya",
+          "code": 14810,
+          "is_urban": false
+        },
+        {
+          "name": "Kodipalya",
+          "code": 14810,
+          "is_urban": false
+        },
+        {
+          "name": "Kuduregere",
+          "code": 14797,
+          "is_urban": false
+        },
+        {
+          "name": "Kuduregere",
+          "code": 14797,
+          "is_urban": false
+        },
+        {
+          "name": "Kukkanahalli",
+          "code": 14788,
+          "is_urban": false
+        },
+        {
+          "name": "Kukkanahalli",
+          "code": 14788,
+          "is_urban": false
+        },
+        {
+          "name": "Makali",
+          "code": 28877,
+          "is_urban": false
+        },
+        {
+          "name": "Makali",
+          "code": 28877,
+          "is_urban": false
+        },
+        {
+          "name": "Mariyana Palya",
+          "code": 28866,
+          "is_urban": false
+        },
+        {
+          "name": "Mariyana Palya",
+          "code": 28866,
+          "is_urban": false
+        },
+        {
+          "name": "Matthahalli",
+          "code": 28908,
+          "is_urban": false
+        },
+        {
+          "name": "Matthahalli",
+          "code": 28908,
+          "is_urban": false
+        },
+        {
+          "name": "Muniyanapalya",
+          "code": 37602,
+          "is_urban": false
+        },
+        {
+          "name": "Muniyanapalya",
+          "code": 37602,
+          "is_urban": false
+        },
+        {
+          "name": "Nagaruru",
+          "code": 28797,
+          "is_urban": false
+        },
+        {
+          "name": "Nagaruru",
+          "code": 28797,
+          "is_urban": false
+        },
+        {
+          "name": "Narasipur",
+          "code": 28800,
+          "is_urban": false
+        },
+        {
+          "name": "Narasipur",
+          "code": 28800,
+          "is_urban": false
+        },
+        {
+          "name": "Narayanappana Palya",
+          "code": 28806,
+          "is_urban": false
+        },
+        {
+          "name": "Narayanappana Palya",
+          "code": 28806,
+          "is_urban": false
+        },
+        {
+          "name": "Pillahalli",
+          "code": 28813,
+          "is_urban": false
+        },
+        {
+          "name": "Pillahalli",
+          "code": 28813,
+          "is_urban": false
+        },
+        {
+          "name": "Rampalya",
+          "code": 28914,
+          "is_urban": false
+        },
+        {
+          "name": "Rampalya",
+          "code": 28914,
+          "is_urban": false
+        },
+        {
+          "name": "Saidamiyapalya",
+          "code": 28982,
+          "is_urban": false
+        },
+        {
+          "name": "Saidamiyapalya",
+          "code": 28982,
+          "is_urban": false
+        },
+        {
+          "name": "Sheshagirirao Palya",
+          "code": 28972,
+          "is_urban": false
+        },
+        {
+          "name": "Sheshagirirao Palya",
+          "code": 28972,
+          "is_urban": false
+        },
+        {
+          "name": "Shyambhattara Palya",
+          "code": 28959,
+          "is_urban": false
+        },
+        {
+          "name": "Shyambhattara Palya",
+          "code": 28959,
+          "is_urban": false
+        },
+        {
+          "name": "Thammenahalli",
+          "code": 14874,
+          "is_urban": false
+        },
+        {
+          "name": "Thammenahalli",
+          "code": 14874,
+          "is_urban": false
+        },
+        {
+          "name": "Thorenagasandra",
+          "code": 28783,
+          "is_urban": false
+        },
+        {
+          "name": "Thorenagasandra",
+          "code": 28783,
+          "is_urban": false
+        },
+        {
+          "name": "Thotagere",
+          "code": 14878,
+          "is_urban": false
+        },
+        {
+          "name": "Thotagere",
+          "code": 14878,
+          "is_urban": false
+        },
+        {
+          "name": "Vaderahalli",
+          "code": 28943,
+          "is_urban": false
+        },
+        {
+          "name": "Vaderahalli",
+          "code": 28943,
+          "is_urban": false
+        }
+      ],
+      "Dasanapura Hobli 2": [
+        {
+          "name": "Bettahalli",
+          "code": 28838,
+          "is_urban": false
+        },
+        {
+          "name": "Bettahalli",
+          "code": 28838,
+          "is_urban": false
+        },
+        {
+          "name": "Bylakonenahalli",
+          "code": 28857,
+          "is_urban": false
+        },
+        {
+          "name": "Bylakonenahalli",
+          "code": 28857,
+          "is_urban": false
+        },
+        {
+          "name": "Byyandanahalli",
+          "code": 28847,
+          "is_urban": false
+        },
+        {
+          "name": "Byyandanahalli",
+          "code": 28847,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkabidarakallu",
+          "code": 14867,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkabidarakallu",
+          "code": 14867,
+          "is_urban": false
+        },
+        {
+          "name": "Dombarahalli",
+          "code": 28794,
+          "is_urban": false
+        },
+        {
+          "name": "Dombarahalli",
+          "code": 28794,
+          "is_urban": false
+        },
+        {
+          "name": "Gangodanahalli (Dasanapurahobli)",
+          "code": 14862,
+          "is_urban": false
+        },
+        {
+          "name": "Gangodanahalli (Dasanapurahobli)",
+          "code": 14862,
+          "is_urban": false
+        },
+        {
+          "name": "Gavi palya",
+          "code": 32883,
+          "is_urban": false
+        },
+        {
+          "name": "Gavi palya",
+          "code": 32883,
+          "is_urban": false
+        },
+        {
+          "name": "Giddanahalli",
+          "code": 14822,
+          "is_urban": false
+        },
+        {
+          "name": "Giddanahalli",
+          "code": 14822,
+          "is_urban": false
+        },
+        {
+          "name": "Hanumanthasagara",
+          "code": 28986,
+          "is_urban": false
+        },
+        {
+          "name": "Hanumanthasagara",
+          "code": 28986,
+          "is_urban": false
+        },
+        {
+          "name": "Kachohalli",
+          "code": 14775,
+          "is_urban": false
+        },
+        {
+          "name": "Kachohalli",
+          "code": 14775,
+          "is_urban": false
+        },
+        {
+          "name": "Kadabagere",
+          "code": 14760,
+          "is_urban": false
+        },
+        {
+          "name": "Kadabagere",
+          "code": 14760,
+          "is_urban": false
+        },
+        {
+          "name": "Kadirenahalli",
+          "code": 14752,
+          "is_urban": false
+        },
+        {
+          "name": "Kadirenahalli",
+          "code": 14752,
+          "is_urban": false
+        },
+        {
+          "name": "Kammasandra",
+          "code": 14767,
+          "is_urban": false
+        },
+        {
+          "name": "Kammasandra",
+          "code": 14767,
+          "is_urban": false
+        },
+        {
+          "name": "K.G. Lakkenahalli",
+          "code": 28922,
+          "is_urban": false
+        },
+        {
+          "name": "K.G. Lakkenahalli",
+          "code": 28922,
+          "is_urban": false
+        },
+        {
+          "name": "Lakshmipura",
+          "code": 28926,
+          "is_urban": false
+        },
+        {
+          "name": "Lakshmipura",
+          "code": 28926,
+          "is_urban": false
+        },
+        {
+          "name": "Machohalli",
+          "code": 28902,
+          "is_urban": false
+        },
+        {
+          "name": "Machohalli",
+          "code": 28902,
+          "is_urban": false
+        },
+        {
+          "name": "Madanayakanahalli",
+          "code": 28896,
+          "is_urban": false
+        },
+        {
+          "name": "Madanayakanahalli",
+          "code": 28896,
+          "is_urban": false
+        },
+        {
+          "name": "Madavar",
+          "code": 28889,
+          "is_urban": false
+        },
+        {
+          "name": "Madavar",
+          "code": 28889,
+          "is_urban": false
+        },
+        {
+          "name": "Shrikantapur (Anchepalya)",
+          "code": 28963,
+          "is_urban": false
+        },
+        {
+          "name": "Shrikantapur (Anchepalya)",
+          "code": 28963,
+          "is_urban": false
+        },
+        {
+          "name": "Shrikantapur K.G",
+          "code": 28969,
+          "is_urban": false
+        },
+        {
+          "name": "Shrikantapur K.G",
+          "code": 28969,
+          "is_urban": false
+        },
+        {
+          "name": "Siddanahosahalli",
+          "code": 28974,
+          "is_urban": false
+        },
+        {
+          "name": "Siddanahosahalli",
+          "code": 28974,
+          "is_urban": false
+        },
+        {
+          "name": "Thotadaguddadahalli",
+          "code": 14881,
+          "is_urban": false
+        },
+        {
+          "name": "Thotadaguddadahalli",
+          "code": 14881,
+          "is_urban": false
+        },
+        {
+          "name": "Vaddarahalli",
+          "code": 28932,
+          "is_urban": false
+        },
+        {
+          "name": "Vaddarahalli",
+          "code": 28932,
+          "is_urban": false
+        }
+      ],
+      "Dasanapura Hobli 3": [
+        {
+          "name": "Averahalli",
+          "code": 14737,
+          "is_urban": false
+        },
+        {
+          "name": "Averahalli",
+          "code": 14737,
+          "is_urban": false
+        },
+        {
+          "name": "Byregowdanahalli",
+          "code": 28852,
+          "is_urban": false
+        },
+        {
+          "name": "Byregowdanahalli",
+          "code": 28852,
+          "is_urban": false
+        },
+        {
+          "name": "Gattisiddanahalli",
+          "code": 14816,
+          "is_urban": false
+        },
+        {
+          "name": "Gattisiddanahalli",
+          "code": 14816,
+          "is_urban": false
+        },
+        {
+          "name": "Gejjagadahalli",
+          "code": 14832,
+          "is_urban": false
+        },
+        {
+          "name": "Gejjagadahalli",
+          "code": 14832,
+          "is_urban": false
+        },
+        {
+          "name": "Gollarapalya",
+          "code": 14850,
+          "is_urban": false
+        },
+        {
+          "name": "Gollarapalya",
+          "code": 14850,
+          "is_urban": false
+        },
+        {
+          "name": "Gowdahalli",
+          "code": 14855,
+          "is_urban": false
+        },
+        {
+          "name": "Gowdahalli",
+          "code": 14855,
+          "is_urban": false
+        },
+        {
+          "name": "Hullegowdanahalli",
+          "code": 29040,
+          "is_urban": false
+        },
+        {
+          "name": "Hullegowdanahalli",
+          "code": 29040,
+          "is_urban": false
+        },
+        {
+          "name": "Hunnigere",
+          "code": 29028,
+          "is_urban": false
+        },
+        {
+          "name": "Hunnigere",
+          "code": 29028,
+          "is_urban": false
+        },
+        {
+          "name": "Kenganahalli",
+          "code": 14803,
+          "is_urban": false
+        },
+        {
+          "name": "Kenganahalli",
+          "code": 14803,
+          "is_urban": false
+        },
+        {
+          "name": "Kithanahalli",
+          "code": 14781,
+          "is_urban": false
+        },
+        {
+          "name": "Kithanahalli",
+          "code": 14781,
+          "is_urban": false
+        },
+        {
+          "name": "Lakkenahalli",
+          "code": 28918,
+          "is_urban": false
+        },
+        {
+          "name": "Lakkenahalli",
+          "code": 28918,
+          "is_urban": false
+        },
+        {
+          "name": "Mallasandra",
+          "code": 28874,
+          "is_urban": false
+        },
+        {
+          "name": "Mallasandra",
+          "code": 28874,
+          "is_urban": false
+        },
+        {
+          "name": "Nagasandra",
+          "code": 28809,
+          "is_urban": false
+        },
+        {
+          "name": "Nagasandra",
+          "code": 28809,
+          "is_urban": false
+        },
+        {
+          "name": "Ravuthanahalli",
+          "code": 28916,
+          "is_urban": false
+        },
+        {
+          "name": "Ravuthanahalli",
+          "code": 28916,
+          "is_urban": false
+        },
+        {
+          "name": "Shivanapur",
+          "code": 28971,
+          "is_urban": false
+        },
+        {
+          "name": "Shivanapur",
+          "code": 28971,
+          "is_urban": false
+        },
+        {
+          "name": "Sondekoppa",
+          "code": 28978,
+          "is_urban": false
+        },
+        {
+          "name": "Sondekoppa",
+          "code": 28978,
+          "is_urban": false
+        },
+        {
+          "name": "Venkatapur",
+          "code": 28950,
+          "is_urban": false
+        },
+        {
+          "name": "Venkatapur",
+          "code": 28950,
+          "is_urban": false
+        }
+      ],
+      "Kasaba Hobli": [
+        {
+          "name": "Agasarahalli",
+          "code": 23982,
+          "is_urban": false
+        },
+        {
+          "name": "Ananthapura",
+          "code": 23984,
+          "is_urban": false
+        },
+        {
+          "name": "Aralasandra",
+          "code": 23987,
+          "is_urban": false
+        },
+        {
+          "name": "Araledibba",
+          "code": 23983,
+          "is_urban": false
+        },
+        {
+          "name": "Arashinakunte",
+          "code": 23980,
+          "is_urban": false
+        },
+        {
+          "name": "Arjunabettahalli",
+          "code": 23981,
+          "is_urban": false
+        },
+        {
+          "name": "Avalakuppe",
+          "code": 23985,
+          "is_urban": false
+        },
+        {
+          "name": "Balaguruvanahalli",
+          "code": 27930,
+          "is_urban": false
+        },
+        {
+          "name": "Banasavadi",
+          "code": 27932,
+          "is_urban": false
+        },
+        {
+          "name": "Baradi",
+          "code": 27941,
+          "is_urban": false
+        },
+        {
+          "name": "Basavanahalli",
+          "code": 27929,
+          "is_urban": false
+        },
+        {
+          "name": "Bettahalli",
+          "code": 27943,
+          "is_urban": false
+        },
+        {
+          "name": "Bhattarahalli",
+          "code": 27936,
+          "is_urban": false
+        },
+        {
+          "name": "Bhusandra",
+          "code": 27939,
+          "is_urban": false
+        },
+        {
+          "name": "Bidanapalya",
+          "code": 27934,
+          "is_urban": false
+        },
+        {
+          "name": "Bolamaranahalli",
+          "code": 27933,
+          "is_urban": false
+        },
+        {
+          "name": "Bolamaranahalli",
+          "code": 27944,
+          "is_urban": false
+        },
+        {
+          "name": "Bommanahalli",
+          "code": 27947,
+          "is_urban": false
+        },
+        {
+          "name": "Boodihal",
+          "code": 27935,
+          "is_urban": false
+        },
+        {
+          "name": "Byadarahalli",
+          "code": 27937,
+          "is_urban": false
+        },
+        {
+          "name": "Byrasandra",
+          "code": 27940,
+          "is_urban": false
+        },
+        {
+          "name": "Byrashetty Halli",
+          "code": 27946,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkamaranahalli",
+          "code": 27914,
+          "is_urban": false
+        },
+        {
+          "name": "Chowdasandra",
+          "code": 27915,
+          "is_urban": false
+        },
+        {
+          "name": "Deganahalli",
+          "code": 27920,
+          "is_urban": false
+        },
+        {
+          "name": "Dodda Karenahalli",
+          "code": 27922,
+          "is_urban": false
+        },
+        {
+          "name": "Entaganahalli",
+          "code": 23989,
+          "is_urban": false
+        },
+        {
+          "name": "Erigenahalli",
+          "code": 23988,
+          "is_urban": false
+        },
+        {
+          "name": "Gandaragollipura",
+          "code": 24937,
+          "is_urban": false
+        },
+        {
+          "name": "Gangaadaranapalya",
+          "code": 24885,
+          "is_urban": false
+        },
+        {
+          "name": "Geddalahalli",
+          "code": 27884,
+          "is_urban": false
+        },
+        {
+          "name": "Gollahalli",
+          "code": 27900,
+          "is_urban": false
+        },
+        {
+          "name": "Goravanahalli",
+          "code": 27913,
+          "is_urban": false
+        },
+        {
+          "name": "Gorinabele",
+          "code": 24902,
+          "is_urban": false
+        },
+        {
+          "name": "Hajipalya",
+          "code": 27985,
+          "is_urban": false
+        },
+        {
+          "name": "Hanchipura",
+          "code": 27984,
+          "is_urban": false
+        },
+        {
+          "name": "Hanumanapalya",
+          "code": 27983,
+          "is_urban": false
+        },
+        {
+          "name": "Honnasandra",
+          "code": 27991,
+          "is_urban": false
+        },
+        {
+          "name": "Hosahalli(Kasaba Hobli)",
+          "code": 27990,
+          "is_urban": false
+        },
+        {
+          "name": "Hurulihalli",
+          "code": 27988,
+          "is_urban": false
+        },
+        {
+          "name": "Hyadalu",
+          "code": 27987,
+          "is_urban": false
+        },
+        {
+          "name": "Jakkasandra(Kasaba Hobli)",
+          "code": 27916,
+          "is_urban": false
+        },
+        {
+          "name": "Kadukarenahalli",
+          "code": 23993,
+          "is_urban": false
+        },
+        {
+          "name": "Kanagondanahalli",
+          "code": 23991,
+          "is_urban": false
+        },
+        {
+          "name": "Kanavanahalli",
+          "code": 23992,
+          "is_urban": false
+        },
+        {
+          "name": "Kempohalli",
+          "code": 23998,
+          "is_urban": false
+        },
+        {
+          "name": "Kenchanahalli",
+          "code": 24346,
+          "is_urban": false
+        },
+        {
+          "name": "K.G Krishnara",
+          "code": 24581,
+          "is_urban": false
+        },
+        {
+          "name": "Kodappanahalli",
+          "code": 24822,
+          "is_urban": false
+        },
+        {
+          "name": "Koneripura",
+          "code": 24664,
+          "is_urban": false
+        },
+        {
+          "name": "Koolipura",
+          "code": 23994,
+          "is_urban": false
+        },
+        {
+          "name": "Koratagere",
+          "code": 24727,
+          "is_urban": false
+        },
+        {
+          "name": "Kotnahalli",
+          "code": 24801,
+          "is_urban": false
+        },
+        {
+          "name": "Krishnarajapura",
+          "code": 23995,
+          "is_urban": false
+        },
+        {
+          "name": "Krishnarajapura(1)",
+          "code": 45101,
+          "is_urban": false
+        },
+        {
+          "name": "Kulume-Kempalinganahalli",
+          "code": 23996,
+          "is_urban": false
+        },
+        {
+          "name": "Lingenahalli",
+          "code": 27965,
+          "is_urban": false
+        },
+        {
+          "name": "Machonayakana Halli",
+          "code": 27956,
+          "is_urban": false
+        },
+        {
+          "name": "Mahadevapura",
+          "code": 27949,
+          "is_urban": false
+        },
+        {
+          "name": "Mallapura",
+          "code": 27948,
+          "is_urban": false
+        },
+        {
+          "name": "Mallarabanavadi",
+          "code": 27950,
+          "is_urban": false
+        },
+        {
+          "name": "Malonagathi Halli",
+          "code": 27955,
+          "is_urban": false
+        },
+        {
+          "name": "Manchenahalli",
+          "code": 27954,
+          "is_urban": false
+        },
+        {
+          "name": "Mandigere",
+          "code": 27951,
+          "is_urban": false
+        },
+        {
+          "name": "Mantanakurchi",
+          "code": 27953,
+          "is_urban": false
+        },
+        {
+          "name": "Marohalli",
+          "code": 27957,
+          "is_urban": false
+        },
+        {
+          "name": "Modalakote",
+          "code": 27952,
+          "is_urban": false
+        },
+        {
+          "name": "Mylanahalli",
+          "code": 27958,
+          "is_urban": false
+        },
+        {
+          "name": "Mylanahalli Becharak",
+          "code": 27960,
+          "is_urban": false
+        },
+        {
+          "name": "Naraseepalya",
+          "code": 27924,
+          "is_urban": false
+        },
+        {
+          "name": "Narasihma Palya J.",
+          "code": 27926,
+          "is_urban": false
+        },
+        {
+          "name": "Narasihma Palya K.",
+          "code": 27925,
+          "is_urban": false
+        },
+        {
+          "name": "Narayanarao Palya",
+          "code": 27928,
+          "is_urban": false
+        },
+        {
+          "name": "Nelamangala Village",
+          "code": 27923,
+          "is_urban": false
+        },
+        {
+          "name": "Seetharam Bhattara Palya",
+          "code": 27979,
+          "is_urban": false
+        },
+        {
+          "name": "Shrinivasapur K.G.",
+          "code": 27977,
+          "is_urban": false
+        },
+        {
+          "name": "Soladevanahalli",
+          "code": 27982,
+          "is_urban": false
+        },
+        {
+          "name": "T. Begooru",
+          "code": 27942,
+          "is_urban": false
+        },
+        {
+          "name": "Thirumalapura",
+          "code": 27918,
+          "is_urban": false
+        },
+        {
+          "name": "Thonachinakuppe",
+          "code": 27919,
+          "is_urban": false
+        },
+        {
+          "name": "Thyagadahalli",
+          "code": 27917,
+          "is_urban": false
+        },
+        {
+          "name": "Vabanayakana Halli",
+          "code": 27974,
+          "is_urban": false
+        },
+        {
+          "name": "Vaddarapalya",
+          "code": 27969,
+          "is_urban": false
+        },
+        {
+          "name": "Vajarahalli",
+          "code": 27970,
+          "is_urban": false
+        },
+        {
+          "name": "Veerananjeepura",
+          "code": 27967,
+          "is_urban": false
+        },
+        {
+          "name": "Veeraraghavana Palya",
+          "code": 27971,
+          "is_urban": false
+        },
+        {
+          "name": "Vishweshwarapura",
+          "code": 27973,
+          "is_urban": false
+        },
+        {
+          "name": "Yalachegere",
+          "code": 27963,
+          "is_urban": false
+        }
+      ],
+      "Kasaba Hobli 1": [
+        {
+          "name": "Agaralingana Doddi",
+          "code": 641,
+          "is_urban": false
+        },
+        {
+          "name": "Alur",
+          "code": 642,
+          "is_urban": false
+        },
+        {
+          "name": "B. Hosahalli",
+          "code": 706,
+          "is_urban": false
+        },
+        {
+          "name": "B. Lakkasandra",
+          "code": 688,
+          "is_urban": false
+        },
+        {
+          "name": "Chamanahalli",
+          "code": 656,
+          "is_urban": false
+        },
+        {
+          "name": "Gejjalagere",
+          "code": 650,
+          "is_urban": false
+        },
+        {
+          "name": "Hallikere",
+          "code": 705,
+          "is_urban": false
+        },
+        {
+          "name": "Hulaganahalli",
+          "code": 3168,
+          "is_urban": false
+        },
+        {
+          "name": "Hunnana Doddi",
+          "code": 713,
+          "is_urban": false
+        },
+        {
+          "name": "Kabbare",
+          "code": 645,
+          "is_urban": false
+        },
+        {
+          "name": "Kadalipura",
+          "code": 644,
+          "is_urban": false
+        },
+        {
+          "name": "K.Hagalahalli",
+          "code": 704,
+          "is_urban": false
+        },
+        {
+          "name": "Kodihalli.K",
+          "code": 649,
+          "is_urban": false
+        },
+        {
+          "name": "Kudaragundi",
+          "code": 648,
+          "is_urban": false
+        },
+        {
+          "name": "Maddur",
+          "code": 681,
+          "is_urban": false
+        },
+        {
+          "name": "Neelakantanahalli",
+          "code": 662,
+          "is_urban": false
+        },
+        {
+          "name": "Shivapura",
+          "code": 693,
+          "is_urban": false
+        },
+        {
+          "name": "Sollepura",
+          "code": 701,
+          "is_urban": false
+        },
+        {
+          "name": "Vaidyanathapura",
+          "code": 692,
+          "is_urban": false
+        },
+        {
+          "name": "Valagerehalli",
+          "code": 690,
+          "is_urban": false
+        }
+      ],
+      "Kasaba Hobli 2": [
+        {
+          "name": "Ajjahalli",
+          "code": 628,
+          "is_urban": false
+        },
+        {
+          "name": "Bhimanakere",
+          "code": 679,
+          "is_urban": false
+        },
+        {
+          "name": "Borapura",
+          "code": 678,
+          "is_urban": false
+        },
+        {
+          "name": "Budaguppe",
+          "code": 677,
+          "is_urban": false
+        },
+        {
+          "name": "Byadarahalli",
+          "code": 674,
+          "is_urban": false
+        },
+        {
+          "name": "Chandahalli",
+          "code": 655,
+          "is_urban": false
+        },
+        {
+          "name": "Channasandra",
+          "code": 654,
+          "is_urban": false
+        },
+        {
+          "name": "Chunchagahalli",
+          "code": 658,
+          "is_urban": false
+        },
+        {
+          "name": "Dadiga",
+          "code": 659,
+          "is_urban": false
+        },
+        {
+          "name": "Deshahalli",
+          "code": 660,
+          "is_urban": false
+        },
+        {
+          "name": "Goravanhalli",
+          "code": 652,
+          "is_urban": false
+        },
+        {
+          "name": "Huligerepura",
+          "code": 710,
+          "is_urban": false
+        },
+        {
+          "name": "Hulikere",
+          "code": 709,
+          "is_urban": false
+        },
+        {
+          "name": "K. Bellur",
+          "code": 676,
+          "is_urban": false
+        },
+        {
+          "name": "K. Honnalagere",
+          "code": 703,
+          "is_urban": false
+        },
+        {
+          "name": "Malagaranahalli",
+          "code": 683,
+          "is_urban": false
+        },
+        {
+          "name": "Mobbalagere",
+          "code": 686,
+          "is_urban": false
+        },
+        {
+          "name": "Nagarakere",
+          "code": 661,
+          "is_urban": false
+        },
+        {
+          "name": "Narayana Iyengar Doddi",
+          "code": 664,
+          "is_urban": false
+        },
+        {
+          "name": "Sadolalu",
+          "code": 696,
+          "is_urban": false
+        },
+        {
+          "name": "Somanahalli",
+          "code": 698,
+          "is_urban": false
+        },
+        {
+          "name": "Sompura",
+          "code": 700,
+          "is_urban": false
+        },
+        {
+          "name": "Uppinakere",
+          "code": 643,
+          "is_urban": false
+        },
+        {
+          "name": "Venkatanarayana Doddi",
+          "code": 711,
+          "is_urban": false
+        }
+      ],
+      "Yeshwantapura Hobli": [
+        {
+          "name": "Gangondanahalli",
+          "code": 14524,
+          "is_urban": false
+        },
+        {
+          "name": "Thippenahalli",
+          "code": 14646,
+          "is_urban": false
+        },
+        {
+          "name": "Thippenahalli",
+          "code": 14646,
+          "is_urban": false
+        },
+        {
+          "name": "Vishveshwara Layout",
+          "code": 37026,
+          "is_urban": false
+        }
+      ],
+      "Yeshwantapura Hobli 1": [
+        {
+          "name": "Abbigere",
+          "code": 14379,
+          "is_urban": false
+        },
+        {
+          "name": "Abbigere",
+          "code": 14379,
+          "is_urban": false
+        },
+        {
+          "name": "Bagalagunte",
+          "code": 14722,
+          "is_urban": false
+        },
+        {
+          "name": "Bagalagunte",
+          "code": 14722,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkabanavara",
+          "code": 14564,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkabanavara",
+          "code": 14564,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkasandra",
+          "code": 14576,
+          "is_urban": false
+        },
+        {
+          "name": "Chikkasandra",
+          "code": 14576,
+          "is_urban": false
+        },
+        {
+          "name": "Doddabidarakallu",
+          "code": 14662,
+          "is_urban": false
+        },
+        {
+          "name": "Doddabidarakallu",
+          "code": 14662,
+          "is_urban": false
+        },
+        {
+          "name": "Ganigarahalli",
+          "code": 14543,
+          "is_urban": false
+        },
+        {
+          "name": "Ganigarahalli",
+          "code": 14543,
+          "is_urban": false
+        },
+        {
+          "name": "Jalahalli",
+          "code": 14594,
+          "is_urban": false
+        },
+        {
+          "name": "Jalahalli",
+          "code": 14594,
+          "is_urban": false
+        },
+        {
+          "name": "Kammagodanahallli",
+          "code": 14491,
+          "is_urban": false
+        },
+        {
+          "name": "Kammagodanahallli",
+          "code": 14491,
+          "is_urban": false
+        },
+        {
+          "name": "Kereguddahalli",
+          "code": 14477,
+          "is_urban": false
+        },
+        {
+          "name": "Kereguddahalli",
+          "code": 14477,
+          "is_urban": false
+        },
+        {
+          "name": "Laggere",
+          "code": 14778,
+          "is_urban": false
+        },
+        {
+          "name": "Lakshmipura",
+          "code": 14798,
+          "is_urban": false
+        },
+        {
+          "name": "Lakshmipura",
+          "code": 14798,
+          "is_urban": false
+        },
+        {
+          "name": "Mallasandra",
+          "code": 14738,
+          "is_urban": false
+        },
+        {
+          "name": "Mallasandra",
+          "code": 14738,
+          "is_urban": false
+        },
+        {
+          "name": "Myadarahalli",
+          "code": 14763,
+          "is_urban": false
+        },
+        {
+          "name": "Myadarahalli",
+          "code": 14763,
+          "is_urban": false
+        },
+        {
+          "name": "Myakalachikkanahalli",
+          "code": 37025,
+          "is_urban": false
+        },
+        {
+          "name": "Myakalachikkanahalli",
+          "code": 37025,
+          "is_urban": false
+        },
+        {
+          "name": "Nagasandra",
+          "code": 14692,
+          "is_urban": false
+        },
+        {
+          "name": "Nagasandra",
+          "code": 14692,
+          "is_urban": false
+        },
+        {
+          "name": "Peenya",
+          "code": 14709,
+          "is_urban": false
+        },
+        {
+          "name": "Peenya",
+          "code": 14709,
+          "is_urban": false
+        },
+        {
+          "name": "Shettyhalli",
+          "code": 14833,
+          "is_urban": false
+        },
+        {
+          "name": "Shettyhalli",
+          "code": 14833,
+          "is_urban": false
+        },
+        {
+          "name": "Shidedahalli",
+          "code": 14814,
+          "is_urban": false
+        },
+        {
+          "name": "Shidedahalli",
+          "code": 14814,
+          "is_urban": false
+        },
+        {
+          "name": "Somashetty halli",
+          "code": 14876,
+          "is_urban": false
+        },
+        {
+          "name": "Somashetty halli",
+          "code": 14876,
+          "is_urban": false
+        },
+        {
+          "name": "Tirumalapura",
+          "code": 14606,
+          "is_urban": false
+        },
+        {
+          "name": "Tirumalapura",
+          "code": 14606,
+          "is_urban": false
+        }
+      ],
+      "Yeshwantapura Hobli 2": [
+        {
+          "name": "Andrahalli",
+          "code": 14395,
+          "is_urban": false
+        },
+        {
+          "name": "Chokkasandra",
+          "code": 14583,
+          "is_urban": false
+        },
+        {
+          "name": "Chokkasandra",
+          "code": 14583,
+          "is_urban": false
+        },
+        {
+          "name": "Dasarahalli",
+          "code": 14653,
+          "is_urban": false
+        },
+        {
+          "name": "Dasarahalli",
+          "code": 14653,
+          "is_urban": false
+        },
+        {
+          "name": "Gidadakonenahalli",
+          "code": 14555,
+          "is_urban": false
+        },
+        {
+          "name": "Hegganahalli",
+          "code": 28766,
+          "is_urban": false
+        },
+        {
+          "name": "Herohalli",
+          "code": 28773,
+          "is_urban": false
+        },
+        {
+          "name": "Hosahalli Gollarapalya",
+          "code": 28780,
+          "is_urban": false
+        },
+        {
+          "name": "Hullalu",
+          "code": 14880,
+          "is_urban": false
+        },
+        {
+          "name": "Kannalli",
+          "code": 14516,
+          "is_urban": false
+        },
+        {
+          "name": "Karivobhanahalli",
+          "code": 14449,
+          "is_urban": false
+        },
+        {
+          "name": "Kodigehalli",
+          "code": 14501,
+          "is_urban": false
+        },
+        {
+          "name": "Lingadheeranahalli",
+          "code": 14806,
+          "is_urban": false
+        },
+        {
+          "name": "Malagalu",
+          "code": 14746,
+          "is_urban": false
+        },
+        {
+          "name": "Mallathahalli",
+          "code": 14730,
+          "is_urban": false
+        },
+        {
+          "name": "Manganahalli",
+          "code": 14771,
+          "is_urban": false
+        },
+        {
+          "name": "Nagarabavi",
+          "code": 14672,
+          "is_urban": false
+        },
+        {
+          "name": "Nallakadaranahalli",
+          "code": 14698,
+          "is_urban": false
+        },
+        {
+          "name": "Sajjepalya",
+          "code": 14869,
+          "is_urban": false
+        },
+        {
+          "name": "Saneguruvanahalli",
+          "code": 14856,
+          "is_urban": false
+        },
+        {
+          "name": "Shigehalli",
+          "code": 14828,
+          "is_urban": false
+        },
+        {
+          "name": "Srigandadakavalu",
+          "code": 14840,
+          "is_urban": false
+        }
+      ]
+    }
+  }
+}

@@ -263,6 +263,7 @@ PLUGIN_SCHEDULES: dict[str, dict | None] = {
     "rera_karnataka": None,          # daily at 02:00 IST
     "igr_karnataka": {"day_of_week": "sun", "hour": 5, "minute": 30},
     "kaveri_bhoomi": {"day_of_week": "sun", "hour": 5, "minute": 0},
+    "kaveri_deeds": {"day_of_week": "sun", "hour": 3, "minute": 0},  # Sunday 03:00 IST — deed extraction, separate from GV run
     "portal_scout": None,            # daily at 02:00 IST
     "developer_scout": None,  # daily at 02:00 IST — vigorous monitoring for all 15 developers
     "news_scout": None,              # daily at 02:00 IST
@@ -293,6 +294,16 @@ DATA_FLOOR_MARKETS: dict[str, int] = {
     "Devanahalli": 100,
     "Hebbal": 200,
 }
+
+# ── SCHEDULER DIET (Sprint 91 — GATE-91) ─────────────────────────────────────
+# When False, org-sim jobs (PR brief, process audit, CEO letter) are NOT registered.
+# Code is untouched — only the scheduler.add_job() call is gated.
+# Set True to re-enable non-essential organizational simulation jobs.
+def _parse_bool_env(key: str, default: str) -> bool:
+    val = os.getenv(key, default).strip().lower()
+    return val in ("1", "true", "yes", "on", "enabled")
+
+SCHEDULER_ENABLE_ORG_SIM = _parse_bool_env("SCHEDULER_ENABLE_ORG_SIM", "false")
 
 # ── AGENT RUN STATUSES ────────────────────────────────────────────────────────
 AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]

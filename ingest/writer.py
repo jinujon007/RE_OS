@@ -40,6 +40,7 @@ _ENTITY_TABLE_MAP: dict[str, str] = {
     "demand_signal": "demand_signals",
     "deal": "deals",
     "opportunity_score": "opportunity_scores",
+    "registered_transaction": "registered_transactions",
 }
 
 # ── Conflict-column resolution ─────────────────────────────────────────────────
@@ -73,6 +74,7 @@ _COMPOSITE_CONFLICT: dict[str, tuple[str, ...]] = {
     "surveys": ("survey_no", "micro_market_id"),
     "rtc_records": ("survey_no", "rtc_period", "rtc_year"),
     "demand_signal": ("micro_market_id", "signal_date"),
+    "registered_transactions": ("sro", "doc_no", "reg_date"),
 }
 
 
