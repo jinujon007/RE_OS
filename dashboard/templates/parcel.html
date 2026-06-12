@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parcel Dossier — LLS Intelligence</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0e1a; color: #c9d1d9; font-family: 'Courier New', Courier, monospace; font-size: 13px; padding: 20px; }
+.header { background: #0f1520; border-bottom: 2px solid #2a3a55; padding: 12px 20px; margin-bottom: 20px; }
+.logo { font-family: 'Press Start 2P', cursive; color: #f0a020; font-size: 14px; }
+.search-box { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+.search-box select, .search-box input, .search-box button { background: #161b2b; color: #c9d1d9; border: 1px solid #2a3a55; padding: 8px 12px; font-family: 'Courier New', monospace; font-size: 13px; }
+.search-box button { background: #1a6d3b; color: white; cursor: pointer; border: none; }
+.search-box button:hover { background: #218a4a; }
+.dossier { display: none; }
+.dossier.active { display: block; }
+.card { background: #0f1520; border: 1px solid #2a3a55; padding: 16px; margin-bottom: 12px; }
+.card h3 { color: #f0a020; margin-bottom: 8px; font-size: 14px; }
+.card table { width: 100%; border-collapse: collapse; }
+.card th, .card td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #1a2235; }
+.card th { color: #8b949e; }
+.badge { display: inline-block; padding: 2px 6px; font-size: 11px; border-radius: 2px; }
+.badge-green { background: #1a6d3b; color: white; }
+.badge-amber { background: #7a5d1a; color: white; }
+.badge-red { background: #6b1a1a; color: white; }
+.error { color: #f85149; margin-top: 8px; }
+.loading { color: #8b949e; font-style: italic; }
+</style>
+</head>
+<body>
+<div class="header">
+  <span class="logo">PARCEL DOSSIER</span>
+  <span style="color:#8b949e;margin-left:12px;">Survey No. Intelligence Portal</span>
+  <a href="/" style="color:#58a6ff;margin-left:20px;">&larr; Dashboard</a>
+</div>
+
+<div class="search-box">
+  <select id="villageSelect">
+    <option value="">Select village...</option>
+  </select>
+  <input type="text" id="surveyNoInput" placeholder="Survey No (e.g. 45/2A)" />
+  <button onclick="lookupParcel()">Lookup</button>
+</div>
+
+<div id="dossier" class="dossier">
+  <div id="parcelCard" class="card"></div>
+  <div id="deedsCard" class="card"><h3>Deed History <span id="deedsCount" style="color:#8b949e;font-size:11px;"></span></h3><div id="deedsBody"></div></div>
+  <div id="reraCard" class="card"><h3>RERA Projects</h3><div id="reraBody"></div></div>
+  <div id="guidanceCard" class="card"><h3>Guidance Value</h3><div id="guidanceBody"></div></div>
+  <div id="zoneCard" class="card"><h3>Zone Risk</h3><div id="zoneBody"></div></div>
+  <div id="assemblyCard" class="card"><h3>Assembly Signals</h3><div id="assemblyBody"></div></div>
+  <div id="compsCard" class="card"><h3>Comparables</h3><div id="compsBody"></div></div>
+</div>
+
+<script>
+const select = document.getElementById("villageSelect");
+const surveyInput = document.getElementById("surveyNoInput");
+
+// Load villages from API on page load
+fetch("/api/parcel/villages").then(r => r.json()).then(data => {
+  (data.villages || []).forEach(v => {
+    const o = document.createElement("option"); o.value = v; o.textContent = v; select.appendChild(o);
+  });
+}).catch(() => {
+  // Fallback: hardcoded list if API unavailable
+  ["Yelahanka", "Devanahalli", "Hebbal", "Attur", "Kothanur", "Byatarayanapura", "Jakkur", "Chokkanahalli", "Shampura"].forEach(v => {
+    const o = document.createElement("option"); o.value = v; o.textContent = v; select.appendChild(o);
+  });
+});
+
+// Enter key triggers lookup
+surveyInput.addEventListener("keydown", e => { if (e.key === "Enter") lookupParcel(); });
+
+async function lookupParcel() {
+  const village = select.value;
+  const surveyNo = document.getElementById("surveyNoInput").value.trim();
+  if (!village || !surveyNo) { alert("Select village and enter survey no"); return; }
+
+  const dossier = document.getElementById("dossier");
+  dossier.classList.remove("active");
+  document.querySelectorAll(".card div[id$=Body]").forEach(el => el.innerHTML = '<span class="loading">Loading...</span>');
+
+  try {
+    const resp = await fetch(`/api/parcel/${encodeURIComponent(village)}/${encodeURIComponent(surveyNo)}`);
+    if (!resp.ok) {
+      const err = await resp.json();
+      document.getElementById("parcelCard").innerHTML = `<h3>Error</h3><div class="error">${err.error || resp.statusText}</div>`;
+      return;
+    }
+    const data = await resp.json();
+    renderParcel(data);
+    dossier.classList.add("active");
+  } catch(e) {
+    document.getElementById("parcelCard").innerHTML = `<h3>Error</h3><div class="error">${e.message}</div>`;
+  }
+}
+
+function renderParcel(data) {
+  const p = data.parcel;
+  document.getElementById("parcelCard").innerHTML = `
+    <h3>Parcel: ${p.village} / ${p.survey_no}</h3>
+    <table>
+      <tr><th>District</th><td>${p.district || "—"}</td></tr>
+      <tr><th>Taluk</th><td>${p.taluk || "—"}</td></tr>
+      <tr><th>Hobli</th><td>${p.hobli || "—"}</td></tr>
+      <tr><th>Extent</th><td>${p.extent_sqft ? Number(p.extent_sqft).toLocaleString() + " sqft" : "—"}</td></tr>
+      <tr><th>Source</th><td>${p.source || "—"}</td></tr>
+    </table>`;
+
+  const deeds = data.deed_history || [];
+  document.getElementById("deedsCount").textContent = deeds.length ? `(${deeds.length} records)` : "";
+  document.getElementById("deedsBody").innerHTML = deeds.length
+    ? `<table><tr><th>Date</th><th>Doc No</th><th>Buyer</th><th>PSF</th><th>Consideration</th></tr>${deeds.map(d => `<tr><td>${d.reg_date || ""}</td><td>${d.doc_no || ""}</td><td>${(d.buyer_name_raw || "").slice(0,30)}</td><td>${d.psf ? "₹" + Number(d.psf).toLocaleString() : ""}</td><td>${d.consideration_inr ? "₹" + Number(d.consideration_inr).toLocaleString() : ""}</td></tr>`).join("")}</table>`
+    : '<span class="error">No deed records linked</span>';
+
+  const rera = data.rera_projects || [];
+  document.getElementById("reraBody").innerHTML = rera.length
+    ? `<table><tr><th>Project</th><th>Developer</th><th>Status</th><th>Units</th></tr>${rera.map(r => `<tr><td>${r.project_name || ""}</td><td>${r.developer_name || ""}</td><td><span class="badge ${r.project_status === "Active" ? "badge-green" : "badge-amber"}">${r.project_status || ""}</span></td><td>${r.total_units || 0}</td></tr>`).join("")}</table>`
+    : '<span class="error">No RERA projects linked</span>';
+
+  const gv = data.guidance_value;
+  document.getElementById("guidanceBody").innerHTML = gv
+    ? `<table><tr><th>Value</th><td>₹${Number(gv.guidance_value).toLocaleString()}</td></tr><tr><th>Source</th><td>${gv.source || ""}</td></tr><tr><th>Date</th><td>${gv.gv_date || ""}</td></tr></table>`
+    : '<span class="error">No guidance value available</span>';
+
+  const zone = data.zone_risk;
+  document.getElementById("zoneBody").innerHTML = zone
+    ? `<table><tr><th>Zone</th><td>${zone.zone || ""}</td></tr><tr><th>FAR</th><td>${zone.far || "—"}</td></tr><tr><th>Max Height</th><td>${zone.max_height_m || "—"}m</td></tr><tr><th>Risk Level</th><td><span class="badge ${zone.risk_level === "LOW" ? "badge-green" : zone.risk_level === "MEDIUM" ? "badge-amber" : "badge-red"}">${zone.risk_level || "UNKNOWN"}</span></td></tr></table>`
+    : '<span class="error">Zone risk unavailable</span>';
+
+  const assembly = data.assembly_flags || [];
+  document.getElementById("assemblyBody").innerHTML = assembly.length
+    ? `<table><tr><th>Buyer</th><th>Parcels</th><th>Extent</th><th>Period</th><th>Confidence</th></tr>${assembly.map(a => `<tr><td>${a.buyer_name_norm || ""}</td><td>${a.parcel_count}</td><td>${a.total_extent_sqft ? Number(a.total_extent_sqft).toLocaleString() + " sqft" : "—"}</td><td>${a.first_deed_date || ""} — ${a.last_deed_date || ""}</td><td>${a.confidence ? (a.confidence * 100).toFixed(0) + "%" : "—"}</td></tr>`).join("")}</table>`
+    : '<span class="error">No assembly signals</span>';
+
+  const comps = data.comps;
+  document.getElementById("compsBody").innerHTML = comps
+    ? `<table><tr><th>Median PSF</th><td>₹${comps.median_psf ? Number(comps.median_psf).toLocaleString() : "N/A"}</td></tr><tr><th>Deeds</th><td>${comps.n}</td></tr><tr><th>Window</th><td>${comps.window}</td></tr><tr><th>Scope</th><td>${comps.scope}</td></tr></table>`
+    : '<span class="error">Insufficient data for comparables</span>';
+}
+</script>
+</body>
+</html>

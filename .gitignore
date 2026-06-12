@@ -47,6 +47,9 @@ chroma_data/
 # Local chroma data dir created when running outside Docker
 data/chroma/
 
+# Kaveri deed scout runtime checkpoints (regenerated each run — inbox PDFs stay committed)
+data/kaveri_deeds/checkpoints/
+
 # VS Code (keep .vscode committed so team shares settings)
 # .vscode/
 

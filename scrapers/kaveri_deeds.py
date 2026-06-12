@@ -23,26 +23,8 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
-from prometheus_client import Counter, Histogram
 
 from utils.pdf_extractor import extract_pdf
-
-# Prometheus metrics
-_deed_records_parsed = Counter(
-    "kaveri_deeds_records_parsed_total",
-    "Total Kaveri deed records parsed",
-    ["mode"],
-)
-_deed_parse_errors = Counter(
-    "kaveri_deeds_parse_errors_total",
-    "Total Kaveri deed parse errors",
-    ["file_type"],
-)
-_deed_parse_duration = Histogram(
-    "kaveri_deeds_parse_duration_seconds",
-    "Time to parse Kaveri deed files",
-    buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
-)
 
 __all__ = [
     "parse_inbox_file", "parse_inbox_all", "write_checkpoint",

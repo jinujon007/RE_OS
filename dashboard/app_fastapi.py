@@ -202,6 +202,7 @@ _READ_ONLY_PREFIXES = (
     "/api/demand/",
     "/api/distress/",
     "/api/scraper/",
+    "/api/parcel/",
 )
 
 
@@ -729,6 +730,58 @@ class ScraperReliabilityInfo(BaseModel):
     successes: int
     reliability_score: float
     last_run: str | None = None
+
+
+class ParcelDossierDeed(BaseModel):
+    id: str
+    doc_no: str | None = None
+    reg_date: str | None = None
+    sro: str | None = None
+    survey_no: str | None = None
+    extent_sqft: float | None = None
+    consideration_inr: float | None = None
+    psf: float | None = None
+    deed_type: str | None = None
+    buyer_name_raw: str | None = None
+    seller_name_raw: str | None = None
+    data_source: str | None = None
+
+
+class ParcelDossierRera(BaseModel):
+    id: str
+    rera_number: str | None = None
+    project_name: str | None = None
+    developer_name: str | None = None
+    survey_no: str | None = None
+    project_status: str | None = None
+    total_units: int | None = None
+
+
+class ParcelDossierAssembly(BaseModel):
+    id: str
+    buyer_name_norm: str
+    parcel_count: int
+    total_extent_sqft: float | None = None
+    first_deed_date: str | None = None
+    last_deed_date: str | None = None
+    confidence: float | None = None
+
+
+class ParcelDossierComps(BaseModel):
+    median_psf: float | None = None
+    n: int = 0
+    window: str = "12mo"
+    scope: str = "same village"
+
+
+class ParcelDossierResponse(BaseModel):
+    parcel: dict
+    deed_history: list[ParcelDossierDeed] = []
+    rera_projects: list[ParcelDossierRera] = []
+    guidance_value: dict | None = None
+    zone_risk: dict | None = None
+    assembly_flags: list[ParcelDossierAssembly] = []
+    comps: ParcelDossierComps | None = None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -5681,6 +5734,196 @@ async def v2_declare(request: Request):
     except Exception as exc:
         logger.error("[v2_declare] %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/parcel/{village}/{survey_no}",
+         response_model=ParcelDossierResponse,
+         tags=["Parcel"],
+         summary="Full parcel dossier with deed history, RERA projects, comps",
+         responses={404: {"model": ErrorResponse}})
+@limiter.limit("60/hour")
+async def parcel_dossier(
+    village: str,
+    survey_no: str,
+    request: Request = None,
+):
+    """Return full parcel dossier: parcel info, deeds, RERA projects, GV, zone, comps."""
+    from urllib.parse import unquote
+    village = unquote(village)
+    survey_no = unquote(survey_no)
+    if not village or not survey_no:
+        return JSONResponse({"error": "village and survey_no are required"}, status_code=400)
+
+    try:
+        with _get_sa_engine().connect() as conn:
+            parcel = conn.execute(
+                _sa_text("""
+                    SELECT id, village, survey_no, district, taluk, hobli,
+                           extent_sqft, source
+                    FROM parcels
+                    WHERE village = :v AND survey_no = :s
+                    LIMIT 1
+                """),
+                {"v": village, "s": survey_no},
+            ).fetchone()
+
+            if not parcel:
+                return JSONResponse({"error": "Parcel not found"}, status_code=404)
+
+            parcel_dict = dict(parcel._mapping)
+            parcel_id = parcel_dict["id"]
+
+            deed_rows = conn.execute(
+                _sa_text("""
+                    SELECT id, doc_no, reg_date, sro, survey_no, extent_sqft,
+                           consideration_inr, psf, deed_type, buyer_name_raw,
+                           seller_name_raw, data_source
+                    FROM registered_transactions
+                    WHERE parcel_id = :pid
+                    ORDER BY reg_date DESC
+                    LIMIT 50
+                """),
+                {"pid": parcel_id},
+            ).fetchall()
+            deed_history = [dict(r._mapping) for r in deed_rows]
+
+            rera_rows = conn.execute(
+                _sa_text("""
+                    SELECT rp.id, rp.rera_number, rp.project_name,
+                           d.name AS developer_name, rp.survey_no,
+                           rp.project_status, rp.total_units
+                    FROM rera_projects rp
+                    LEFT JOIN developers d ON d.id = rp.developer_id
+                    WHERE rp.parcel_id = :pid
+                    ORDER BY rp.created_at DESC
+                    LIMIT 20
+                """),
+                {"pid": parcel_id},
+            ).fetchall()
+            rera_projects = [dict(r._mapping) for r in rera_rows]
+
+            gv_row = conn.execute(
+                _sa_text("""
+                    SELECT gv.guidance_value_psf AS guidance_value,
+                           gv.data_source AS source,
+                           gv.effective_from AS gv_date,
+                           gv.area_code AS zone_code
+                    FROM guidance_values gv
+                    WHERE gv.locality ILIKE '%' || :v || '%'
+                    ORDER BY gv.effective_from DESC NULLS LAST
+                    LIMIT 1
+                """),
+                {"v": village},
+            ).fetchone()
+            guidance_value = dict(gv_row._mapping) if gv_row else None
+
+            assembly_rows = conn.execute(
+                _sa_text("""
+                    SELECT id, buyer_name_norm, parcel_count, total_extent_sqft,
+                           first_deed_date, last_deed_date, confidence
+                    FROM assembly_signals
+                    WHERE village = :v AND status = 'open'
+                    ORDER BY parcel_count DESC
+                    LIMIT 10
+                """),
+                {"v": village},
+            ).fetchall()
+            assembly_flags = [dict(r._mapping) for r in assembly_rows]
+
+            comps_row = conn.execute(
+                _sa_text("""
+                    SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY rt.psf) AS median_psf,
+                           COUNT(*) AS n
+                    FROM registered_transactions rt
+                    WHERE rt.village = :v
+                      AND rt.psf IS NOT NULL
+                      AND rt.psf > 500
+                      AND rt.psf < 50000
+                      AND rt.reg_date >= NOW() - INTERVAL '12 months'
+                """),
+                {"v": village},
+            ).fetchone()
+            comps = None
+            if comps_row:
+                md = dict(comps_row._mapping)
+                comps = {
+                    "median_psf": float(md["median_psf"]) if md.get("median_psf") else None,
+                    "n": md.get("n", 0) or 0,
+                    "window": "12mo",
+                    "scope": "same village",
+                }
+
+        zone_risk = None
+        try:
+            from utils.zone_risk_checker import check_zone_risk
+            zr = check_zone_risk(village, zone="R2")
+            zone_risk = {
+                "market": zr.market,
+                "zone": zr.zone,
+                "far": zr.far,
+                "max_height_m": zr.max_height_m,
+                "ground_coverage_pct": zr.ground_coverage_pct,
+                "risk_level": zr.risk_level,
+                "overlay_risks": zr.overlay_risks,
+            }
+        except Exception:
+            pass
+
+        def _serialize(val):
+            from decimal import Decimal
+            if val is None:
+                return val
+            if isinstance(val, Decimal):
+                return float(val)
+            if hasattr(val, "isoformat"):
+                return val.isoformat()
+            if isinstance(val, (float, int)):
+                return val
+            return str(val)
+
+        result = {
+            "parcel": {k: _serialize(v) for k, v in parcel_dict.items()},
+            "deed_history": [
+                {k: _serialize(v) for k, v in d.items()} for d in deed_history
+            ],
+            "rera_projects": [
+                {k: _serialize(v) for k, v in r.items()} for r in rera_projects
+            ],
+            "guidance_value": {k: _serialize(v) for k, v in guidance_value.items()} if guidance_value else None,
+            "zone_risk": zone_risk,
+            "assembly_flags": [
+                {k: _serialize(v) for k, v in a.items()} for a in assembly_flags
+            ],
+            "comps": comps,
+        }
+        return JSONResponse(result)
+    except Exception as exc:
+        logger.error("[API] /api/parcel/%s/%s failed: %s", village, survey_no, exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/api/parcel/villages", tags=["Parcel"],
+         summary="Distinct villages with parcel data")
+@limiter.limit("120/minute")
+async def parcel_villages(request: Request = None):
+    """Return distinct villages from the parcels table for UI dropdown."""
+    try:
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text("SELECT DISTINCT village FROM parcels ORDER BY village")
+            ).fetchall()
+            villages = [r[0] for r in rows if r[0]]
+            return {"villages": villages if villages else []}
+    except Exception as exc:
+        logger.error("[API] /api/parcel/villages failed: %s", exc)
+        return JSONResponse({"villages": []})
+
+
+@app.get("/parcel", response_class=HTMLResponse, tags=["Pages"],
+         summary="Parcel lookup dashboard panel")
+async def parcel_panel(request: Request):
+    """Serve the parcel lookup panel."""
+    return templates.TemplateResponse(request, "parcel.html")
 
 
 if __name__ == "__main__":
