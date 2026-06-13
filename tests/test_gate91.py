@@ -47,27 +47,38 @@ def test_a1_registered_transactions_table():
 
 
 def test_a2_kaveri_deed_scout_parses_fixtures():
-    """A2: KaveriDeedScout parses fixture TXT files → ≥3 records + PDF branch safe."""
-    from scrapers.kaveri_deeds import parse_inbox_file, _parse_pdf_text, _split_deed_sections
+    """A2: KaveriDeedScout EC Form 15 table parser → ≥3 records + TXT safely rejected."""
+    from scrapers.kaveri_deeds import parse_inbox_file, _parse_ec_form15_rows
 
-    # TXT fixture parsing
-    total = 0
-    for fpath in sorted(FIXTURES_DIR.glob("*.txt")):
-        records = parse_inbox_file(fpath)
-        total += len(records)
-    assert total >= 3, f"Expected ≥3 records from fixtures, got {total}"
+    # EC Form 15 is table-based — TXT files not supported (Sprint 91.5 truth rebuild)
+    txt_files = sorted(FIXTURES_DIR.glob("*.txt"))
+    for fpath in txt_files:
+        result = parse_inbox_file(fpath)
+        assert result == [], f"TXT not supported for EC Form 15, expected [], got {result}"
 
-    # Multi-deed splitting
-    multi_text = (
-        "Document No: 1/2026\nRegistration Date: 15/05/2026\nSRO: Yelahanka\nVillage: Jakkur\n"
-        "Property Description:\nSy. No. 45/2, 2400 Sq. Ft\nConsideration: Rs. 85,00,000\n\n"
-        "Document No: 2/2026\nRegistration Date: 10/04/2026\nSRO: Yelahanka\nVillage: Allalasandra\n"
-        "Property Description:\nSurvey No. 101/1A, 3200 Sq. Ft\nConsideration: INR 1,20,00,000\n"
-    )
-    sections = _split_deed_sections(multi_text)
-    assert len(sections) >= 2, f"Expected ≥2 sections from multi-deed text, got {len(sections)}"
-    records = _parse_pdf_text(multi_text)
-    assert len(records) >= 2, f"Expected ≥2 records from multi-deed text, got {len(records)}"
+    # Test _parse_ec_form15_rows with fixture rows matching real EC Form 15 format
+    # doc_no format: [A-Z]{2,4}-\d-\d{4,6}-\d{4}-\d{2}
+    # date format: DD-MM-YYYY
+    # deed_type via "Article Name: X" in col4
+    fixture_rows = [
+        ["1", "Sy.No. 45/2, Jakkur Village, Yelahanka Hobli, 2400 Sq.Ft",
+         "15-05-2026",
+         "Article Name: Sale Deed; Market Value: Rs.85,00,000/- Consideration: Rs.85,00,000/-",
+         "Seller One", "Buyer One", None, None, "DOC NO: YEL-1-12345-2026-01"],
+        ["2", "Sy.No. 101/1A, Allalasandra Village, 3200 Sq.Ft",
+         "10-04-2026",
+         "Article Name: Sale Deed; Market Value: Rs.1,20,00,000/- Consideration: Rs.1,20,00,000/-",
+         "Seller Two", "Buyer Two", None, None, "DOC NO: YEL-2-67890-2026-02"],
+        ["3", "Sy.No. 88/3, Venkatala Village, 1800 Sq.Ft",
+         "01-03-2026",
+         "Article Name: Sale Deed; Market Value: Rs.72,00,000/- Consideration: Rs.72,00,000/-",
+         "Seller Three", "Buyer Three", None, None, "DOC NO: YEL-3-11111-2026-03"],
+    ]
+    records = _parse_ec_form15_rows(fixture_rows)
+    assert len(records) >= 3, f"Expected ≥3 records from fixture rows, got {len(records)}"
+    assert records[0]["doc_no"] == "YEL-1-12345-2026-01"
+    assert records[0]["reg_date"] == "2026-05-15"
+    assert records[1]["doc_no"] == "YEL-2-67890-2026-02"
 
 
 def test_a3_spread_endpoint_with_pydantic():
