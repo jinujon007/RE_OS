@@ -263,8 +263,10 @@ class KaveriDeedsPlugin(DataPlugin):
             str(raw.get("hobli") or ""),
         )
 
-        # Source ID for dedup (within this plugin)
-        source_id = f"deed_{sro}_{doc_no}_{reg_date}"
+        # Source ID for dedup (within this plugin).
+        # Truncated to 100 chars to stay within ingest_log.source_id varchar(100).
+        raw_source_id = f"deed_{sro}_{doc_no}_{reg_date}"
+        source_id = raw_source_id[:100]
 
         now_iso = datetime.now(timezone.utc).isoformat()
         data = {

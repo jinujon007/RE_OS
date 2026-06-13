@@ -1,5 +1,5 @@
 # Kaveri Deed Pipeline Log
-**Updated: 2026-06-12 | Sprint 91 (GATE-91)**
+**Updated: 2026-06-12 | J-16 COMPLETE**
 
 ## Architecture
 
@@ -123,3 +123,74 @@ Docker restored. All pending commands executed. Results:
 **Fix tasks:** T-1156 (parser rebuild vs real format, hard success criterion on 3.pdf), T-1157 (source_id truncation + SALE_DEED_TYPES filter) — TASK_QUEUE Sprint 91.5.
 
 **GATE-91 remains CONDITIONAL.** The integration criterion did its job: code-level tests were green while the pipeline produced zero usable truth. Do not relax integration criteria on future gates.
+
+---
+
+## J-16 — Deed Throughput Session (2026-06-12)
+
+**Conducted by:** Jinu + Claude (browser recon + live Kaveri session)
+**Duration:** ~1 hour
+**Question answered:** What is the manual deed extraction throughput? → F1 decision.
+
+### Site Recon Findings
+
+| Finding | Detail |
+|---------|--------|
+| Correct URL | `kaveri.karnataka.gov.in` (old `kaverionline.karnataka.gov.in` is dead) |
+| Login required | Yes — OTP via registered mobile number |
+| EC search (property-level) | Requires survey number + village + date range. One EC = one property. Property-by-property only. |
+| Document Registration search | Disabled without login on public dashboard |
+| **Form 17 Index II** | `kaveri.karnataka.gov.in/form-of-index-2` — **bulk deed register by village + date range** |
+
+### Form 17 Index II — The Mechanism
+
+The Form-17 Form of Index No. II is the official SRO day-book: all registered documents for a village in a date range. Tested live on Devanahalli Division 1 (Bangalore Rural), 01-01-2024 to 12-06-2026.
+
+**Columns confirmed:**
+- Name of Village
+- Nature of deed + consideration value (e.g. "Sale - ₹21,00,000.00")
+- Survey No + dimensions
+- Area (Sq.Metre)
+- Name of Executants (sellers)
+- Name of Claimants (buyers)
+- SRO name
+- Date of execution
+- Date of registration
+- Document number (e.g. DNH-1-13888-2023-24)
+
+**Volume:** Page 1 of 17 for one village over 2.5 years → ~85 records per village per 2.5 years
+
+**Cost:** ₹50 per report to download PDF. On-screen view is free (rendered as PDF embed with watermark — not plain HTML table).
+
+**PDF structure:** Fixed-column government register table, one deed per row, consistent format. Significantly cleaner than EC Form 15 (no multi-page row continuation, no masked survey numbers, no property-description cell parsing).
+
+### F1 Decision
+
+**HYBRID** — not fully manual, not fully automated.
+
+| Path | Verdict |
+|------|---------|
+| Full automation | Blocked by ₹50 UPI payment per report (requires human auth) |
+| Pure manual | Impractical — 17+ pages × 25 villages to read manually |
+| Narrow scope | Unnecessary — data is clean, accessible, cheap |
+| **Hybrid** | ✅ **CHOSEN** |
+
+**Hybrid workflow:**
+1. Jinu logs in to kaveri.karnataka.gov.in (OTP, ~1 min)
+2. Jinu navigates to form-of-index-2, selects village + date range
+3. Jinu clicks Generate Report → Make Payment (₹50 UPI)
+4. PDF downloads to `data/kaveri_deeds/inbox/`
+5. `kaveri_deeds_weekly` job picks it up → parser → `registered_transactions`
+
+**Cost:** 25 Yalahanka villages × ₹50 × quarterly = **₹5,000/year** for full Yalahanka hobli deed coverage.
+
+### Architecture Revision Required
+
+The current pipeline was built for EC Form 15 PDFs. Form 17 Index II PDFs are a different format and need a separate parser. EC Form 15 parser rebuild (Sprint 91.5 T-1156) should still proceed for backward compatibility with existing samples, but Form 17 is the **primary bulk path going forward**.
+
+| Parser | Status | Priority |
+|--------|--------|----------|
+| EC Form 15 parser (T-1156) | 🔄 Sprint 91.5 — in progress | P1 — fixes existing samples |
+| Form 17 Index II parser | ☐ Not yet built | P0 — primary bulk extraction path |
+
+**Next task:** Build Form 17 Index II parser. Success criterion: parse the Devanahalli test report → ≥10 rows in `registered_transactions` with deed_type, consideration_value, survey_no, executant, claimant, reg_date all populated. Jinu to download one Form 17 PDF (pay ₹50) and place in `data/kaveri_deeds/inbox/form17/` as the test fixture.

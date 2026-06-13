@@ -1,10 +1,11 @@
-"""Unit tests for scheduler diet (GATE-91, T-1139).
+"""Unit tests for scheduler diet (GATE-91, T-1139) + hiring snapshot (GATE-94, T-1152).
 
 4 assertions:
 (1) Org-sim jobs absent by default (SCHEDULER_ENABLE_ORG_SIM=False)
 (2) SCHEDULER_ENABLE_ORG_SIM setting exists and defaults to False
 (3) kaveri_deeds_weekly job registered in scheduler.py
 (4) No duplicate job IDs in scheduler.py
+(5) gcc_hiring_snapshot job registered in scheduler.py (T-1152)
 """
 import re
 from pathlib import Path
@@ -56,6 +57,14 @@ def test_kaveri_deeds_weekly_registered():
     assert "kaveri_deeds_weekly" in content
     assert "id=\"kaveri_deeds_weekly\"" in content
     assert "run_kaveri_deeds_weekly" in content
+
+
+def test_gcc_hiring_snapshot_job_registered():
+    """Assert gcc_hiring_snapshot weekly job is registered (T-1152)."""
+    content = SCHEDULER_PATH.read_text()
+    assert "gcc_hiring_snapshot" in content
+    assert "id=\"gcc_hiring_snapshot\"" in content
+    assert "run_gcc_hiring_snapshot" in content
 
 
 def test_no_duplicate_job_ids():

@@ -403,8 +403,9 @@ class GCCPlugin(DataPlugin):
     def run(self, market: str) -> list[ParsedRecord]:
         records: list[ParsedRecord] = []
         existing = self._get_existing_canonical_ids()
+        snapshot_employers = self._get_snapshot_employers()
 
-        # Source 1: seed data
+        # Source 1: seed data (demoted to data_source='seed' if employer has live snapshot)
         for evt in _SEED_EVENTS:
             cid = _make_canonical_id(
                 evt["company"],
@@ -418,13 +419,20 @@ class GCCPlugin(DataPlugin):
             nb_impact = _CORRIDOR_NB_IMPACT.get(corridor or "", 0.0)
             gcc_score = _compute_gcc_score(evt)
 
+            # Demote seed to data_source='seed' if employer has live hiring snapshot
+            company = evt["company"]
+            data_source = "seed"
+            if company.lower() in snapshot_employers:
+                data_source = "seed_demoted"
+
             data = {
                 "canonical_id": cid,
-                "company": evt["company"],
+                "company": company,
                 "sector": evt.get("sector"),
                 "country_of_origin": evt.get("country_of_origin"),
                 "bengaluru_location": evt.get("bengaluru_location"),
                 "nearest_corridor": corridor,
+                "data_source": data_source,
                 "entrant_type": evt.get("entrant_type", "EXPANSION"),
                 "work_model": evt.get("work_model", "HYBRID"),
                 "signal_maturity_level": evt.get("signal_maturity_level", 3),
@@ -463,11 +471,16 @@ class GCCPlugin(DataPlugin):
         news_records = self._scan_news_articles(market, existing)
         records.extend(news_records)
 
+        # Source 3: hiring snapshots (GATE-94, T-1152)
+        snapshot_records = self._scan_hiring_snapshots(market, existing, snapshot_employers)
+        records.extend(snapshot_records)
+
         logger.info(
-            "[GCCPlugin] {} — {} seed + {} news records ({} total)",
+            "[GCCPlugin] {} — {} seed + {} news + {} snapshot records ({} total)",
             market,
-            len(records) - len(news_records),
+            len(records) - len(news_records) - len(snapshot_records),
             len(news_records),
+            len(snapshot_records),
             len(records),
         )
         return records
@@ -606,6 +619,121 @@ class GCCPlugin(DataPlugin):
 
         except Exception as exc:
             logger.debug("[GCCPlugin] news scan failed: {}", exc)
+
+        return records
+
+    def _get_snapshot_employers(self) -> set[str]:
+        """Return set of employer names (lowercased) that have live hiring snapshots."""
+        try:
+            from utils.db import get_engine
+            from sqlalchemy import text
+            from datetime import date, timedelta
+            cutoff = date.today() - timedelta(days=14)
+            with get_engine(pool_size=1, max_overflow=0).connect() as conn:
+                rows = conn.execute(
+                    text("SELECT DISTINCT employer FROM gcc_hiring_snapshots WHERE snapshot_date >= :cutoff AND posting_count > 0"),
+                    {"cutoff": cutoff},
+                ).fetchall()
+            return {str(r[0]).lower() for r in rows}
+        except Exception as exc:
+            logger.debug("[GCCPlugin] snapshot employers fetch failed: {}", exc)
+            return set()
+
+    def _scan_hiring_snapshots(
+        self, market: str, existing: set[str], snapshot_employers: set[str]
+    ) -> list[ParsedRecord]:
+        """Scan gcc_hiring_snapshots for employers and create GCC events.
+
+        For each employer with live snapshot data, create a gcc_event with
+        data_source='snapshot' so the system has a real hiring signal.
+        """
+        records: list[ParsedRecord] = []
+        try:
+            from utils.db import get_engine
+            from sqlalchemy import text
+            from datetime import date, timedelta
+            cutoff = date.today() - timedelta(days=7)
+            with get_engine(pool_size=1, max_overflow=0).connect() as conn:
+                rows = conn.execute(
+                    text("""
+                        SELECT employer, location, posting_count, snapshot_date
+                        FROM gcc_hiring_snapshots
+                        WHERE snapshot_date >= :cutoff
+                        ORDER BY employer, snapshot_date DESC
+                    """),
+                    {"cutoff": cutoff},
+                ).fetchall()
+
+            seen: set[str] = set()
+            for row in rows:
+                employer, location, posting_count, snapshot_date = row
+                employer_str = str(employer)
+                cid = _make_canonical_id(employer_str, location, str(snapshot_date)[:7])
+                if cid in existing or cid in seen:
+                    continue
+                seen.add(cid)
+
+                headcount = int(posting_count) * 5  # rough multiplier: 1 posting ≈ 5 hires
+                if headcount < 10:
+                    continue
+
+                corridor, nb_impact = _resolve_corridor(location)
+                if corridor is None:
+                    corridor = "manyata_tech_park"
+                    nb_impact = _CORRIDOR_NB_IMPACT.get(corridor, 0.5)
+
+                score_input = {
+                    "demand_creation_score": 5,
+                    "residential_impact_score": 5,
+                    "appreciation_impact_score": 6,
+                    "rental_impact_score": 5,
+                    "entrant_type": "EXPANSION",
+                    "work_model": "HYBRID",
+                    "signal_maturity_level": 3,
+                }
+                gcc_score = _compute_gcc_score(score_input)
+
+                evt_data = {
+                    "canonical_id": cid,
+                    "company": employer_str,
+                    "sector": "Technology",
+                    "bengaluru_location": location,
+                    "nearest_corridor": corridor,
+                    "data_source": "snapshot",
+                    "entrant_type": "EXPANSION",
+                    "work_model": "HYBRID",
+                    "signal_maturity_level": 3,
+                    "is_negative_signal": False,
+                    "north_bengaluru_impact_score": nb_impact,
+                    "planned_headcount": headcount,
+                    "headcount_timeline_months": 12,
+                    "median_ctc_l": 25.0,
+                    "demand_creation_score": 5,
+                    "residential_impact_score": 5,
+                    "appreciation_impact_score": 6,
+                    "rental_impact_score": 5,
+                    "gcc_signal_score": gcc_score,
+                    "primary_housing_segment": "Premium Apartment",
+                    "time_horizon": "1-3y",
+                    "estimated_demand_units": max(1, headcount // 20),
+                    "source_name": f"Naukri hiring snapshot ({snapshot_date})",
+                    "source_reliability": "PRESS",
+                    "announced_at": str(snapshot_date),
+                    "discord_alert_fired": False,
+                }
+
+                records.append(
+                    ParsedRecord(
+                        entity_type="gcc_event",
+                        source_id=f"gcc_snapshot_{cid}",
+                        market=market,
+                        data=evt_data,
+                        confidence=0.6,
+                    )
+                )
+
+        except Exception as exc:
+            logger.debug("[GCCPlugin] hiring snapshot scan failed: {}", exc)
 
         return records
 

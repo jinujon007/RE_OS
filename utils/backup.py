@@ -1,26 +1,30 @@
 """
-RE_OS — Database Backup Utility (Sprint 83, GATE-83)
+RE_OS — Database Backup Utility (Sprint 83, GATE-83, Sprint 93 GATE-93)
 pg_dump binary wrapper — no SQLAlchemy dependency.
 Backup path: /backups/ (bind-mounted to ./backups/ on host).
 
 Public API:
     DBBackup          — pg_dump wrapper class
-    check_backup_staleness  — returns staleness status dict
+    check_backup_staleness  — returns local staleness status dict
     enforce_retention       — prunes old backups, returns deleted count
     verify_backup           — checks integrity via pg_restore --list
     get_backup_dir          — returns configured backup directory path
+    push_to_remote          — rclone push latest local dump to remote (GATE-93)
+    verify_remote_backup    — download + pg_restore --list on remote dump
+    check_remote_backup_staleness — checks if remote copy >8 days stale
 """
 import os
 import subprocess
 import threading as _threading
 import time as _time
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import datetime
 
 from loguru import logger
 
 _BACKUP_DIR = os.environ.get("RE_OS_BACKUP_DIR", "/backups")
 _STALE_HOURS = 26
+_REMOTE_STALE_DAYS = 8
+_BACKUP_REMOTE = os.environ.get("BACKUP_REMOTE", "")
 
 __all__ = [
     "DBBackup",
@@ -28,6 +32,10 @@ __all__ = [
     "enforce_retention",
     "verify_backup",
     "get_backup_dir",
+    "push_to_remote",
+    "verify_remote_backup",
+    "verify_remote_backup_integrity_via_checksum",
+    "check_remote_backup_staleness",
 ]
 
 
@@ -259,3 +267,251 @@ def verify_backup(filepath: str) -> dict:
         return {"valid": False, "object_count": 0, "error": "pg_restore binary not found"}
     except Exception as exc:
         return {"valid": False, "object_count": 0, "error": str(exc)[:500]}
+
+
+# ── Remote backup (Sprint 93 — GATE-93) ────────────────────────────────────────
+
+
+def _get_latest_local_dump() -> str | None:
+    """Return the path of the most recent local dump file, or None."""
+    if not os.path.isdir(_BACKUP_DIR):
+        return None
+    dumps = sorted(
+        [f for f in os.listdir(_BACKUP_DIR) if f.startswith("re_os_") and f.endswith(".dump")],
+        key=lambda f: os.path.getmtime(os.path.join(_BACKUP_DIR, f)),
+        reverse=True,
+    )
+    if not dumps:
+        return None
+    return os.path.join(_BACKUP_DIR, dumps[0])
+
+
+def push_to_remote(local_path: str | None = None) -> dict:
+    """Push latest local backup dump to remote object storage via rclone.
+
+    Shares the threading lock with DBBackup.run() to prevent concurrent
+    local + remote operations from corrupting each other. Retries up to
+    2 times with exponential backoff on transient failures.
+
+    Requires BACKUP_REMOTE env var (e.g. ``backup_remote:bucket/path``
+    configured via ``rclone config``). For encryption, use rclone crypt remote.
+
+    Returns:
+        dict with keys: status (ok/skipped/failed), detail (str).
+    """
+    if not _BACKUP_REMOTE:
+        return {"status": "skipped", "detail": "BACKUP_REMOTE not configured — no remote push"}
+
+    acquired = _backup_lock.acquire(blocking=False)
+    if not acquired:
+        logger.warning("[RemoteBackup] Local backup in progress — skipping remote push")
+        return {"status": "skipped", "detail": "Local backup running — deferred to next window"}
+    try:
+        local_path = local_path or _get_latest_local_dump()
+        if not local_path or not os.path.isfile(local_path):
+            return {"status": "skipped", "detail": "No local dump file found to push"}
+
+        last_error = ""
+        for attempt in range(3):
+            try:
+                result = subprocess.run(
+                    ["rclone", "copy", local_path, _BACKUP_REMOTE],
+                    capture_output=True,
+                    timeout=300,
+                )
+                if result.returncode == 0:
+                    logger.info("[RemoteBackup] Push complete: {} → {}", local_path, _BACKUP_REMOTE)
+                    return {"status": "ok", "detail": f"Pushed {os.path.basename(local_path)} to remote"}
+                else:
+                    last_error = result.stderr.decode("utf-8", errors="replace")[:500]
+                    logger.warning("[RemoteBackup] rclone copy attempt {} failed: {}", attempt + 1, last_error)
+                    if attempt < 2:
+                        _time.sleep(2 ** attempt * 5)
+            except subprocess.TimeoutExpired:
+                last_error = f"rclone copy timed out after 300s (attempt {attempt + 1})"
+                logger.warning("[RemoteBackup] {}", last_error)
+                if attempt < 2:
+                    _time.sleep(2 ** attempt * 5)
+            except FileNotFoundError:
+                logger.warning("[RemoteBackup] rclone binary not found — remote push unavailable")
+                return {"status": "failed", "detail": "rclone binary not found"}
+
+        return {"status": "failed", "detail": last_error}
+    except Exception as exc:
+        logger.warning("[RemoteBackup] push failed: {}", exc)
+        return {"status": "failed", "detail": str(exc)[:500]}
+    finally:
+        _backup_lock.release()
+
+
+def verify_remote_backup() -> dict:
+    """Download the latest remote backup and verify via pg_restore --list.
+
+    Downloads to a temp file, runs pg_restore --list, removes temp file.
+    Requires BACKUP_REMOTE env var.
+
+    Returns:
+        dict with keys: valid (bool), object_count (int), error (str|None),
+        status (ok/skipped/failed).
+    """
+    if not _BACKUP_REMOTE:
+        return {"status": "skipped", "detail": "BACKUP_REMOTE not configured"}
+
+    import tempfile
+
+    try:
+        # List remote files to find latest
+        list_result = subprocess.run(
+            ["rclone", "lsf", _BACKUP_REMOTE],
+            capture_output=True,
+            timeout=60,
+        )
+        if list_result.returncode != 0:
+            stderr = list_result.stderr.decode("utf-8", errors="replace")[:300]
+            return {"status": "failed", "valid": False, "object_count": 0,
+                    "error": f"rclone lsf failed: {stderr}"}
+
+        remote_files = list_result.stdout.decode("utf-8", errors="replace").strip().split("\n")
+        remote_dumps = [f.strip() for f in remote_files if f.strip().endswith(".dump")]
+        if not remote_dumps:
+            return {"status": "failed", "valid": False, "object_count": 0,
+                    "error": "No remote dump files found"}
+
+        latest_remote = max(remote_dumps)
+        tmp = tempfile.NamedTemporaryFile(suffix=".dump", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+
+        try:
+            dl_result = subprocess.run(
+                ["rclone", "copy", f"{_BACKUP_REMOTE}/{latest_remote}", tmp_path],
+                capture_output=True,
+                timeout=300,
+            )
+            if dl_result.returncode != 0:
+                stderr = dl_result.stderr.decode("utf-8", errors="replace")[:300]
+                return {"status": "failed", "valid": False, "object_count": 0,
+                        "error": f"rclone download failed: {stderr}"}
+
+            v = verify_backup(tmp_path)
+            return {
+                "status": "ok" if v["valid"] else "failed",
+                "valid": v["valid"],
+                "object_count": v["object_count"],
+                "error": v["error"],
+                "file": latest_remote,
+            }
+        except Exception as exc:
+            return {"status": "failed", "valid": False, "object_count": 0,
+                    "error": str(exc)[:500]}
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    except FileNotFoundError:
+        return {"status": "failed", "valid": False, "object_count": 0,
+                "error": "rclone binary not found"}
+    except subprocess.TimeoutExpired:
+        return {"status": "failed", "valid": False, "object_count": 0,
+                "error": "rclone operation timed out"}
+    except Exception as exc:
+        return {"status": "failed", "valid": False, "object_count": 0,
+                "error": str(exc)[:500]}
+
+
+def verify_remote_backup_integrity_via_checksum() -> dict:
+    """Verify remote backup integrity using rclone checksum without full download.
+
+    Runs ``rclone check`` with SHA-256 comparison against local copy.
+    This is bandwidth-efficient for multi-GB dumps.
+
+    Returns:
+        dict with valid (bool), errors (int), detail (str).
+    """
+    if not _BACKUP_REMOTE:
+        return {"valid": False, "errors": 0, "detail": "BACKUP_REMOTE not configured"}
+
+    local_path = _get_latest_local_dump()
+    if not local_path:
+        return {"valid": False, "errors": 0, "detail": "No local dump to compare against"}
+
+    try:
+        result = subprocess.run(
+            ["rclone", "check", local_path, _BACKUP_REMOTE, "--checksum", "--one-way"],
+            capture_output=True,
+            timeout=300,
+        )
+        stdout = result.stdout.decode("utf-8", errors="replace")
+        import re as _re
+        err_match = _re.search(r'(\d+)\s+errors? found', stdout)
+        error_count = int(err_match.group(1)) if err_match else 0
+        return {
+            "valid": result.returncode == 0 or error_count == 0,
+            "errors": error_count,
+            "detail": "Integrity passed" if error_count == 0 else f"{error_count} file mismatches",
+        }
+    except FileNotFoundError:
+        return {"valid": False, "errors": 0, "detail": "rclone binary not found"}
+    except Exception as exc:
+        return {"valid": False, "errors": 0, "detail": str(exc)[:300]}
+
+
+def check_remote_backup_staleness() -> dict:
+    """Check if the latest remote backup is older than REMOTE_STALE_DAYS.
+
+    Returns:
+        dict with keys:
+            stale (bool): True if no remote backups or latest > REMOTE_STALE_DAYS old.
+            age_days (float | None): age in days of latest remote backup, or None.
+            latest_file (str | None): filename of latest remote backup, or None.
+            status (str): ok/skipped/failed.
+    """
+    if not _BACKUP_REMOTE:
+        return {"status": "skipped", "stale": True, "age_days": None, "latest_file": None}
+
+    try:
+        result = subprocess.run(
+            ["rclone", "lsf", "--format", "t", _BACKUP_REMOTE],
+            capture_output=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            return {"status": "failed", "stale": True, "age_days": None,
+                    "latest_file": None, "error": result.stderr.decode()[:200]}
+
+        lines = result.stdout.decode("utf-8", errors="replace").strip().split("\n")
+        # rclone lsf --format t outputs: "timestamp;filename"
+        entries = []
+        for line in lines:
+            line = line.strip()
+            if ";" in line:
+                ts_str, name = line.split(";", 1)
+                if name.endswith(".dump"):
+                    try:
+                        ts = datetime.fromisoformat(ts_str)
+                        entries.append((ts, name))
+                    except ValueError:
+                        pass
+
+        if not entries:
+            return {"status": "ok", "stale": True, "age_days": None, "latest_file": None}
+
+        latest = max(entries, key=lambda x: x[0])
+        age = (datetime.now() - latest[0]).days
+        return {
+            "status": "ok",
+            "stale": age > _REMOTE_STALE_DAYS,
+            "age_days": age,
+            "latest_file": latest[1],
+        }
+    except FileNotFoundError:
+        return {"status": "failed", "stale": True, "age_days": None,
+                "latest_file": None, "error": "rclone binary not found"}
+    except subprocess.TimeoutExpired:
+        return {"status": "failed", "stale": True, "age_days": None,
+                "latest_file": None, "error": "rclone lsf timed out"}
+    except Exception as exc:
+        return {"status": "failed", "stale": True, "age_days": None,
+                "latest_file": None, "error": str(exc)[:500]}

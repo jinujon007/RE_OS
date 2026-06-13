@@ -287,6 +287,40 @@ PORTAL_SCOUT_MIN_LISTINGS_CANARY: int = 10
 # If the gazette year is more than this many months old, flag as stale
 GV_FRESHNESS_WARN_MONTHS: int = 18
 
+# ── SALE DEED TYPES (Sprint 91.5 — T-1157) ──────────────────────────────────
+# Only these deed types + consideration_inr >= 100000 are used for PSF/spread.
+# Non-sale rows (Discharge, Release, Surrender, Mortgage) are stored but excluded
+# from price-signal aggregation.
+SALE_DEED_TYPES: list[str] = [
+    "Sale",
+    "Sale Deed",
+    "Absolute Sale",
+    "Sale Agreement",
+    "Sale Agreement with Possession",
+    "Sale Deed with Possession",
+]
+
+# ── GCC TRACKED EMPLOYERS (Sprint 94 — GATE-94, T-1152) ─────────────────────
+# Weekly Naukri job-posting snapshot targets at North Bengaluru office hubs.
+# Used by GccHiringPlugin to track hiring momentum as a leading demand indicator.
+GCC_TRACKED_EMPLOYERS: list[dict[str, str]] = [
+    {"employer": "NTT Data", "hub": "Manyata Tech Park"},
+    {"employer": "Cognizant", "hub": "Manyata Tech Park"},
+    {"employer": "Genpact", "hub": "Manyata Tech Park"},
+    {"employer": "Philips", "hub": "Manyata Tech Park"},
+    {"employer": "Standard Chartered", "hub": "Manyata Tech Park"},
+    {"employer": "Nokia", "hub": "Manyata Tech Park"},
+    {"employer": "NetApp", "hub": "Manyata Tech Park"},
+    {"employer": "Qualcomm", "hub": "Manyata Tech Park"},
+    {"employer": "Mphasis", "hub": "Manyata Tech Park"},
+    {"employer": "Oracle", "hub": "Manyata Tech Park"},
+    {"employer": "Texas Instruments", "hub": "Karle Tech Park"},
+    {"employer": "Broadcom", "hub": "Karle Tech Park"},
+    {"employer": "AMD", "hub": "Karle Tech Park"},
+    {"employer": "ARM", "hub": "Karle Tech Park"},
+    {"employer": "Micron", "hub": "Karle Tech Park"},
+]
+
 # ── DATA FLOOR MARKETS (Sprint 89 — GATE-89) ─────────────────────────────────
 # Minimum live (non-seed) RERA records per market before alerting via Discord.
 DATA_FLOOR_MARKETS: dict[str, int] = {
@@ -304,6 +338,7 @@ def _parse_bool_env(key: str, default: str) -> bool:
     return val in ("1", "true", "yes", "on", "enabled")
 
 SCHEDULER_ENABLE_ORG_SIM = _parse_bool_env("SCHEDULER_ENABLE_ORG_SIM", "false")
+SCHEDULER_DRY_RUN = _parse_bool_env("SCHEDULER_DRY_RUN", "false")
 
 # ── AGENT RUN STATUSES ────────────────────────────────────────────────────────
 AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]

@@ -129,6 +129,7 @@ def compute_psf_spread(
                     spread_pct=None, n_registered=0, n_listings=0,
                     window_days=window_days, status="insufficient_data",
                 )
+            from config.settings import SALE_DEED_TYPES as _SALE_TYPES
             reg_row = conn.execute(
                 text("""
                     SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY psf) AS median_psf,
@@ -138,8 +139,11 @@ def compute_psf_spread(
                       AND psf IS NOT NULL
                       AND extraction_confidence != 'low'
                       AND reg_date >= CURRENT_DATE - :window_days * INTERVAL '1 day'
+                      AND deed_type = ANY(:sale_types::text[])
+                      AND consideration_inr >= 100000
                 """),
-                {"market": market_clause, "window_days": window_days},
+                {"market": market_clause, "window_days": window_days,
+                 "sale_types": list(_SALE_TYPES)},
             ).fetchone()
     except Exception:
         pass

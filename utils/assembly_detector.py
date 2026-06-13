@@ -234,6 +234,43 @@ def detect_assemblies(markets: list[str] | None = None) -> list[dict]:
                 "survey_nos": survey_nos,
             })
 
+    # Write falsifiable claims to prediction_ledger (GATE-93, T-1148)
+    try:
+        from utils.prediction_ledger import write_prediction_ledger
+        from datetime import timedelta as _td
+
+        def _village_to_market(v: str) -> str:
+            vl = v.lower()
+            if "yelahanka" in vl:
+                return "Yelahanka"
+            if "devanahalli" in vl:
+                return "Devanahalli"
+            if "hebbal" in vl:
+                return "Hebbal"
+            return "unknown"
+
+        for sig in signals:
+            village = sig.get("village", "")
+            write_prediction_ledger(
+                source_module="assembly_detector",
+                claim_type="assembly_alert",
+                market=_village_to_market(village),
+                claim_text=(
+                    f"Land assembly: {sig['buyer_name_norm']} — "
+                    f"{sig['parcel_count']} parcels in {sig['village']} "
+                    f"over {sig['days_span']}d"
+                ),
+                falsifiable_metric=(
+                    f"Developer {sig['buyer_name_norm']} confirms active "
+                    f"land assembly in {sig['village']} with ≥{sig['parcel_count']} parcels"
+                ),
+                predicted_value=float(sig.get("total_consideration_inr", 0) or 0),
+                check_date=date.today() + _td(days=365),
+                confidence=float(sig.get("confidence", 0.5)),
+            )
+    except Exception:
+        logger.debug("[AssemblyDetector] prediction_ledger write skipped (non-fatal)")
+
     logger.info("[AssemblyDetector] {} assemblies detected, {} written to DB", len(signals), written)
     return signals
 

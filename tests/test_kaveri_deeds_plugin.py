@@ -162,6 +162,54 @@ def test_plugin_build_record_empty():
     assert record is None
 
 
+def test_source_id_truncation():
+    """Long source_id (>100 chars) truncated to 100 chars."""
+    plugin = KaveriDeedsPlugin()
+    # Build a raw record with a very long SRO name to trigger truncation
+    raw = {
+        "doc_no": "BYP-1-14551-2022-23",
+        "reg_date": "2023-03-03",
+        "sro": "Sri Sub-Registrar Office Gandhinagar Bangalore Urban District Karnataka",
+        "village": "Venkatala",
+        "survey_no": "3",
+        "extent_sqft": 28311.0,
+        "consideration_inr": 1.0,
+        "deed_type": "Surrender of Lease",
+        "buyer_name_raw": "Buyer Name",
+        "seller_name_raw": "Seller Name",
+        "data_source": "kaveri_inbox",
+        "source_ref": "3.pdf",
+        "extraction_confidence": "low",
+    }
+    record = plugin._build_record(raw, "Yelahanka", 0)
+    assert record is not None
+    # source_id should be truncated to 100 chars
+    assert len(record.source_id) <= 100, f"source_id {len(record.source_id)} > 100: {record.source_id}"
+
+
+def test_source_id_truncation_31k():
+    """Source_id with very long doc_no/reg_date truncated to 100 chars — no crash."""
+    plugin = KaveriDeedsPlugin()
+    # Simulate a worst-case source_id
+    raw = {
+        "doc_no": "X" * 200,
+        "reg_date": "Y" * 200,
+        "sro": "Z" * 200,
+        "village": "Test",
+        "survey_no": "1",
+        "extent_sqft": 1000.0,
+        "consideration_inr": 5000000.0,
+        "deed_type": "Sale Deed",
+        "buyer_name_raw": "Buyer",
+        "seller_name_raw": "Seller",
+        "data_source": "kaveri_inbox",
+        "extraction_confidence": "high",
+    }
+    record = plugin._build_record(raw, "Yelahanka", 0)
+    assert record is not None
+    assert len(record.source_id) <= 100, f"source_id {len(record.source_id)} > 100"
+
+
 def test_plugin_validation():
     """Plugin validation checks required fields."""
     plugin = KaveriDeedsPlugin()

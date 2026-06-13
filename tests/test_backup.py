@@ -268,3 +268,86 @@ def test_run_backup_deletes_corrupt_file_and_alerts():
         assert "corrupt" in result["error"]
         assert mock_remove.called
         assert mock_alert.called
+
+
+# ── T-1146: Off-site backup (Sprint 93 — GATE-93) ──────────────────────────────
+
+
+def test_push_to_remote_skipped_when_not_configured():
+    """push_to_remote returns skipped when BACKUP_REMOTE is not set."""
+    from utils.backup import push_to_remote
+    with patch.dict("os.environ", {}, clear=True):
+        result = push_to_remote("/fake/path.dump")
+    assert result["status"] == "skipped"
+    assert "not configured" in result["detail"]
+
+
+def test_push_to_remote_ok():
+    """push_to_remote returns ok on successful rclone copy."""
+    with (
+        patch("utils.backup.subprocess.run") as mock_run,
+        patch("utils.backup._BACKUP_REMOTE", "remote:bucket"),
+        patch("utils.backup._backup_lock") as mock_lock,
+        patch("utils.backup.os.path.isfile", return_value=True),
+    ):
+        mock_lock.acquire.return_value = True
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stderr = b""
+        mock_run.return_value = mock_proc
+
+        from utils.backup import push_to_remote
+        result = push_to_remote("/backups/re_os_20260613_050000.dump")
+        assert result["status"] == "ok"
+        assert "Pushed" in result["detail"]
+
+
+def test_push_to_remote_failed_on_rclone_error():
+    """push_to_remote returns failed when rclone exits non-zero."""
+    with (
+        patch("utils.backup.subprocess.run") as mock_run,
+        patch("utils.backup._BACKUP_REMOTE", "remote:bucket"),
+        patch("utils.backup._backup_lock") as mock_lock,
+        patch("utils.backup.os.path.isfile", return_value=True),
+    ):
+        mock_lock.acquire.return_value = True
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1
+        mock_proc.stderr = b"rclone: error: authentication failed"
+        mock_run.return_value = mock_proc
+
+        from utils.backup import push_to_remote
+        result = push_to_remote("/backups/test.dump")
+        assert result["status"] == "failed"
+        assert "authentication" in result["detail"]
+
+
+def test_push_to_remote_skipped_when_no_local_dump():
+    """push_to_remote returns skipped when no local dump file found."""
+    from utils.backup import push_to_remote
+    with (
+        patch("utils.backup._BACKUP_REMOTE", "remote:bucket"),
+        patch("utils.backup._backup_lock") as mock_lock,
+        patch("utils.backup._get_latest_local_dump", return_value=None),
+    ):
+        mock_lock.acquire.return_value = True
+        result = push_to_remote(None)
+    assert result["status"] == "skipped"
+    assert "No local dump" in result["detail"]
+
+
+def test_verify_remote_backup_skipped_when_not_configured():
+    """verify_remote_backup returns skipped when BACKUP_REMOTE is not set."""
+    from utils.backup import verify_remote_backup
+    with patch.dict("os.environ", {}, clear=True):
+        result = verify_remote_backup()
+    assert result["status"] == "skipped"
+
+
+def test_check_remote_backup_staleness_skipped_when_not_configured():
+    """check_remote_backup_staleness returns skipped when BACKUP_REMOTE not set."""
+    from utils.backup import check_remote_backup_staleness
+    with patch.dict("os.environ", {}, clear=True):
+        result = check_remote_backup_staleness()
+    assert result["status"] == "skipped"
+    assert result["stale"] is True

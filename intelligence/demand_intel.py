@@ -96,6 +96,11 @@ class DemandSignals:
     # and policy momentum for North Bengaluru. Derived from GovtPolicyIntel.
     infra_pipeline_norm: float | None = None
 
+    # Sprint 94 — Demand coefficient calibration status (GATE-94, T-1154)
+    # "UNCALIBRATED" until Manyata backcast validation passes.
+    # Set to "CALIBRATED" by demand_calibration.py once coefficient verified.
+    calibration_status: str = "UNCALIBRATED"
+
     signals: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
@@ -110,8 +115,9 @@ class DemandSignals:
             else ""
         )
         signal = self.demand_signal or "UNKNOWN"
+        cal_label = f"[{self.calibration_status}]" if self.calibration_status != "CALIBRATED" else ""
         parts = [
-            f"[DemandSignals:{self.market}] {signal} (v1={score}, v2={score_v2})",
+            f"[DemandSignals:{self.market}] {cal_label} {signal} (v1={score}, v2={score_v2})".strip(),
             f"PSF momentum {trend}",
             f"{mos_str} MoS{kav}",
         ]

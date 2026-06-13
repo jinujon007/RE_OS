@@ -41,6 +41,10 @@ _ENTITY_TABLE_MAP: dict[str, str] = {
     "deal": "deals",
     "opportunity_score": "opportunity_scores",
     "registered_transaction": "registered_transactions",
+    "tender": "tenders",
+    "gcc_event": "gcc_events",
+    "gcc_hiring_snapshot": "gcc_hiring_snapshots",
+    "dc_conversion": "dc_conversions",
 }
 
 # ── Conflict-column resolution ─────────────────────────────────────────────────
@@ -66,6 +70,8 @@ _CONFLICT_COLUMNS: dict[str, str | tuple[str, ...] | None] = {
     "deals": None,
     "opportunity_scores": None,
     "developers": "name_normalized",
+    "gcc_events": "canonical_id",
+    "dc_conversions": "application_no",
 }
 
 # Tables whose conflict key is a composite UNIQUE constraint.
@@ -75,6 +81,7 @@ _COMPOSITE_CONFLICT: dict[str, tuple[str, ...]] = {
     "rtc_records": ("survey_no", "rtc_period", "rtc_year"),
     "demand_signal": ("micro_market_id", "signal_date"),
     "registered_transactions": ("sro", "doc_no", "reg_date"),
+    "gcc_hiring_snapshots": ("employer", "location", "snapshot_date"),
 }
 
 

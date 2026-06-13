@@ -89,6 +89,19 @@ _MARKET_TIMEOUT_SECONDS: int = 600
 _SCORE_DELTA_WARN: float = 0.1
 
 
+def _band_name(score: float) -> str:
+    """Return the action band name for a composite score."""
+    if score >= _URGENT_THRESHOLD:
+        return "URGENT"
+    if score >= _PRIORITY_THRESHOLD:
+        return "PRIORITY"
+    if score >= _WATCH_THRESHOLD:
+        return "WATCH"
+    if score >= _OBSERVE_THRESHOLD:
+        return "OBSERVE"
+    return "HOLD"
+
+
 @dataclass
 class ScoreComponents:
     """Five raw sub-scores before weighting. Each in [0.0, 1.0]."""
@@ -511,6 +524,40 @@ class OpportunityEngine:
                         self._caller, written, len(all_results), len(markets))
             self._prune_stale(seen_survey_ids)
 
+            # Write falsifiable claims to prediction_ledger for high-scoring opps (GATE-93, T-1148)
+            try:
+                from utils.prediction_ledger import write_prediction_ledger
+                from datetime import date, timedelta
+
+                # Batch resolve market IDs to names (one query, not per-survey)
+                mm_ids = list({r.micro_market_id for r in all_results if r.score >= _PRIORITY_THRESHOLD})
+                market_names = self._batch_market_names(mm_ids)
+
+                for r in all_results:
+                    if r.score >= _PRIORITY_THRESHOLD:
+                        score_margin = r.score - _PRIORITY_THRESHOLD
+                        dynamic_confidence = min(0.9, 0.5 + score_margin * 2.0)
+                        write_prediction_ledger(
+                            source_module="opportunity_engine",
+                            claim_type="opportunity_score",
+                            market=market_names.get(r.micro_market_id, "unknown"),
+                            survey_no=r.survey_no,
+                            claim_text=(
+                                f"{r.next_action} — composite={r.score:.2f}, "
+                                f"IRR={r.components.irr_score:.2f}, "
+                                f"Legal={r.components.legal_score:.2f}"
+                            ),
+                            falsifiable_metric=(
+                                f"Deal outcome for survey {r.survey_no} "
+                                f"confirms score band ({_band_name(r.score)})"
+                            ),
+                            predicted_value=float(r.score),
+                            check_date=date.today() + timedelta(days=90),
+                            confidence=dynamic_confidence,
+                        )
+            except Exception:
+                logger.debug("[{}] prediction_ledger write skipped (non-fatal)", self._caller)
+
         return all_results
 
     # ═════════════════════════════════════════════════════════════════════════
@@ -682,6 +729,37 @@ class OpportunityEngine:
                 result.survey_no, result.micro_market_id[:8],
                 prev_score, result.score, delta, result.next_action[:40],
             )
+
+    def _market_name_from_id(self, market_id: str) -> str | None:
+        """Look up a single micro_market name by UUID."""
+        try:
+            from utils.db import get_engine
+            from sqlalchemy import text
+            with get_engine().connect() as conn:
+                row = conn.execute(
+                    text("SELECT name FROM micro_markets WHERE id = :mid"),
+                    {"mid": market_id},
+                ).fetchone()
+            return row[0] if row else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _batch_market_names(mm_ids: list[str]) -> dict[str, str]:
+        """Resolve a list of micro_market_ids to market names in one query."""
+        if not mm_ids:
+            return {}
+        try:
+            from utils.db import get_engine
+            from sqlalchemy import text
+            with get_engine().connect() as conn:
+                rows = conn.execute(
+                    text("SELECT id, name FROM micro_markets WHERE id = ANY(:ids)"),
+                    {"ids": mm_ids},
+                ).fetchall()
+            return {str(r[0]): str(r[1]) for r in rows}
+        except Exception:
+            return {mid: "unknown" for mid in mm_ids}
 
     @staticmethod
     def _log_score_distribution(results: list[OpportunityScore]) -> None:

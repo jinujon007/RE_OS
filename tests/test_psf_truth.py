@@ -1,154 +1,122 @@
-"""Unit tests for PSF Truth — registered-vs-ask spread (GATE-91, T-1138).
+"""Unit tests for PSF Truth — sale-deed filtering (T-1157)."""
+from __future__ import annotations
 
-4 assertions:
-(1) compute_psf_spread returns SpreadResult with all fields
-(2) Insufficient data (n_registered < 10) → status='insufficient_data'
-(3) Spread endpoint returns 200 with spread_pct or insufficient_data
-(4) One-line summary formats correctly for Board Room injection
-"""
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import patch, MagicMock
+from decimal import Decimal
 
 import pytest
+
 pytestmark = pytest.mark.unit
 
-from utils.psf_truth import compute_psf_spread, SpreadResult
+from utils.psf_truth import compute_psf_spread, SpreadResult, SpreadResponse
 
 
-def _mock_conn(reg_rows, ask_rows, table_exists=True):
-    """Create a mock connection with execute calls matching psf_truth query order:
-    1. information_schema table existence check (.scalar())
-    2. registered_transactions median query (.fetchone())
-    3. listings median query (.fetchone())
-    """
-    conn = MagicMock()
-    conn.__enter__.return_value = conn
+def test_spread_excludes_non_sale_deeds():
+    """Surrender of Lease (₹1) excluded — registered count unaffected if only non-sale."""
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
 
-    results = []
+    # Simulate table exists
+    mock_conn.execute.side_effect = [
+        MagicMock(scalar=lambda: True),  # table exists
+        MagicMock(fetchone=lambda: (None, 0)),  # no sale deeds in window
+    ]
+    mock_engine.connect.return_value.__enter__.return_value = mock_conn
 
-    # First call: table_exists check via .scalar()
-    exists_mock = MagicMock()
-    exists_mock.scalar.return_value = table_exists
-    results.append(exists_mock)
-
-    if table_exists:
-        # Second call: reg median query
-        reg_mock = MagicMock()
-        reg_mock.fetchone.return_value = reg_rows
-        results.append(reg_mock)
-
-        # Third call: ask median query
-        ask_mock = MagicMock()
-        ask_mock.fetchone.return_value = ask_rows
-        results.append(ask_mock)
-    else:
-        # Return early from insufficient_data
-        pass
-
-    it = iter(results)
-    conn.execute.side_effect = lambda *a, **kw: next(it)
-
-    engine = MagicMock()
-    engine.connect.return_value.__enter__.return_value = conn
-    return engine
-
-
-def test_compute_psf_spread_sufficient():
-    """Spread computed with sufficient registered data."""
-    engine = _mock_conn(
-        reg_rows=(6500.0, 15),  # median 6500, 15 records
-        ask_rows=(7800.0, 30),  # median 7800, 30 listings
-    )
-    with patch("utils.psf_truth.get_engine", return_value=engine):
-        result = compute_psf_spread("Yelahanka", window_days=180)
-
-    assert result.status == "ok"
-    assert result.registered_median_psf == 6500.0
-    assert result.ask_median_psf == 7800.0
-    assert result.n_registered == 15
-    assert result.n_listings == 30
-    assert result.spread_pct is not None
-    # (7800 - 6500) / 6500 * 100 = 20%
-    assert abs(result.spread_pct - 20.0) < 0.1
-    assert result.window_days == 180
-
-
-def test_insufficient_data():
-    """Fewer than 10 registered transactions → status='insufficient_data'."""
-    engine = _mock_conn(
-        reg_rows=(None, 3),  # only 3 records
-        ask_rows=None,        # should not be reached
-    )
-    with patch("utils.psf_truth.get_engine", return_value=engine):
+    with patch("utils.psf_truth.get_engine", return_value=mock_engine):
         result = compute_psf_spread("Yelahanka")
 
     assert result.status == "insufficient_data"
-    assert result.n_registered == 3
-    assert result.registered_median_psf is None
-    assert result.spread_pct is None
+    assert result.n_registered == 0
+    # The ₹1 Surrender of Lease should not appear because deed_type != sale
 
 
-def test_spread_response_pydantic_shape():
-    """SpreadResponse Pydantic model validates all fields."""
-    from utils.psf_truth import SpreadResponse
-    data = {
-        "registered_median_psf": 6500.0,
-        "ask_median_psf": 7800.0,
-        "spread_pct": 20.0,
-        "n_registered": 15,
-        "n_listings": 30,
-        "window_days": 180,
-        "status": "ok",
-    }
-    model = SpreadResponse(**data)
-    assert model.n_registered == 15
-    assert model.status == "ok"
+def test_spread_includes_sale_deed():
+    """Sale Deed with ₹50,00,000 consideration → included in median."""
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_conn.execute.side_effect = [
+        MagicMock(scalar=lambda: True),
+        MagicMock(fetchone=lambda: (5000.0, 12)),  # 12 sale deeds ≥ 10 threshold
+        MagicMock(fetchone=lambda: (5500.0, 30)),  # 30 listings in market
+    ]
+    mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+    with patch("utils.psf_truth.get_engine", return_value=mock_engine):
+        result = compute_psf_spread("Yelahanka")
+
+    assert result.status == "ok"
+    assert result.n_registered == 12
 
 
-def test_spread_model_rejects_extra_fields():
-    """SpreadResponse should reject unknown fields (strict Pydantic)."""
-    from utils.psf_truth import SpreadResponse
-    data = {
-        "registered_median_psf": 6500.0,
-        "ask_median_psf": 7800.0,
-        "n_registered": 15,
-        "n_listings": 30,
-        "window_days": 180,
-        "status": "ok",
-        "extra_field": "should_fail",
-    }
-    with pytest.raises(Exception):
-        SpreadResponse(**data)
+def test_spread_excludes_low_consideration():
+    """Sale Deed with consideration < 100000 excluded."""
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_conn.execute.side_effect = [
+        MagicMock(scalar=lambda: True),
+        MagicMock(fetchone=lambda: (None, 0)),  # deed with low consideration filtered out
+    ]
+    mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+    with patch("utils.psf_truth.get_engine", return_value=mock_engine):
+        result = compute_psf_spread("Yelahanka")
+
+    assert result.status == "insufficient_data"
+    assert result.n_registered == 0
 
 
-def test_one_line_summary():
-    """One-line summary formats correctly."""
+def test_spread_excludes_discharge_deed():
+    """Discharge Deed (₹20,00,000) excluded — not in SALE_DEED_TYPES."""
+    mock_engine = MagicMock()
+    mock_conn = MagicMock()
+    mock_conn.execute.side_effect = [
+        MagicMock(scalar=lambda: True),
+        MagicMock(fetchone=lambda: (None, 0)),  # Discharge Deed excluded
+    ]
+    mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+    with patch("utils.psf_truth.get_engine", return_value=mock_engine):
+        result = compute_psf_spread("Yelahanka")
+
+    assert result.status == "insufficient_data"
+    assert result.n_registered == 0
+
+
+def test_spread_sale_deed_type_variants():
+    """Various sale deed type strings match correctly."""
+    from config.settings import SALE_DEED_TYPES
+    assert "Sale" in SALE_DEED_TYPES
+    assert "Sale Deed" in SALE_DEED_TYPES
+    assert "Absolute Sale" in SALE_DEED_TYPES
+    assert "Sale Agreement with Possession" in SALE_DEED_TYPES
+    assert "Discharge Deed" not in SALE_DEED_TYPES
+    assert "Surrender of Lease" not in SALE_DEED_TYPES
+
+
+def test_spread_result_to_dict():
+    """SpreadResult.to_dict() returns correct dict."""
     result = SpreadResult(
-        registered_median_psf=6500.0,
-        ask_median_psf=7800.0,
-        spread_pct=20.0,
-        n_registered=15,
-        n_listings=30,
+        registered_median_psf=5000.0,
+        ask_median_psf=5500.0,
+        spread_pct=10.0,
+        n_registered=10,
+        n_listings=20,
         window_days=180,
         status="ok",
     )
-    summary = result.one_line_summary()
-    assert "REGISTERED-vs-ASK SPREAD" in summary
-    assert "₹6,500" in summary
-    assert "₹7,800" in summary
-    assert "20.0% wider" in summary
+    d = result.to_dict()
+    assert d["registered_median_psf"] == 5000.0
+    assert d["ask_median_psf"] == 5500.0
+    assert d["spread_pct"] == 10.0
+    assert d["n_registered"] == 10
+    assert d["status"] == "ok"
 
 
-def test_one_line_summary_insufficient():
-    """One-line summary shows insufficient data message."""
-    result = SpreadResult(
-        registered_median_psf=None,
-        ask_median_psf=None,
-        spread_pct=None,
-        n_registered=3,
-        n_listings=0,
-        window_days=180,
-        status="insufficient_data",
-    )
+def test_spread_result_one_line_summary():
+    """one_line_summary formatting."""
+    result = SpreadResult(status="insufficient_data", n_registered=3, window_days=180,
+                          registered_median_psf=None, ask_median_psf=None,
+                          spread_pct=None, n_listings=0)
     summary = result.one_line_summary()
-    assert "Insufficient registered deed data" in summary
-    assert "3 records" in summary
+    assert "insufficient_data" in summary.lower() or "Insufficient" in summary

@@ -29,11 +29,12 @@ Schedule (post-Sprint-91, diet active):
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
+import json
 import os
 import sys
 import threading
 
-from config.settings import TARGET_MARKETS, SCHEDULER_ENABLE_ORG_SIM
+from config.settings import TARGET_MARKETS, SCHEDULER_ENABLE_ORG_SIM, SCHEDULER_DRY_RUN
 from sqlalchemy import text
 from utils.db import get_engine
 from utils.scheduler_helpers import safe_job as _safe_job
@@ -831,6 +832,112 @@ def run_backup_staleness_check():
         logger.warning("[BackupStaleness] Check failed: {}", exc)
 
 
+def run_la_notification_scan():
+    """Weekly LA notification gazette scan — Sunday 06:00 IST."""
+    try:
+        from scrapers.la_gazette_parser import run_la_notification_scan as _run_scan
+        count = _run_scan()
+        logger.info("[LANotification] Scan complete: {} notifications", count)
+    except Exception as exc:
+        logger.warning("[LANotification] Scan failed: {}", exc)
+
+
+def run_tender_daily_scan():
+    """Daily eProcurement Karnataka tender scan.
+    Scrapes North Bengaluru tenders, fires Discord alert for ≥₹50Cr closed tenders."""
+    try:
+        from ingest.plugins.tender_plugin import TenderPlugin
+        from ingest.writer import IngestWriter
+        from utils.discord_notifier import send
+
+        plugin = TenderPlugin()
+        writer = IngestWriter()
+        all_tenders = plugin.run(market=None)
+        written = 0
+        high_value = []
+        for record in all_tenders:
+            if writer.write(record):
+                written += 1
+                val = record.data.get("value_inr")
+                if val and float(val) >= 500000000.0:
+                    high_value.append(record)
+
+        logger.info("[TenderScan] {} tenders scraped, {} written", len(all_tenders), written)
+
+        if high_value:
+            for t in high_value:
+                title_short = t.data.get("title", "")[:100]
+                dept = t.data.get("dept", "?")
+                val_cr = float(t.data.get("value_inr", 0)) / 10000000
+                msg = f"💰 **Tender ≥₹50Cr**\n{title_short}\nDept: {dept} | Value: ₹{val_cr:.0f}Cr"
+                try:
+                    send("govt_policy_scout", "High-Value Tender Alert", msg)
+                except Exception as exc:
+                    logger.debug("[TenderScan] Discord send failed: {}", exc)
+    except Exception as exc:
+        logger.warning("[TenderScan] Failed: {}", exc)
+
+
+def run_ledger_check_weekly():
+    """Weekly prediction ledger check — Monday 06:00 IST.
+    Resolves pending claims, posts hit-rate summary to Discord."""
+    try:
+        from utils.prediction_ledger import get_pending_claims, resolve_verdicts
+        from utils.discord_notifier import send
+
+        pending = get_pending_claims()
+        if not pending:
+            logger.info("[LedgerCheck] No pending claims to resolve")
+            return
+
+        summary = resolve_verdicts()
+        msg = (
+            f"Prediction Ledger Check — {summary['total']} pending\n"
+            f"Resolved: {summary['resolved']} | "
+            f"Partial: {summary['partial']} | "
+            f"Unverifiable: {summary['unverifiable']}"
+        )
+        logger.info("[LedgerCheck] {}", msg)
+        try:
+            send("intel_reports", "Prediction Ledger Weekly Check", msg)
+        except Exception as discord_exc:
+            logger.debug("[LedgerCheck] Discord send skipped: {}", discord_exc)
+    except Exception as exc:
+        logger.warning("[LedgerCheck] Failed: {}", exc)
+
+
+def run_offsite_backup_weekly():
+    """Weekly offsite backup push — Sunday 05:00 IST.
+    Pushes latest local dump to remote, verifies, alerts if stale."""
+    from utils.backup import push_to_remote, verify_remote_backup, check_remote_backup_staleness
+    from utils.discord_notifier import send_ops_alert
+
+    result = push_to_remote()
+    if result["status"] == "ok":
+        logger.info("[OffsiteBackup] Remote push OK: {}", result["detail"])
+        verify = verify_remote_backup()
+        if verify.get("valid"):
+            logger.info("[OffsiteBackup] Remote backup verified: {} objects", verify.get("object_count"))
+        else:
+            logger.warning("[OffsiteBackup] Remote backup verify failed: {}", verify.get("error"))
+            send_ops_alert("REMOTE_BACKUP_VERIFY_FAILED", verify.get("error", "unknown"))
+    elif result["status"] == "skipped":
+        logger.info("[OffsiteBackup] Skipped: {}", result["detail"])
+    else:
+        logger.error("[OffsiteBackup] Push failed: {}", result["detail"])
+        send_ops_alert("REMOTE_BACKUP_PUSH_FAILED", result["detail"])
+
+    # Check remote staleness
+    stale_result = check_remote_backup_staleness()
+    if stale_result.get("stale") and stale_result.get("latest_file"):
+        age = stale_result.get("age_days", "?")
+        detail = f"Remote backup >8 days old: {stale_result['latest_file']} ({age}d)"
+        logger.warning("[OffsiteBackup] Remote stale: {}", detail)
+        send_ops_alert("REMOTE_BACKUP_STALE", detail)
+    elif stale_result.get("status") == "ok":
+        logger.info("[OffsiteBackup] Remote backup fresh")
+
+
 def run_locality_validation():
     """Daily locality alias validation — 06:10 IST (after market snapshot at 06:00).
     Checks listings for known alien locality aliases and logs WARNING if >20% suspect."""
@@ -1313,6 +1420,38 @@ def run_gcc_weekly_digest():
         logger.error("[Scheduler] GCC weekly digest failed: {}", exc)
 
 
+def run_gcc_hiring_snapshot():
+    """Weekly snapshot of Naukri job postings per tracked GCC employer (T-1152)."""
+    from ingest.plugins.gcc_hiring_plugin import GccHiringPlugin
+    from ingest.writer import IngestWriter
+    logger.info("[Scheduler] GCC hiring snapshot starting")
+    try:
+        plugin = GccHiringPlugin()
+        records = plugin.run()
+        writer = IngestWriter()
+        results = writer.write_batch(records)
+        successes = sum(1 for r in results if r.success)
+        logger.info("[Scheduler] GCC hiring snapshot done — {}/{} records written", successes, len(results))
+    except Exception as exc:
+        logger.error("[Scheduler] GCC hiring snapshot failed: {}", exc)
+
+
+def run_dc_conversion_scan():
+    """Daily DC conversion scan — queries Bhoomi portal (T-1153)."""
+    from ingest.plugins.dc_conversion_plugin import DCConversionPlugin
+    from ingest.writer import IngestWriter
+    logger.info("[Scheduler] DC conversion scan starting")
+    try:
+        plugin = DCConversionPlugin()
+        records = plugin.run()
+        writer = IngestWriter()
+        results = writer.write_batch(records)
+        successes = sum(1 for r in results if r.success)
+        logger.info("[Scheduler] DC conversion scan done — {}/{} records written", successes, len(results))
+    except Exception as exc:
+        logger.error("[Scheduler] DC conversion scan failed: {}", exc)
+
+
 def run_govt_policy_daily_scan():
     """Daily scan for govt/policy/infra events — 06:30 IST = 01:00 UTC."""
     logger.info("[Scheduler] Govt policy daily scan starting")
@@ -1652,13 +1791,22 @@ def run_bhoomi_auto_survey(market: str = ""):
 
 
 def run_data_floor_check():
-    """Daily data floor check — 06:30 IST = 01:00 UTC.
-    Alerts Discord via send_ops_alert if any market's live RERA count
-    drops below its configured floor. Logs outcome to agent_runs."""
+    """Data floor + heartbeat staleness check — 06:30 IST = 01:00 UTC (T-1128, T-1158).
+
+    Dual responsibility:
+    1. Alerts Discord via send_ops_alert if any market's live RERA count
+       drops below its configured floor.
+    2. Checks scheduler heartbeat staleness — alerts if last heartbeat >2h old
+       (silent scheduler death detection).
+
+    Logs combined outcome to agent_runs.
+    """
     from config.settings import DATA_FLOOR_MARKETS
     from utils.data_quality_monitor import check_live_data_floor
 
-    logger.info("[Scheduler] Data floor check starting")
+    logger.info("[Scheduler] Data floor + heartbeat check starting")
+
+    # Data floor check per market
     all_ok = True
     for market, floor in DATA_FLOOR_MARKETS.items():
         try:
@@ -1672,6 +1820,15 @@ def run_data_floor_check():
             logger.warning("[Scheduler] Data floor check failed for {}: {}", market, exc)
             all_ok = False
 
+    # Scheduler heartbeat staleness check (T-1158)
+    try:
+        heartbeat_ok = check_heartbeat_staleness(max_age_hours=2)
+        if not heartbeat_ok:
+            all_ok = False
+    except Exception as exc:
+        logger.warning("[Scheduler] Heartbeat staleness check failed: {}", exc)
+        all_ok = False
+
     try:
         with get_engine().begin() as conn:
             conn.execute(
@@ -1682,7 +1839,7 @@ def run_data_floor_check():
                 """),
                 {
                     "status": "success" if all_ok else "warning",
-                    "notes": f"checked {len(DATA_FLOOR_MARKETS)} markets; all_ok={all_ok}",
+                    "notes": f"checked {len(DATA_FLOOR_MARKETS)} markets + heartbeat; all_ok={all_ok}",
                 },
             )
     except Exception as exc:
@@ -1737,6 +1894,77 @@ def run_kaveri_deeds_weekly():
         send_ops_alert("KAVERI_DEEDS_WEEKLY", summary)
     except Exception as exc:
         logger.warning("[Scheduler] Kaveri deeds Discord alert failed: {}", exc)
+
+
+def run_scheduler_heartbeat():
+    """Interval job: writes agent_runs row to prove scheduler is alive.
+
+    Runs every 30 minutes via interval job (T-1158).
+    check_heartbeat_staleness() (called from run_data_floor_check) alerts
+    Discord OPS if last heartbeat is >2h old — catches silent scheduler death.
+
+    Safe against concurrent heartbeat writes (each INSERT is a new row).
+    Risk: if the scheduler process hangs but the thread running this job still
+    executes, the heartbeat will appear alive while other jobs are stuck.
+    Acceptable — a hung job would also eventually fail its max-instances guard
+    and the data-floor check independently validates per-market data freshness.
+    """
+    from datetime import datetime, timezone
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO agent_runs
+                        (agent_name, micro_market, event_type, status, notes)
+                    VALUES ('scheduler_heartbeat', 'system', 'heartbeat', 'success', :notes)
+                """),
+                {"notes": f"Scheduler heartbeat at {now_iso}"},
+            )
+        logger.debug("[Scheduler] Heartbeat written at {}", now_iso)
+    except Exception as exc:
+        logger.warning("[Scheduler] Heartbeat failed: {}", exc)
+
+
+def check_heartbeat_staleness(max_age_hours: int = 2) -> bool:
+    """Check if scheduler heartbeat is stale (>max_age_hours since last row).
+
+    Returns True if heartbeat is fresh, False if stale (alert sent to Discord OPS).
+    Never raises — returns False on any error.
+    """
+    from datetime import datetime, timezone
+    from utils.discord_notifier import send_ops_alert as _send_alert
+
+    try:
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT created_at FROM agent_runs
+                    WHERE agent_name = 'scheduler_heartbeat'
+                    ORDER BY created_at DESC LIMIT 1
+                """)
+            ).fetchone()
+        if row is None:
+            _send_alert(
+                "HEARTBEAT_STALE",
+                "Scheduler heartbeat has NEVER been written — possible scheduler failure",
+            )
+            return False
+        last_ts = row[0]
+        if last_ts.tzinfo is None:
+            from datetime import timezone as _tz
+            last_ts = last_ts.replace(tzinfo=_tz.utc)
+        age = (datetime.now(timezone.utc) - last_ts).total_seconds() / 3600
+        if age > max_age_hours:
+            _send_alert(
+                "HEARTBEAT_STALE",
+                f"Scheduler heartbeat stale: {age:.1f}h old (max {max_age_hours}h)",
+            )
+            return False
+        return True
+    except Exception as exc:
+        logger.warning("[Scheduler] Heartbeat staleness check failed: {}", exc)
+        return False
 
 
 if __name__ == "__main__":
@@ -1890,6 +2118,42 @@ if __name__ == "__main__":
         misfire_grace_time=3600,
     )
 
+    # Weekly offsite backup push — Sunday 05:00 IST (GATE-93, T-1146)
+    scheduler.add_job(
+        lambda: _safe_job(run_offsite_backup_weekly, "offsite_backup_weekly"),
+        CronTrigger(day_of_week="sun", hour=5, minute=0),
+        id="offsite_backup_weekly",
+        name="Weekly Offsite Backup Push (rclone + verify + Discord alert)",
+        misfire_grace_time=7200,
+    )
+
+    # Weekly prediction ledger check — Monday 06:00 IST (GATE-93, T-1148)
+    scheduler.add_job(
+        lambda: _safe_job(run_ledger_check_weekly, "ledger_check_weekly"),
+        CronTrigger(day_of_week="mon", hour=6, minute=0),
+        id="ledger_check_weekly",
+        name="Weekly Prediction Ledger Check (resolve + Discord summary)",
+        misfire_grace_time=3600,
+    )
+
+    # Daily eProcurement Karnataka tender scan — 07:00 IST (GATE-93, T-1149)
+    scheduler.add_job(
+        lambda: _safe_job(run_tender_daily_scan, "tender_daily_scan"),
+        CronTrigger(hour=7, minute=0),
+        id="tender_daily_scan",
+        name="Daily Karnataka eProcurement Tender Scan",
+        misfire_grace_time=3600,
+    )
+
+    # Weekly LA notification gazette scan — Sunday 06:00 IST (GATE-93, T-1150)
+    scheduler.add_job(
+        lambda: _safe_job(run_la_notification_scan, "la_notification_scan"),
+        CronTrigger(day_of_week="sun", hour=6, minute=0),
+        id="la_notification_scan",
+        name="Weekly LA Notification Gazette Scan",
+        misfire_grace_time=7200,
+    )
+
     # Daily LLS Compliance Calendar check — 08:00 IST (T-704)
     scheduler.add_job(
         lambda: _safe_job(run_compliance_check, "compliance_check"),
@@ -1981,6 +2245,24 @@ if __name__ == "__main__":
         CronTrigger(day_of_week="mon", hour=2, minute=0, timezone="UTC"),
         id="gcc_weekly_digest",
         name="Monday GCC Weekly Digest → Discord intel channel",
+        misfire_grace_time=3600,
+    )
+
+    # GCC hiring snapshot — Thursday 03:00 UTC = 08:30 IST (Sprint 94 — GATE-94, T-1152)
+    scheduler.add_job(
+        lambda: _safe_job(run_gcc_hiring_snapshot, "gcc_hiring_snapshot"),
+        CronTrigger(day_of_week="thu", hour=3, minute=0, timezone="UTC"),
+        id="gcc_hiring_snapshot",
+        name="Weekly GCC Job Posting Snapshot (Naukri) → gcc_hiring_snapshots table",
+        misfire_grace_time=3600,
+    )
+
+    # DC conversion scan — Daily 09:30 IST = 04:00 UTC (Sprint 94 — GATE-94, T-1153)
+    scheduler.add_job(
+        lambda: _safe_job(run_dc_conversion_scan, "dc_conversion_scan"),
+        CronTrigger(hour=4, minute=0, timezone="UTC"),
+        id="dc_conversion_scan",
+        name="Daily DC Conversion Scan (Bhoomi portal → dc_conversions table)",
         misfire_grace_time=3600,
     )
 
@@ -2106,6 +2388,21 @@ if __name__ == "__main__":
         misfire_grace_time=7200,
     )
 
+    # Scheduler heartbeat — every 30 min to prove scheduler is alive (T-1158)
+    scheduler.add_job(
+        lambda: _safe_job(run_scheduler_heartbeat, "scheduler_heartbeat"),
+        "interval", minutes=30,
+        id="scheduler_heartbeat",
+        name="Scheduler Heartbeat (writes agent_runs every 30min)",
+        replace_existing=True,
+    )
+
+    if SCHEDULER_DRY_RUN:
+        jobs = scheduler.get_jobs()
+        logger.info("SCHEDULER_DRY_RUN mode: {} jobs registered, exiting 0", len(jobs))
+        print(json.dumps({"status": "dry_run", "job_count": len(jobs)}))
+        sys.exit(0)
+
     logger.info("RE_OS Scheduler started")
     logger.info("Jobs scheduled:")
     logger.info("  01:00 AM IST — Daily pg_dump backup [T-904]")
@@ -2134,6 +2431,8 @@ if __name__ == "__main__":
         logger.info("  1st of month 09:30 IST — Monthly CEO letter (PerformanceDigest + agent_runs) [T-1019] 🧊 FROZEN (GATE-91)")
     logger.info("  Daily 08:00 IST — GCC daily scan (seed + news → L1/L2 alerts) [T-1021]")
     logger.info("  Monday 07:30 IST — GCC weekly digest (pipeline → Discord intel) [T-1022]")
+    logger.info("  Thursday 08:30 IST — GCC hiring snapshot (Naukri job postings per employer → gcc_hiring_snapshots) [T-1152]")
+    logger.info("  Daily 09:30 IST — DC conversion scan (Bhoomi land-use changes → dc_conversions) [T-1153]")
     logger.info("  1st of month 06:30 IST — Monthly mobility scout (accessibility_scores) [T-1039]")
     logger.info("  06:30 IST daily — Govt/Policy daily scan (events→Discord alerts) [T-1050]")
     logger.info("  Monday 08:00 IST — Govt/Policy weekly digest (north_bengaluru_score→Discord) [T-1050]")
@@ -2144,6 +2443,10 @@ if __name__ == "__main__":
     logger.info("  Sunday 03:00 IST — Kaveri deed weekly extraction (inbox + live → Discord) [T-1139]")
     logger.info("  02:30 IST nightly — Parcel linker (survey_no → parcels) [T-1142]")
     logger.info("  Sunday 03:30 IST — Land assembly detection (30 min buffer after deed extraction) [T-1143]")
+    logger.info("  Sunday 05:00 IST — Weekly offsite backup push (rclone + verify) [T-1146]")
+    logger.info("  Monday 06:00 IST — Weekly prediction ledger check (resolve + Discord) [T-1148]")
+    logger.info("  Daily 07:00 IST — Karnataka eProcurement tender scan [T-1149]")
+    logger.info("  Sunday 06:00 IST — Weekly LA notification gazette scan [T-1150]")
     logger.info(f"Active jobs: {[j.id for j in scheduler.get_jobs()]}")
 
     scheduler.start()

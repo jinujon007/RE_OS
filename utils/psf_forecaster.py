@@ -186,4 +186,27 @@ class PSFForecaster:
             logger.warning("[PSFForecaster] forecast failed for {}: {}", market, exc)
             result.status = "error"
 
+        # Log falsifiable claim to prediction_ledger (GATE-93, T-1148)
+        if result.status == "ok" and result.data_points >= 4:
+            try:
+                from utils.prediction_ledger import write_prediction_ledger
+                from datetime import date, timedelta
+                write_prediction_ledger(
+                    source_module="psf_forecaster",
+                    claim_type="psf_forecast",
+                    market=market,
+                    claim_text=f"{result.trend_direction} PSF trend for {market}: "
+                               f"current={result.current_psf}, "
+                               f"6m forecast={result.forecast_6m} ±{result.error_range_6m}",
+                    falsifiable_metric=(
+                        f"registered_transactions PSF median for {market} "
+                        f"within {result.conf_low_6m}–{result.conf_high_6m} range"
+                    ),
+                    predicted_value=float(result.forecast_6m),
+                    check_date=date.today() + timedelta(days=180),
+                    confidence=max(0.0, min(1.0, 1.0 - (result.mae_pct or 0.0) / 100.0)),
+                )
+            except Exception:
+                logger.debug("[PSFForecaster] prediction_ledger write skipped (non-fatal)")
+
         return result
