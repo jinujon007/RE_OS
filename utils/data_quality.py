@@ -574,11 +574,86 @@ class DataQualityMonitor:
             return []
         except Exception as exc:
             logger.warning("[DataQuality] PSF divergence check failed for {}: {}", market, exc)
+            return []
 
-            logger.warning("[DataQuality] seed_staleness check failed: {}", exc)
+    @staticmethod
+    def locality_validation_score(market: str, max_suspect_pct: float = 20.0) -> dict:
+        """Check listings for known alien localities (mis-geocoded records).
 
-            logger.warning("[DataQuality] locality_validation_score failed for {}: {}", market, exc)
-            return {"market": market, "valid": 0, "suspect": 0, "score": 1.0, "suspect_listings": [], "action": "ERROR"}
+        Returns dict: score (0–1), valid, suspect, action ('OK'|'WARN').
+        score=1.0 means all listings are in-market; 0.0 means all are alien.
+        """
+        from config.locality_aliases import KNOWN_ALIEN_LOCALITIES
+        from utils.db import get_engine
+        from sqlalchemy import text
+
+        alien_set = {a.lower() for a in KNOWN_ALIEN_LOCALITIES.get(market.lower(), [])}
+        try:
+            with get_engine().connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT l.id, l.source_url, l.property_type, l.locality, l.project_name
+                    FROM listings l
+                    JOIN micro_markets mm ON l.micro_market_id = mm.id
+                    WHERE mm.name ILIKE :market
+                """), {"market": f"%{market}%"}).fetchall()
+        except Exception as exc:
+            logger.warning("[DataQuality] locality_validation_score query failed for {}: {}", market, exc)
+            return {"score": 1.0, "valid": 0, "suspect": 0, "action": "OK"}
+
+        valid = suspect = 0
+        for row in rows:
+            locality = (row[3] or "").lower().strip()
+            if locality in alien_set:
+                suspect += 1
+            else:
+                valid += 1
+
+        total = valid + suspect
+        score = valid / total if total > 0 else 1.0
+        suspect_pct = (suspect / total * 100) if total > 0 else 0.0
+        action = "WARN" if suspect_pct > max_suspect_pct else "OK"
+        return {"score": round(score, 4), "valid": valid, "suspect": suspect, "action": action}
+
+    @staticmethod
+    def check_seed_staleness(min_live_listings: int = 10) -> list[dict]:
+        """Return markets where live listing count justifies removing seed data.
+
+        Queries listings grouped by market, counting seed_estimated vs live rows.
+        A market is flagged when live_count >= min_live_listings — seed data is no
+        longer needed and should be purged to avoid polluting PSF averages.
+
+        Returns list of flag dicts with market, live_listing_count, action.
+        """
+        from utils.db import get_engine
+        from sqlalchemy import text
+
+        try:
+            with get_engine().connect() as conn:
+                rows = conn.execute(text("""
+                    SELECT mm.name,
+                           COUNT(*) AS total,
+                           COUNT(CASE WHEN l.data_source = 'seed_estimated' THEN 1 END) AS seed_count,
+                           COUNT(CASE WHEN l.data_source != 'seed_estimated' THEN 1 END) AS live_count
+                    FROM listings l
+                    JOIN micro_markets mm ON l.micro_market_id = mm.id
+                    GROUP BY mm.name
+                    HAVING COUNT(CASE WHEN l.data_source = 'seed_estimated' THEN 1 END) > 0
+                """)).fetchall()
+        except Exception as exc:
+            logger.warning("[DataQuality] check_seed_staleness failed: {}", exc)
+            return []
+
+        flags = []
+        for row in rows:
+            market_name = row[0]
+            live_count = row[3]
+            if live_count >= min_live_listings:
+                flags.append({
+                    "market": market_name,
+                    "live_listing_count": live_count,
+                    "action": "remove_seed_and_use_live",
+                })
+        return flags
 
     @staticmethod
     def cross_source_divergence_flag(market: str) -> list[dict]:

@@ -111,7 +111,7 @@ class DBBackup:
         filepath = os.path.join(_BACKUP_DIR, f"re_os_{timestamp}.dump")
 
         cmd = [
-            "pg_dump",
+            "/usr/bin/pg_dump",
             "-Fc",
             "-h", db["host"],
             "-p", str(db["port"]),
@@ -247,7 +247,7 @@ def verify_backup(filepath: str) -> dict:
     """
     try:
         result = subprocess.run(
-            ["pg_restore", "--list", filepath],
+            ["/usr/bin/pg_restore", "--list", filepath],
             capture_output=True,
             timeout=_VERIFY_TIMEOUT_S,
         )
