@@ -20,15 +20,12 @@ _REV_RE = re.compile(
 
 
 def _parse_down_revision(text: str) -> list[str]:
-    # Use "down_revision:" (with colon) to avoid matching docstring text
-    # like "down_revision=0043" in comments.
-    idx = text.find("down_revision:")
-    if idx == -1:
+    # Match both typed (`down_revision: Union[str, None] = ...`) and
+    # untyped (`down_revision = ...`) forms, anchored to start of line.
+    m = re.search(r"""^down_revision\s*(?::[^=]+)?\s*=\s*(.+)""", text, re.MULTILINE)
+    if not m:
         return []
-    eq_idx = text.find("=", idx)
-    if eq_idx == -1:
-        return []
-    rest = text[eq_idx + 1 :].lstrip()
+    rest = m.group(1).lstrip()
     if rest.startswith("None"):
         return []
     if rest.startswith("("):

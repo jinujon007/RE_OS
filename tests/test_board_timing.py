@@ -35,7 +35,7 @@ def test_board_pitch_response_includes_timing():
         resp = client.post(
             "/api/board/session",
             json={"pitch": "5-acre site at Yelahanka", "market": "Yelahanka"},
-            headers={"X-API-Key": "test-api-key"},
+            headers={"X-API-Key": "test-key"},
         )
     assert resp.status_code == 200
     data = resp.json()

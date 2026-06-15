@@ -109,7 +109,7 @@ def test_developer_name_normalized_unique():
 
 @pytest.mark.unit
 def test_integrity_test_file_has_six_assertions():
-    """Meta-test: verify the file defines exactly 6 test functions."""
+    """Meta-test: verify the file defines exactly 7 test functions (6 integration + this one)."""
     source = Path(__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
     test_fns = [
@@ -117,6 +117,6 @@ def test_integrity_test_file_has_six_assertions():
         for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
     ]
-    assert len(test_fns) == 6, (
-        f"Expected 6 test functions, got {len(test_fns)}: {test_fns}"
+    assert len(test_fns) == 7, (
+        f"Expected 7 test functions, got {len(test_fns)}: {test_fns}"
     )

@@ -132,6 +132,7 @@ def test_get_board_session_returns_all_fields(monkeypatch):
         "ceo_synthesis": None,
         "created_at": "2026-05-29 06:00:00",
         "completed_at": "2026-05-29 06:01:30",
+        "response_time_s": 0.5,
     }
     mock_engine = MagicMock()
     mock_conn = MagicMock()

@@ -80,8 +80,8 @@ def safe_scraper_market(market: str) -> str:
 
 llm_router_fallbacks_total = _counter(
     "llm_router_fallbacks_total",
-    "LLM router fallback count by tier_from -> tier_to",
-    ["from", "to"],
+    "LLM router fallback count by tier and provider",
+    ["tier", "provider"],
 )
 
 pipeline_stage_duration_seconds = _histogram(

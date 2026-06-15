@@ -116,7 +116,7 @@ class DBBackup:
         filepath = os.path.join(_BACKUP_DIR, f"re_os_{timestamp}.dump")
 
         cmd = [
-            "/usr/bin/pg_dump",
+            "pg_dump",
             "-Fc",
             "-h",
             db["host"],

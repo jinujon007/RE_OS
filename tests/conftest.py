@@ -14,7 +14,7 @@ os.environ.setdefault(
     "postgresql://re_os_user:test_password_for_pytest@localhost:5432/re_os",
 )
 os.environ.setdefault("REDIS_URL", "memory://")
-os.environ.setdefault("DASHBOARD_API_KEY", "test-api-key")
+os.environ.setdefault("DASHBOARD_API_KEY", "test-key")
 
 # ── crewai stub ────────────────────────────────────────────────────────────────
 # Stubs LLM, Agent, Task, Crew, Process, and crewai.tools so every module that
