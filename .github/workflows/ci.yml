@@ -147,6 +147,38 @@ jobs:
           pip install detect-secrets
           detect-secrets scan --baseline .secrets.baseline
 
+  type-check:
+    name: Static Type Check (mypy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: lint
+    # continue-on-error: codebase has no annotations yet; gate is informational
+    # Remove continue-on-error once annotations reach coverage in core modules
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install mypy + stubs
+        run: pip install mypy types-requests types-redis types-beautifulsoup4
+
+      - name: Run mypy (core modules only)
+        run: |
+          mypy agents/ config/ crews/ utils/ intelligence/ ingest/ \
+            --ignore-missing-imports \
+            --no-strict-optional \
+            --follow-imports=skip \
+            --exclude "tests/" \
+            || true
+          echo "mypy gate: informational — fix annotations to make this blocking"
+
   sast:
     name: Static Security Analysis (Bandit)
     runs-on: ubuntu-latest
