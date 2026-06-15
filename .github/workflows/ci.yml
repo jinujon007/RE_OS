@@ -64,7 +64,8 @@ jobs:
             loguru python-dotenv \
             psycopg2-binary sqlalchemy alembic \
             "prometheus-client>=0.21.0" \
-            redis requests
+            redis requests \
+            fastapi starlette httpx pandas geoalchemy2 shapely
 
       - name: Run unit tests
         env:
@@ -243,7 +244,7 @@ jobs:
           DB_PASSWORD: re_os_test
           DATABASE_URL: postgresql://re_os_user:re_os_test@localhost:5432/re_os_test
         run: |
-          pip install alembic>=1.13.0 psycopg2-binary sqlalchemy
+          pip install alembic>=1.13.0 psycopg2-binary sqlalchemy geoalchemy2
           # Run all pending migrations
           alembic upgrade head
           echo "Migrations applied successfully"
