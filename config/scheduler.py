@@ -2145,28 +2145,40 @@ def run_data_floor_check():
 def run_kaveri_deeds_weekly():
     """Weekly Kaveri deed extraction — Sunday 03:00 IST.
 
-    Runs inbox mode always, attempts live mode, sends Discord summary.
+    Runs EC Form 15 inbox mode + Form 17 Index II inbox mode, then
+    attempts live mode, sends Discord summary.
     """
     from scrapers.kaveri_deeds import (
         run_inbox_mode,
         run_live_mode,
-        read_latest_checkpoint,
     )
+    from scrapers.kaveri_form17 import parse_form17_inbox
 
     logger.info("[Scheduler] Kaveri deeds weekly extraction starting")
 
+    # EC Form 15 path (property-level ECs)
     inbox_records = run_inbox_mode()
     live_records = run_live_mode()
-    total = len(inbox_records) + len(live_records)
+
+    # Form 17 Index II path (bulk village deed register — primary throughput path)
+    try:
+        form17_records = parse_form17_inbox()
+    except Exception as exc:
+        logger.warning("[Scheduler] Form 17 inbox parse failed: {}", exc)
+        form17_records = []
+
+    total = len(inbox_records) + len(live_records) + len(form17_records)
+    form17_sale = sum(1 for r in form17_records if r.get("is_sale_deed"))
 
     # Count deeds with PSF
     psf_count = sum(
         1 for r in (inbox_records + live_records) if r.get("psf") is not None
-    )
+    ) + sum(1 for r in form17_records if r.get("psf") is not None)
 
     summary = (
         f"KAVERI DEEDS WEEKLY: {total} new deeds extracted "
-        f"({len(inbox_records)} inbox, {len(live_records)} live). "
+        f"({len(inbox_records)} EC inbox, {len(live_records)} live, "
+        f"{len(form17_records)} Form17 [{form17_sale} sales]). "
         f"{psf_count} have computed PSF."
     )
     logger.info(summary)

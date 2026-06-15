@@ -276,7 +276,12 @@ PLUGIN_SCHEDULES: dict[str, dict | None] = {
         "day_of_week": "sun",
         "hour": 3,
         "minute": 0,
-    },  # Sunday 03:00 IST — deed extraction, separate from GV run
+    },  # Sunday 03:00 IST — EC Form 15 deed extraction
+    "kaveri_form17": {
+        "day_of_week": "sun",
+        "hour": 3,
+        "minute": 15,
+    },  # Sunday 03:15 IST — Form 17 Index II bulk deed path (Sprint 95)
     "portal_scout": None,  # daily at 02:00 IST
     "developer_scout": None,  # daily at 02:00 IST — vigorous monitoring for all 15 developers
     "news_scout": None,  # daily at 02:00 IST
