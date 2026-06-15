@@ -7,6 +7,7 @@ Adds columns for 6-label finbert-tone (yiyanghkust/finbert-tone):
 Migration chain:
     0023_unified_psf_view -> 0024_news_tone_columns
 """
+
 from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
@@ -18,11 +19,11 @@ depends_on: Union[str, None] = None
 
 
 def upgrade():
-    op.add_column("news_articles",
-        sa.Column("tone_label", sa.VARCHAR(30), nullable=True)
+    op.add_column(
+        "news_articles", sa.Column("tone_label", sa.VARCHAR(30), nullable=True)
     )
-    op.add_column("news_articles",
-        sa.Column("tone_score", sa.NUMERIC(5, 4), nullable=True)
+    op.add_column(
+        "news_articles", sa.Column("tone_score", sa.NUMERIC(5, 4), nullable=True)
     )
     op.create_index("idx_news_tone_label", "news_articles", ["tone_label"])
 

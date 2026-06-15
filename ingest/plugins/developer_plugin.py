@@ -6,6 +6,7 @@ project data to the developer-health schema.
 
 Records are deduplicated by developer name per market run.
 """
+
 from __future__ import annotations
 
 from loguru import logger
@@ -46,14 +47,17 @@ class DeveloperPlugin(DataPlugin):
                 "source_url": str(entry.get("source_url", "")),
                 "scraped_at": str(entry.get("scraped_at", "")),
             }
-            records.append(ParsedRecord(
-                entity_type="developer_health",
-                source_id=rera_no or f"dev_{dev_name}_{market}",
-                market=market,
-                data=data,
-            ))
+            records.append(
+                ParsedRecord(
+                    entity_type="developer_health",
+                    source_id=rera_no or f"dev_{dev_name}_{market}",
+                    market=market,
+                    data=data,
+                )
+            )
         logger.info("[DeveloperPlugin] {} developers for {}", len(records), market)
         import threading
+
         threading.Thread(
             target=self._check_and_alert_new_grade_a_launches,
             args=(market,),
@@ -68,7 +72,8 @@ class DeveloperPlugin(DataPlugin):
 
         try:
             with get_engine().connect() as conn:
-                rows = conn.execute(text("""
+                rows = conn.execute(
+                    text("""
                     SELECT r.project_name, d.name, r.rera_number,
                            r.price_min_psf, r.price_max_psf, r.total_units
                     FROM rera_projects r
@@ -79,15 +84,23 @@ class DeveloperPlugin(DataPlugin):
                       AND r.created_at >= NOW() - INTERVAL '25 hours'
                     ORDER BY r.created_at DESC
                     LIMIT 5
-                """), {"market": f"%{market}%"}).fetchall()
+                """),
+                    {"market": f"%{market}%"},
+                ).fetchall()
 
             for row in rows:
                 project_name, dev_name, rera_no, psf_min, psf_max, units = row
-                psf_str = f"\u20b9{psf_min:,.0f}\u2013\u20b9{psf_max:,.0f} PSF" if psf_min else "PSF unknown"
+                psf_str = (
+                    f"\u20b9{psf_min:,.0f}\u2013\u20b9{psf_max:,.0f} PSF"
+                    if psf_min
+                    else "PSF unknown"
+                )
                 alert = (
                     f"**[{dev_name}]** launched **{project_name}** in {market}\n"
                     f"{units or '?'} units \u00b7 {psf_str} \u00b7 RERA: {rera_no or 'pending'}"
                 )
                 send("competitor", f"Grade A Launch \u2014 {market}", alert)
         except Exception as exc:
-            logger.warning("[DeveloperPlugin] Competitor alert failed for {}: {}", market, exc)
+            logger.warning(
+                "[DeveloperPlugin] Competitor alert failed for {}: {}", market, exc
+            )

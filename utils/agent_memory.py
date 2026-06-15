@@ -59,7 +59,7 @@ def _sanitize_market(market: str) -> str:
     """Strip non-alphanumeric chars from market name. Returns empty string if invalid."""
     if not market or not isinstance(market, str):
         return ""
-    return re.sub(r'[^a-zA-Z0-9\s]', '', market).strip()
+    return re.sub(r"[^a-zA-Z0-9\s]", "", market).strip()
 
 
 def _dispose_engine():
@@ -104,16 +104,23 @@ def read_memories(agent_id: str, market: str, limit: int = 5) -> list[dict]:
                 """),
                 {"agent_id": agent_id, "pattern": f"%{sanitized}%", "limit": limit},
             ).fetchall()
-            return [{"fact": r[0], "confidence": r[1], "created_at": str(r[2])} for r in rows]
+            return [
+                {"fact": r[0], "confidence": r[1], "created_at": str(r[2])}
+                for r in rows
+            ]
     except Exception as exc:
-        logger.warning(f"agent_memory.read_memories failed ({agent_id}/{market}): {exc}")
+        logger.warning(
+            f"agent_memory.read_memories failed ({agent_id}/{market}): {exc}"
+        )
         return []
 
 
 _MEMORY_ROW_CAP = 500
 
 
-def write_memory(agent_id: str, market: str, fact: str, confidence: float = 0.6) -> bool:
+def write_memory(
+    agent_id: str, market: str, fact: str, confidence: float = 0.6
+) -> bool:
     """Insert a new memory fact. Confidence starts at 0.6 per spec (T-244).
 
     If the exact same fact already exists for this agent+market, update confidence
@@ -214,27 +221,27 @@ def decay_memories(days: int = 30, decay_amount: float = 0.1) -> int:
 
 def detect_conflicts(market: str) -> list[dict]:
     """Detect conflicting facts in agent_memories for a market.
-    
+
     Finds facts that appear multiple times for the same market from different agents,
     indicating potential disagreement. For facts with numeric values that differ by >20%,
     writes a conflict record with metadata.
-    
+
     Production-ready with input validation, error handling, and observability.
-    
+
     Returns list of conflict dicts with keys: market, fact_prefix, agent_a, agent_b,
     value_a, value_b, pct_gap.
     """
     import json
     import time
-    
+
     conflicts = []
     start_time = time.time()
-    
+
     sanitized_market = _sanitize_market(market)
     if not sanitized_market:
         logger.warning(f"[Memory] detect_conflicts rejected invalid market: {market!r}")
         return []
-    
+
     try:
         with _get_engine().connect() as conn:
             # Query for potential conflicts - facts with same 50-char prefix
@@ -258,30 +265,30 @@ def detect_conflicts(market: str) -> list[dict]:
                 """),
                 {"market": sanitized_market},
             ).fetchall()
-            
+
             for row in rows:
                 agent_a, agent_b, fact_a, fact_b, conf_a, conf_b, mkt = row
-                
+
                 # Extract numeric values from facts using robust regex
-                nums_a = re.findall(r'₹?\d[\d,]*\.?\d*', fact_a)
-                nums_b = re.findall(r'₹?\d[\d,]*\.?\d*', fact_b)
-                
+                nums_a = re.findall(r"₹?\d[\d,]*\.?\d*", fact_a)
+                nums_b = re.findall(r"₹?\d[\d,]*\.?\d*", fact_b)
+
                 if not nums_a or not nums_b:
                     continue
-                
+
                 # Parse numeric values with error handling
                 try:
-                    val_a = float(nums_a[0].replace('₹', '').replace(',', ''))
-                    val_b = float(nums_b[0].replace('₹', '').replace(',', ''))
+                    val_a = float(nums_a[0].replace("₹", "").replace(",", ""))
+                    val_b = float(nums_b[0].replace("₹", "").replace(",", ""))
                 except (ValueError, IndexError):
                     continue
-                
+
                 # Skip zero values
                 if val_a == 0 or val_b == 0:
                     continue
-                
+
                 pct_gap = abs(val_a - val_b) / max(val_a, val_b) * 100
-                
+
                 # Only flag if >20% difference
                 if pct_gap > 20:
                     fact_prefix = fact_a[:50]
@@ -295,22 +302,26 @@ def detect_conflicts(market: str) -> list[dict]:
                         "pct_gap": round(pct_gap, 1),
                     }
                     conflicts.append(conflict_dict)
-                    
+
                     # Write conflict record with robust JSON handling
                     try:
-                        metadata_json = json.dumps({
-                            "source_a": agent_a,
-                            "value_a": val_a,
-                            "source_b": agent_b,
-                            "value_b": val_b,
-                            "pct_gap": round(pct_gap, 1),
-                        })
+                        metadata_json = json.dumps(
+                            {
+                                "source_a": agent_a,
+                                "value_a": val_a,
+                                "source_b": agent_b,
+                                "value_b": val_b,
+                                "pct_gap": round(pct_gap, 1),
+                            }
+                        )
                     except (TypeError, ValueError) as json_exc:
-                        logger.warning(f"[Memory] JSON serialization failed for conflict: {json_exc}")
+                        logger.warning(
+                            f"[Memory] JSON serialization failed for conflict: {json_exc}"
+                        )
                         metadata_json = "{}"
-                    
+
                     conflict_fact = f"CONFLICT: {fact_prefix} — {agent_a}:₹{val_a:,.0f} vs {agent_b}:₹{val_b:,.0f} ({pct_gap:.0f}% gap)"
-                    
+
                     try:
                         with _get_engine().begin() as write_conn:
                             write_conn.execute(
@@ -332,15 +343,21 @@ def detect_conflicts(market: str) -> list[dict]:
                                 },
                             )
                     except Exception as write_exc:
-                        logger.warning(f"[Memory] Failed to write conflict record: {write_exc}")
-        
+                        logger.warning(
+                            f"[Memory] Failed to write conflict record: {write_exc}"
+                        )
+
         duration_ms = (time.time() - start_time) * 1000
-        logger.info(f"[Memory] detect_conflicts({sanitized_market}): {len(conflicts)} conflicts in {duration_ms:.1f}ms")
+        logger.info(
+            f"[Memory] detect_conflicts({sanitized_market}): {len(conflicts)} conflicts in {duration_ms:.1f}ms"
+        )
         return conflicts
-        
+
     except Exception as exc:
         duration_ms = (time.time() - start_time) * 1000
-        logger.error(f"[Memory] detect_conflicts failed for {sanitized_market} after {duration_ms:.1f}ms: {exc}")
+        logger.error(
+            f"[Memory] detect_conflicts failed for {sanitized_market} after {duration_ms:.1f}ms: {exc}"
+        )
         return []
 
 
@@ -365,7 +382,9 @@ def generate_weekly_digest(market: str, max_fact_length: int = 0) -> list[dict]:
     """
     sanitized = _sanitize_market(market)
     if not sanitized:
-        logger.warning(f"[Memory] generate_weekly_digest rejected invalid market: {market!r}")
+        logger.warning(
+            f"[Memory] generate_weekly_digest rejected invalid market: {market!r}"
+        )
         return []
 
     try:
@@ -391,15 +410,21 @@ def generate_weekly_digest(market: str, max_fact_length: int = 0) -> list[dict]:
                 fact_text = str(r[0] or "")
                 if max_fact_length > 0 and len(fact_text) > max_fact_length:
                     fact_text = fact_text[:max_fact_length] + "…"
-                digest.append({
-                    "fact": fact_text,
-                    "confidence": round(float(r[1]), 4) if r[1] is not None else 0.0,
-                    "agent_id": str(r[2] or ""),
-                    "market": str(r[3] or ""),
-                    "created_at": str(r[4]) if r[4] else "",
-                })
+                digest.append(
+                    {
+                        "fact": fact_text,
+                        "confidence": round(float(r[1]), 4)
+                        if r[1] is not None
+                        else 0.0,
+                        "agent_id": str(r[2] or ""),
+                        "market": str(r[3] or ""),
+                        "created_at": str(r[4]) if r[4] else "",
+                    }
+                )
 
-            logger.info(f"[Memory] generate_weekly_digest({sanitized}): {len(digest)} facts")
+            logger.info(
+                f"[Memory] generate_weekly_digest({sanitized}): {len(digest)} facts"
+            )
             return digest
 
     except Exception as exc:

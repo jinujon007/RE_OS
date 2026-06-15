@@ -11,6 +11,7 @@ Risk Register:
 | Prometheus import failure | Module crash | timed_intel_query is a safe no-op with nullcontext fallback |
 | validate_market deadlock | Two modules call get_engine simultaneously | engine is thread-safe singleton; each module uses its own connection context |
 """
+
 import re
 import threading
 import time as _time
@@ -18,8 +19,12 @@ from typing import Any
 from loguru import logger
 
 __all__ = [
-    "fval", "sanitize_market", "sanitize_survey", "validate_market",
-    "MarketCache", "timed_intel_query",
+    "fval",
+    "sanitize_market",
+    "sanitize_survey",
+    "validate_market",
+    "MarketCache",
+    "timed_intel_query",
 ]
 
 
@@ -103,16 +108,21 @@ def validate_market(market: str) -> dict | None:
     try:
         from utils.db import get_engine
         from sqlalchemy import text
+
         with get_engine(pool_size=2, max_overflow=1).connect() as conn:
             row = conn.execute(
-                text("SELECT id, name, slug FROM micro_markets WHERE name ILIKE :m LIMIT 1"),
+                text(
+                    "SELECT id, name, slug FROM micro_markets WHERE name ILIKE :m LIMIT 1"
+                ),
                 {"m": market},
             ).fetchone()
             if row:
                 return {"id": row[0], "name": str(row[1]), "slug": str(row[2])}
             slug = sanitize_market(market).lower().replace(" ", "-")
             row = conn.execute(
-                text("SELECT id, name, slug FROM micro_markets WHERE slug = :slug LIMIT 1"),
+                text(
+                    "SELECT id, name, slug FROM micro_markets WHERE slug = :slug LIMIT 1"
+                ),
                 {"slug": slug},
             ).fetchone()
             if row:
@@ -204,7 +214,9 @@ def timed_intel_query(query_name: str):
     """
     try:
         from utils.db import timed_query
+
         return timed_query(query_name)
     except (ImportError, Exception):
         from contextlib import nullcontext
+
         return nullcontext()

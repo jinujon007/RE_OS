@@ -24,6 +24,7 @@ Negative signal suppressor:
     positive demand in the same 12-month window, gcc_north_norm is halved.
     This prevents a market from looking bullish when a large employer is leaving.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -33,7 +34,10 @@ from typing import Any
 from loguru import logger
 
 from intelligence._shared import (
-    MarketCache, sanitize_market, timed_intel_query, validate_market,
+    MarketCache,
+    sanitize_market,
+    timed_intel_query,
+    validate_market,
 )
 
 __all__ = ["GCCIntel", "GCCIntelResult", "GCCEvent"]
@@ -42,22 +46,24 @@ _CACHE_NS = "gcc_intel"
 
 # Corridor names that are primary for North Bengaluru markets.
 # Used to restrict which events count toward a given market's gcc_north_norm.
-_NORTH_BENGALURU_CORRIDORS = frozenset({
-    "kiadb_aerospace_park",
-    "devanahalli_nh44",
-    "manyata_tech_park",
-    "yelahanka_jakkur",
-    "hebbal_orn_north",
-    "nagawara_hm_tech",
-    "thanisandra_strr",
-})
+_NORTH_BENGALURU_CORRIDORS = frozenset(
+    {
+        "kiadb_aerospace_park",
+        "devanahalli_nh44",
+        "manyata_tech_park",
+        "yelahanka_jakkur",
+        "hebbal_orn_north",
+        "nagawara_hm_tech",
+        "thanisandra_strr",
+    }
+)
 
 # Market slug → primary corridor. Determines which corridor's GCC events
 # feed the market's gcc_north_norm.
 _MARKET_TO_CORRIDOR: dict[str, str] = {
-    "yelahanka":    "yelahanka_jakkur",
-    "devanahalli":  "devanahalli_nh44",
-    "hebbal":       "hebbal_orn_north",
+    "yelahanka": "yelahanka_jakkur",
+    "devanahalli": "devanahalli_nh44",
+    "hebbal": "hebbal_orn_north",
 }
 
 # Normalisation ceiling: gcc_signal_score × north_bengaluru_impact_score of
@@ -72,6 +78,7 @@ _NEGATIVE_SUPPRESSOR_THRESHOLD = 0.30
 @dataclass
 class GCCEvent:
     """Single GCC announcement record from the gcc_events table."""
+
     id: str
     canonical_id: str
     company: str
@@ -112,11 +119,12 @@ class GCCIntelResult:
     demand_score_v2. All other fields are informational context for the dashboard
     and weekly digest.
     """
+
     market: str
     collected_at: str
     corridor: str | None = None
 
-    gcc_north_norm: float = 0.0      # the component that feeds demand_score_v2
+    gcc_north_norm: float = 0.0  # the component that feeds demand_score_v2
     event_count_12m: int = 0
     event_count_90d: int = 0
     total_headcount_12m: int = 0
@@ -162,9 +170,7 @@ class GCCIntel:
         self._cache = MarketCache()
         self._caller = caller or "GCCIntel"
 
-    def get_gcc_score(
-        self, market: str, force_refresh: bool = False
-    ) -> GCCIntelResult:
+    def get_gcc_score(self, market: str, force_refresh: bool = False) -> GCCIntelResult:
         """Return GCC demand signal for *market*.
 
         Never raises. Returns result with gcc_north_norm=0.0 on any failure.
@@ -196,6 +202,7 @@ class GCCIntel:
         try:
             from utils.db import get_engine
             from sqlalchemy import text
+
             with get_engine(pool_size=2, max_overflow=1).connect() as conn:
                 self._load_positive_score(conn, result, corridor)
                 self._load_negative_score(conn, result, corridor)
@@ -240,7 +247,9 @@ class GCCIntel:
                     params[f"c{i}"] = c
 
             if maturity_levels:
-                placeholders = ", ".join(f":ml{i}" for i, _ in enumerate(maturity_levels))
+                placeholders = ", ".join(
+                    f":ml{i}" for i, _ in enumerate(maturity_levels)
+                )
                 conditions.append(f"signal_maturity_level IN ({placeholders})")
                 for i, lvl in enumerate(maturity_levels):
                     params[f"ml{i}"] = lvl
@@ -274,19 +283,35 @@ class GCCIntel:
 
             return [
                 GCCEvent(
-                    id=r[0], canonical_id=r[1], company=r[2], sector=r[3],
-                    country_of_origin=r[4], bengaluru_location=r[5],
-                    nearest_corridor=r[6], entrant_type=r[7], work_model=r[8],
-                    signal_maturity_level=r[9], is_negative_signal=bool(r[10]),
-                    north_bengaluru_impact_score=r[11], investment_cr=r[12],
-                    planned_headcount=r[13], headcount_timeline_months=r[14],
-                    median_ctc_l=r[15], office_sqft=r[16],
-                    demand_creation_score=r[17], residential_impact_score=r[18],
-                    appreciation_impact_score=r[19], rental_impact_score=r[20],
-                    gcc_signal_score=r[21], primary_housing_segment=r[22],
-                    time_horizon=r[23], estimated_demand_units=r[24],
-                    source_name=r[25], source_reliability=r[26],
-                    announced_at=r[27], discord_alert_fired=bool(r[28]),
+                    id=r[0],
+                    canonical_id=r[1],
+                    company=r[2],
+                    sector=r[3],
+                    country_of_origin=r[4],
+                    bengaluru_location=r[5],
+                    nearest_corridor=r[6],
+                    entrant_type=r[7],
+                    work_model=r[8],
+                    signal_maturity_level=r[9],
+                    is_negative_signal=bool(r[10]),
+                    north_bengaluru_impact_score=r[11],
+                    investment_cr=r[12],
+                    planned_headcount=r[13],
+                    headcount_timeline_months=r[14],
+                    median_ctc_l=r[15],
+                    office_sqft=r[16],
+                    demand_creation_score=r[17],
+                    residential_impact_score=r[18],
+                    appreciation_impact_score=r[19],
+                    rental_impact_score=r[20],
+                    gcc_signal_score=r[21],
+                    primary_housing_segment=r[22],
+                    time_horizon=r[23],
+                    estimated_demand_units=r[24],
+                    source_name=r[25],
+                    source_reliability=r[26],
+                    announced_at=r[27],
+                    discord_alert_fired=bool(r[28]),
                     created_at=r[29],
                 )
                 for r in rows
@@ -300,8 +325,10 @@ class GCCIntel:
         try:
             from utils.db import get_engine
             from sqlalchemy import text
+
             with get_engine(pool_size=2, max_overflow=1).connect() as conn:
-                rows = conn.execute(text("""
+                rows = conn.execute(
+                    text("""
                     SELECT
                         id::text, canonical_id, company, sector, country_of_origin,
                         bengaluru_location, nearest_corridor, entrant_type, work_model,
@@ -322,22 +349,39 @@ class GCCIntel:
                       AND north_bengaluru_impact_score >= 0.70
                       AND signal_maturity_level <= 2
                     ORDER BY gcc_signal_score DESC
-                """)).fetchall()
+                """)
+                ).fetchall()
             return [
                 GCCEvent(
-                    id=r[0], canonical_id=r[1], company=r[2], sector=r[3],
-                    country_of_origin=r[4], bengaluru_location=r[5],
-                    nearest_corridor=r[6], entrant_type=r[7], work_model=r[8],
-                    signal_maturity_level=r[9], is_negative_signal=bool(r[10]),
-                    north_bengaluru_impact_score=r[11], investment_cr=r[12],
-                    planned_headcount=r[13], headcount_timeline_months=r[14],
-                    median_ctc_l=r[15], office_sqft=r[16],
-                    demand_creation_score=r[17], residential_impact_score=r[18],
-                    appreciation_impact_score=r[19], rental_impact_score=r[20],
-                    gcc_signal_score=r[21], primary_housing_segment=r[22],
-                    time_horizon=r[23], estimated_demand_units=r[24],
-                    source_name=r[25], source_reliability=r[26],
-                    announced_at=r[27], discord_alert_fired=bool(r[28]),
+                    id=r[0],
+                    canonical_id=r[1],
+                    company=r[2],
+                    sector=r[3],
+                    country_of_origin=r[4],
+                    bengaluru_location=r[5],
+                    nearest_corridor=r[6],
+                    entrant_type=r[7],
+                    work_model=r[8],
+                    signal_maturity_level=r[9],
+                    is_negative_signal=bool(r[10]),
+                    north_bengaluru_impact_score=r[11],
+                    investment_cr=r[12],
+                    planned_headcount=r[13],
+                    headcount_timeline_months=r[14],
+                    median_ctc_l=r[15],
+                    office_sqft=r[16],
+                    demand_creation_score=r[17],
+                    residential_impact_score=r[18],
+                    appreciation_impact_score=r[19],
+                    rental_impact_score=r[20],
+                    gcc_signal_score=r[21],
+                    primary_housing_segment=r[22],
+                    time_horizon=r[23],
+                    estimated_demand_units=r[24],
+                    source_name=r[25],
+                    source_reliability=r[26],
+                    announced_at=r[27],
+                    discord_alert_fired=bool(r[28]),
                     created_at=r[29],
                 )
                 for r in rows
@@ -351,13 +395,17 @@ class GCCIntel:
         try:
             from utils.db import get_engine
             from sqlalchemy import text
+
             with get_engine(pool_size=2, max_overflow=1).connect() as conn:
-                result = conn.execute(text("""
+                result = conn.execute(
+                    text("""
                     UPDATE gcc_events
                     SET discord_alert_fired = TRUE,
                         updated_at = NOW()
                     WHERE canonical_id = :cid
-                """), {"cid": canonical_id})
+                """),
+                    {"cid": canonical_id},
+                )
                 conn.commit()
                 return (result.rowcount or 0) > 0
         except Exception as exc:
@@ -365,16 +413,16 @@ class GCCIntel:
             return False
 
     def invalidate_cache(self, market: str | None = None):
-        self._cache.invalidate(
-            _CACHE_NS, sanitize_market(market) if market else None
-        )
+        self._cache.invalidate(_CACHE_NS, sanitize_market(market) if market else None)
 
     # ── Private DB loaders ────────────────────────────────────────────────────
 
     def _load_positive_score(self, conn, result: GCCIntelResult, corridor: str):
         from sqlalchemy import text
+
         with timed_intel_query("gcc_positive_score"):
-            row = conn.execute(text("""
+            row = conn.execute(
+                text("""
                 SELECT
                     COALESCE(
                         AVG(gcc_signal_score * north_bengaluru_impact_score),
@@ -388,7 +436,9 @@ class GCCIntel:
                   AND announced_at >= CURRENT_DATE - INTERVAL '12 months'
                   AND gcc_signal_score IS NOT NULL
                   AND north_bengaluru_impact_score IS NOT NULL
-            """), {"corridor": corridor}).fetchone()
+            """),
+                {"corridor": corridor},
+            ).fetchone()
 
         if row and row[0]:
             raw = float(row[0])
@@ -400,8 +450,10 @@ class GCCIntel:
     def _load_negative_score(self, conn, result: GCCIntelResult, corridor: str):
         """Store raw negative demand total for suppressor calculation."""
         from sqlalchemy import text
+
         with timed_intel_query("gcc_negative_score"):
-            row = conn.execute(text("""
+            row = conn.execute(
+                text("""
                 SELECT
                     COALESCE(
                         ABS(AVG(gcc_signal_score * north_bengaluru_impact_score)),
@@ -413,7 +465,9 @@ class GCCIntel:
                   AND announced_at >= CURRENT_DATE - INTERVAL '12 months'
                   AND gcc_signal_score IS NOT NULL
                   AND north_bengaluru_impact_score IS NOT NULL
-            """), {"corridor": corridor}).fetchone()
+            """),
+                {"corridor": corridor},
+            ).fetchone()
         # Store on result for _apply_negative_suppressor
         result._neg_raw = float(row[0]) if row and row[0] else 0.0  # type: ignore[attr-defined]
 
@@ -421,7 +475,8 @@ class GCCIntel:
         from sqlalchemy import text
 
         with timed_intel_query("gcc_event_stats"):
-            row = conn.execute(text("""
+            row = conn.execute(
+                text("""
                 SELECT
                     COALESCE(SUM(planned_headcount), 0) AS total_headcount,
                     COALESCE(AVG(gcc_signal_score), 0.0) AS avg_score,
@@ -433,7 +488,9 @@ class GCCIntel:
                 WHERE nearest_corridor = :corridor
                   AND is_negative_signal = FALSE
                   AND announced_at >= CURRENT_DATE - INTERVAL '12 months'
-            """), {"corridor": corridor}).fetchone()
+            """),
+                {"corridor": corridor},
+            ).fetchone()
 
         if row:
             result.total_headcount_12m = int(row[0]) if row[0] else 0
@@ -442,7 +499,8 @@ class GCCIntel:
             result.event_count_90d = int(row[3]) if row[3] else 0
 
         with timed_intel_query("gcc_top_sectors"):
-            sector_rows = conn.execute(text("""
+            sector_rows = conn.execute(
+                text("""
                 SELECT sector, COUNT(*) AS cnt
                 FROM gcc_events
                 WHERE nearest_corridor = :corridor
@@ -452,11 +510,14 @@ class GCCIntel:
                 GROUP BY sector
                 ORDER BY cnt DESC
                 LIMIT 5
-            """), {"corridor": corridor}).fetchall()
+            """),
+                {"corridor": corridor},
+            ).fetchall()
         result.top_sectors = [str(r[0]) for r in sector_rows if r[0]]
 
         with timed_intel_query("gcc_housing_segment"):
-            seg_row = conn.execute(text("""
+            seg_row = conn.execute(
+                text("""
                 SELECT primary_housing_segment
                 FROM gcc_events
                 WHERE nearest_corridor = :corridor
@@ -466,7 +527,9 @@ class GCCIntel:
                 GROUP BY primary_housing_segment
                 ORDER BY COUNT(*) DESC
                 LIMIT 1
-            """), {"corridor": corridor}).fetchone()
+            """),
+                {"corridor": corridor},
+            ).fetchone()
         result.dominant_housing_segment = str(seg_row[0]) if seg_row else None
 
     def _apply_negative_suppressor(self, result: GCCIntelResult):
@@ -517,14 +580,21 @@ class GCCIntel:
 
 if __name__ == "__main__":
     import json
+
     for mkt in ("Yelahanka", "Devanahalli", "Hebbal"):
         r = GCCIntel(caller="self_test").get_gcc_score(mkt)
-        print(json.dumps({
-            "market": r.market,
-            "corridor": r.corridor,
-            "gcc_north_norm": r.gcc_north_norm,
-            "event_count_12m": r.event_count_12m,
-            "total_headcount_12m": r.total_headcount_12m,
-            "has_level1": r.has_level1_signal,
-            "signals": r.signals,
-        }, indent=2, default=str))
+        print(
+            json.dumps(
+                {
+                    "market": r.market,
+                    "corridor": r.corridor,
+                    "gcc_north_norm": r.gcc_north_norm,
+                    "event_count_12m": r.event_count_12m,
+                    "total_headcount_12m": r.total_headcount_12m,
+                    "has_level1": r.has_level1_signal,
+                    "signals": r.signals,
+                },
+                indent=2,
+                default=str,
+            )
+        )

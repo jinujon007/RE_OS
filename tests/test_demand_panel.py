@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 
@@ -8,6 +9,7 @@ def _auth_env():
     with patch.dict("os.environ", {"DASHBOARD_API_KEY": "test-key"}):
         import importlib
         import dashboard.app_fastapi as _fa
+
         importlib.reload(_fa)
         yield
 
@@ -16,6 +18,7 @@ class TestDemandPanel:
     def test_demand_route_returns_200(self):
         from starlette.testclient import TestClient
         from dashboard.app_fastapi import app
+
         client = TestClient(app)
         resp = client.get("/demand")
         assert resp.status_code == 200
@@ -25,6 +28,7 @@ class TestDemandPanel:
         from starlette.testclient import TestClient
         from dashboard.app_fastapi import app
         from intelligence.demand_intel import DemandSignals
+
         client = TestClient(app)
         mock_ds = MagicMock(spec=DemandSignals)
         mock_ds.market = "Yelahanka"
@@ -47,9 +51,12 @@ class TestDemandPanel:
         mock_ds.avg_news_sentiment = 0.05
         mock_ds.kaveri_monthly_approvals = 4500.0
         mock_ds.signals = ["Market is stable"]
-        with patch("intelligence.demand_intel.DemandIntel.get_signals", return_value=mock_ds):
-            resp = client.get("/api/demand/Yelahanka",
-                              headers={"X-API-Key": "test-key"})
+        with patch(
+            "intelligence.demand_intel.DemandIntel.get_signals", return_value=mock_ds
+        ):
+            resp = client.get(
+                "/api/demand/Yelahanka", headers={"X-API-Key": "test-key"}
+            )
             assert resp.status_code == 200
             data = resp.json()
             assert data["market"] == "Yelahanka"

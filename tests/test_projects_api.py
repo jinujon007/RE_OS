@@ -1,8 +1,10 @@
 """Unit tests for /api/projects CRUD + deal velocity (T-995)."""
+
 import os
 from unittest.mock import patch, MagicMock
 from starlette.testclient import TestClient
 import pytest
+
 pytestmark = pytest.mark.unit
 
 _API_KEY = "test-key"
@@ -13,21 +15,37 @@ _T1 = "00000000-0000-0000-0000-000000000002"
 class TestCreateProject:
     def test_create_project(self):
         from dashboard.app_fastapi import app
+
         client = TestClient(app)
         conn = MagicMock()
-        with patch("dashboard.app_fastapi._get_sa_engine") as mock_eng, \
-             patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}):
+        with (
+            patch("dashboard.app_fastapi._get_sa_engine") as mock_eng,
+            patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}),
+        ):
             mock_eng.return_value.begin.return_value.__enter__.return_value = conn
             result = MagicMock()
             result.fetchone.return_value = (
-                _P1, "Test Project", "Yelahanka", "45/2", "compare",
-                "lead", None, None, None, None, None,
+                _P1,
+                "Test Project",
+                "Yelahanka",
+                "45/2",
+                "compare",
+                "lead",
+                None,
+                None,
+                None,
+                None,
+                None,
             )
             conn.execute.return_value = result
             resp = client.post(
                 "/api/projects",
-                json={"name": "Test Project", "market": "Yelahanka",
-                       "survey_no": "45/2", "deal_type": "compare"},
+                json={
+                    "name": "Test Project",
+                    "market": "Yelahanka",
+                    "survey_no": "45/2",
+                    "deal_type": "compare",
+                },
                 headers={"X-API-Key": _API_KEY},
             )
         assert resp.status_code == 201
@@ -37,6 +55,7 @@ class TestCreateProject:
 
     def test_create_project_invalid_status(self):
         from dashboard.app_fastapi import app
+
         client = TestClient(app)
         with patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}):
             resp = client.post(
@@ -50,15 +69,29 @@ class TestCreateProject:
 class TestListProjects:
     def test_list_with_status_filter(self):
         from dashboard.app_fastapi import app
+
         client = TestClient(app)
         conn = MagicMock()
-        with patch("dashboard.app_fastapi._get_sa_engine") as mock_eng, \
-             patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}):
+        with (
+            patch("dashboard.app_fastapi._get_sa_engine") as mock_eng,
+            patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}),
+        ):
             mock_eng.return_value.connect.return_value.__enter__.return_value = conn
             result = MagicMock()
             result.scalar.return_value = 1
             result.fetchall.return_value = [
-                (_P1, "Test", "Yelahanka", "45/2", "compare", "lead", None, None, 10, 2),
+                (
+                    _P1,
+                    "Test",
+                    "Yelahanka",
+                    "45/2",
+                    "compare",
+                    "lead",
+                    None,
+                    None,
+                    10,
+                    2,
+                ),
             ]
             conn.execute.side_effect = [result, result]
             resp = client.get(
@@ -75,19 +108,37 @@ class TestListProjects:
 class TestGetProject:
     def test_get_project_with_tasks(self):
         from dashboard.app_fastapi import app
+
         client = TestClient(app)
         conn = MagicMock()
-        with patch("dashboard.app_fastapi._get_sa_engine") as mock_eng, \
-             patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}):
+        with (
+            patch("dashboard.app_fastapi._get_sa_engine") as mock_eng,
+            patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}),
+        ):
             mock_eng.return_value.connect.return_value.__enter__.return_value = conn
             conn.execute.side_effect = [
-                MagicMock(fetchone=lambda: (
-                    _P1, "Test", "Yelahanka", "45/2", "compare",
-                    "lead", None, None, None, None, None, None, 10,
-                )),
-                MagicMock(fetchall=lambda: [
-                    (_T1, "Task A", None, "ops", "todo", None, None, None, None),
-                ]),
+                MagicMock(
+                    fetchone=lambda: (
+                        _P1,
+                        "Test",
+                        "Yelahanka",
+                        "45/2",
+                        "compare",
+                        "lead",
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        10,
+                    )
+                ),
+                MagicMock(
+                    fetchall=lambda: [
+                        (_T1, "Task A", None, "ops", "todo", None, None, None, None),
+                    ]
+                ),
                 MagicMock(fetchall=lambda: []),
             ]
             resp = client.get(
@@ -102,6 +153,7 @@ class TestGetProject:
 
     def test_get_project_invalid_id(self):
         from dashboard.app_fastapi import app
+
         client = TestClient(app)
         with patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}):
             resp = client.get(
@@ -114,16 +166,26 @@ class TestGetProject:
 class TestCreateTask:
     def test_create_task(self):
         from dashboard.app_fastapi import app
+
         client = TestClient(app)
         conn = MagicMock()
-        with patch("dashboard.app_fastapi._get_sa_engine") as mock_eng, \
-             patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}):
+        with (
+            patch("dashboard.app_fastapi._get_sa_engine") as mock_eng,
+            patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}),
+        ):
             mock_eng.return_value.begin.return_value.__enter__.return_value = conn
             r1 = MagicMock()
             r1.fetchone.return_value = (_P1,)
             r2 = MagicMock()
             r2.fetchone.return_value = (
-                _T1, "New Task", None, "ops", "todo", None, None, None,
+                _T1,
+                "New Task",
+                None,
+                "ops",
+                "todo",
+                None,
+                None,
+                None,
             )
             conn.execute.side_effect = [r1, r2]
             resp = client.post(
@@ -138,10 +200,13 @@ class TestCreateTask:
 class TestTaskCompletion:
     def test_task_completion_sets_timestamp(self):
         from dashboard.app_fastapi import app
+
         client = TestClient(app)
         conn = MagicMock()
-        with patch("dashboard.app_fastapi._get_sa_engine") as mock_eng, \
-             patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}):
+        with (
+            patch("dashboard.app_fastapi._get_sa_engine") as mock_eng,
+            patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}),
+        ):
             mock_eng.return_value.begin.return_value.__enter__.return_value = conn
             result = MagicMock()
             result.fetchone.return_value = (_T1, "Task A", "done", None, None)
@@ -158,10 +223,13 @@ class TestTaskCompletion:
 class TestVelocity:
     def test_velocity_written_on_status_change(self):
         from dashboard.app_fastapi import app
+
         client = TestClient(app)
         conn = MagicMock()
-        with patch("dashboard.app_fastapi._get_sa_engine") as mock_eng, \
-             patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}):
+        with (
+            patch("dashboard.app_fastapi._get_sa_engine") as mock_eng,
+            patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}),
+        ):
             mock_eng.return_value.begin.return_value.__enter__.return_value = conn
             r1 = MagicMock()
             r1.fetchone.return_value = (_P1, "lead", "Test", "Yelahanka", None, None)
@@ -169,7 +237,14 @@ class TestVelocity:
             r2.fetchone.return_value = None
             r3 = MagicMock()
             r3.fetchone.return_value = (
-                _P1, "Test", "Yelahanka", None, "mou", None, None, None,
+                _P1,
+                "Test",
+                "Yelahanka",
+                None,
+                "mou",
+                None,
+                None,
+                None,
             )
             conn.execute.side_effect = [r1, r2, r3]
             resp = client.patch(
@@ -182,10 +257,13 @@ class TestVelocity:
 
     def test_velocity_endpoint(self):
         from dashboard.app_fastapi import app
+
         client = TestClient(app)
         conn = MagicMock()
-        with patch("dashboard.app_fastapi._get_sa_engine") as mock_eng, \
-             patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}):
+        with (
+            patch("dashboard.app_fastapi._get_sa_engine") as mock_eng,
+            patch.dict(os.environ, {"DASHBOARD_API_KEY": _API_KEY}),
+        ):
             mock_eng.return_value.connect.return_value.__enter__.return_value = conn
             conn.execute.side_effect = [
                 MagicMock(fetchone=lambda: (_P1, "lead", None)),

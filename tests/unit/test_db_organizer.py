@@ -36,6 +36,7 @@ class TestComputeGrade:
 
     def test_boundary_grade_a_min(self, monkeypatch):
         import config.settings as s
+
         monkeypatch.setattr(s, "GRADE_A_MIN_UNITS", 500)
         monkeypatch.setattr(s, "GRADE_B_MIN_UNITS", 100)
         assert DBOrganizer._compute_grade("Unknown", 500) == "A"
@@ -43,6 +44,7 @@ class TestComputeGrade:
 
     def test_boundary_grade_b_min(self, monkeypatch):
         import config.settings as s
+
         monkeypatch.setattr(s, "GRADE_A_MIN_UNITS", 500)
         monkeypatch.setattr(s, "GRADE_B_MIN_UNITS", 100)
         assert DBOrganizer._compute_grade("Unknown", 100) == "B"

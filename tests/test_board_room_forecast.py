@@ -1,6 +1,8 @@
 """T-1113: Finance Head Board Room PSF forecast context tests."""
+
 import pytest
 from unittest.mock import MagicMock, patch
+
 pytestmark = pytest.mark.unit
 
 
@@ -25,6 +27,7 @@ def test_finance_head_context_contains_psf_forecast_on_ok_status():
         MockFC.return_value = instance
 
         from utils.psf_forecaster import PSFForecaster
+
         fc = PSFForecaster()
         f_result = fc.forecast("Yelahanka")
 
@@ -57,6 +60,7 @@ def test_finance_head_context_contains_insufficient_data_message_on_failure():
         MockFC.return_value = instance
 
         from utils.psf_forecaster import PSFForecaster
+
         fc = PSFForecaster()
         f_result = fc.forecast("Yelahanka")
 

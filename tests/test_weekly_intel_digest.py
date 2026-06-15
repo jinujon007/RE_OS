@@ -1,14 +1,18 @@
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 
 class TestWeeklyIntelDigest:
     def test_weekly_digest_returns_dataclass(self):
         from utils.weekly_digest import WeeklyIntelDigest, WeeklyDigestResult
+
         with patch("utils.weekly_digest.get_engine") as mock_eng:
             mock_conn = MagicMock()
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             mock_conn.execute.return_value.scalar.return_value = None
             mock_conn.execute.return_value.fetchall.return_value = []
             mock_conn.execute.return_value.fetchone.return_value = None
@@ -19,9 +23,12 @@ class TestWeeklyIntelDigest:
 
     def test_psf_delta_computed_correctly(self):
         from utils.weekly_digest import WeeklyIntelDigest
+
         with patch("utils.weekly_digest.get_engine") as mock_eng:
             mock_conn = MagicMock()
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
 
             psf_call_count = [0]
 
@@ -45,9 +52,12 @@ class TestWeeklyIntelDigest:
 
     def test_psf_returns_flat_on_null_data(self):
         from utils.weekly_digest import WeeklyIntelDigest
+
         with patch("utils.weekly_digest.get_engine") as mock_eng:
             mock_conn = MagicMock()
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             mock_conn.execute.return_value.scalar.return_value = None
             mock_conn.execute.return_value.fetchall.return_value = []
             mock_conn.execute.return_value.fetchone.return_value = None
@@ -59,6 +69,7 @@ class TestWeeklyIntelDigest:
 
     def test_distressed_devs_threshold_applied(self):
         from utils.weekly_digest import WeeklyIntelDigest
+
         with patch("utils.weekly_digest.get_engine") as mock_eng:
             mock_conn = MagicMock()
             mock_eng.return_value.connect.return_value.__enter__.return_value = mock_eng
@@ -78,7 +89,9 @@ class TestWeeklyIntelDigest:
                 return mr
 
             mock_conn.execute.side_effect = exec_side
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
 
             digest = WeeklyIntelDigest()
             result = digest.build("Yelahanka")
@@ -87,9 +100,12 @@ class TestWeeklyIntelDigest:
 
     def test_top_opportunity_returns_none_on_empty(self):
         from utils.weekly_digest import WeeklyIntelDigest
+
         with patch("utils.weekly_digest.get_engine") as mock_eng:
             mock_conn = MagicMock()
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             mock_conn.execute.return_value.scalar.return_value = None
             mock_conn.execute.return_value.fetchall.return_value = []
             mock_conn.execute.return_value.fetchone.return_value = None
@@ -100,6 +116,7 @@ class TestWeeklyIntelDigest:
 
     def test_build_returns_zeroed_on_db_exception(self):
         from utils.weekly_digest import WeeklyIntelDigest
+
         with patch("utils.weekly_digest.get_engine", side_effect=Exception("DB down")):
             digest = WeeklyIntelDigest()
             result = digest.build("Yelahanka")
@@ -112,9 +129,12 @@ class TestWeeklyIntelDigest:
 
     def test_case_insensitive_market_yelahanka(self):
         from utils.weekly_digest import WeeklyIntelDigest
+
         with patch("utils.weekly_digest.get_engine") as mock_eng:
             mock_conn = MagicMock()
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             mock_conn.execute.return_value.scalar.return_value = None
             mock_conn.execute.return_value.fetchall.return_value = []
             mock_conn.execute.return_value.fetchone.return_value = None

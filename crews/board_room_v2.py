@@ -15,7 +15,11 @@ Usage:
 import json
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    as_completed,
+    TimeoutError as FuturesTimeoutError,
+)
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -74,6 +78,7 @@ def _get_grade_b_pipeline(market: str) -> list[dict]:
         return []
     try:
         from sqlalchemy import text as _text
+
         with get_engine().connect() as conn:
             # Match micro_market_id via ILIKE on micro_markets.name (consistent with JD/JV)
             mm_row = conn.execute(
@@ -107,7 +112,9 @@ def _get_grade_b_pipeline(market: str) -> list[dict]:
             for row in rows
         ]
     except Exception as exc:
-        logger.debug("[BoardRoomV2] Grade B pipeline lookup failed for {}: {}", market_raw, exc)
+        logger.debug(
+            "[BoardRoomV2] Grade B pipeline lookup failed for {}: {}", market_raw, exc
+        )
         return []
 
 
@@ -215,6 +222,7 @@ _DEPT_PROMPTS: dict[str, str] = {
 
 def _build_agent(role: str, goal: str, backstory: str):
     from crewai import Agent
+
     return Agent(
         role=role,
         goal=goal,
@@ -233,7 +241,7 @@ _AGENT_DEFS: dict[str, tuple[str, str, str]] = {
         "Sharp, numbers-first real-estate operator who turns structured intelligence "
         "into investment decisions. Interprets market pulse, financial scenarios, "
         "demand signals, and developer landscape from structured data packages. "
-        "All analysis is grounded in the IntelPackage — no external tool calls needed."
+        "All analysis is grounded in the IntelPackage — no external tool calls needed.",
     ),
     "finance": (
         "VP — Finance & Capital Strategy",
@@ -241,7 +249,7 @@ _AGENT_DEFS: dict[str, tuple[str, str, str]] = {
         "Conservative finance leader who evaluates feasibility from structured financial "
         "intelligence. Analyses purchase/JD/JV scenarios, PSF source quality, and "
         "capital requirements from the IntelPackage. Never makes up numbers — every "
-        "figure cited comes from the structured data."
+        "figure cited comes from the structured data.",
     ),
     "engineering": (
         "VP — Engineering & Technical Delivery",
@@ -249,14 +257,14 @@ _AGENT_DEFS: dict[str, tuple[str, str, str]] = {
         "Principal architect-engineer who translates land intelligence into buildable "
         "reality. Evaluates zone, FAR, green coverage, flood risk, and development "
         "readiness from the IntelPackage data. Flags approval bottlenecks and design "
-        "assumptions against the provided data."
+        "assumptions against the provided data.",
     ),
     "ops": (
         "VP — Operations & Market Execution",
         "Define go-to-market playbook from IntelPackage demand signals and market pulse.",
         "Operations director who turns demand intelligence into execution strategy. "
         "Analyses absorption velocity, competitive landscape, and sales projections "
-        "from the IntelPackage. Every KPI and channel recommendation is data-grounded."
+        "from the IntelPackage. Every KPI and channel recommendation is data-grounded.",
     ),
     "legal": (
         "VP — Legal & Compliance",
@@ -264,7 +272,7 @@ _AGENT_DEFS: dict[str, tuple[str, str, str]] = {
         "Detail-oriented legal researcher who evaluates title risk, zone compliance, "
         "overlay constraints, and encumbrance from the IntelPackage. Flags every "
         "unresolved item with the applicable Karnataka statute. All findings are "
-        "sourced from the structured legal intelligence."
+        "sourced from the structured legal intelligence.",
     ),
 }
 
@@ -279,14 +287,22 @@ def _get_competitive_context(market: str) -> str:
             engine = CompetitiveIntelEngine()
             absorbers = engine.absorption_leaders(market=market, top_n=3)
             launches = engine.new_launches(market=market, days=30)
-            abs_lines = [
-                f"  {a['project_name']} — {a['developer_name']} ({a['absorption_pct']:.0f}% sold)"
-                for a in absorbers[:3]
-            ] if absorbers else ["  (no data)"]
-            launch_lines = [
-                f"  {la['project_name']} — {la['developer_name']} ({la['total_units']} units)"
-                for la in launches[:5]
-            ] if launches else ["  (no data)"]
+            abs_lines = (
+                [
+                    f"  {a['project_name']} — {a['developer_name']} ({a['absorption_pct']:.0f}% sold)"
+                    for a in absorbers[:3]
+                ]
+                if absorbers
+                else ["  (no data)"]
+            )
+            launch_lines = (
+                [
+                    f"  {la['project_name']} — {la['developer_name']} ({la['total_units']} units)"
+                    for la in launches[:5]
+                ]
+                if launches
+                else ["  (no data)"]
+            )
             return (
                 "Current competitive context:\n"
                 f"Top absorbers in {market}:\n" + "\n".join(abs_lines) + "\n"
@@ -298,11 +314,15 @@ def _get_competitive_context(market: str) -> str:
             try:
                 return fut.result(timeout=3.0)
             except _PoolTimeout:
-                logger.warning("[BoardRoomV2] competitive context timed out for {}", market)
+                logger.warning(
+                    "[BoardRoomV2] competitive context timed out for {}", market
+                )
                 fut.cancel()
                 return ""
     except Exception as exc:
-        logger.warning("[BoardRoomV2] competitive context failed for {}: {}", market, exc)
+        logger.warning(
+            "[BoardRoomV2] competitive context failed for {}: {}", market, exc
+        )
         return ""
 
 
@@ -340,18 +360,23 @@ def _run_dept_heads(pkg: IntelPackage, pitch: str) -> dict[str, str]:
                     )
                 task_desc_parts.append(
                     "GRADE B PRE-LAUNCH PIPELINE (monitor for distress and JD/JV opportunity):\n"
-                    + "\n".join(lines) + "\n"
+                    + "\n".join(lines)
+                    + "\n"
                 )
             else:
-                task_desc_parts.append("GRADE B PRE-LAUNCH PIPELINE: None detected in current DB.\n")
+                task_desc_parts.append(
+                    "GRADE B PRE-LAUNCH PIPELINE: None detected in current DB.\n"
+                )
             comp_context = _get_competitive_context(pkg.market)
             if comp_context:
                 task_desc_parts.append(f"\n{comp_context}\n")
-        task_desc_parts.extend([
-            f"\n{prompt}\n",
-            "\n=== INTELLIGENCE PACKAGE ===\n",
-            f"{ctx_json}\n",
-        ])
+        task_desc_parts.extend(
+            [
+                f"\n{prompt}\n",
+                "\n=== INTELLIGENCE PACKAGE ===\n",
+                f"{ctx_json}\n",
+            ]
+        )
         task_desc = "".join(task_desc_parts)
 
         task = Task(
@@ -362,7 +387,9 @@ def _run_dept_heads(pkg: IntelPackage, pitch: str) -> dict[str, str]:
             ),
             agent=agent,
         )
-        crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False)
+        crew = Crew(
+            agents=[agent], tasks=[task], process=Process.sequential, verbose=False
+        )
         result = crew.kickoff()
         if hasattr(result, "tasks_output") and result.tasks_output:
             return result.tasks_output[0].raw or ""
@@ -407,6 +434,9 @@ def run_board_session_v2(
     )
     logger.info(
         "[BoardRoomV2] %s | %d/%d depts | %.1fs",
-        sid[:8], len(responses), len(_AGENT_DEFS), elapsed,
+        sid[:8],
+        len(responses),
+        len(_AGENT_DEFS),
+        elapsed,
     )
     return result

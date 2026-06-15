@@ -6,13 +6,18 @@ v_market_brief_mat, IGR transactions, news sentiment, and portal listing trends.
 Returns MarketPulse with pricing, absorption, supply, developer activity,
 and news signals. Gracefully degrades on DB failure.
 """
+
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from loguru import logger
 
 from intelligence._shared import (
     __all__ as _,
-    fval, sanitize_market, validate_market, MarketCache, timed_intel_query,
+    fval,
+    sanitize_market,
+    validate_market,
+    MarketCache,
+    timed_intel_query,
 )
 
 __all__ = ["MarketIntel", "MarketPulse"]
@@ -83,7 +88,8 @@ class MarketIntel:
         m = sanitize_market(market)
         if not m:
             return MarketPulse(
-                market=market or "", collected_at=datetime.now(timezone.utc).isoformat(),
+                market=market or "",
+                collected_at=datetime.now(timezone.utc).isoformat(),
                 market_found=False,
             )
 
@@ -94,20 +100,24 @@ class MarketIntel:
         market_info = validate_market(m)
         if market_info is None:
             pulse = MarketPulse(
-                market=m, collected_at=datetime.now(timezone.utc).isoformat(),
+                market=m,
+                collected_at=datetime.now(timezone.utc).isoformat(),
                 market_found=False,
             )
             self._cache.set(_CACHE_NS, m, pulse, is_positive=False)
             return pulse
 
         pulse = MarketPulse(
-            market=market_info["name"], collected_at=datetime.now(timezone.utc).isoformat(),
-            market_found=True, market_slug=market_info["slug"],
+            market=market_info["name"],
+            collected_at=datetime.now(timezone.utc).isoformat(),
+            market_found=True,
+            market_slug=market_info["slug"],
         )
 
         try:
             from utils.db import get_engine
             from sqlalchemy import text
+
             engine = get_engine(pool_size=3, max_overflow=1)
             with engine.connect() as conn:
                 self._load_market_brief(conn, pulse, market_info)
@@ -129,8 +139,10 @@ class MarketIntel:
 
     def _load_market_brief(self, conn, pulse: MarketPulse, mi: dict):
         from sqlalchemy import text
+
         with timed_intel_query("market_brief"):
-            row = conn.execute(text("""
+            row = conn.execute(
+                text("""
                 SELECT micro_market, total_projects, total_units, total_sold, total_unsold,
                        avg_absorption_pct, avg_listing_psf, floor_psf, ceiling_psf,
                        months_of_supply, supply_label, unique_developers, grade_a_developers,
@@ -138,7 +150,9 @@ class MarketIntel:
                 FROM v_market_brief_mat
                 WHERE micro_market ILIKE :m
                 LIMIT 1
-            """), {"m": mi["name"]}).fetchone()
+            """),
+                {"m": mi["name"]},
+            ).fetchone()
         if row:
             pulse.avg_listing_psf = fval(row[6])
             pulse.floor_psf = fval(row[7])
@@ -156,8 +170,10 @@ class MarketIntel:
 
     def _load_igr_stats(self, conn, pulse: MarketPulse, mi: dict):
         from sqlalchemy import text
+
         with timed_intel_query("market_igr_psf"):
-            row = conn.execute(text("""
+            row = conn.execute(
+                text("""
                 SELECT
                     PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY transaction_psf) AS median_psf,
                     COUNT(*) AS cnt
@@ -166,15 +182,19 @@ class MarketIntel:
                   AND transaction_psf IS NOT NULL
                   AND transaction_psf > 0
                   AND registration_date >= NOW() - INTERVAL '90 days'
-            """), {"m": mi["name"]}).fetchone()
+            """),
+                {"m": mi["name"]},
+            ).fetchone()
         if row and row[1] and int(row[1]) > 0:
             pulse.median_igr_psf = fval(row[0])
             pulse.igr_record_count = int(row[1])
 
     def _load_news_sentiment(self, conn, pulse: MarketPulse, mi: dict):
         from sqlalchemy import text
+
         with timed_intel_query("market_news_sentiment"):
-            row = conn.execute(text("""
+            row = conn.execute(
+                text("""
                 SELECT
                     COUNT(*) AS total,
                     AVG(sentiment_score) AS avg_sentiment
@@ -183,17 +203,21 @@ class MarketIntel:
                 WHERE mm.slug = :slug
                   AND (na.published_at >= CURRENT_DATE - INTERVAL '30 days'
                        OR na.created_at >= NOW() - INTERVAL '30 days')
-            """), {"slug": mi["slug"]}).fetchone()
+            """),
+                {"slug": mi["slug"]},
+            ).fetchone()
         if row:
             pulse.news_articles_30d = int(row[0]) if row[0] else 0
             pulse.avg_news_sentiment = fval(row[1])
 
     def _load_listing_trend(self, conn, pulse: MarketPulse, mi: dict):
         from sqlalchemy import text
+
         non_overlapping_start = "NOW() - INTERVAL '60 days'"
         non_overlapping_end = "NOW() - INTERVAL '31 days'"
         with timed_intel_query("market_listing_trend"):
-            row_period = conn.execute(text(f"""
+            row_period = conn.execute(
+                text(f"""
                 SELECT
                     AVG(l.price_psf) AS avg_psf,
                     COUNT(*) AS cnt
@@ -203,9 +227,12 @@ class MarketIntel:
                   AND l.price_psf IS NOT NULL AND l.price_psf > 1000 AND l.price_psf < 50000
                   AND l.last_seen_at >= {non_overlapping_start}
                   AND l.last_seen_at < {non_overlapping_end}
-            """), {"slug": mi["slug"]}).fetchone()
+            """),
+                {"slug": mi["slug"]},
+            ).fetchone()
 
-            row_recent = conn.execute(text("""
+            row_recent = conn.execute(
+                text("""
                 SELECT
                     AVG(l.price_psf) AS avg_psf,
                     COUNT(*) AS cnt
@@ -214,14 +241,21 @@ class MarketIntel:
                 WHERE mm.slug = :slug
                   AND l.price_psf IS NOT NULL AND l.price_psf > 1000 AND l.price_psf < 50000
                   AND l.last_seen_at >= NOW() - INTERVAL '30 days'
-            """), {"slug": mi["slug"]}).fetchone()
+            """),
+                {"slug": mi["slug"]},
+            ).fetchone()
 
         if row_recent:
             pulse.new_listings_30d = int(row_recent[1]) if row_recent[1] else 0
 
-        if (row_period and row_recent
-                and row_period[1] and int(row_period[1]) >= _MIN_LISTINGS_FOR_TREND
-                and row_recent[1] and int(row_recent[1]) >= _MIN_LISTINGS_FOR_TREND):
+        if (
+            row_period
+            and row_recent
+            and row_period[1]
+            and int(row_period[1]) >= _MIN_LISTINGS_FOR_TREND
+            and row_recent[1]
+            and int(row_recent[1]) >= _MIN_LISTINGS_FOR_TREND
+        ):
             avg_period = fval(row_period[0])
             avg_recent = fval(row_recent[0])
             if avg_period and avg_recent and avg_period > 0:
@@ -231,14 +265,18 @@ class MarketIntel:
 
     def _load_active_listings(self, conn, pulse: MarketPulse, mi: dict):
         from sqlalchemy import text
+
         with timed_intel_query("market_active_listings"):
-            row = conn.execute(text("""
+            row = conn.execute(
+                text("""
                 SELECT COUNT(*)
                 FROM listings l
                 JOIN micro_markets mm ON mm.id = l.micro_market_id
                 WHERE mm.slug = :slug
                   AND l.is_active = TRUE
-            """), {"slug": mi["slug"]}).fetchone()
+            """),
+                {"slug": mi["slug"]},
+            ).fetchone()
         if row:
             pulse.active_listings = int(row[0]) if row[0] else 0
 
@@ -258,13 +296,20 @@ class MarketIntel:
 
 if __name__ == "__main__":
     import json
+
     pulse = MarketIntel(caller="self_test").get_pulse("Yelahanka")
-    print(json.dumps({
-        "market": pulse.market,
-        "market_found": pulse.market_found,
-        "avg_listing_psf": pulse.avg_listing_psf,
-        "total_projects": pulse.total_projects,
-        "months_of_supply": pulse.months_of_supply,
-        "supply_label": pulse.supply_label,
-        "signal": pulse.price_momentum_signal,
-    }, indent=2, default=str))
+    print(
+        json.dumps(
+            {
+                "market": pulse.market,
+                "market_found": pulse.market_found,
+                "avg_listing_psf": pulse.avg_listing_psf,
+                "total_projects": pulse.total_projects,
+                "months_of_supply": pulse.months_of_supply,
+                "supply_label": pulse.supply_label,
+                "signal": pulse.price_momentum_signal,
+            },
+            indent=2,
+            default=str,
+        )
+    )

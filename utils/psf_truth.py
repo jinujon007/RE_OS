@@ -10,6 +10,7 @@ Computes the gap between:
 A wide spread means sellers are pricing above what buyers actually pay
 in registered deeds — early signal of market softening or mispricing.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -96,9 +97,7 @@ class SpreadResult:
         )
 
 
-def compute_psf_spread(
-    market: str, window_days: int = 180
-) -> SpreadResult:
+def compute_psf_spread(market: str, window_days: int = 180) -> SpreadResult:
     """Compute registered-vs-ask PSF spread for a market.
 
     Returns SpreadResult with registered_median_psf from registered_transactions
@@ -125,11 +124,16 @@ def compute_psf_spread(
             ).scalar()
             if not table_check:
                 return SpreadResult(
-                    registered_median_psf=None, ask_median_psf=None,
-                    spread_pct=None, n_registered=0, n_listings=0,
-                    window_days=window_days, status="insufficient_data",
+                    registered_median_psf=None,
+                    ask_median_psf=None,
+                    spread_pct=None,
+                    n_registered=0,
+                    n_listings=0,
+                    window_days=window_days,
+                    status="insufficient_data",
                 )
             from config.settings import SALE_DEED_TYPES as _SALE_TYPES
+
             reg_row = conn.execute(
                 text("""
                     SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY psf) AS median_psf,
@@ -142,18 +146,25 @@ def compute_psf_spread(
                       AND deed_type = ANY(:sale_types::text[])
                       AND consideration_inr >= 100000
                 """),
-                {"market": market_clause, "window_days": window_days,
-                 "sale_types": list(_SALE_TYPES)},
+                {
+                    "market": market_clause,
+                    "window_days": window_days,
+                    "sale_types": list(_SALE_TYPES),
+                },
             ).fetchone()
     except Exception:
         pass
 
-    registered_median_psf = float(reg_row[0]) if reg_row and reg_row[0] is not None else None
+    registered_median_psf = (
+        float(reg_row[0]) if reg_row and reg_row[0] is not None else None
+    )
     n_registered = int(reg_row[1]) if reg_row and reg_row[1] is not None else 0
 
     # Need at least 10 registered transactions
     if n_registered < 10:
-        kaveri_deeds_spread_computations.labels(market=market, status="insufficient_data").inc()
+        kaveri_deeds_spread_computations.labels(
+            market=market, status="insufficient_data"
+        ).inc()
         return SpreadResult(
             registered_median_psf=registered_median_psf,
             ask_median_psf=None,

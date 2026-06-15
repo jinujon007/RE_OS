@@ -2,6 +2,7 @@
 RE_OS — News Scout Tests (T-790)
 ≥8 unit tests: parse, fallback, dedup, upsert, source field, etc.
 """
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +11,7 @@ pytestmark = pytest.mark.unit
 
 
 # ── Google News RSS parse ─────────────────────────────────────────────────────
+
 
 class TestFetchGoogleNewsRss:
     def test_returns_list_of_dicts(self):
@@ -74,6 +76,7 @@ class TestFetchGoogleNewsRss:
 
 # ── ET Realty markdown parse ───────────────────────────────────────────────────
 
+
 class TestParseEtRealtyMarkdown:
     def test_extracts_links(self):
         from scrapers.news_scout import _parse_et_realty_markdown
@@ -96,6 +99,7 @@ class TestParseEtRealtyMarkdown:
 
 
 # ── Dedup by URL hash ──────────────────────────────────────────────────────────
+
 
 class TestDedupByUrl:
     def test_duplicate_urls_removed(self):
@@ -127,6 +131,7 @@ class TestDedupByUrl:
 
 # ── _normalize_article ─────────────────────────────────────────────────────────
 
+
 class TestNormalizeArticle:
     def test_returns_none_for_empty(self):
         from scrapers.news_scout import _normalize_article
@@ -152,6 +157,7 @@ class TestNormalizeArticle:
 
 # ── Source field correctness ───────────────────────────────────────────────────
 
+
 class TestSourceField:
     def test_google_news_source_label(self):
         from scrapers.news_scout import _fetch_google_news_rss
@@ -174,11 +180,13 @@ class TestSourceField:
         # Title must be >=20 chars to pass the parser's minimum length guard
         md = "[Bengaluru real estate market sees record registrations in May 2026](https://realty.economictimes.indiatimes.com/news/bengaluru-market-2026)"
         from scrapers.news_scout import _parse_et_realty_markdown
+
         results = _parse_et_realty_markdown(md)
         assert results[0]["source"] == "et_realty"
 
 
 # ── db upsert idempotency ───────────────────────────────────────────────────────
+
 
 class TestNewsUpsertIdempotent:
     def test_re_run_does_not_duplicate(self):

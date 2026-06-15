@@ -3,6 +3,7 @@ RE_OS — Compliance Researcher Agent (Phase 12 — Legal Department)
 Standalone researcher for RERA compliance, zone risk, and encumbrance checks.
 Reports to Legal Head Agent. Uses all three legal tools.
 """
+
 from crewai import Agent
 from config.llm_router import get_analysis_llm
 from crewai.tools import BaseTool
@@ -17,14 +18,21 @@ from utils.kaveri_encumbrance import check_encumbrance
 class _RERAComplianceTool(BaseTool):
     name: str = "rera_compliance_check"
     description: str = "Check developer's RERA compliance from DB. Input: JSON with 'developer_name', optional 'market'."
+
     def _run(self, input_str: str) -> str:
         try:
             p = json.loads(input_str)
         except Exception:
             return json.dumps({"error": "invalid JSON"})
         try:
-            r = check_developer_compliance(p.get("developer_name", ""), market=p.get("market"))
-            return json.dumps({k: v for k, v in r.__dict__.items() if k != "inactive_anomalies"}, indent=2, default=str)
+            r = check_developer_compliance(
+                p.get("developer_name", ""), market=p.get("market")
+            )
+            return json.dumps(
+                {k: v for k, v in r.__dict__.items() if k != "inactive_anomalies"},
+                indent=2,
+                default=str,
+            )
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -32,6 +40,7 @@ class _RERAComplianceTool(BaseTool):
 class _ZoneRiskTool(BaseTool):
     name: str = "zone_risk_check"
     description: str = "Check zone rules + overlays for a market. Input: JSON with 'market', optional 'zone' (default R2)."
+
     def _run(self, input_str: str) -> str:
         try:
             p = json.loads(input_str)
@@ -39,14 +48,19 @@ class _ZoneRiskTool(BaseTool):
             return json.dumps({"error": "invalid JSON"})
         try:
             r = check_zone_risk(p.get("market", ""), p.get("zone", "R2"))
-            return json.dumps({k: v for k, v in r.__dict__.items()}, indent=2, default=str)
+            return json.dumps(
+                {k: v for k, v in r.__dict__.items()}, indent=2, default=str
+            )
         except Exception as e:
             return json.dumps({"error": str(e)})
 
 
 class _EncumbranceCheckTool(BaseTool):
     name: str = "encumbrance_check"
-    description: str = "Check encumbrance via Kaveri. Input: JSON with 'market', optional 'survey_no'."
+    description: str = (
+        "Check encumbrance via Kaveri. Input: JSON with 'market', optional 'survey_no'."
+    )
+
     def _run(self, input_str: str) -> str:
         try:
             p = json.loads(input_str)
@@ -54,7 +68,9 @@ class _EncumbranceCheckTool(BaseTool):
             return json.dumps({"error": "invalid JSON"})
         try:
             r = check_encumbrance(p.get("market", ""), survey_no=p.get("survey_no"))
-            return json.dumps({k: v for k, v in r.__dict__.items()}, indent=2, default=str)
+            return json.dumps(
+                {k: v for k, v in r.__dict__.items()}, indent=2, default=str
+            )
         except Exception as e:
             return json.dumps({"error": str(e)})
 

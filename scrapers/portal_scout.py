@@ -37,6 +37,7 @@ from loguru import logger
 
 try:
     from scrapling.fetchers import Fetcher, DynamicFetcher
+
     _SCRAPLING_OK = True
 except Exception:
     _SCRAPLING_OK = False
@@ -113,11 +114,13 @@ _UA_BAN_ROTATION = 0
 
 def _get_rotated_headers(source_key: str = "") -> dict[str, str]:
     import random
+
     return {
         "User-Agent": random.choice(_USER_AGENT_POOL),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-IN,en;q=0.9",
     }
+
 
 # Minimal stealth patches injected before page load — removes the most-checked
 # bot signals without requiring playwright-stealth or any extra dependency.
@@ -133,7 +136,13 @@ PLAYWRIGHT_SOURCES = {"housing_sale", "nobroker"}
 
 # Scrapling routing — checked before Playwright/requests fallback.
 # HTTP: TLS fingerprint spoofing via curl_cffi — no browser needed.
-_SCRAPLING_HTTP = {"99acres_sale", "99acres_rent", "magicbricks", "proptiger", "squareyards"}
+_SCRAPLING_HTTP = {
+    "99acres_sale",
+    "99acres_rent",
+    "magicbricks",
+    "proptiger",
+    "squareyards",
+}
 # Dynamic: stealth Playwright — reuses PLAYWRIGHT_BROWSERS_PATH, no extra download.
 _SCRAPLING_DYNAMIC = {"housing_sale", "nobroker"}
 
@@ -143,13 +152,29 @@ _SCRAPLING_DYNAMIC = {"housing_sale", "nobroker"}
 # These target the repeating card containers, not individual fields — AI reads
 # the card text and infers structure, which is more resilient than field selectors.
 _PORTAL_CARD_SELECTORS: dict[str, list[str]] = {
-    "99acres_sale":  ["[id^='srp_tuple_']", ".card-container", "[class*='srpList'] li"],
-    "99acres_rent":  ["[id^='srp_tuple_']", ".card-container", "[class*='srpList'] li"],
-    "magicbricks":   ["[class*='projectCard']", ".mb-srp__list__items li", "[class*='PropertyList'] li"],
-    "housing_sale":  ["[data-q='property-card']", "[class*='listingCard']", "[class*='listing-card']"],
-    "proptiger":     ["[class*='projectTile']", "[class*='newCard']", "[class*='tilesList'] li"],
-    "nobroker":      ["[class*='propertyCard']", ".resultTile", "[class*='tuple']"],
-    "squareyards":   ["[class*='property-card']", "[class*='listing-card']", "[class*='projectCard']"],
+    "99acres_sale": ["[id^='srp_tuple_']", ".card-container", "[class*='srpList'] li"],
+    "99acres_rent": ["[id^='srp_tuple_']", ".card-container", "[class*='srpList'] li"],
+    "magicbricks": [
+        "[class*='projectCard']",
+        ".mb-srp__list__items li",
+        "[class*='PropertyList'] li",
+    ],
+    "housing_sale": [
+        "[data-q='property-card']",
+        "[class*='listingCard']",
+        "[class*='listing-card']",
+    ],
+    "proptiger": [
+        "[class*='projectTile']",
+        "[class*='newCard']",
+        "[class*='tilesList'] li",
+    ],
+    "nobroker": ["[class*='propertyCard']", ".resultTile", "[class*='tuple']"],
+    "squareyards": [
+        "[class*='property-card']",
+        "[class*='listing-card']",
+        "[class*='projectCard']",
+    ],
 }
 
 EXTRACTION_PROMPT = """\
@@ -207,7 +232,9 @@ def _ai_extract(text: str, market: str) -> list[dict]:
                 logger.warning("[PortalScout] Cerebras returned empty content")
         except Exception as exc:
             cerebras_error = exc
-            logger.warning(f"[PortalScout] Cerebras extraction error ({type(exc).__name__}): {exc}")
+            logger.warning(
+                f"[PortalScout] Cerebras extraction error ({type(exc).__name__}): {exc}"
+            )
 
     if not raw_response and GEMINI_API_KEY:
         try:
@@ -228,13 +255,17 @@ def _ai_extract(text: str, market: str) -> list[dict]:
             elif not raw_response:
                 logger.warning("[PortalScout] Gemini returned empty content")
         except Exception as exc:
-            logger.warning(f"[PortalScout] Gemini extraction error ({type(exc).__name__}): {exc}")
+            logger.warning(
+                f"[PortalScout] Gemini extraction error ({type(exc).__name__}): {exc}"
+            )
 
     if not raw_response:
         if not CEREBRAS_API_KEY and not GEMINI_API_KEY:
             logger.warning("[PortalScout] No AI key available for extraction")
         else:
-            logger.warning("[PortalScout] All extraction paths returned empty — no listings parsed")
+            logger.warning(
+                "[PortalScout] All extraction paths returned empty — no listings parsed"
+            )
         return []
 
     return _parse_json_response(raw_response)
@@ -301,7 +332,9 @@ def _scrapling_targeted_text(page, src: str, max_cards: int = 30) -> str:
             snippets: list[str] = []
             for el in elements[:max_cards]:
                 parts = el.css("::text").getall()
-                card = " | ".join(p.strip() for p in parts if p.strip() and len(p.strip()) > 1)
+                card = " | ".join(
+                    p.strip() for p in parts if p.strip() and len(p.strip()) > 1
+                )
                 if len(card) > 30:
                     snippets.append(card[:600])
             if len(snippets) >= 3:
@@ -483,13 +516,19 @@ class PortalScout:
         if not text:
             # Fallback: existing Playwright / requests path
             if src in PLAYWRIGHT_SOURCES:
-                logger.info(f"[PortalScout][{src}] Scrapling unavailable or empty → Playwright fallback")
+                logger.info(
+                    f"[PortalScout][{src}] Scrapling unavailable or empty → Playwright fallback"
+                )
                 text = self._playwright_fetch(url)
                 if not text:
-                    logger.info(f"[PortalScout][{src}] Playwright empty → requests fallback")
+                    logger.info(
+                        f"[PortalScout][{src}] Playwright empty → requests fallback"
+                    )
                     text = self._requests_fetch(url)
             else:
-                logger.info(f"[PortalScout][{src}] Scrapling unavailable or empty → requests fallback")
+                logger.info(
+                    f"[PortalScout][{src}] Scrapling unavailable or empty → requests fallback"
+                )
                 text = self._requests_fetch(url)
 
         if not text:
@@ -506,7 +545,9 @@ class PortalScout:
             if locality and not _locality_matches_market(locality, self.market):
                 global scraper_locality_filtered
                 scraper_locality_filtered += 1
-                logger.warning(f"[PortalScout][{src}] Filtered out mis-geocoded listing: locality={locality!r}, market={self.market}, project={item.get('project_name', '?')[:40]}")
+                logger.warning(
+                    f"[PortalScout][{src}] Filtered out mis-geocoded listing: locality={locality!r}, market={self.market}, project={item.get('project_name', '?')[:40]}"
+                )
                 continue
             results.append(item)
         return results
@@ -521,7 +562,9 @@ class PortalScout:
                 return ""
             html = getattr(page, "body", None) or ""
             if len(html) < 500:
-                logger.debug(f"[PortalScout][Scrapling HTTP][{src}] {len(html)} chars — bot-wall, skipping")
+                logger.debug(
+                    f"[PortalScout][Scrapling HTTP][{src}] {len(html)} chars — bot-wall, skipping"
+                )
                 return ""
             # CSS-targeted extraction first — pure listing signal, no nav/footer noise
             targeted = _scrapling_targeted_text(page, src)
@@ -529,7 +572,9 @@ class PortalScout:
                 return targeted
             # Fallback: full BeautifulSoup clean
             result = _clean_html(html)
-            logger.debug(f"[PortalScout][Scrapling HTTP][{src}] full clean: {len(result)} chars")
+            logger.debug(
+                f"[PortalScout][Scrapling HTTP][{src}] full clean: {len(result)} chars"
+            )
             return result
         except Exception as exc:
             logger.debug(f"[PortalScout][Scrapling HTTP][{src}] {exc}")
@@ -539,13 +584,19 @@ class PortalScout:
         """Stealth Playwright — patches webdriver flag, reuses existing Chromium."""
         try:
             page = DynamicFetcher.fetch(
-                url, headless=True, network_idle=True, disable_resources=True, timeout=30000
+                url,
+                headless=True,
+                network_idle=True,
+                disable_resources=True,
+                timeout=30000,
             )
             if page is None:
                 return ""
             html = getattr(page, "body", None) or ""
             if len(html) < 500:
-                logger.debug(f"[PortalScout][Scrapling Dynamic][{src}] {len(html)} chars — bot-wall, skipping")
+                logger.debug(
+                    f"[PortalScout][Scrapling Dynamic][{src}] {len(html)} chars — bot-wall, skipping"
+                )
                 return ""
             # CSS-targeted extraction first — pure listing signal, no nav/footer noise
             targeted = _scrapling_targeted_text(page, src)
@@ -553,7 +604,9 @@ class PortalScout:
                 return targeted
             # Fallback: full BeautifulSoup clean
             result = _clean_html(html)
-            logger.debug(f"[PortalScout][Scrapling Dynamic][{src}] full clean: {len(result)} chars")
+            logger.debug(
+                f"[PortalScout][Scrapling Dynamic][{src}] full clean: {len(result)} chars"
+            )
             return result
         except Exception as exc:
             logger.debug(f"[PortalScout][Scrapling Dynamic][{src}] {exc}")
@@ -563,9 +616,7 @@ class PortalScout:
 
     def _requests_fetch(self, url: str) -> str:
         try:
-            source_key = next(
-                (k for k, v in self.urls.items() if v == url), None
-            )
+            source_key = next((k for k, v in self.urls.items() if v == url), None)
             headers = _get_rotated_headers(source_key or "")
             resp = self.session.get(url, headers=headers, timeout=25)
             time.sleep(1)
@@ -635,17 +686,24 @@ def scout_market(market: str, sources: list[str] | None = None) -> list[dict]:
         from utils.db import get_engine
         from utils.discord_notifier import send_price_alert
         from sqlalchemy import text
+
         with get_engine().connect() as conn:
-            prev = conn.execute(text("""
+            prev = conn.execute(
+                text("""
                 SELECT avg_psf_sale FROM market_snapshots
                 WHERE micro_market_id = (SELECT id FROM micro_markets WHERE name ILIKE :m)
                 ORDER BY snapshot_date DESC LIMIT 1
-            """), {"m": f"%{market}%"}).fetchone()
-            curr = conn.execute(text("""
+            """),
+                {"m": f"%{market}%"},
+            ).fetchone()
+            curr = conn.execute(
+                text("""
                 SELECT ROUND(AVG(price_psf)) FROM listings l
                 JOIN micro_markets mm ON mm.id = l.micro_market_id
                 WHERE mm.name ILIKE :m AND price_psf > 1000 AND price_psf < 50000
-            """), {"m": f"%{market}%"}).fetchone()
+            """),
+                {"m": f"%{market}%"},
+            ).fetchone()
         if prev and prev[0] and curr and curr[0]:
             old_psf, new_psf = float(prev[0]), float(curr[0])
             if abs((new_psf - old_psf) / max(old_psf, 1)) >= 0.05:
@@ -656,12 +714,24 @@ def scout_market(market: str, sources: list[str] | None = None) -> list[dict]:
     # Canary: alert if listing count drops below threshold (silent failure detection)
     # Only fire when all 7 sources were attempted (not a partial/source-filtered run)
     # Skip if threshold is 0 or negative (misconfiguration guard)
-    if sources is None and PORTAL_SCOUT_MIN_LISTINGS_CANARY > 0 and len(findings) < PORTAL_SCOUT_MIN_LISTINGS_CANARY:
+    if (
+        sources is None
+        and PORTAL_SCOUT_MIN_LISTINGS_CANARY > 0
+        and len(findings) < PORTAL_SCOUT_MIN_LISTINGS_CANARY
+    ):
         try:
             from utils.discord_notifier import send_scraper_alert
-            send_scraper_alert(market, "portal_scout", "ZERO_LISTINGS_CANARY", record_count=len(findings))
+
+            send_scraper_alert(
+                market,
+                "portal_scout",
+                "ZERO_LISTINGS_CANARY",
+                record_count=len(findings),
+            )
         except Exception as _canary_err:
-            logger.warning(f"[PortalScout] Canary alert failed for {market}: {_canary_err}")
+            logger.warning(
+                f"[PortalScout] Canary alert failed for {market}: {_canary_err}"
+            )
 
     scraper_runs_total.labels(source="portal", market=market, status="success").inc()
     print(f"\n{'=' * 55}")

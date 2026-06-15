@@ -5,6 +5,7 @@ Chains T-944 (seed listings) → T-945 (conflict detection) → T-946 (MoS cap)
 
 All tests use mocked DB — no live Docker required.
 """
+
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 
@@ -44,10 +45,13 @@ class TestMosCapWithSparseData:
         ]
         for raw, expected in test_cases:
             capped = min(raw, 120.0) if raw > 0 else 0.0
-            assert capped == expected, f"MoS raw={raw}: expected {expected}, got {capped}"
+            assert capped == expected, (
+                f"MoS raw={raw}: expected {expected}, got {capped}"
+            )
 
     def test_mos_quality_inferred(self):
         """Validate mos_quality labels match count thresholds."""
+
         def infer_quality(total_count, mos_fallback):
             if total_count >= 12:
                 return "kaveri_sufficient"
@@ -70,6 +74,7 @@ class TestPsfHierarchyConsistency:
         """_igr_source_for must handle all defined states."""
         from unittest.mock import MagicMock
         from intelligence.financial_intel import FinancialIntel
+
         state_map = {
             "live_igr": "igr_portal",
             "guidance_value": "guidance_values",
@@ -90,6 +95,7 @@ class TestFreshnessCache:
     @patch("utils.data_freshness.get_engine")
     def test_cache_hits_within_ttl(self, mock_get_engine):
         from utils.data_freshness import get_source_status, _invalidate_cache
+
         _invalidate_cache()
         mock_conn = MagicMock()
         mock_engine = MagicMock()
@@ -107,21 +113,25 @@ class TestSloEvaluation:
 
     def test_slo_check_passes_for_recent_data(self):
         from config.slos import check_slo
+
         passes, msg = check_slo("news_scout", 12.0)
         assert passes is True, f"Expected pass for 12h news: {msg}"
 
     def test_slo_check_fails_for_stale_data(self):
         from config.slos import check_slo
+
         passes, msg = check_slo("news_scout", 72.0)
         assert passes is False, f"Expected fail for 72h news: {msg}"
 
     def test_unknown_source_returns_pass(self):
         from config.slos import check_slo
+
         passes, _ = check_slo("unknown_plugin", 999.0)
         assert passes is True, "Unknown source should return pass"
 
     def test_all_slo_status_counts(self):
         from config.slos import all_slo_status
+
         freshness = {
             "news_scout": {"hours_since_update": 10.0, "status": "fresh"},
             "rera_karnataka": {"hours_since_update": 100.0, "status": "stale"},
@@ -132,5 +142,14 @@ class TestSloEvaluation:
 
     def test_slo_registry_has_all_expected_sources(self):
         from config.slos import SLO_MAP
-        expected = {"news_scout", "portal_plugin", "rera_karnataka", "igr_karnataka", "kaveri_bhoomi"}
-        assert expected.issubset(SLO_MAP.keys()), f"Missing SLOs: {expected - set(SLO_MAP.keys())}"
+
+        expected = {
+            "news_scout",
+            "portal_plugin",
+            "rera_karnataka",
+            "igr_karnataka",
+            "kaveri_bhoomi",
+        }
+        assert expected.issubset(SLO_MAP.keys()), (
+            f"Missing SLOs: {expected - set(SLO_MAP.keys())}"
+        )

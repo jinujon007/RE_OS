@@ -27,6 +27,7 @@ from loguru import logger
 
 try:
     import httpx
+
     HAS_HTTPX = True
 except ImportError:
     HAS_HTTPX = False
@@ -40,9 +41,30 @@ _RETRY_BACKOFF = 3.0
 # These lists should be kept in sync with re_os_market_kaveri_map.json for
 # survey-level parcel linking.
 MARKET_VILLAGES: dict[str, list[str]] = {
-    "Yelahanka": ["Venkatala", "Yelahanka", "Atturu", "Kodigehalli", "Singanayakanahalli", "Anjanapura"],
-    "Devanahalli": ["Devanahalli", "Sulibele", "Bettahalasuru", "Hunasamaranahalli", "Vishwanathapura", "Nandagudi"],
-    "Hebbal": ["Byatarayanapura", "Jakkur", "Nagawara", "Thanisandra", "HBR Layout", "Kogilu"],
+    "Yelahanka": [
+        "Venkatala",
+        "Yelahanka",
+        "Atturu",
+        "Kodigehalli",
+        "Singanayakanahalli",
+        "Anjanapura",
+    ],
+    "Devanahalli": [
+        "Devanahalli",
+        "Sulibele",
+        "Bettahalasuru",
+        "Hunasamaranahalli",
+        "Vishwanathapura",
+        "Nandagudi",
+    ],
+    "Hebbal": [
+        "Byatarayanapura",
+        "Jakkur",
+        "Nagawara",
+        "Thanisandra",
+        "HBR Layout",
+        "Kogilu",
+    ],
 }
 
 # Bhoomi portal DC conversion endpoint
@@ -134,14 +156,24 @@ def _fetch_dc_applications(
             last_error = str(exc)
 
         if attempt < _RETRY_MAX:
-            wait = _RETRY_BACKOFF * (2 ** attempt)
-            logger.info("[DCScraper] retry {} for village {} in {:.0f}s (last: {})",
-                attempt + 1, village, wait, last_error)
+            wait = _RETRY_BACKOFF * (2**attempt)
+            logger.info(
+                "[DCScraper] retry {} for village {} in {:.0f}s (last: {})",
+                attempt + 1,
+                village,
+                wait,
+                last_error,
+            )
             time.sleep(wait)
 
     if close_client:
         client.close()
-        logger.info("[DCScraper] fetch failed for village {} after {} retries: {}", village, _RETRY_MAX, last_error)
+        logger.info(
+            "[DCScraper] fetch failed for village {} after {} retries: {}",
+            village,
+            _RETRY_MAX,
+            last_error,
+        )
     return []
 
 
@@ -168,9 +200,7 @@ def run_scan(
         logger.warning("[DCScraper] httpx not available — returning empty")
         return []
 
-    targets = villages or list(set(
-        v for vs in MARKET_VILLAGES.values() for v in vs
-    ))
+    targets = villages or list(set(v for vs in MARKET_VILLAGES.values() for v in vs))
 
     with httpx.Client(timeout=15.0, follow_redirects=True) as client:
         for village in targets:
@@ -181,7 +211,11 @@ def run_scan(
                     seen.add(app_no)
                     all_records.append(rec)
 
-    logger.info("[DCScraper] scan complete: {} villages, {} records", len(targets), len(all_records))
+    logger.info(
+        "[DCScraper] scan complete: {} villages, {} records",
+        len(targets),
+        len(all_records),
+    )
     return all_records
 
 
@@ -228,6 +262,7 @@ def market_for_village(village: str) -> str | None:
 
 if __name__ == "__main__":
     import sys
+
     mode = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == "--mode" else "live"
     results = run_scan(mode=mode)
     print(json.dumps(results, indent=2, default=str))

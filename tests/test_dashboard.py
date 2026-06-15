@@ -1,6 +1,7 @@
 import os
 from unittest.mock import MagicMock, patch
 import pytest
+
 pytestmark = pytest.mark.unit
 
 # Use in-memory rate limiter storage (avoid Redis requirement for tests)

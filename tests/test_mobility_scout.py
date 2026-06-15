@@ -1,4 +1,5 @@
 """T-1038/T-1040 — MobilityScout + compute_market_accessibility tests (GATE-74)."""
+
 import types
 from unittest.mock import MagicMock, patch, call
 
@@ -46,7 +47,9 @@ class TestMobilityScout:
             ],
         }
 
-        with patch("scrapers.mobility_scout.requests.Session.get", return_value=mock_resp):
+        with patch(
+            "scrapers.mobility_scout.requests.Session.get", return_value=mock_resp
+        ):
             results = scout.measure_travel_times("Yelahanka")
             assert len(results) > 0
             assert results[0]["travel_time_min"] == 25.0
@@ -60,7 +63,9 @@ class TestMobilityScout:
         mock_resp = MagicMock()
         mock_resp.status_code = 403
 
-        with patch("scrapers.mobility_scout.requests.Session.get", return_value=mock_resp):
+        with patch(
+            "scrapers.mobility_scout.requests.Session.get", return_value=mock_resp
+        ):
             results = scout.measure_travel_times("Hebbal")
             assert results == []
 
@@ -75,7 +80,17 @@ class TestMobilityScout:
         ok_resp.status_code = 200
         ok_resp.json.return_value = {
             "status": "OK",
-            "rows": [{"elements": [{"status": "OK", "duration": {"value": 900}, "distance": {"value": 12000}}]}],
+            "rows": [
+                {
+                    "elements": [
+                        {
+                            "status": "OK",
+                            "duration": {"value": 900},
+                            "distance": {"value": 12000},
+                        }
+                    ]
+                }
+            ],
         }
 
         call_count = {"n": 0}
@@ -88,8 +103,10 @@ class TestMobilityScout:
 
         scout = MobilityScout()
         scout.api_key = "test_key"
-        with patch.object(scout, "_session") as mock_session, \
-             patch("scrapers.mobility_scout.time.sleep"):
+        with (
+            patch.object(scout, "_session") as mock_session,
+            patch("scrapers.mobility_scout.time.sleep"),
+        ):
             mock_session.get.side_effect = get_side_effect
             results = scout.measure_travel_times("Yelahanka")
             assert len(results) > 0
@@ -104,7 +121,9 @@ class TestMobilityScout:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"status": "INVALID_REQUEST", "rows": []}
 
-        with patch("scrapers.mobility_scout.requests.Session.get", return_value=mock_resp):
+        with patch(
+            "scrapers.mobility_scout.requests.Session.get", return_value=mock_resp
+        ):
             results = scout.measure_travel_times("Yelahanka")
             assert results == []
 
@@ -120,7 +139,9 @@ class TestMobilityScout:
             "rows": [{"elements": [{"status": "NOT_FOUND"}]}],
         }
 
-        with patch("scrapers.mobility_scout.requests.Session.get", return_value=mock_resp):
+        with patch(
+            "scrapers.mobility_scout.requests.Session.get", return_value=mock_resp
+        ):
             results = scout.measure_travel_times("Yelahanka")
             assert results == []
 
@@ -128,6 +149,7 @@ class TestMobilityScout:
 class TestComputeAccessibility:
     def _clear_cache(self):
         from scrapers.mobility_scout import _accessibility_cache
+
         _accessibility_cache.clear()
 
     def test_formula_correct_returns_expected_range(self):
@@ -144,7 +166,9 @@ class TestComputeAccessibility:
 
         with patch("utils.db.get_engine") as mock_eng:
             mock_conn = MagicMock()
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             mock_conn.execute.return_value.fetchall.return_value = mock_rows
             score = compute_market_accessibility("Yelahanka")
             assert 0.4 <= score <= 0.55, f"Expected score in [0.4, 0.55], got {score}"
@@ -155,7 +179,9 @@ class TestComputeAccessibility:
 
         with patch("utils.db.get_engine") as mock_eng:
             mock_conn = MagicMock()
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             mock_conn.execute.return_value.fetchall.return_value = []
             score = compute_market_accessibility("Yelahanka")
             assert score == 0.0
@@ -174,11 +200,17 @@ class TestComputeAccessibility:
 
         with patch("utils.db.get_engine") as mock_eng:
             mock_conn = MagicMock()
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             mock_conn.execute.return_value.fetchall.return_value = mock_rows
             score = compute_market_accessibility("Yelahanka")
             assert mock_conn.execute.called, "DB should be queried (not cached)"
-            executed_sql = str(mock_conn.execute.call_args[0][0]) if mock_conn.execute.call_args else ""
+            executed_sql = (
+                str(mock_conn.execute.call_args[0][0])
+                if mock_conn.execute.call_args
+                else ""
+            )
             assert "market =" in executed_sql, "Should use exact match, not ILIKE"
             assert score > 0.0
 
@@ -223,9 +255,16 @@ class TestPersistResults:
     def test_persist_upserts_with_on_conflict(self):
         from scrapers.mobility_scout import _persist_results
 
-        results = [{"destination_name": "Manyata Tech Park", "travel_time_min": 25.0,
-                     "distance_km": 14.0, "mode": "driving", "traffic_condition": "typical",
-                     "measured_at": "2026-06-08T00:00:00+00:00"}]
+        results = [
+            {
+                "destination_name": "Manyata Tech Park",
+                "travel_time_min": 25.0,
+                "distance_km": 14.0,
+                "mode": "driving",
+                "traffic_condition": "typical",
+                "measured_at": "2026-06-08T00:00:00+00:00",
+            }
+        ]
 
         with patch("utils.db.get_engine") as mock_eng:
             mock_conn = MagicMock()

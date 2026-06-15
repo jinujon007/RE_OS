@@ -1,13 +1,26 @@
 import pytest
+
 pytestmark = pytest.mark.unit
 
 from utils.irr_model import (
-    calc_land_cost, calc_gdv, calc_irr, compare_scenarios,
-    TARGET_IRR_GO, TARGET_IRR_MARGINAL, CONSTRUCTION_COST_PSF,
-    EQUITY_RATIO, DEBT_RATIO, TOTAL_TIMELINE_MONTHS,
+    calc_land_cost,
+    calc_gdv,
+    calc_irr,
+    compare_scenarios,
+    TARGET_IRR_GO,
+    TARGET_IRR_MARGINAL,
+    CONSTRUCTION_COST_PSF,
+    EQUITY_RATIO,
+    DEBT_RATIO,
+    TOTAL_TIMELINE_MONTHS,
     RERA_TO_POSSESSION_MONTHS,
-    LandCostResult, GDVResult, IRRResult, ScenarioResult,
-    re_sharpe_ratio, _build_monthly_returns, _compute_risk_metrics,
+    LandCostResult,
+    GDVResult,
+    IRRResult,
+    ScenarioResult,
+    re_sharpe_ratio,
+    _build_monthly_returns,
+    _compute_risk_metrics,
 )
 
 
@@ -165,6 +178,7 @@ class TestGDVEstimator:
 
     def test_estimate_returns_gdv_result(self):
         from utils.irr_model import GDVEstimator
+
         est = GDVEstimator()
         result = est.estimate(sellable_area_sqft=10000, market="")
         assert result.sellable_area_sqft == 10000
@@ -174,18 +188,21 @@ class TestGDVEstimator:
 
     def test_estimate_clamps_max_area(self):
         from utils.irr_model import GDVEstimator
+
         est = GDVEstimator()
         result = est.estimate(sellable_area_sqft=50_000_000, market="")
         assert result.sellable_area_sqft == 10_000_000
 
     def test_estimate_clamps_negative_area(self):
         from utils.irr_model import GDVEstimator
+
         est = GDVEstimator()
         result = est.estimate(sellable_area_sqft=-5000, market="")
         assert result.sellable_area_sqft == 0.0
 
     def test_estimate_empty_market_returns_zero_psf_no_source(self):
         from utils.irr_model import GDVEstimator
+
         est = GDVEstimator()
         result = est.estimate(sellable_area_sqft=10000, market="")
         assert result.sell_psf == 0.0
@@ -194,7 +211,12 @@ class TestGDVEstimator:
     def test_estimate_market_no_igr_data_passes_source_through(self):
         from unittest.mock import patch
         from utils.irr_model import GDVEstimator
-        with patch.object(GDVEstimator, "_query_igr_median_psf", return_value=(None, 2, "insufficient_records")):
+
+        with patch.object(
+            GDVEstimator,
+            "_query_igr_median_psf",
+            return_value=(None, 2, "insufficient_records"),
+        ):
             est = GDVEstimator()
             result = est.estimate(sellable_area_sqft=10000, market="Devanahalli")
             assert result.igr_source == "insufficient_records"
@@ -203,14 +225,16 @@ class TestGDVEstimator:
     def test_estimate_psf_sanity_rejects_outliers(self):
         from unittest.mock import patch
         from utils.irr_model import GDVEstimator
+
         est = GDVEstimator()
         est.clear_cache()
-        assert est._validate_psf(250) is None   # below ₹500/sqft
+        assert est._validate_psf(250) is None  # below ₹500/sqft
         assert est._validate_psf(60000) is None  # above ₹50,000/sqft
-        assert est._validate_psf(5000) == 5000   # valid
+        assert est._validate_psf(5000) == 5000  # valid
 
     def test_clear_cache_empties_cache(self):
         from utils.irr_model import GDVEstimator
+
         est = GDVEstimator()
         est._cache["test"] = (5000.0, 10, "igr_portal", 9999999999.0)
         assert len(est._cache) == 1
@@ -220,6 +244,7 @@ class TestGDVEstimator:
     def test_query_igr_median_psf_db_error_returns_none(self):
         from unittest.mock import patch
         from utils.irr_model import GDVEstimator
+
         with patch("utils.db.get_engine", side_effect=Exception("DB down")):
             est = GDVEstimator()
             psf, count, source = est._query_igr_median_psf("Yelahanka")
@@ -230,6 +255,7 @@ class TestGDVEstimator:
     def test_query_igr_median_psf_zero_rows(self):
         from unittest.mock import MagicMock, patch
         from utils.irr_model import GDVEstimator
+
         mock_result = MagicMock()
         mock_result.fetchone.return_value = None
         mock_conn = MagicMock()
@@ -245,17 +271,20 @@ class TestGDVEstimator:
 
     def test_normalize_market_title_case(self):
         from utils.irr_model import GDVEstimator
+
         assert GDVEstimator._normalize_market("YELAHANKA") == "Yelahanka"
         assert GDVEstimator._normalize_market("devanahalli") == "Devanahalli"
         assert GDVEstimator._normalize_market("HEBBAL ") == "Hebbal"
 
     def test_normalize_market_empty(self):
         from utils.irr_model import GDVEstimator
+
         assert GDVEstimator._normalize_market("") == ""
         assert GDVEstimator._normalize_market("   ") == ""
 
     def test_normalize_market_truncates_long(self):
         from utils.irr_model import GDVEstimator
+
         long_name = "A" * 200
         result = GDVEstimator._normalize_market(long_name)
         assert len(result) <= 100
@@ -263,18 +292,21 @@ class TestGDVEstimator:
     def test_log_igr_lookup_db_error_does_not_raise(self):
         from utils.irr_model import log_igr_lookup
         from unittest.mock import patch
+
         with patch("utils.db.get_engine", side_effect=Exception("DB down")):
             log_igr_lookup("Yelahanka", "igr_portal", 10, 5500.0, "TestCaller")
 
     def test_log_igr_lookup_ignores_empty_market(self):
         from utils.irr_model import log_igr_lookup
         from unittest.mock import patch
+
         with patch("utils.db.get_engine", side_effect=Exception("DB down")):
             log_igr_lookup("", None, 0, 0.0, "TestCaller")
 
     def test_query_igr_median_psf_insufficient_records(self):
         from unittest.mock import MagicMock, patch
         from utils.irr_model import GDVEstimator
+
         mock_result = MagicMock()
         mock_result.fetchone.return_value = (5500.0, 3)
         mock_conn = MagicMock()
@@ -316,6 +348,7 @@ class TestRiskMetrics:
     def test_re_sharpe_ratio_nan_input_returns_zero(self):
         """NaN in any parameter → 0 (no crash)."""
         import math
+
         assert re_sharpe_ratio(math.nan, 0.07, 5.0) == 0.0
         assert re_sharpe_ratio(18.0, math.nan, 5.0) == 0.0
         assert re_sharpe_ratio(18.0, 0.07, math.nan) == 0.0
@@ -326,20 +359,24 @@ class TestRiskMetrics:
 
     def test_build_monthly_returns_short_timeline(self):
         """Timeline shorter than LAND_TO_RERA_MONTHS produces valid series."""
-        mr = _build_monthly_returns(10_000_000, 50_000_000, 100_000_000, 36_000_000, timeline_months=12)
+        mr = _build_monthly_returns(
+            10_000_000, 50_000_000, 100_000_000, 36_000_000, timeline_months=12
+        )
         assert len(mr) >= 1
         # Month 0 still includes land cost
-        assert mr.iloc[0] == (-10_000_000 - 50_000_000/12) / 36_000_000
+        assert mr.iloc[0] == (-10_000_000 - 50_000_000 / 12) / 36_000_000
 
     def test_build_monthly_returns_zero_gdv(self):
         """Zero GDV → empty Series."""
         import pandas as pd
+
         mr = _build_monthly_returns(10_000_000, 50_000_000, 0, 36_000_000)
         assert isinstance(mr, pd.Series) and len(mr) == 0
 
     def test_build_monthly_returns_negative_land_capped(self):
         """Negative land cost → treated as 0 (clamped upstream)."""
         import pandas as pd
+
         mr = _build_monthly_returns(-10_000_000, 50_000_000, 100_000_000, 36_000_000)
         assert isinstance(mr, pd.Series) and len(mr) == TOTAL_TIMELINE_MONTHS
 
@@ -351,6 +388,7 @@ class TestRiskMetrics:
     def test_build_monthly_returns_zero_equity(self):
         """Zero equity required → empty Series (no division by zero)."""
         import pandas as pd
+
         mr = _build_monthly_returns(10_000_000, 50_000_000, 100_000_000, 0)
         assert isinstance(mr, pd.Series) and len(mr) == 0
 
@@ -369,9 +407,13 @@ class TestRiskMetrics:
     def test_compute_risk_metrics_basic(self):
         """Compute risk metrics returns all 4 keys with expected types."""
         r = _compute_risk_metrics(
-            land_cost=10_000_000, construction_cost=50_000_000,
-            gdv=100_000_000, equity_required=36_000_000,
-            simple_irr_pct=10.5, bull_irr_pct=13.8, bear_irr_pct=3.9,
+            land_cost=10_000_000,
+            construction_cost=50_000_000,
+            gdv=100_000_000,
+            equity_required=36_000_000,
+            simple_irr_pct=10.5,
+            bull_irr_pct=13.8,
+            bear_irr_pct=3.9,
         )
         assert isinstance(r, dict)
         assert "sharpe_ratio" in r
@@ -384,9 +426,13 @@ class TestRiskMetrics:
     def test_compute_risk_metrics_best_worst_rounding(self):
         """Best/worst case IRRs should be rounded to 1 decimal."""
         r = _compute_risk_metrics(
-            land_cost=0, construction_cost=0,
-            gdv=0, equity_required=0,
-            simple_irr_pct=10.555, bull_irr_pct=14.777, bear_irr_pct=4.222,
+            land_cost=0,
+            construction_cost=0,
+            gdv=0,
+            equity_required=0,
+            simple_irr_pct=10.555,
+            bull_irr_pct=14.777,
+            bear_irr_pct=4.222,
         )
         assert r["best_case_irr_pct"] == 14.8
         assert r["worst_case_irr_pct"] == 4.2
@@ -394,9 +440,13 @@ class TestRiskMetrics:
     def test_compute_risk_metrics_sharpe_with_std(self):
         """With non-zero std across scenarios, Sharpe should be non-zero."""
         r = _compute_risk_metrics(
-            land_cost=10_000_000, construction_cost=50_000_000,
-            gdv=100_000_000, equity_required=36_000_000,
-            simple_irr_pct=10.5, bull_irr_pct=13.8, bear_irr_pct=3.9,
+            land_cost=10_000_000,
+            construction_cost=50_000_000,
+            gdv=100_000_000,
+            equity_required=36_000_000,
+            simple_irr_pct=10.5,
+            bull_irr_pct=13.8,
+            bear_irr_pct=3.9,
         )
         # std of [10.5, 13.8, 3.9] ≈ 4.97, so (10.5 - 7) / 4.97 ≈ 0.70
         assert r["sharpe_ratio"] > 0
@@ -405,9 +455,13 @@ class TestRiskMetrics:
     def test_compute_risk_metrics_identical_scenarios_zero_sharpe(self):
         """All scenarios identical → zero std → Sharpe = 0."""
         r = _compute_risk_metrics(
-            land_cost=0, construction_cost=0,
-            gdv=0, equity_required=0,
-            simple_irr_pct=10.0, bull_irr_pct=10.0, bear_irr_pct=10.0,
+            land_cost=0,
+            construction_cost=0,
+            gdv=0,
+            equity_required=0,
+            simple_irr_pct=10.0,
+            bull_irr_pct=10.0,
+            bear_irr_pct=10.0,
         )
         assert r["sharpe_ratio"] == 0.0
 
@@ -446,13 +500,19 @@ class TestDataclassContracts:
     def test_land_cost_result_fields(self):
         r = calc_land_cost(43560, 4000, 10.0)
         assert hasattr(r, "area_sqft") and isinstance(r.area_sqft, (int, float))
-        assert hasattr(r, "guidance_value_psf") and isinstance(r.guidance_value_psf, (int, float))
-        assert hasattr(r, "negotiated_land_cost") and isinstance(r.negotiated_land_cost, (int, float))
+        assert hasattr(r, "guidance_value_psf") and isinstance(
+            r.guidance_value_psf, (int, float)
+        )
+        assert hasattr(r, "negotiated_land_cost") and isinstance(
+            r.negotiated_land_cost, (int, float)
+        )
 
     def test_irr_result_fields(self):
         r = calc_irr(10_000_000, 10000, 9000)
         assert hasattr(r, "verdict") and isinstance(r.verdict, str)
-        assert hasattr(r, "equity_required") and isinstance(r.equity_required, (int, float))
+        assert hasattr(r, "equity_required") and isinstance(
+            r.equity_required, (int, float)
+        )
         assert hasattr(r, "payback_months") and isinstance(r.payback_months, int)
 
     def test_irr_result_has_risk_fields(self):

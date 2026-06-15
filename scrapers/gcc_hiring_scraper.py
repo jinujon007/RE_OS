@@ -23,6 +23,7 @@ from loguru import logger
 
 try:
     import httpx
+
     HAS_HTTPX = True
 except ImportError:
     HAS_HTTPX = False
@@ -73,7 +74,13 @@ def _fetch_posting_count(
     close_client = False
     if client is None:
         if not HAS_HTTPX:
-            return {"employer": employer, "hub": hub, "posting_count": 0, "source": "naukri_search", "error": "httpx not installed"}
+            return {
+                "employer": employer,
+                "hub": hub,
+                "posting_count": 0,
+                "source": "naukri_search",
+                "error": "httpx not installed",
+            }
         client = httpx.Client(timeout=15.0, follow_redirects=True)
         close_client = True
 
@@ -92,7 +99,12 @@ def _fetch_posting_count(
                 if count is not None:
                     if close_client:
                         client.close()
-                    return {"employer": employer, "hub": hub, "posting_count": count, "source": "naukri_search"}
+                    return {
+                        "employer": employer,
+                        "hub": hub,
+                        "posting_count": count,
+                        "source": "naukri_search",
+                    }
                 last_error = "count not found in HTML"
             else:
                 last_error = f"HTTP {resp.status_code}"
@@ -100,19 +112,30 @@ def _fetch_posting_count(
                     break
 
             if attempt < _RETRY_MAX:
-                wait = _RETRY_BACKOFF * (2 ** attempt)
-                logger.info("[GccHiringScraper] retry {} for {} in {:.0f}s (last: {})",
-                    attempt + 1, employer, wait, last_error)
+                wait = _RETRY_BACKOFF * (2**attempt)
+                logger.info(
+                    "[GccHiringScraper] retry {} for {} in {:.0f}s (last: {})",
+                    attempt + 1,
+                    employer,
+                    wait,
+                    last_error,
+                )
                 time.sleep(wait)
 
         except Exception as exc:
             last_error = str(exc)
             if attempt < _RETRY_MAX:
-                time.sleep(_RETRY_BACKOFF * (2 ** attempt))
+                time.sleep(_RETRY_BACKOFF * (2**attempt))
 
     if close_client:
         client.close()
-    return {"employer": employer, "hub": hub, "posting_count": 0, "source": "naukri_search", "error": last_error}
+    return {
+        "employer": employer,
+        "hub": hub,
+        "posting_count": 0,
+        "source": "naukri_search",
+        "error": last_error,
+    }
 
 
 def run_snapshot(
@@ -131,6 +154,7 @@ def run_snapshot(
     """
     if employers is None:
         from config.settings import GCC_TRACKED_EMPLOYERS as _EMPLOYERS
+
         targets = _EMPLOYERS
     else:
         targets = employers
@@ -140,9 +164,19 @@ def run_snapshot(
         return _parse_inbox_files()
 
     if not HAS_HTTPX:
-        logger.warning("[GccHiringScraper] httpx not available — returning empty snapshot")
+        logger.warning(
+            "[GccHiringScraper] httpx not available — returning empty snapshot"
+        )
         for t in targets:
-            results.append({"employer": t["employer"], "hub": t["hub"], "posting_count": 0, "source": "naukri_search", "error": "httpx not installed"})
+            results.append(
+                {
+                    "employer": t["employer"],
+                    "hub": t["hub"],
+                    "posting_count": 0,
+                    "source": "naukri_search",
+                    "error": "httpx not installed",
+                }
+            )
         return results
 
     with httpx.Client(timeout=15.0, follow_redirects=True) as client:
@@ -152,8 +186,12 @@ def run_snapshot(
 
     ok = sum(1 for r in results if r.get("posting_count", 0) > 0)
     failed = sum(1 for r in results if r.get("error"))
-    logger.info("[GccHiringScraper] snapshot: {} employers, {} OK, {} failed",
-        len(results), ok, failed)
+    logger.info(
+        "[GccHiringScraper] snapshot: {} employers, {} OK, {} failed",
+        len(results),
+        ok,
+        failed,
+    )
     return results
 
 
@@ -180,9 +218,18 @@ def _parse_inbox_files() -> list[dict[str, Any]]:
                     item.setdefault("source", "inbox")
                     results.append(item)
             else:
-                results.append({"employer": str(data.get("employer", "unknown")), "hub": str(data.get("hub", "unknown")), "posting_count": int(data.get("posting_count", 0)), "source": "inbox"})
+                results.append(
+                    {
+                        "employer": str(data.get("employer", "unknown")),
+                        "hub": str(data.get("hub", "unknown")),
+                        "posting_count": int(data.get("posting_count", 0)),
+                        "source": "inbox",
+                    }
+                )
         except Exception as exc:
-            logger.warning("[GccHiringScraper] inbox parse failed for {}: {}", fname, exc)
+            logger.warning(
+                "[GccHiringScraper] inbox parse failed for {}: {}", fname, exc
+            )
 
     return results
 
@@ -190,9 +237,12 @@ def _parse_inbox_files() -> list[dict[str, Any]]:
 if __name__ == "__main__":
     import sys
     from config.settings import GCC_TRACKED_EMPLOYERS
+
     mode = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == "--mode" else "live"
     results = run_snapshot(employers=GCC_TRACKED_EMPLOYERS, mode=mode)
     print(json.dumps(results, indent=2, default=str))
     ok = sum(1 for r in results if r.get("posting_count", 0) > 0)
     failed = sum(1 for r in results if r.get("error"))
-    print(f"\n{len(results)} employers: {ok} OK, {failed} failed, {sum(r.get('posting_count', 0) for r in results)} total postings")
+    print(
+        f"\n{len(results)} employers: {ok} OK, {failed} failed, {sum(r.get('posting_count', 0) for r in results)} total postings"
+    )

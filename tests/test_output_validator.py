@@ -1,4 +1,5 @@
 import pytest
+
 pytestmark = pytest.mark.unit
 
 from utils.output_validator import validate_intel_output
@@ -35,7 +36,9 @@ def test_valid_psf_passes():
 
 
 def test_unknown_market_flagged():
-    r = validate_intel_output("PSF trending at ₹6,500 in an unknown locality", "Yelahanka")
+    r = validate_intel_output(
+        "PSF trending at ₹6,500 in an unknown locality", "Yelahanka"
+    )
     assert r.passed is True
     assert r.market_references_valid is True
 

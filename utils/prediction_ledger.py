@@ -10,6 +10,7 @@ Public API:
     get_pending_claims       — list claims where verdict IS NULL and check_date <= today
     resolve_verdicts         — compute actuals & set verdict for all pending claims
 """
+
 from datetime import date
 from loguru import logger
 from sqlalchemy import text
@@ -119,7 +120,9 @@ def resolve_verdicts() -> dict:
                 if actual_psf is not None:
                     predicted = claim.get("predicted_value")
                     if predicted and actual_psf > 0:
-                        pct_diff = abs(actual_psf - float(predicted)) / float(predicted) * 100
+                        pct_diff = (
+                            abs(actual_psf - float(predicted)) / float(predicted) * 100
+                        )
                         if pct_diff <= 15:
                             _set_verdict(cid, "hit", actual_psf)
                             resolved += 1
@@ -130,26 +133,52 @@ def resolve_verdicts() -> dict:
                             _set_verdict(cid, "miss", actual_psf)
                             resolved += 1
                     else:
-                        _set_verdict(cid, "unverifiable", None, "No predicted value to compare")
+                        _set_verdict(
+                            cid, "unverifiable", None, "No predicted value to compare"
+                        )
                         unverifiable += 1
                 else:
-                    _set_verdict(cid, "unverifiable", None, "No transaction PSF data available")
+                    _set_verdict(
+                        cid, "unverifiable", None, "No transaction PSF data available"
+                    )
                     unverifiable += 1
             elif ctype == "opportunity_score":
-                _set_verdict(cid, "unverifiable", None, "Opportunity score verdict needs deal outcome data")
+                _set_verdict(
+                    cid,
+                    "unverifiable",
+                    None,
+                    "Opportunity score verdict needs deal outcome data",
+                )
                 unverifiable += 1
             elif ctype == "assembly_alert":
-                _set_verdict(cid, "unverifiable", None, "Assembly alert verdict needs site visit confirmation")
+                _set_verdict(
+                    cid,
+                    "unverifiable",
+                    None,
+                    "Assembly alert verdict needs site visit confirmation",
+                )
                 unverifiable += 1
             else:
-                _set_verdict(cid, "unverifiable", None, f"Unknown or unresolvable claim_type: {ctype}")
+                _set_verdict(
+                    cid,
+                    "unverifiable",
+                    None,
+                    f"Unknown or unresolvable claim_type: {ctype}",
+                )
                 unverifiable += 1
         except Exception as exc:
             logger.warning("[PredictionLedger] resolve failed for {}: {}", cid, exc)
-            _set_verdict(cid, "unverifiable", None, f"Resolution error: {str(exc)[:200]}")
+            _set_verdict(
+                cid, "unverifiable", None, f"Resolution error: {str(exc)[:200]}"
+            )
             unverifiable += 1
 
-    return {"total": len(claims), "resolved": resolved, "partial": partial, "unverifiable": unverifiable}
+    return {
+        "total": len(claims),
+        "resolved": resolved,
+        "partial": partial,
+        "unverifiable": unverifiable,
+    }
 
 
 def _get_market_median_psf(market: str) -> float | None:
@@ -173,7 +202,9 @@ def _get_market_median_psf(market: str) -> float | None:
         return None
 
 
-def _set_verdict(claim_id: str, verdict: str, actual_value: float | None, notes: str | None = None) -> bool:
+def _set_verdict(
+    claim_id: str, verdict: str, actual_value: float | None, notes: str | None = None
+) -> bool:
     """Set the verdict + actual_value for a claim.
 
     Safe with both TEXT and UUID claim_ids — SQLAlchemy coerces UUID strings.
@@ -181,7 +212,11 @@ def _set_verdict(claim_id: str, verdict: str, actual_value: float | None, notes:
     try:
         from uuid import UUID
 
-        cid_uuid = UUID(claim_id) if isinstance(claim_id, str) and len(claim_id) == 36 else claim_id
+        cid_uuid = (
+            UUID(claim_id)
+            if isinstance(claim_id, str) and len(claim_id) == 36
+            else claim_id
+        )
         with get_engine().begin() as conn:
             conn.execute(
                 text("""
@@ -194,5 +229,7 @@ def _set_verdict(claim_id: str, verdict: str, actual_value: float | None, notes:
             )
         return True
     except Exception as exc:
-        logger.warning("[PredictionLedger] _set_verdict failed for {}: {}", claim_id, exc)
+        logger.warning(
+            "[PredictionLedger] _set_verdict failed for {}: {}", claim_id, exc
+        )
         return False

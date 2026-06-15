@@ -10,8 +10,12 @@ import json
 from pathlib import Path
 from datetime import datetime
 
-_PINCODE_CSV_PATH = Path(__file__).parent.parent / "data" / "bangalore_pincode_master.csv"
-_INFRA_JSON_PATH = Path(__file__).parent.parent / "data" / "bangalore_infrastructure_timeline.json"
+_PINCODE_CSV_PATH = (
+    Path(__file__).parent.parent / "data" / "bangalore_pincode_master.csv"
+)
+_INFRA_JSON_PATH = (
+    Path(__file__).parent.parent / "data" / "bangalore_infrastructure_timeline.json"
+)
 
 _BASE_APPRECIATION_RATES = {
     "Urban_Core_Apex": 0.03,
@@ -79,15 +83,23 @@ def _get_infrastructure_events(pincode: str) -> list:
     pincode_str = str(pincode)
     for project in _get_infra_data():
         if pincode_str in project.get("influenced_pincodes", []):
-            events.append({
-                "project": project.get("name", ""),
-                "status": project.get("status", ""),
-                "completion_date": project.get("completion_date", ""),
-                "psf_impact_on_completion_pct": project.get("psf_appreciation_on_completion_pct", 0),
-                "psf_appreciation_5yr_pct": project.get("psf_appreciation_5yr_pct", 0),
-                "psf_appreciation_10yr_pct": project.get("psf_appreciation_10yr_pct", 0),
-                "probability": project.get("completion_probability", 1.0),
-            })
+            events.append(
+                {
+                    "project": project.get("name", ""),
+                    "status": project.get("status", ""),
+                    "completion_date": project.get("completion_date", ""),
+                    "psf_impact_on_completion_pct": project.get(
+                        "psf_appreciation_on_completion_pct", 0
+                    ),
+                    "psf_appreciation_5yr_pct": project.get(
+                        "psf_appreciation_5yr_pct", 0
+                    ),
+                    "psf_appreciation_10yr_pct": project.get(
+                        "psf_appreciation_10yr_pct", 0
+                    ),
+                    "probability": project.get("completion_probability", 1.0),
+                }
+            )
     return events
 
 
@@ -160,7 +172,9 @@ def get_appreciation_forecast(pincode: str) -> dict:
             infra_5yr_boost += impact_5yr * 0.7
             infra_10yr_boost += impact_10yr * 0.8
 
-    if infrastructure_events and any(e.get("status") == "functional" for e in infrastructure_events):
+    if infrastructure_events and any(
+        e.get("status") == "functional" for e in infrastructure_events
+    ):
         confidence = "high"
     elif infrastructure_events:
         confidence = "medium"
@@ -169,9 +183,13 @@ def get_appreciation_forecast(pincode: str) -> dict:
 
     forecast_3yr = round((base_rate * 3 + water_penalty * 3 + infra_3yr_boost * 100), 1)
     forecast_5yr = round((base_rate * 5 + water_penalty * 5 + infra_5yr_boost * 100), 1)
-    forecast_10yr = round((base_rate * 10 + water_penalty * 10 + infra_10yr_boost * 100), 1)
+    forecast_10yr = round(
+        (base_rate * 10 + water_penalty * 10 + infra_10yr_boost * 100), 1
+    )
 
-    primary_driver = primary_drivers[0] if primary_drivers else "Base market appreciation"
+    primary_driver = (
+        primary_drivers[0] if primary_drivers else "Base market appreciation"
+    )
 
     tier_recs = {
         "Tier1_Apex_Growth": "Strong Buy — premium location appreciation accelerating",

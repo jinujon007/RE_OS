@@ -18,7 +18,9 @@ from utils.db import get_engine
 from ingest.base import ParsedRecord
 
 __all__ = [
-    "IngestWriter", "WriteResult", "route_record",
+    "IngestWriter",
+    "WriteResult",
+    "route_record",
 ]
 
 
@@ -88,6 +90,7 @@ _COMPOSITE_CONFLICT: dict[str, tuple[str, ...]] = {
 @dataclass
 class WriteResult:
     """Outcome of a single :meth:`IngestWriter.write` call."""
+
     success: bool
     table: str | None = None
     entity_type: str = ""
@@ -129,13 +132,21 @@ class IngestWriter:
         """Like :meth:`write` but returns a structured :class:`WriteResult`."""
         table = self.table_for(record.entity_type)
         if table is None:
-            logger.warning("[IngestWriter] unknown entity_type '{}' — skipping", record.entity_type)
-            return WriteResult(success=False, entity_type=record.entity_type, error="unknown entity_type")
+            logger.warning(
+                "[IngestWriter] unknown entity_type '{}' — skipping", record.entity_type
+            )
+            return WriteResult(
+                success=False,
+                entity_type=record.entity_type,
+                error="unknown entity_type",
+            )
 
         sql = self._build_upsert(table, record.data)
         try:
             with self._engine.begin() as conn:
-                sp = f"sp_{record.entity_type[:4]}_{abs(hash(record.source_id)) % 10000}"
+                sp = (
+                    f"sp_{record.entity_type[:4]}_{abs(hash(record.source_id)) % 10000}"
+                )
                 conn.execute(text(f"SAVEPOINT {sp}"))
                 try:
                     result = conn.execute(text(sql), record.data)
@@ -145,13 +156,26 @@ class IngestWriter:
                     conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
                     raise
             rows = result.rowcount if result else 0
-            return WriteResult(success=True, table=table, entity_type=record.entity_type, rows_affected=rows)
+            return WriteResult(
+                success=True,
+                table=table,
+                entity_type=record.entity_type,
+                rows_affected=rows,
+            )
         except Exception as exc:
             logger.error(
                 "[IngestWriter] write failed for {} ({}/{}): {}",
-                record.entity_type, record.market, record.source_id, exc,
+                record.entity_type,
+                record.market,
+                record.source_id,
+                exc,
             )
-            return WriteResult(success=False, table=table, entity_type=record.entity_type, error=str(exc))
+            return WriteResult(
+                success=False,
+                table=table,
+                entity_type=record.entity_type,
+                error=str(exc),
+            )
 
     def write_batch(self, records: list[ParsedRecord]) -> list[WriteResult]:
         """Persist a batch of records in a single transaction with SAVEPOINT isolation."""
@@ -164,20 +188,44 @@ class IngestWriter:
                     try:
                         table = self.table_for(record.entity_type)
                         if table is None:
-                            logger.warning("[IngestWriter] unknown entity_type '{}' in batch — skipping", record.entity_type)
-                            results.append(WriteResult(success=False, entity_type=record.entity_type, error="unknown entity_type"))
+                            logger.warning(
+                                "[IngestWriter] unknown entity_type '{}' in batch — skipping",
+                                record.entity_type,
+                            )
+                            results.append(
+                                WriteResult(
+                                    success=False,
+                                    entity_type=record.entity_type,
+                                    error="unknown entity_type",
+                                )
+                            )
                             conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
                             continue
                         sql = self._build_upsert(table, record.data)
                         result = conn.execute(text(sql), record.data)
                         conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
                         rows = result.rowcount if result else 0
-                        results.append(WriteResult(success=True, table=table, entity_type=record.entity_type, rows_affected=rows))
+                        results.append(
+                            WriteResult(
+                                success=True,
+                                table=table,
+                                entity_type=record.entity_type,
+                                rows_affected=rows,
+                            )
+                        )
                     except Exception as exc:
                         conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
                         conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
-                        logger.error("[IngestWriter] batch record {} failed: {}", i, exc)
-                        results.append(WriteResult(success=False, entity_type=record.entity_type, error=str(exc)))
+                        logger.error(
+                            "[IngestWriter] batch record {} failed: {}", i, exc
+                        )
+                        results.append(
+                            WriteResult(
+                                success=False,
+                                entity_type=record.entity_type,
+                                error=str(exc),
+                            )
+                        )
         except Exception as exc:
             logger.error("[IngestWriter] batch transaction failed: {}", exc)
         return results

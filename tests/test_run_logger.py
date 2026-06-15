@@ -48,6 +48,7 @@ def test_run_id_contains_timestamp():
 
 def test_run_id_unique_per_instance():
     import time
+
     a = RunLogger(market="Yelahanka")
     time.sleep(0.01)
     b = RunLogger(market="Yelahanka")
@@ -98,7 +99,11 @@ def test_finish_success_updates_record(isolated_logs):
     rl.start()
     rl.finish(status="success", report_path="outputs/yelahanka/intel_report.txt")
 
-    lines = [ln for ln in (isolated_logs / "run_history.jsonl").read_text().splitlines() if ln.strip()]
+    lines = [
+        ln
+        for ln in (isolated_logs / "run_history.jsonl").read_text().splitlines()
+        if ln.strip()
+    ]
     # start() + finish() both write — finish() overwrites the same run_id entry
     records = [json.loads(ln) for ln in lines]
     final = next(r for r in records if r["run_id"] == rl.run_id)
@@ -125,7 +130,11 @@ def test_finish_failed_records_error_type(isolated_logs):
     rl.start()
     rl.finish(status="failed", error="rate_limit exceeded by groq")
 
-    lines = [ln for ln in (isolated_logs / "run_history.jsonl").read_text().splitlines() if ln.strip()]
+    lines = [
+        ln
+        for ln in (isolated_logs / "run_history.jsonl").read_text().splitlines()
+        if ln.strip()
+    ]
     records = [json.loads(ln) for ln in lines]
     final = next(r for r in records if r["run_id"] == rl.run_id)
     assert final["status"] == "failed"
@@ -178,7 +187,10 @@ def test_classify_ollama_missing(rl):
 
 
 def test_classify_db_error(rl):
-    assert rl._classify_error("psycopg2 OperationalError: relation does not exist") == "DB_ERROR"
+    assert (
+        rl._classify_error("psycopg2 OperationalError: relation does not exist")
+        == "DB_ERROR"
+    )
     # "sqlalchemy" without "connection" so CONNECTION_ERROR doesn't fire first
     assert rl._classify_error("sqlalchemy error: table missing") == "DB_ERROR"
     assert rl._classify_error("database error") == "DB_ERROR"

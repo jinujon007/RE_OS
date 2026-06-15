@@ -1,15 +1,20 @@
 """Unit tests for ProjectManagerAgent (T-994)."""
+
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 
 class TestProjectStatusReport:
     def test_status_report_returns_keys(self):
         from agents.project_manager_agent import _get_project_status
+
         with patch("utils.db.get_engine") as mock_eng:
             mock_conn = MagicMock()
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             mock_conn.execute.side_effect = [
                 MagicMock(fetchone=lambda: ("p1", "Test Project", "lead", None)),
                 MagicMock(fetchall=lambda: [("todo", 3), ("done", 1)]),
@@ -26,15 +31,19 @@ class TestProjectStatusReport:
 
     def test_status_report_nonexistent_project(self):
         from agents.project_manager_agent import _get_project_status
+
         with patch("utils.db.get_engine") as mock_eng:
             mock_conn = MagicMock()
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             mock_conn.execute.return_value.fetchone.return_value = None
             report = _get_project_status("nonexistent")
         assert report.status == "not_found"
 
     def test_weekly_brief_non_empty(self):
         from agents.project_manager_agent import ProjectManagerAgent
+
         agent = ProjectManagerAgent()
         with patch("agents.project_manager_agent._get_project_status") as mock_status:
             mock_report = MagicMock()
@@ -53,6 +62,7 @@ class TestProjectStatusReport:
 
     def test_pm_handles_nonexistent_project(self):
         from agents.project_manager_agent import ProjectManagerAgent
+
         agent = ProjectManagerAgent()
         with patch("agents.project_manager_agent._get_project_status") as mock_status:
             mock_report = MagicMock()

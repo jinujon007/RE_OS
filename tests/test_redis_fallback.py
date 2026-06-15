@@ -7,6 +7,7 @@ before the request handler runs. Our tests document this constraint and verify
 that (1) the health endpoint survives via mocking the limiter's storage layer,
 and (2) memory:// storage works without any Redis dependency.
 """
+
 import os
 import sys
 import pytest
@@ -20,9 +21,11 @@ def _reload_app():
     if "dashboard.app_fastapi" in sys.modules:
         import importlib
         import dashboard.app_fastapi  # noqa: F811
+
         importlib.reload(dashboard.app_fastapi)
     from starlette.testclient import TestClient
     from dashboard.app_fastapi import app
+
     return TestClient(app)
 
 

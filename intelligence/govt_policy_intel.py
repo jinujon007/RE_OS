@@ -21,6 +21,7 @@ Scoring:
 
 Cache: 4-hour TTL (via MarketCache) — govt/infra signals change slowly.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -30,7 +31,10 @@ from typing import Any
 from loguru import logger
 
 from intelligence._shared import (
-    MarketCache, sanitize_market, timed_intel_query, validate_market,
+    MarketCache,
+    sanitize_market,
+    timed_intel_query,
+    validate_market,
 )
 
 __all__ = ["GovtPolicyIntel", "GovtPolicyResult"]
@@ -53,6 +57,7 @@ class GovtPolicyResult:
         computed_at: ISO-8601 timestamp.
         errors: Any error messages encountered.
     """
+
     north_bengaluru_score: float = 0.0
     north_bengaluru_count: int = 0
     high_opportunity_count: int = 0
@@ -86,7 +91,11 @@ class GovtPolicyIntel:
         Returns:
             GovtPolicyResult with north_bengaluru_score in [0.0, 1.0].
         """
-        m = sanitize_market(market) if market != "north_bengaluru_aggregate" else "north_bengaluru_aggregate"
+        m = (
+            sanitize_market(market)
+            if market != "north_bengaluru_aggregate"
+            else "north_bengaluru_aggregate"
+        )
 
         cached = self._cache.get(_CACHE_NS, m)
         if cached is not None:
@@ -148,8 +157,10 @@ class GovtPolicyIntel:
     def _query_north_bengaluru_events(self, conn) -> list[dict]:
         """Query events where is_north_bengaluru=True, ordered by impact."""
         from sqlalchemy import text
+
         with timed_intel_query("govt_policy_nb_events"):
-            rows = conn.execute(text("""
+            rows = conn.execute(
+                text("""
                 SELECT headline, category, subcategory, investment_cr,
                        stage, impact_score, signal_strength, time_horizon,
                        actionability, summary, why_it_matters,
@@ -158,17 +169,20 @@ class GovtPolicyIntel:
                 WHERE is_north_bengaluru = TRUE
                 ORDER BY impact_score DESC, scraped_at DESC
                 LIMIT 50
-            """)).fetchall()
+            """)
+            ).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
     def _query_market_events(self, conn, market: str) -> list[dict]:
         """Query events for a specific market."""
         from sqlalchemy import text
+
         mi = validate_market(market)
         if mi is None:
             return []
         with timed_intel_query("govt_policy_market_events"):
-            rows = conn.execute(text("""
+            rows = conn.execute(
+                text("""
                 SELECT headline, category, subcategory, investment_cr,
                        stage, impact_score, signal_strength, time_horizon,
                        actionability, summary, why_it_matters,
@@ -177,7 +191,9 @@ class GovtPolicyIntel:
                 WHERE micro_markets @> ARRAY[:market]::text[]
                 ORDER BY impact_score DESC, scraped_at DESC
                 LIMIT 20
-            """), {"market": mi["name"]}).fetchall()
+            """),
+                {"market": mi["name"]},
+            ).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
     @staticmethod
@@ -255,7 +271,9 @@ class GovtPolicyIntel:
                 headline = evt.get("headline", "")[:100]
                 impact = evt.get("impact_score", 0)
                 action = evt.get("actionability", "monitor")
-                event_lines.append(f"- {headline} (impact={impact}/10, action={action})")
+                event_lines.append(
+                    f"- {headline} (impact={impact}/10, action={action})"
+                )
 
             events_text = "\n".join(event_lines)
             prompt = (
@@ -285,7 +303,7 @@ class GovtPolicyIntel:
             f"North Bengaluru Govt/Infra Summary: Score {score:.2f}/1.00 | "
             f"{total} tracked events ({high_count} high opportunity, "
             f"{risk_count} risk). "
-            f"Top categories: infrastructure ({sum(1 for e in events if e.get('category')=='infrastructure')}), "
-            f"policy ({sum(1 for e in events if e.get('category')=='policy')}). "
+            f"Top categories: infrastructure ({sum(1 for e in events if e.get('category') == 'infrastructure')}), "
+            f"policy ({sum(1 for e in events if e.get('category') == 'policy')}). "
             f"Monitor STRR, Metro Phase 3, and KIADB Aerospace Park developments."
         )

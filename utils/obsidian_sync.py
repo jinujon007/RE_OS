@@ -63,16 +63,22 @@ def sync_to_obsidian(
         with open(market_file, "w", encoding="utf-8") as f:
             f.write(body)
 
-        logger.info(f"[ObsidianSync] {market} → {market_file} (confidence={confidence})")
+        logger.info(
+            f"[ObsidianSync] {market} → {market_file} (confidence={confidence})"
+        )
 
         # Append one-liner to today's daily log (T-299)
         try:
             daily_log = vault_path.parent / "01 Daily" / f"[AI] {today}.md"
             daily_log.parent.mkdir(parents=True, exist_ok=True)
             with open(daily_log, "a", encoding="utf-8") as f:
-                f.write(f"\n- RE_OS: {market} market brief synced (confidence: {confidence}, sources: {sources})\n")
+                f.write(
+                    f"\n- RE_OS: {market} market brief synced (confidence: {confidence}, sources: {sources})\n"
+                )
         except Exception as log_exc:
-            logger.warning(f"[ObsidianSync] daily log append failed for {market}: {log_exc}")
+            logger.warning(
+                f"[ObsidianSync] daily log append failed for {market}: {log_exc}"
+            )
 
         return True
 

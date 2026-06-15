@@ -4,6 +4,7 @@ Revision ID: 0019_add_opp_scores_unique
 Revises: 0018_add_surveys_developer_id
 Create Date: 2026-06-05
 """
+
 from typing import Sequence, Union
 from alembic import op
 
@@ -15,7 +16,9 @@ depends_on: Union[str, None] = None
 
 def upgrade() -> None:
     # Constraint may already exist (added by v2 schema or earlier migration) — drop + recreate
-    op.execute("ALTER TABLE opportunity_scores DROP CONSTRAINT IF EXISTS uq_opp_scores_survey")
+    op.execute(
+        "ALTER TABLE opportunity_scores DROP CONSTRAINT IF EXISTS uq_opp_scores_survey"
+    )
     op.execute("ALTER TABLE opportunity_scores DROP CONSTRAINT IF EXISTS uq_opp_score")
     op.execute("""
         ALTER TABLE opportunity_scores
@@ -24,4 +27,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint('uq_opp_scores_survey', 'opportunity_scores', type_='unique')
+    op.drop_constraint("uq_opp_scores_survey", "opportunity_scores", type_="unique")

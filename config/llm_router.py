@@ -71,6 +71,8 @@ from config.settings import (
 
 # Register litellm callback for token tracking
 import litellm
+
+
 def _litellm_usage_callback(kwargs, completion_response, start_time, end_time):
     try:
         api_key = kwargs.get("api_key")
@@ -106,12 +108,15 @@ def _litellm_usage_callback(kwargs, completion_response, start_time, end_time):
                 "ollama": "ollama",
             }
             provider = provider_map.get(provider_part, provider_part)
-        tokens = completion_response.usage.total_tokens if completion_response.usage else 0
+        tokens = (
+            completion_response.usage.total_tokens if completion_response.usage else 0
+        )
         record_token_usage(provider, tokens)
         _record_success(provider)
         logger.debug(f"[Router] Token usage recorded: {provider} {tokens}")
     except Exception:
         pass
+
 
 _DAILY_LIMITS = {
     "groq": 1_000_000,
@@ -128,21 +133,28 @@ _DAILY_LIMITS = {
 
 _redis_client = None
 
+
 def _get_redis():
     global _redis_client
     if _redis_client is None:
         try:
             import redis as _redis_mod
             from config.settings import REDIS_URL
-            _redis_client = _redis_mod.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=2)
+
+            _redis_client = _redis_mod.from_url(
+                REDIS_URL, decode_responses=True, socket_connect_timeout=2
+            )
         except Exception as exc:
             logger.debug("[Router] Redis unavailable: {}", exc)
     return _redis_client
 
 
-def _track_token_usage(provider: str, prompt_tokens: int, completion_tokens: int) -> None:
+def _track_token_usage(
+    provider: str, prompt_tokens: int, completion_tokens: int
+) -> None:
     try:
         from datetime import date
+
         r = _get_redis()
         if r is None:
             return
@@ -153,9 +165,14 @@ def _track_token_usage(provider: str, prompt_tokens: int, completion_tokens: int
         limit = _DAILY_LIMITS.get(provider)
         if limit and new_val > limit * 0.80:
             from utils.discord_notifier import send
-            send("system", "LLM Quota Warning — {}".format(provider),
-                 "{} at {}% daily quota ({:,} / {:,} tokens)".format(
-                     provider, int(new_val / limit * 100), new_val, limit))
+
+            send(
+                "system",
+                "LLM Quota Warning — {}".format(provider),
+                "{} at {}% daily quota ({:,} / {:,} tokens)".format(
+                    provider, int(new_val / limit * 100), new_val, limit
+                ),
+            )
     except Exception as exc:
         logger.debug("[Router] Token tracking failed for {}: {}", provider, exc)
 
@@ -189,10 +206,18 @@ def _get_circuit_state(provider: str) -> dict:
     now = _time.time()
     with _CIRCUIT_LOCK:
         if provider not in _CIRCUIT_STATE:
-            return {"circuit": "CLOSED", "failures": [], "open_since": None, "half_open_since": None}
+            return {
+                "circuit": "CLOSED",
+                "failures": [],
+                "open_since": None,
+                "half_open_since": None,
+            }
         state = _CIRCUIT_STATE[provider]
         if state["circuit"] == "OPEN":
-            if state["open_since"] and (now - state["open_since"]) >= _CIRCUIT_HALF_OPEN_SECONDS:
+            if (
+                state["open_since"]
+                and (now - state["open_since"]) >= _CIRCUIT_HALF_OPEN_SECONDS
+            ):
                 state["circuit"] = "HALF_OPEN"
                 state["open_since"] = None
                 state["half_open_since"] = now
@@ -204,35 +229,71 @@ def _get_circuit_state(provider: str) -> dict:
                 state["circuit"] = "OPEN"
                 state["open_since"] = now
                 state["half_open_since"] = None
-                logger.warning("[CircuitBreaker] {} stale HALF_OPEN → OPEN (trial timed out after {}s)",
-                               provider, _CIRCUIT_HALF_OPEN_STALE_SECONDS)
+                logger.warning(
+                    "[CircuitBreaker] {} stale HALF_OPEN → OPEN (trial timed out after {}s)",
+                    provider,
+                    _CIRCUIT_HALF_OPEN_STALE_SECONDS,
+                )
     return state
 
 
 def _record_failure(provider: str) -> None:
     now = _time.time()
     with _CIRCUIT_LOCK:
-        state = _CIRCUIT_STATE.setdefault(provider, {"circuit": "CLOSED", "failures": [], "open_since": None, "half_open_since": None})
-        state["failures"] = [t for t in state["failures"] if now - t < _CIRCUIT_WINDOW_SECONDS]
+        state = _CIRCUIT_STATE.setdefault(
+            provider,
+            {
+                "circuit": "CLOSED",
+                "failures": [],
+                "open_since": None,
+                "half_open_since": None,
+            },
+        )
+        state["failures"] = [
+            t for t in state["failures"] if now - t < _CIRCUIT_WINDOW_SECONDS
+        ]
         state["failures"].append(now)
-        if len(state["failures"]) >= _CIRCUIT_FAIL_THRESHOLD and state["circuit"] != "OPEN":
+        if (
+            len(state["failures"]) >= _CIRCUIT_FAIL_THRESHOLD
+            and state["circuit"] != "OPEN"
+        ):
             state["circuit"] = "OPEN"
             state["open_since"] = now
-            logger.warning("[CircuitBreaker] {} → OPEN after {} failures in {}s",
-                           provider, _CIRCUIT_FAIL_THRESHOLD, _CIRCUIT_WINDOW_SECONDS)
+            logger.warning(
+                "[CircuitBreaker] {} → OPEN after {} failures in {}s",
+                provider,
+                _CIRCUIT_FAIL_THRESHOLD,
+                _CIRCUIT_WINDOW_SECONDS,
+            )
             try:
                 from utils.discord_notifier import send
-                send("ops", "LLM Circuit OPEN — {}".format(provider),
-                     "{} circuit opened after {} failures in {}s. "
-                     "Half-open in {}s. Auto-recovery enabled.".format(
-                         provider, _CIRCUIT_FAIL_THRESHOLD, _CIRCUIT_WINDOW_SECONDS, _CIRCUIT_HALF_OPEN_SECONDS))
+
+                send(
+                    "ops",
+                    "LLM Circuit OPEN — {}".format(provider),
+                    "{} circuit opened after {} failures in {}s. "
+                    "Half-open in {}s. Auto-recovery enabled.".format(
+                        provider,
+                        _CIRCUIT_FAIL_THRESHOLD,
+                        _CIRCUIT_WINDOW_SECONDS,
+                        _CIRCUIT_HALF_OPEN_SECONDS,
+                    ),
+                )
             except Exception:
                 pass
 
 
 def _record_success(provider: str) -> None:
     with _CIRCUIT_LOCK:
-        state = _CIRCUIT_STATE.setdefault(provider, {"circuit": "CLOSED", "failures": [], "open_since": None, "half_open_since": None})
+        state = _CIRCUIT_STATE.setdefault(
+            provider,
+            {
+                "circuit": "CLOSED",
+                "failures": [],
+                "open_since": None,
+                "half_open_since": None,
+            },
+        )
         prev = state["circuit"]
         state["circuit"] = "CLOSED"
         state["failures"] = []
@@ -250,13 +311,28 @@ def get_circuit_states() -> dict[str, dict]:
         for provider, state in _CIRCUIT_STATE.items():
             result[provider] = {
                 "circuit_state": state["circuit"],
-                "failure_count": len([t for t in state["failures"] if now - t < _CIRCUIT_WINDOW_SECONDS]),
+                "failure_count": len(
+                    [t for t in state["failures"] if now - t < _CIRCUIT_WINDOW_SECONDS]
+                ),
                 "open_since": state.get("open_since"),
             }
-    for p in ["groq", "cerebras", "gemini", "nvidia", "sambanova", "openrouter", "cloudflare"]:
+    for p in [
+        "groq",
+        "cerebras",
+        "gemini",
+        "nvidia",
+        "sambanova",
+        "openrouter",
+        "cloudflare",
+    ]:
         if p not in result:
-            result[p] = {"circuit_state": "CLOSED", "failure_count": 0, "open_since": None}
+            result[p] = {
+                "circuit_state": "CLOSED",
+                "failure_count": 0,
+                "open_since": None,
+            }
     return result
+
 
 # DAILY_LIMITS config — limits are per calendar day UTC, reset at midnight
 DAILY_LIMITS = {
@@ -265,9 +341,9 @@ DAILY_LIMITS = {
     "gemini_flash": 1_000_000,
     "gemini_gemma": 500_000,
     "nvidia": 2_000_000,
-    "sambanova": 20_000_000,   # 20M tok/day free tier
+    "sambanova": 20_000_000,  # 20M tok/day free tier
     "openrouter": 500_000,
-    "cloudflare": 5_000,       # conservative — 10K neurons, not raw tokens
+    "cloudflare": 5_000,  # conservative — 10K neurons, not raw tokens
 }
 
 # In-process daily token counters — reset automatically at UTC midnight
@@ -314,7 +390,9 @@ def _reset_daily_counts_if_needed() -> None:
             logger.info("[Router] Daily token counters reset for {} UTC", today)
 
 
-def record_token_usage(provider: str, tokens: int, prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
+def record_token_usage(
+    provider: str, tokens: int, prompt_tokens: int = 0, completion_tokens: int = 0
+) -> None:
     """Record token usage for a provider. Call after each LLM invocation."""
     if prompt_tokens or completion_tokens:
         _track_token_usage(provider, prompt_tokens, completion_tokens)
@@ -339,7 +417,10 @@ def get_heavy_llm(temperature: float = 0.1, excluded: set = None) -> LLM:
     excluded: optional per-session exclusion set (board room sessions) — does NOT
     touch the global _EXCLUDED used by the pipeline.
     """
-    def _excl(p): return _is_excluded(p) or (excluded is not None and p in excluded)
+
+    def _excl(p):
+        return _is_excluded(p) or (excluded is not None and p in excluded)
+
     if GROQ_API_KEY and not _excl("groq") and not is_near_quota("groq"):
         logger.info(f"[Router] HEAVY tier → Groq {GROQ_CEO_MODEL} (30k TPM)")
         return LLM(
@@ -350,7 +431,11 @@ def get_heavy_llm(temperature: float = 0.1, excluded: set = None) -> LLM:
             num_retries=3,
         )
     llm_router_fallbacks_total.labels(tier="heavy", provider="groq").inc()
-    if GEMINI_API_KEY and not _excl("gemini_flash") and not is_near_quota("gemini_flash"):
+    if (
+        GEMINI_API_KEY
+        and not _excl("gemini_flash")
+        and not is_near_quota("gemini_flash")
+    ):
         logger.info(
             f"[Router] HEAVY fallback → Google AI Studio {GEMINI_CEO_MODEL} (250k TPM)"
         )
@@ -374,7 +459,9 @@ def get_heavy_llm(temperature: float = 0.1, excluded: set = None) -> LLM:
         )
     llm_router_fallbacks_total.labels(tier="heavy", provider="nvidia").inc()
     if SAMBANOVA_API_KEY and not _excl("sambanova") and not is_near_quota("sambanova"):
-        logger.info(f"[Router] HEAVY fallback → SambaNova {SAMBANOVA_HEAVY_MODEL} (20M tok/day)")
+        logger.info(
+            f"[Router] HEAVY fallback → SambaNova {SAMBANOVA_HEAVY_MODEL} (20M tok/day)"
+        )
         return LLM(
             model=f"openai/{SAMBANOVA_HEAVY_MODEL}",
             api_key=SAMBANOVA_API_KEY,
@@ -384,7 +471,11 @@ def get_heavy_llm(temperature: float = 0.1, excluded: set = None) -> LLM:
             num_retries=2,
         )
     llm_router_fallbacks_total.labels(tier="heavy", provider="sambanova").inc()
-    if OPENROUTER_API_KEY and not _excl("openrouter") and not is_near_quota("openrouter"):
+    if (
+        OPENROUTER_API_KEY
+        and not _excl("openrouter")
+        and not is_near_quota("openrouter")
+    ):
         logger.info("[Router] HEAVY fallback → OpenRouter")
         return LLM(
             model=f"openrouter/{OPENROUTER_MODEL}",
@@ -394,8 +485,15 @@ def get_heavy_llm(temperature: float = 0.1, excluded: set = None) -> LLM:
             num_retries=3,
         )
     llm_router_fallbacks_total.labels(tier="heavy", provider="openrouter").inc()
-    if CLOUDFLARE_API_KEY and CLOUDFLARE_ACCOUNT_ID and not _excl("cloudflare") and not is_near_quota("cloudflare"):
-        logger.warning("[Router] HEAVY last-resort → Cloudflare Workers AI (10K neurons/day)")
+    if (
+        CLOUDFLARE_API_KEY
+        and CLOUDFLARE_ACCOUNT_ID
+        and not _excl("cloudflare")
+        and not is_near_quota("cloudflare")
+    ):
+        logger.warning(
+            "[Router] HEAVY last-resort → Cloudflare Workers AI (10K neurons/day)"
+        )
         cf_base = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1"
         return LLM(
             model=f"openai/{CLOUDFLARE_HEAVY_MODEL}",
@@ -421,7 +519,11 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
     Groq Scout backup: shares CEO's 30k TPM bucket only if Cerebras unavailable.
     Gemini 2.5 Flash backup: 250k TPM if Groq also exhausted.
     """
-    if CEREBRAS_API_KEY and not _is_excluded("cerebras") and not is_near_quota("cerebras"):
+    if (
+        CEREBRAS_API_KEY
+        and not _is_excluded("cerebras")
+        and not is_near_quota("cerebras")
+    ):
         logger.info(f"[Router] ANALYSIS tier → Cerebras {CEREBRAS_MODEL} (1M tok/day)")
         return LLM(
             model=f"openai/{CEREBRAS_MODEL}",
@@ -444,7 +546,11 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             num_retries=3,
         )
     llm_router_fallbacks_total.labels(tier="analysis", provider="groq").inc()
-    if GEMINI_API_KEY and not _is_excluded("gemini_flash") and not is_near_quota("gemini_flash"):
+    if (
+        GEMINI_API_KEY
+        and not _is_excluded("gemini_flash")
+        and not is_near_quota("gemini_flash")
+    ):
         logger.info(
             f"[Router] ANALYSIS fallback → Google AI Studio {GEMINI_CEO_MODEL} (250k TPM)"
         )
@@ -469,7 +575,11 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             num_retries=3,
         )
     llm_router_fallbacks_total.labels(tier="analysis", provider="nvidia").inc()
-    if SAMBANOVA_API_KEY and not _is_excluded("sambanova") and not is_near_quota("sambanova"):
+    if (
+        SAMBANOVA_API_KEY
+        and not _is_excluded("sambanova")
+        and not is_near_quota("sambanova")
+    ):
         logger.info(f"[Router] ANALYSIS fallback → SambaNova {SAMBANOVA_HEAVY_MODEL}")
         return LLM(
             model=f"openai/{SAMBANOVA_HEAVY_MODEL}",
@@ -480,7 +590,12 @@ def get_analysis_llm(temperature: float = 0.2) -> LLM:
             num_retries=2,
         )
     llm_router_fallbacks_total.labels(tier="analysis", provider="sambanova").inc()
-    if CLOUDFLARE_API_KEY and CLOUDFLARE_ACCOUNT_ID and not _is_excluded("cloudflare") and not is_near_quota("cloudflare"):
+    if (
+        CLOUDFLARE_API_KEY
+        and CLOUDFLARE_ACCOUNT_ID
+        and not _is_excluded("cloudflare")
+        and not is_near_quota("cloudflare")
+    ):
         logger.warning("[Router] ANALYSIS last-resort → Cloudflare Workers AI")
         cf_base = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1"
         return LLM(
@@ -507,7 +622,11 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
     Google Gemma 3 27B backup: 15k TPM, 14,400 req/day — near-unlimited daily quota.
     NVIDIA backup: 40 req/min, no TPM cap.
     """
-    if CEREBRAS_API_KEY and not _is_excluded("cerebras") and not is_near_quota("cerebras"):
+    if (
+        CEREBRAS_API_KEY
+        and not _is_excluded("cerebras")
+        and not is_near_quota("cerebras")
+    ):
         logger.info(
             f"[Router] LIGHT tier → Cerebras {CEREBRAS_MODEL} (1M tok/day, fastest)"
         )
@@ -520,7 +639,11 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
             num_retries=3,
         )
     llm_router_fallbacks_total.labels(tier="light", provider="cerebras").inc()
-    if GEMINI_API_KEY and not _is_excluded("gemini_gemma") and not is_near_quota("gemini_gemma"):
+    if (
+        GEMINI_API_KEY
+        and not _is_excluded("gemini_gemma")
+        and not is_near_quota("gemini_gemma")
+    ):
         logger.info(
             f"[Router] LIGHT fallback → Google AI Studio {GEMINI_LIGHT_MODEL} (15k TPM)"
         )
@@ -545,7 +668,11 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
             num_retries=3,
         )
     llm_router_fallbacks_total.labels(tier="light", provider="nvidia").inc()
-    if SAMBANOVA_API_KEY and not _is_excluded("sambanova") and not is_near_quota("sambanova"):
+    if (
+        SAMBANOVA_API_KEY
+        and not _is_excluded("sambanova")
+        and not is_near_quota("sambanova")
+    ):
         logger.info(f"[Router] LIGHT fallback → SambaNova {SAMBANOVA_HEAVY_MODEL}")
         return LLM(
             model=f"openai/{SAMBANOVA_HEAVY_MODEL}",
@@ -556,7 +683,12 @@ def get_light_llm(temperature: float = 0.0) -> LLM:
             num_retries=2,
         )
     llm_router_fallbacks_total.labels(tier="light", provider="sambanova").inc()
-    if CLOUDFLARE_API_KEY and CLOUDFLARE_ACCOUNT_ID and not _is_excluded("cloudflare") and not is_near_quota("cloudflare"):
+    if (
+        CLOUDFLARE_API_KEY
+        and CLOUDFLARE_ACCOUNT_ID
+        and not _is_excluded("cloudflare")
+        and not is_near_quota("cloudflare")
+    ):
         logger.warning("[Router] LIGHT last-resort → Cloudflare Workers AI")
         cf_base = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1"
         return LLM(
@@ -616,7 +748,9 @@ def get_router_status() -> dict:
     }
 
 
-def record_agent_token_usage(agent_name: str, tokens_used: int, model: str, run_id: str) -> None:
+def record_agent_token_usage(
+    agent_name: str, tokens_used: int, model: str, run_id: str
+) -> None:
     """Record token usage for an agent after LLM call.
 
     Called by agents after successful LLM invocation to track their token budget.
@@ -625,6 +759,7 @@ def record_agent_token_usage(agent_name: str, tokens_used: int, model: str, run_
     """
     try:
         from utils.token_tracker import record
+
         record(agent_name, tokens_used, model, run_id)
     except Exception as e:
         logger.debug("[Router] Agent token recording failed: {}", e)

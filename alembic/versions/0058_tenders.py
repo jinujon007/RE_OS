@@ -6,6 +6,7 @@ North Bengaluru relevant keywords. Dedup on tender_id.
 Migration chain:
     0057_prediction_ledger -> 0058_tenders
 """
+
 from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
@@ -19,7 +20,12 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.create_table(
         "tenders",
-        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), primary_key=True),
+        sa.Column(
+            "id",
+            sa.UUID(),
+            server_default=sa.text("gen_random_uuid()"),
+            primary_key=True,
+        ),
         sa.Column("tender_id", sa.Text(), nullable=False),
         sa.Column("title", sa.Text(), nullable=False),
         sa.Column("dept", sa.Text(), nullable=True),
@@ -30,7 +36,12 @@ def upgrade() -> None:
         sa.Column("location_text", sa.Text(), nullable=True),
         sa.Column("market_match", sa.Text(), nullable=True),
         sa.Column("source_url", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=True,
+        ),
         sa.UniqueConstraint("tender_id"),
     )
     op.create_index("idx_tenders_published", "tenders", ["published_date"])

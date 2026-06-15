@@ -1,4 +1,5 @@
 """Unit tests for PSF Truth — sale-deed filtering (T-1157)."""
+
 from __future__ import annotations
 
 from unittest.mock import patch, MagicMock
@@ -55,7 +56,9 @@ def test_spread_excludes_low_consideration():
     mock_conn = MagicMock()
     mock_conn.execute.side_effect = [
         MagicMock(scalar=lambda: True),
-        MagicMock(fetchone=lambda: (None, 0)),  # deed with low consideration filtered out
+        MagicMock(
+            fetchone=lambda: (None, 0)
+        ),  # deed with low consideration filtered out
     ]
     mock_engine.connect.return_value.__enter__.return_value = mock_conn
 
@@ -86,6 +89,7 @@ def test_spread_excludes_discharge_deed():
 def test_spread_sale_deed_type_variants():
     """Various sale deed type strings match correctly."""
     from config.settings import SALE_DEED_TYPES
+
     assert "Sale" in SALE_DEED_TYPES
     assert "Sale Deed" in SALE_DEED_TYPES
     assert "Absolute Sale" in SALE_DEED_TYPES
@@ -115,8 +119,14 @@ def test_spread_result_to_dict():
 
 def test_spread_result_one_line_summary():
     """one_line_summary formatting."""
-    result = SpreadResult(status="insufficient_data", n_registered=3, window_days=180,
-                          registered_median_psf=None, ask_median_psf=None,
-                          spread_pct=None, n_listings=0)
+    result = SpreadResult(
+        status="insufficient_data",
+        n_registered=3,
+        window_days=180,
+        registered_median_psf=None,
+        ask_median_psf=None,
+        spread_pct=None,
+        n_listings=0,
+    )
     summary = result.one_line_summary()
     assert "insufficient_data" in summary.lower() or "Insufficient" in summary

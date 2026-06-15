@@ -7,6 +7,7 @@ so Alembic has exactly one head.
 Migration chain:
     0049_idx_listings_price_psf + 0043_rera_projects_bhoomi_checked_at -> 0050_merge_sprint81_82
 """
+
 from typing import Sequence, Union
 
 from alembic import op

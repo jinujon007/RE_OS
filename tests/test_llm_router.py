@@ -32,6 +32,7 @@ def reset_excluded():
 def mock_llm(monkeypatch):
     """Replace crewai.LLM with a MagicMock so no real HTTP calls happen."""
     from unittest.mock import MagicMock
+
     mock = MagicMock()
     monkeypatch.setattr(r, "LLM", mock)
     return mock
@@ -121,7 +122,7 @@ def test_heavy_falls_back_to_ollama_when_no_keys(monkeypatch, mock_llm):
     monkeypatch.setattr(r, "GROQ_API_KEY", "")
     monkeypatch.setattr(r, "GEMINI_API_KEY", "")
     monkeypatch.setattr(r, "NVIDIA_API_KEY", "")
-    monkeypatch.setattr(r, "SAMBANOVA_API_KEY", "")   # skip SambaNova
+    monkeypatch.setattr(r, "SAMBANOVA_API_KEY", "")  # skip SambaNova
     monkeypatch.setattr(r, "OPENROUTER_API_KEY", "")
     monkeypatch.setattr(r, "CLOUDFLARE_API_KEY", "")  # skip Cloudflare
     r.get_heavy_llm()
@@ -143,7 +144,11 @@ def test_analysis_uses_cerebras_primary(monkeypatch, mock_llm):
         call_kwargs.args[0] if call_kwargs.args else ""
     )
     # T-312: Cerebras model changed from llama3.1-8b to gpt-oss-120b
-    assert "cerebras" in model.lower() or "llama3" in model.lower() or "gpt-oss" in model.lower()
+    assert (
+        "cerebras" in model.lower()
+        or "llama3" in model.lower()
+        or "gpt-oss" in model.lower()
+    )
 
 
 def test_analysis_falls_back_to_groq_when_cerebras_excluded(monkeypatch, mock_llm):
@@ -163,7 +168,7 @@ def test_analysis_falls_back_to_ollama_when_all_excluded(monkeypatch, mock_llm):
     monkeypatch.setattr(r, "GROQ_API_KEY", "")
     monkeypatch.setattr(r, "GEMINI_API_KEY", "")
     monkeypatch.setattr(r, "NVIDIA_API_KEY", "")
-    monkeypatch.setattr(r, "SAMBANOVA_API_KEY", "")   # skip SambaNova
+    monkeypatch.setattr(r, "SAMBANOVA_API_KEY", "")  # skip SambaNova
     monkeypatch.setattr(r, "CLOUDFLARE_API_KEY", "")  # skip Cloudflare
     r.get_analysis_llm()
     call_kwargs = mock_llm.call_args
@@ -184,7 +189,11 @@ def test_light_uses_cerebras_primary(monkeypatch, mock_llm):
         call_kwargs.args[0] if call_kwargs.args else ""
     )
     # T-312: Cerebras model changed from llama3.1-8b to gpt-oss-120b
-    assert "cerebras" in model.lower() or "llama3" in model.lower() or "gpt-oss" in model.lower()
+    assert (
+        "cerebras" in model.lower()
+        or "llama3" in model.lower()
+        or "gpt-oss" in model.lower()
+    )
 
 
 def test_light_falls_back_to_gemini_when_cerebras_excluded(monkeypatch, mock_llm):

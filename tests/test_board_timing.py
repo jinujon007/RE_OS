@@ -1,4 +1,5 @@
 """T-1124: Board Room response time logging (R9) — unit tests."""
+
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -8,12 +9,15 @@ pytestmark = pytest.mark.unit
 def test_board_pitch_response_includes_timing():
     """Assert POST /api/board/session response contains response_time_s key."""
     import os
+
     os.environ["REDIS_URL"] = "memory://"
 
     import sys
+
     if "dashboard.app_fastapi" in sys.modules:
         import importlib
         import dashboard.app_fastapi  # noqa: F811
+
         importlib.reload(dashboard.app_fastapi)
 
     from starlette.testclient import TestClient

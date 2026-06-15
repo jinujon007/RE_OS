@@ -13,14 +13,19 @@ NOTE: These tests verify the formula logic in Python. The actual SQL view
 division semantics, COALESCE). A future integration test should run the
 view against a real or emulated PostgreSQL instance.
 """
+
 import pytest
 from dataclasses import dataclass
+
 pytestmark = pytest.mark.unit
 
 
 # ── Formula replicas (mirror v_market_brief logic) ──────────────────────────
 
-def _compute_mos_kaveri(active_units: int, monthly_registrations: float | None) -> float | None:
+
+def _compute_mos_kaveri(
+    active_units: int, monthly_registrations: float | None
+) -> float | None:
     """Primary formula: kaveri_registrations-based absorption.
     ROUND(active_units / NULLIF(monthly_registrations*12, 0) * 12, 1)."""
     if monthly_registrations is None or monthly_registrations <= 0:
@@ -47,8 +52,9 @@ def _supply_label(mos: float | None) -> str:
     return "OVERSUPPLY"
 
 
-def _resolve_mos(active_units: int, total_sold: int,
-                 monthly_registrations: float | None) -> tuple[float | None, str]:
+def _resolve_mos(
+    active_units: int, total_sold: int, monthly_registrations: float | None
+) -> tuple[float | None, str]:
     """Mirror COALESCE logic: kaveri formula first, fallback second."""
     mos = _compute_mos_kaveri(active_units, monthly_registrations)
     if mos is not None:
@@ -58,6 +64,7 @@ def _resolve_mos(active_units: int, total_sold: int,
 
 
 # ── Threshold tests ─────────────────────────────────────────────────────────
+
 
 class TestMonthsSupplyFormula:
     """Primary kaveri formula: threshold labels."""

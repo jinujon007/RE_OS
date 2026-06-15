@@ -1,4 +1,5 @@
 """GATE-69 declaration — Sprint 61 Process Automation."""
+
 import json
 import pytest
 from pathlib import Path
@@ -24,22 +25,36 @@ def _write_runs(path: Path, runs: list[dict]):
 def test_bottleneck_detected_from_10_runs(tmp_path):
     """(1) Seed 10 runs with stage1 > 2× stage2 → find_bottleneck returns scraping."""
     runs = [
-        {"run_id": f"r{i}", "market": "A", "start_time": f"2026-01-{i+1:02d}T00:00:00",
-         "duration_seconds": 100.0, "status": "success", "agents_completed": ["scraper"]}
+        {
+            "run_id": f"r{i}",
+            "market": "A",
+            "start_time": f"2026-01-{i + 1:02d}T00:00:00",
+            "duration_seconds": 100.0,
+            "status": "success",
+            "agents_completed": ["scraper"],
+        }
         for i in range(10)
     ]
     _write_runs(tmp_path / "run_history.jsonl", runs)
     ana = PipelineRunAnalyzer(tmp_path / "run_history.jsonl")
     bn = ana.find_bottleneck(10)
     assert bn is not None, "Bottleneck should be detected from 10 scraping-heavy runs"
-    assert bn["bottleneck"] == "scraping", f"Expected 'scraping', got {bn['bottleneck']}"
+    assert bn["bottleneck"] == "scraping", (
+        f"Expected 'scraping', got {bn['bottleneck']}"
+    )
 
 
 def test_log_analyst_top_finding_non_empty(tmp_path):
     """(2) LogAnalystAgent returns BottleneckReport with top_finding non-empty."""
     runs = [
-        {"run_id": f"r{i}", "market": "A", "start_time": f"2026-01-{i+1:02d}T00:00:00",
-         "duration_seconds": 100.0, "status": "success", "agents_completed": ["scraper"]}
+        {
+            "run_id": f"r{i}",
+            "market": "A",
+            "start_time": f"2026-01-{i + 1:02d}T00:00:00",
+            "duration_seconds": 100.0,
+            "status": "success",
+            "agents_completed": ["scraper"],
+        }
         for i in range(15)
     ]
     _write_runs(tmp_path / "run_history.jsonl", runs)

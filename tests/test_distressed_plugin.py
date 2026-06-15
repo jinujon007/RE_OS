@@ -17,7 +17,9 @@ def _mock_engine_with_rows(rows):
 def test_rera_stall_detection_returns_records():
     from ingest.plugins.distressed_plugin import DistressedPlugin
 
-    row = MagicMock(developer_name="Brigade", market="Yelahanka", stall_count=2, stall_ratio=0.5)
+    row = MagicMock(
+        developer_name="Brigade", market="Yelahanka", stall_count=2, stall_ratio=0.5
+    )
     engine, _ = _mock_engine_with_rows([row])
     with patch("ingest.plugins.distressed_plugin.get_engine", return_value=engine):
         results = DistressedPlugin()._detect_rera_stalls("Yelahanka")
@@ -30,7 +32,9 @@ def test_rera_stall_detection_returns_records():
 def test_stall_ratio_capped_at_1():
     from ingest.plugins.distressed_plugin import DistressedPlugin
 
-    row = MagicMock(developer_name="Prestige", market="Yelahanka", stall_count=5, stall_ratio=1.0)
+    row = MagicMock(
+        developer_name="Prestige", market="Yelahanka", stall_count=5, stall_ratio=1.0
+    )
     engine, _ = _mock_engine_with_rows([row])
     with patch("ingest.plugins.distressed_plugin.get_engine", return_value=engine):
         results = DistressedPlugin()._detect_rera_stalls("Yelahanka")
@@ -56,12 +60,14 @@ def test_nclt_detection_groups_by_developer():
     with patch("ingest.plugins.distressed_plugin.get_engine", return_value=engine):
         results = DistressedPlugin()._detect_nclt_from_news("Yelahanka")
 
-    assert results == [{
-        "developer_name": "Sobha",
-        "mention_count": 3,
-        "signal_type": "nclt_news",
-        "market": "Yelahanka",
-    }]
+    assert results == [
+        {
+            "developer_name": "Sobha",
+            "mention_count": 3,
+            "signal_type": "nclt_news",
+            "market": "Yelahanka",
+        }
+    ]
 
 
 def test_nclt_returns_empty_when_no_matching_news():
@@ -78,11 +84,36 @@ def test_run_generates_computed_signal_records():
     from ingest.plugins.distressed_plugin import DistressedPlugin
 
     plugin = DistressedPlugin()
-    with patch("utils.distressed_developer.scan_distressed_developers", return_value=[]), \
-         patch.object(plugin, "_detect_rera_stalls", return_value=[{"developer_name": "Brigade", "market": "Yelahanka", "stall_count": 2, "stall_ratio": 0.5, "signal_type": "rera_stall"}]), \
-         patch.object(plugin, "_detect_nclt_from_news", return_value=[]), \
-         patch.object(plugin, "_persist_distress_signals", return_value=1), \
-         patch.object(plugin, "_compute_and_persist_scores", return_value=[{"developer_name": "Brigade", "market": "Yelahanka", "signal_type": "computed", "distress_score": 0.625}]):
+    with (
+        patch("utils.distressed_developer.scan_distressed_developers", return_value=[]),
+        patch.object(
+            plugin,
+            "_detect_rera_stalls",
+            return_value=[
+                {
+                    "developer_name": "Brigade",
+                    "market": "Yelahanka",
+                    "stall_count": 2,
+                    "stall_ratio": 0.5,
+                    "signal_type": "rera_stall",
+                }
+            ],
+        ),
+        patch.object(plugin, "_detect_nclt_from_news", return_value=[]),
+        patch.object(plugin, "_persist_distress_signals", return_value=1),
+        patch.object(
+            plugin,
+            "_compute_and_persist_scores",
+            return_value=[
+                {
+                    "developer_name": "Brigade",
+                    "market": "Yelahanka",
+                    "signal_type": "computed",
+                    "distress_score": 0.625,
+                }
+            ],
+        ),
+    ):
         records = plugin.run("Yelahanka")
 
     assert any(rec.data.get("signal_type") == "computed" for rec in records)

@@ -1,4 +1,5 @@
 """Unit tests for GET /api/competitive/pulse (T-974)."""
+
 import pytest
 from unittest.mock import patch, MagicMock
 from starlette.testclient import TestClient
@@ -15,7 +16,9 @@ class TestCompetitivePulseEndpoint:
             _pulse_cache.clear()
 
     def test_competitive_pulse_returns_200(self):
-        with patch("intelligence.competitive_intel.CompetitiveIntelEngine") as MockEngine:
+        with patch(
+            "intelligence.competitive_intel.CompetitiveIntelEngine"
+        ) as MockEngine:
             mock_instance = MagicMock()
             mock_instance.pulse.return_value = {
                 "new_launches": [],
@@ -30,7 +33,9 @@ class TestCompetitivePulseEndpoint:
         assert resp.status_code == 200
 
     def test_competitive_pulse_has_all_3_sections(self):
-        with patch("intelligence.competitive_intel.CompetitiveIntelEngine") as MockEngine:
+        with patch(
+            "intelligence.competitive_intel.CompetitiveIntelEngine"
+        ) as MockEngine:
             mock_instance = MagicMock()
             mock_instance.pulse.return_value = {
                 "new_launches": [{"project_name": "A", "market": "Yelahanka"}],
@@ -48,7 +53,9 @@ class TestCompetitivePulseEndpoint:
         assert "absorption_leaders" in data
 
     def test_competitive_pulse_market_filter_applied(self):
-        with patch("intelligence.competitive_intel.CompetitiveIntelEngine") as MockEngine:
+        with patch(
+            "intelligence.competitive_intel.CompetitiveIntelEngine"
+        ) as MockEngine:
             mock_instance = MagicMock()
             mock_instance.pulse.return_value = {
                 "new_launches": [{"project_name": "A", "market": "Devanahalli"}],
@@ -67,6 +74,7 @@ class TestCompetitivePulseEndpoint:
     def test_competitive_pulse_cache_hit_returns_cached(self):
         from dashboard.app_fastapi import _PULSE_CACHE_TTL
         import time as _time
+
         test_data = {
             "new_launches": [],
             "psf_movers": [],
@@ -82,7 +90,9 @@ class TestCompetitivePulseEndpoint:
         assert resp.json()["market_filter"] == "Yelahanka"
 
     def test_competitive_pulse_error_returns_500(self):
-        with patch("intelligence.competitive_intel.CompetitiveIntelEngine") as MockEngine:
+        with patch(
+            "intelligence.competitive_intel.CompetitiveIntelEngine"
+        ) as MockEngine:
             MockEngine.side_effect = Exception("Engine crash")
             resp = client.get("/api/competitive/pulse")
         assert resp.status_code == 500

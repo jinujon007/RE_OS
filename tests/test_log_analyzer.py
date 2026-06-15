@@ -17,10 +17,22 @@ def _write_runs(path: Path, runs: list[dict]):
 
 def test_stage_durations_parsed(tmp_path):
     runs = [
-        {"run_id": "r1", "market": "A", "start_time": "2026-01-01T00:00:00",
-         "duration_seconds": 100.0, "status": "success", "agents_completed": ["a", "b", "c"]},
-        {"run_id": "r2", "market": "B", "start_time": "2026-01-02T00:00:00",
-         "duration_seconds": 200.0, "status": "success", "agents_completed": ["a"]},
+        {
+            "run_id": "r1",
+            "market": "A",
+            "start_time": "2026-01-01T00:00:00",
+            "duration_seconds": 100.0,
+            "status": "success",
+            "agents_completed": ["a", "b", "c"],
+        },
+        {
+            "run_id": "r2",
+            "market": "B",
+            "start_time": "2026-01-02T00:00:00",
+            "duration_seconds": 200.0,
+            "status": "success",
+            "agents_completed": ["a"],
+        },
     ]
     _write_runs(tmp_path / "run_history.jsonl", runs)
     ana = PipelineRunAnalyzer(tmp_path / "run_history.jsonl")
@@ -33,8 +45,14 @@ def test_stage_durations_parsed(tmp_path):
 
 def test_bottleneck_scraping_detected(tmp_path):
     runs = [
-        {"run_id": f"r{i}", "market": "A", "start_time": f"2026-01-{i+1:02d}T00:00:00",
-         "duration_seconds": 100.0, "status": "success", "agents_completed": ["x", "y"]}
+        {
+            "run_id": f"r{i}",
+            "market": "A",
+            "start_time": f"2026-01-{i + 1:02d}T00:00:00",
+            "duration_seconds": 100.0,
+            "status": "success",
+            "agents_completed": ["x", "y"],
+        }
         for i in range(10)
     ]
     _write_runs(tmp_path / "run_history.jsonl", runs)
@@ -46,8 +64,14 @@ def test_bottleneck_scraping_detected(tmp_path):
 
 def test_bottleneck_llm_detected(tmp_path):
     runs = [
-        {"run_id": f"r{i}", "market": "A", "start_time": f"2026-01-{i+1:02d}T00:00:00",
-         "duration_seconds": 100.0, "status": "success", "agents_completed": ["a", "b", "c", "d", "e"]}
+        {
+            "run_id": f"r{i}",
+            "market": "A",
+            "start_time": f"2026-01-{i + 1:02d}T00:00:00",
+            "duration_seconds": 100.0,
+            "status": "success",
+            "agents_completed": ["a", "b", "c", "d", "e"],
+        }
         for i in range(10)
     ]
     _write_runs(tmp_path / "run_history.jsonl", runs)
@@ -60,8 +84,14 @@ def test_bottleneck_llm_detected(tmp_path):
 
 def test_no_bottleneck_returns_none(tmp_path):
     runs = [
-        {"run_id": f"r{i}", "market": "A", "start_time": f"2026-01-{i+1:02d}T00:00:00",
-         "duration_seconds": 50.0, "status": "success", "agents_completed": ["a", "b", "c"]}
+        {
+            "run_id": f"r{i}",
+            "market": "A",
+            "start_time": f"2026-01-{i + 1:02d}T00:00:00",
+            "duration_seconds": 50.0,
+            "status": "success",
+            "agents_completed": ["a", "b", "c"],
+        }
         for i in range(5)
     ]
     _write_runs(tmp_path / "run_history.jsonl", runs)

@@ -8,20 +8,24 @@
 (5) link_parcels is idempotent (mock DB, no duplicate parcels)
 (6) link_parcels returns dict with expected keys
 """
+
 from unittest.mock import patch, MagicMock
 import pytest
+
 pytestmark = pytest.mark.unit
 
 
 def test_normalize_standard():
     """Assertion 1: '45/2A' stays as '45/2A'."""
     from utils.parcel_linker import normalize_survey_no
+
     assert normalize_survey_no("45/2A") == "45/2A"
 
 
 def test_normalize_variant_separators():
     """Assertion 2: variant separators all map to same canonical form."""
     from utils.parcel_linker import normalize_survey_no
+
     assert normalize_survey_no("45/2-A") == "45/2A"
     assert normalize_survey_no("45/2 A") == "45/2A"
     assert normalize_survey_no("45/2  A") == "45/2A"
@@ -31,6 +35,7 @@ def test_normalize_variant_separators():
 def test_normalize_garbage():
     """Assertion 3: garbage input returns None."""
     from utils.parcel_linker import normalize_survey_no
+
     assert normalize_survey_no("") is None
     assert normalize_survey_no(None) is None
     assert normalize_survey_no("   ") is None
@@ -40,6 +45,7 @@ def test_normalize_garbage():
 def test_normalize_empty_after_strip():
     """Assertion 4: whitespace-only after strip returns None."""
     from utils.parcel_linker import normalize_survey_no
+
     assert normalize_survey_no("   ") is None
     assert normalize_survey_no("") is None
 
@@ -47,6 +53,7 @@ def test_normalize_empty_after_strip():
 def test_normalize_kannada_and_url_encoded():
     """Assertion 4b: Kannada numerals and URL-encoded input handled safely."""
     from utils.parcel_linker import normalize_survey_no
+
     # Kannada numerals should survive normalization (kept as-is, not stripped)
     result = normalize_survey_no("45/2ಎ")
     assert result is not None
@@ -60,6 +67,7 @@ def test_normalize_kannada_and_url_encoded():
 def test_link_parcels_idempotent():
     """Assertion 5: link_parcels does not create duplicate parcels on re-run."""
     from utils.parcel_linker import link_parcels
+
     mock_engine = MagicMock()
     mock_conn = MagicMock()
     mock_engine.begin.return_value.__enter__.return_value = mock_conn
@@ -77,11 +85,18 @@ def test_link_parcels_idempotent():
 def test_link_parcels_returns_dict():
     """Assertion 6: link_parcels returns dict with expected keys."""
     from utils.parcel_linker import link_parcels
+
     mock_engine = MagicMock()
     mock_conn = MagicMock()
     mock_engine.begin.return_value.__enter__.return_value = mock_conn
     mock_conn.execute.return_value.fetchall.return_value = []
     with patch("utils.parcel_linker.get_engine", return_value=mock_engine):
         stats = link_parcels()
-        for key in ("created", "linked_rera", "linked_registered", "linked_kaveri", "skipped"):
+        for key in (
+            "created",
+            "linked_rera",
+            "linked_registered",
+            "linked_kaveri",
+            "skipped",
+        ):
             assert key in stats, f"Missing key: {key}"

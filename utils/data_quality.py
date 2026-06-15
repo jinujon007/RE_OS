@@ -51,10 +51,16 @@ from typing import Any
 
 import pandas as pd
 from loguru import logger
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError, DatabaseError
 from utils.db import get_engine
+
 
 @dataclass
 class ExpectationDef:
@@ -85,7 +91,8 @@ class FailedExpectation:
 
     def to_dict(self) -> dict:
         return {
-            "expectation": self.expectation.description or self.expectation.expectation_type,
+            "expectation": self.expectation.description
+            or self.expectation.expectation_type,
             "column": self.expectation.column,
             "table": self.expectation.table,
             "severity": self.expectation.severity,
@@ -112,11 +119,15 @@ class DataQualityError(Exception):
         )
 
     def to_dict(self) -> dict:
-        return self.result if isinstance(self.result, dict) else {
-            "market": self.market,
-            "errors": self.result,
-            "warnings": [],
-        }
+        return (
+            self.result
+            if isinstance(self.result, dict)
+            else {
+                "market": self.market,
+                "errors": self.result,
+                "warnings": [],
+            }
+        )
 
 
 _PSF_MIN = int(os.environ.get("DQ_PSF_MIN", "2000"))
@@ -160,7 +171,7 @@ _dq_expectations: list[ExpectationDef] = [
 
 def _derive_projected_columns() -> dict[str, list[str]]:
     """Build projected_columns dict from _dq_expectations.
-    
+
     Ensures every table+column referenced by an expectation is fetched,
     eliminating the sync-maintenance burden of a manually maintained dict.
     """
@@ -182,7 +193,10 @@ def _increment_check_counter(market: str, status: str, source: str = "dq_checkpo
     """Increment Prometheus counter for data quality checks (no-op if metrics not configured)."""
     try:
         from config.metrics import data_quality_checks_total
-        data_quality_checks_total.labels(market=market, source=source, status=status).inc()
+
+        data_quality_checks_total.labels(
+            market=market, source=source, status=status
+        ).inc()
     except Exception as exc:
         logger.debug(f"[DataQuality] Metrics counter skipped: {exc}")
 
@@ -212,16 +226,26 @@ def run_data_quality_checkpoint(market: str) -> dict:
     if not market_clean:
         logger.warning("[DataQuality] Empty market — skipping check")
         _increment_check_counter("unknown", "skipped")
-        return {"success": True, "status": "skipped", "failed_expectations": [], "warnings": [],
-                "note": "empty market"}
+        return {
+            "success": True,
+            "status": "skipped",
+            "failed_expectations": [],
+            "warnings": [],
+            "note": "empty market",
+        }
 
     market = market_clean
     failed: list[FailedExpectation] = []
     projected_columns = _derive_projected_columns()
     if not projected_columns:
         logger.warning("[DataQuality] No expectations configured — skipping check")
-        return {"success": True, "status": "skipped", "failed_expectations": [], "warnings": [],
-                "note": "no expectations configured"}
+        return {
+            "success": True,
+            "status": "skipped",
+            "failed_expectations": [],
+            "warnings": [],
+            "note": "no expectations configured",
+        }
 
     try:
         engine = get_engine()
@@ -236,14 +260,18 @@ def run_data_quality_checkpoint(market: str) -> dict:
                 sql = f"SELECT {col_list} {join_clause} LIMIT 5000"
                 with engine.connect() as conn:
                     result = conn.execute(text(sql))
-            
+
             # Convert SQLAlchemy result to pandas DataFrame
             df = pd.DataFrame(result.fetchall(), columns=result.keys())
             if df.empty:
                 logger.info(f"[DataQuality] {table_name}: empty — skipping")
                 continue
 
-            relevant = [e for e in _dq_expectations if e.table == table_name and e.column in df.columns]
+            relevant = [
+                e
+                for e in _dq_expectations
+                if e.table == table_name and e.column in df.columns
+            ]
             if not relevant:
                 continue
 
@@ -251,14 +279,18 @@ def run_data_quality_checkpoint(market: str) -> dict:
                 try:
                     series = df[exp.column]
                     if series.empty:
-                        logger.info(f"[DataQuality] {exp.table}.{exp.column}: empty series — skipping")
+                        logger.info(
+                            f"[DataQuality] {exp.table}.{exp.column}: empty series — skipping"
+                        )
                         continue
                     if exp.expectation_type == "expect_column_values_to_be_between":
                         lo = exp.kwargs.get("min_value", 0)
                         hi = exp.kwargs.get("max_value", float("inf"))
                         numeric = pd.to_numeric(series, errors="coerce")
                         if numeric.notna().sum() == 0:
-                            logger.warning(f"[DataQuality] {exp.table}.{exp.column}: all NaN — skipping")
+                            logger.warning(
+                                f"[DataQuality] {exp.table}.{exp.column}: all NaN — skipping"
+                            )
                             continue
                         mask = numeric.notna() & ~numeric.between(lo, hi)
                         bad = numeric[mask].head(5).tolist()
@@ -272,35 +304,51 @@ def run_data_quality_checkpoint(market: str) -> dict:
                         bad = series[mask].head(5).tolist()
                         success = len(bad) == 0
                     else:
-                        logger.warning(f"[DataQuality] Unknown expectation type: {exp.expectation_type}")
+                        logger.warning(
+                            f"[DataQuality] Unknown expectation type: {exp.expectation_type}"
+                        )
                         continue
 
                     if not success:
-                        failed.append(FailedExpectation(
-                            expectation=exp,
-                            message=f"{len(bad)} unexpected value(s)",
-                            bad_values=bad,
-                            unexpected_count=len(bad),
-                        ))
+                        failed.append(
+                            FailedExpectation(
+                                expectation=exp,
+                                message=f"{len(bad)} unexpected value(s)",
+                                bad_values=bad,
+                                unexpected_count=len(bad),
+                            )
+                        )
                 except Exception as exc:
-                    logger.warning(f"[DataQuality] Check failed for {exp.column}: {exc}")
-                    failed.append(FailedExpectation(
-                        expectation=exp,
-                        message=str(exc),
-                        bad_values=[],
-                    ))
+                    logger.warning(
+                        f"[DataQuality] Check failed for {exp.column}: {exc}"
+                    )
+                    failed.append(
+                        FailedExpectation(
+                            expectation=exp,
+                            message=str(exc),
+                            bad_values=[],
+                        )
+                    )
     except OperationalError as exc:
         logger.error(f"[DataQuality] DB connection failed for {market}: {exc}")
         _increment_check_counter(market, "db_error")
-        return {"success": True, "status": "db_error",
-                "failed_expectations": [], "warnings": [],
-                "error": f"DB connection failed: {exc}"}
+        return {
+            "success": True,
+            "status": "db_error",
+            "failed_expectations": [],
+            "warnings": [],
+            "error": f"DB connection failed: {exc}",
+        }
     except Exception as exc:
         logger.error(f"[DataQuality] Unexpected error for {market}: {exc}")
         _increment_check_counter(market, "error")
-        return {"success": False, "status": "error",
-                "failed_expectations": [], "warnings": [],
-                "error": str(exc)}
+        return {
+            "success": False,
+            "status": "error",
+            "failed_expectations": [],
+            "warnings": [],
+            "error": str(exc),
+        }
 
     elapsed = time.time() - started
     errors = [f for f in failed if f.expectation.severity == "ERROR"]
@@ -373,16 +421,17 @@ def get_active_expectations() -> list[dict]:
 
 # ── DataQualityMonitor (Sprint 66 — Compounding Intelligence) ──────────────
 
+
 class DataQualityMonitor:
     """Monitors data quality across all sources.
-    
+
     Features:
     - freshness_score: per-source staleness check
     - stale_flag: marks sources not updated in >24h
     - PSFValidator: checks listing PSF vs IGR PSF gaps
     - cross_source_divergence_flag: flags divergent values between sources
     """
-    
+
     FRESHNESS_WINDOW_HOURS = {
         "rera": 48,
         "listings": 12,
@@ -390,9 +439,9 @@ class DataQualityMonitor:
         "igr": 48,
         "news": 24,
     }
-    
+
     _STALE_HOURS = 24
-    
+
     @staticmethod
     def freshness_score() -> dict:
         """Compute freshness per source.
@@ -400,15 +449,17 @@ class DataQualityMonitor:
         try:
             from utils.db import get_engine
             from sqlalchemy import text
-            
+
             with get_engine().connect() as conn:
-                rows = conn.execute(text("""
+                rows = conn.execute(
+                    text("""
                     SELECT plugin_id AS source, MAX(created_at) AS last_update
                     FROM ingest_log
                     WHERE status = 'success'
                     GROUP BY plugin_id
-                """)).fetchall()
-            
+                """)
+                ).fetchall()
+
             now = datetime.now(timezone.utc)
             result = {}
             for r in rows:
@@ -425,18 +476,21 @@ class DataQualityMonitor:
                     status = "aging"
                 else:
                     status = "stale"
-                result[source] = {"hours_since_update": round(hours, 1), "status": status}
+                result[source] = {
+                    "hours_since_update": round(hours, 1),
+                    "status": status,
+                }
             return result
         except Exception as exc:
             logger.warning("[DataQuality] freshness_score failed: {}", exc)
             return {}
-    
+
     @staticmethod
     def stale_flag() -> list[str]:
         """Return list of sources that haven't been updated in >24h."""
         freshness = DataQualityMonitor.freshness_score()
         return [s for s, info in freshness.items() if info.get("status") == "stale"]
-    
+
     @staticmethod
     def check_gv_freshness(market: str) -> dict:
         """Check if guidance values for a market are stale.
@@ -449,10 +503,17 @@ class DataQualityMonitor:
         Returns early with safe defaults if market is empty.
         """
         if not market or not market.strip():
-            logger.warning("[DataQuality] Empty market in check_gv_freshness — skipping")
-            return {"market": market, "gazette_year": None, "portal_year": None,
-                    "months_stale": None, "alert_needed": False,
-                    "error": "empty market"}
+            logger.warning(
+                "[DataQuality] Empty market in check_gv_freshness — skipping"
+            )
+            return {
+                "market": market,
+                "gazette_year": None,
+                "portal_year": None,
+                "months_stale": None,
+                "alert_needed": False,
+                "error": "empty market",
+            }
         try:
             from config.settings import GV_FRESHNESS_WARN_MONTHS
             from sqlalchemy import text
@@ -501,17 +562,28 @@ class DataQualityMonitor:
 
             if alert_needed:
                 from utils.discord_notifier import send_scraper_alert
+
                 try:
                     send_scraper_alert(
-                        market, "kaveri_gv", "STALE_GV",
-                        gazette_year=gy, portal_year=py, months_stale=months_stale,
+                        market,
+                        "kaveri_gv",
+                        "STALE_GV",
+                        gazette_year=gy,
+                        portal_year=py,
+                        months_stale=months_stale,
                     )
                 except Exception as _alert_exc:
-                    logger.warning("[DataQuality] GV stale alert failed: {}", _alert_exc)
+                    logger.warning(
+                        "[DataQuality] GV stale alert failed: {}", _alert_exc
+                    )
 
             logger.info(
                 "[DataQuality] GV freshness for {}: gazette_year={}, portal_year={}, months_stale={}, alert={}",
-                market, gy, py, months_stale, alert_needed,
+                market,
+                gy,
+                py,
+                months_stale,
+                alert_needed,
             )
             return {
                 "market": market,
@@ -521,26 +593,33 @@ class DataQualityMonitor:
                 "alert_needed": alert_needed,
             }
         except Exception as exc:
-            logger.warning("[DataQuality] check_gv_freshness failed for {}: {}", market, exc)
-            return {"market": market, "gazette_year": None, "portal_year": None,
-                    "months_stale": None, "alert_needed": False,
-                    "error": str(exc)}
+            logger.warning(
+                "[DataQuality] check_gv_freshness failed for {}: {}", market, exc
+            )
+            return {
+                "market": market,
+                "gazette_year": None,
+                "portal_year": None,
+                "months_stale": None,
+                "alert_needed": False,
+                "error": str(exc),
+            }
 
     @staticmethod
     def check_psf_divergence(market: str, max_gap_pct: float = 25.0) -> list[dict]:
         """Check listing PSF vs IGR PSF gap for a market.
-        
+
         Args:
             market: Market name.
             max_gap_pct: Max acceptable gap (listing vs IGR) as % of avg.
-            
+
         Returns:
             List of divergence flags with details.
         """
         try:
             from utils.db import get_engine
             from sqlalchemy import text
-            
+
             with get_engine().connect() as conn:
                 row = conn.execute(
                     text("""
@@ -554,26 +633,32 @@ class DataQualityMonitor:
                     """),
                     {"m": f"%{market}%"},
                 ).fetchone()
-            
+
             if not row:
                 return []
-            
+
             listing_psf = float(row[0]) if row[0] else None
             igr_psf = float(row[1]) if row[1] else None
-            
+
             if listing_psf and igr_psf and listing_psf > 0 and igr_psf > 0:
-                gap_pct = abs(listing_psf - igr_psf) / ((listing_psf + igr_psf) / 2) * 100
+                gap_pct = (
+                    abs(listing_psf - igr_psf) / ((listing_psf + igr_psf) / 2) * 100
+                )
                 if gap_pct > max_gap_pct:
-                    return [{
-                        "market": market,
-                        "listing_psf": round(listing_psf, 2),
-                        "igr_psf": round(igr_psf, 2),
-                        "gap_pct": round(gap_pct, 1),
-                        "severity": "HIGH" if gap_pct > 50 else "MEDIUM",
-                    }]
+                    return [
+                        {
+                            "market": market,
+                            "listing_psf": round(listing_psf, 2),
+                            "igr_psf": round(igr_psf, 2),
+                            "gap_pct": round(gap_pct, 1),
+                            "severity": "HIGH" if gap_pct > 50 else "MEDIUM",
+                        }
+                    ]
             return []
         except Exception as exc:
-            logger.warning("[DataQuality] PSF divergence check failed for {}: {}", market, exc)
+            logger.warning(
+                "[DataQuality] PSF divergence check failed for {}: {}", market, exc
+            )
             return []
 
     @staticmethod
@@ -590,14 +675,21 @@ class DataQualityMonitor:
         alien_set = {a.lower() for a in KNOWN_ALIEN_LOCALITIES.get(market.lower(), [])}
         try:
             with get_engine().connect() as conn:
-                rows = conn.execute(text("""
+                rows = conn.execute(
+                    text("""
                     SELECT l.id, l.source_url, l.property_type, l.locality, l.project_name
                     FROM listings l
                     JOIN micro_markets mm ON l.micro_market_id = mm.id
                     WHERE mm.name ILIKE :market
-                """), {"market": f"%{market}%"}).fetchall()
+                """),
+                    {"market": f"%{market}%"},
+                ).fetchall()
         except Exception as exc:
-            logger.warning("[DataQuality] locality_validation_score query failed for {}: {}", market, exc)
+            logger.warning(
+                "[DataQuality] locality_validation_score query failed for {}: {}",
+                market,
+                exc,
+            )
             return {"score": 1.0, "valid": 0, "suspect": 0, "action": "OK"}
 
         valid = suspect = 0
@@ -612,7 +704,12 @@ class DataQualityMonitor:
         score = valid / total if total > 0 else 1.0
         suspect_pct = (suspect / total * 100) if total > 0 else 0.0
         action = "WARN" if suspect_pct > max_suspect_pct else "OK"
-        return {"score": round(score, 4), "valid": valid, "suspect": suspect, "action": action}
+        return {
+            "score": round(score, 4),
+            "valid": valid,
+            "suspect": suspect,
+            "action": action,
+        }
 
     @staticmethod
     def check_seed_staleness(min_live_listings: int = 10) -> list[dict]:
@@ -629,7 +726,8 @@ class DataQualityMonitor:
 
         try:
             with get_engine().connect() as conn:
-                rows = conn.execute(text("""
+                rows = conn.execute(
+                    text("""
                     SELECT mm.name,
                            COUNT(*) AS total,
                            COUNT(CASE WHEN l.data_source = 'seed_estimated' THEN 1 END) AS seed_count,
@@ -638,7 +736,8 @@ class DataQualityMonitor:
                     JOIN micro_markets mm ON l.micro_market_id = mm.id
                     GROUP BY mm.name
                     HAVING COUNT(CASE WHEN l.data_source = 'seed_estimated' THEN 1 END) > 0
-                """)).fetchall()
+                """)
+                ).fetchall()
         except Exception as exc:
             logger.warning("[DataQuality] check_seed_staleness failed: {}", exc)
             return []
@@ -648,11 +747,13 @@ class DataQualityMonitor:
             market_name = row[0]
             live_count = row[3]
             if live_count >= min_live_listings:
-                flags.append({
-                    "market": market_name,
-                    "live_listing_count": live_count,
-                    "action": "remove_seed_and_use_live",
-                })
+                flags.append(
+                    {
+                        "market": market_name,
+                        "live_listing_count": live_count,
+                        "action": "remove_seed_and_use_live",
+                    }
+                )
         return flags
 
     @staticmethod

@@ -9,6 +9,7 @@ Sources:
     2. RSS/XML feed fallback
     3. Fixture/seed data for testing and offline mode
 """
+
 from __future__ import annotations
 
 import re
@@ -22,12 +23,33 @@ from ingest.base import DataPlugin, ParsedRecord
 __all__ = ["TenderPlugin"]
 
 TENDER_KEYWORDS = [
-    "BMRCL", "BWSSB", "BBMP", "KIADB", "NH-44", "STRR", "PRR",
-    "Devanahalli", "Yelahanka", "Hebbal",
-    "road", "water", "metro", "bridge", "flyover", "sewerage",
-    "drainage", "storm water", "culvert", "junction improvement",
-    "street light", "park", "footpath", "cycle track",
-    "signal", "intelligent traffic", "bus shelter",
+    "BMRCL",
+    "BWSSB",
+    "BBMP",
+    "KIADB",
+    "NH-44",
+    "STRR",
+    "PRR",
+    "Devanahalli",
+    "Yelahanka",
+    "Hebbal",
+    "road",
+    "water",
+    "metro",
+    "bridge",
+    "flyover",
+    "sewerage",
+    "drainage",
+    "storm water",
+    "culvert",
+    "junction improvement",
+    "street light",
+    "park",
+    "footpath",
+    "cycle track",
+    "signal",
+    "intelligent traffic",
+    "bus shelter",
 ]
 
 _TENDER_API_URL = "https://eproc.karnataka.gov.in/eprocv2/search/searchtender"
@@ -51,7 +73,9 @@ class TenderPlugin(DataPlugin):
         records.extend(self._scrape_portal(market, seen_ids))
 
         if not records:
-            logger.info("[TenderPlugin] No tenders found via live scrape — using seed data")
+            logger.info(
+                "[TenderPlugin] No tenders found via live scrape — using seed data"
+            )
             records.extend(self._seed_tenders(seen_ids, market))
 
         logger.info("[TenderPlugin] {} tenders for {}", len(records), market or "all")
@@ -75,7 +99,9 @@ class TenderPlugin(DataPlugin):
                 return True
         return False
 
-    def _scrape_portal(self, market: str | None, seen_ids: set[str]) -> list[ParsedRecord]:
+    def _scrape_portal(
+        self, market: str | None, seen_ids: set[str]
+    ) -> list[ParsedRecord]:
         """Scrape eProcurement portal via HTTP POST.
 
         Handles HTML, JSON, and XML response formats. Returns [] on any
@@ -86,13 +112,15 @@ class TenderPlugin(DataPlugin):
             import urllib.request
             import urllib.parse
 
-            params = urllib.parse.urlencode({
-                "searchType": "tender",
-                "dept": "All",
-                "status": "Active",
-                "pageNo": "1",
-                "pageSize": str(_PAGE_SIZE),
-            }).encode()
+            params = urllib.parse.urlencode(
+                {
+                    "searchType": "tender",
+                    "dept": "All",
+                    "status": "Active",
+                    "pageNo": "1",
+                    "pageSize": str(_PAGE_SIZE),
+                }
+            ).encode()
 
             req = urllib.request.Request(
                 _TENDER_API_URL,
@@ -111,6 +139,7 @@ class TenderPlugin(DataPlugin):
 
             if "json" in content_type:
                 import json
+
                 data = json.loads(raw.decode("utf-8", errors="replace"))
                 for item in data if isinstance(data, list) else data.get("data", []):
                     if isinstance(item, dict):
@@ -119,6 +148,7 @@ class TenderPlugin(DataPlugin):
                             records.append(rec)
             elif "xml" in content_type:
                 import xml.etree.ElementTree as ET
+
                 root = ET.fromstring(raw)
                 for item in root.iter("tender"):
                     rec = self._parse_xml_tender(item, market, seen_ids)
@@ -127,39 +157,59 @@ class TenderPlugin(DataPlugin):
             else:
                 html = raw.decode("utf-8", errors="replace")
                 rows = re.findall(
-                    r'<tr[^>]*>(.*?)</tr>',
+                    r"<tr[^>]*>(.*?)</tr>",
                     html,
                     re.IGNORECASE | re.DOTALL,
                 )
                 for row_html in rows:
-                    cells = re.findall(r'<td[^>]*>(.*?)</td>', row_html, re.IGNORECASE | re.DOTALL)
+                    cells = re.findall(
+                        r"<td[^>]*>(.*?)</td>", row_html, re.IGNORECASE | re.DOTALL
+                    )
                     if len(cells) < 6:
                         continue
 
-                    title_text = re.sub(r'<[^>]+>', '', cells[1]).strip()
+                    title_text = re.sub(r"<[^>]+>", "", cells[1]).strip()
                     if not title_text or not self._matches_keywords(title_text):
                         continue
 
-                    tender_id_raw = re.sub(r'<[^>]+>', '', cells[0]).strip()
+                    tender_id_raw = re.sub(r"<[^>]+>", "", cells[0]).strip()
                     if tender_id_raw in seen_ids:
                         continue
                     seen_ids.add(tender_id_raw)
 
-                    dept_raw = re.sub(r'<[^>]+>', '', cells[2]).strip() if len(cells) > 2 else ""
-                    value_raw = re.sub(r'<[^>]+>', '', cells[3]).strip() if len(cells) > 3 else ""
-                    pub_date_raw = re.sub(r'<[^>]+>', '', cells[4]).strip() if len(cells) > 4 else ""
-                    close_date_raw = re.sub(r'<[^>]+>', '', cells[5]).strip() if len(cells) > 5 else ""
+                    dept_raw = (
+                        re.sub(r"<[^>]+>", "", cells[2]).strip()
+                        if len(cells) > 2
+                        else ""
+                    )
+                    value_raw = (
+                        re.sub(r"<[^>]+>", "", cells[3]).strip()
+                        if len(cells) > 3
+                        else ""
+                    )
+                    pub_date_raw = (
+                        re.sub(r"<[^>]+>", "", cells[4]).strip()
+                        if len(cells) > 4
+                        else ""
+                    )
+                    close_date_raw = (
+                        re.sub(r"<[^>]+>", "", cells[5]).strip()
+                        if len(cells) > 5
+                        else ""
+                    )
 
-                    records.append(self._make_record(
-                        tender_id=tender_id_raw,
-                        title=title_text,
-                        dept=dept_raw,
-                        value_inr=self._parse_value(value_raw),
-                        published_date=self._parse_date(pub_date_raw),
-                        close_date=self._parse_date(close_date_raw),
-                        market_match=market or "",
-                        source_url=_TENDER_API_URL,
-                    ))
+                    records.append(
+                        self._make_record(
+                            tender_id=tender_id_raw,
+                            title=title_text,
+                            dept=dept_raw,
+                            value_inr=self._parse_value(value_raw),
+                            published_date=self._parse_date(pub_date_raw),
+                            close_date=self._parse_date(close_date_raw),
+                            market_match=market or "",
+                            source_url=_TENDER_API_URL,
+                        )
+                    )
 
             return records
 
@@ -167,7 +217,9 @@ class TenderPlugin(DataPlugin):
             logger.debug("[TenderPlugin] Live scrape failed: {}", exc)
             return []
 
-    def _parse_json_tender(self, item: dict, market: str | None, seen_ids: set[str]) -> ParsedRecord | None:
+    def _parse_json_tender(
+        self, item: dict, market: str | None, seen_ids: set[str]
+    ) -> ParsedRecord | None:
         """Parse a single tender from JSON response."""
         tender_id = str(item.get("tenderId", item.get("tender_id", "")))
         if not tender_id or tender_id in seen_ids:
@@ -180,15 +232,23 @@ class TenderPlugin(DataPlugin):
             tender_id=tender_id,
             title=title,
             dept=str(item.get("department", item.get("dept", ""))),
-            value_inr=self._parse_value(str(item.get("estimatedValue", item.get("value_inr", "")))),
-            published_date=self._parse_date(str(item.get("publishDate", item.get("published_date", "")))),
-            close_date=self._parse_date(str(item.get("bidCloseDate", item.get("close_date", "")))),
+            value_inr=self._parse_value(
+                str(item.get("estimatedValue", item.get("value_inr", "")))
+            ),
+            published_date=self._parse_date(
+                str(item.get("publishDate", item.get("published_date", "")))
+            ),
+            close_date=self._parse_date(
+                str(item.get("bidCloseDate", item.get("close_date", "")))
+            ),
             location_text=str(item.get("location", item.get("location_text", ""))),
             market_match=market or "",
             source_url=_TENDER_API_URL,
         )
 
-    def _parse_xml_tender(self, item, market: str | None, seen_ids: set[str]) -> ParsedRecord | None:
+    def _parse_xml_tender(
+        self, item, market: str | None, seen_ids: set[str]
+    ) -> ParsedRecord | None:
         """Parse a single tender from XML element."""
         tender_id = item.findtext("tenderId", item.findtext("tender_id", ""))
         if not tender_id or tender_id in seen_ids:
@@ -208,7 +268,9 @@ class TenderPlugin(DataPlugin):
             source_url=_TENDER_API_URL,
         )
 
-    def _seed_tenders(self, seen_ids: set[str], market: str | None) -> list[ParsedRecord]:
+    def _seed_tenders(
+        self, seen_ids: set[str], market: str | None
+    ) -> list[ParsedRecord]:
         """Seed tenders as fallback when live scrape unavailable."""
         records: list[ParsedRecord] = []
         seed = _get_seed_tenders()
@@ -216,7 +278,9 @@ class TenderPlugin(DataPlugin):
             if t["tender_id"] in seen_ids:
                 continue
             seen_ids.add(t["tender_id"])
-            if market and not any(kw.lower() in t["title"].lower() for kw in [market.lower()]):
+            if market and not any(
+                kw.lower() in t["title"].lower() for kw in [market.lower()]
+            ):
                 continue
             records.append(self._make_record(**t))
         return records
@@ -267,11 +331,11 @@ class TenderPlugin(DataPlugin):
         raw_upper = raw.upper()
         if "CRORE" in raw_upper or "CR" in raw_upper:
             multiplier = 10000000.0
-            raw = re.sub(r'(?i)\s*(CRORE|CR|CRO?)\s*', '', raw)
+            raw = re.sub(r"(?i)\s*(CRORE|CR|CRO?)\s*", "", raw)
         elif "LAKH" in raw_upper or "L" == raw_upper[-1:]:
             multiplier = 100000.0
-            raw = re.sub(r'(?i)\s*(LAKH|L)\s*', '', raw)
-        cleaned = re.sub(r'[^\d,.]', '', raw)
+            raw = re.sub(r"(?i)\s*(LAKH|L)\s*", "", raw)
+        cleaned = re.sub(r"[^\d,.]", "", raw)
         try:
             return float(cleaned.replace(",", "")) * multiplier
         except (ValueError, TypeError):

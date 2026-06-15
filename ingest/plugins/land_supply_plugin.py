@@ -12,6 +12,7 @@ All phases produce ParsedRecord(entity_type='supply_pipeline') entries.
 The IngestEngine upserts these into the supply_pipeline table on
 canonical_id to prevent duplicates across runs.
 """
+
 from __future__ import annotations
 
 import json
@@ -35,10 +36,18 @@ _SCRAPING_HEADERS = {
 }
 
 _BDA_NEWS_KEYWORDS = [
-    "bda layout", "bda site", "bmrda", "kiadb acquisition",
-    "kiadb land", "bda allotment", "bda e-auction",
-    "layout formation", "new layout", "residential layout",
-    "industrial area", "kiadb plot",
+    "bda layout",
+    "bda site",
+    "bmrda",
+    "kiadb acquisition",
+    "kiadb land",
+    "bda allotment",
+    "bda e-auction",
+    "layout formation",
+    "new layout",
+    "residential layout",
+    "industrial area",
+    "kiadb plot",
 ]
 
 
@@ -77,7 +86,11 @@ class LandSupplyPlugin(DataPlugin):
 
         logger.info(
             "[LandSupplyPlugin] {} — {} RERA + {} KIADB + {} news = {} records",
-            market, len(phase1), len(phase2), len(phase3), len(records),
+            market,
+            len(phase1),
+            len(phase2),
+            len(phase3),
+            len(records),
         )
         return records
 
@@ -121,15 +134,28 @@ class LandSupplyPlugin(DataPlugin):
                     {"market": market_like},
                 ).fetchall()
         except Exception as exc:
-            logger.debug("[LandSupplyPlugin] RERA pipeline phase failed for {}: {}", market, exc)
+            logger.debug(
+                "[LandSupplyPlugin] RERA pipeline phase failed for {}: {}", market, exc
+            )
             return []
 
         records: list[ParsedRecord] = []
         for row in rows:
-            record_id, project_name, developer_name, units, launch_date, completion_date, status = row
+            (
+                record_id,
+                project_name,
+                developer_name,
+                units,
+                launch_date,
+                completion_date,
+                status,
+            ) = row
             dev_name = str(developer_name)
             if dev_name in ("Unknown", "unknown", ""):
-                logger.debug("[LandSupplyPlugin] Skipping RERA record {} with unknown developer", record_id)
+                logger.debug(
+                    "[LandSupplyPlugin] Skipping RERA record {} with unknown developer",
+                    record_id,
+                )
                 continue
             units_int = int(units) if units else 0
             comp_year = completion_date.year if completion_date else None
@@ -144,14 +170,20 @@ class LandSupplyPlugin(DataPlugin):
                 "approval_date": str(launch_date) if launch_date else None,
                 "expected_completion_year": comp_year,
             }
-            records.append(ParsedRecord(
-                entity_type="supply_pipeline",
-                source_id=f"rera_{record_id}",
-                market=market,
-                data=data,
-                confidence=0.8,
-            ))
-        logger.debug("[LandSupplyPlugin] RERA phase: {} records from {} rows", len(records), len(rows))
+            records.append(
+                ParsedRecord(
+                    entity_type="supply_pipeline",
+                    source_id=f"rera_{record_id}",
+                    market=market,
+                    data=data,
+                    confidence=0.8,
+                )
+            )
+        logger.debug(
+            "[LandSupplyPlugin] RERA phase: {} records from {} rows",
+            len(records),
+            len(rows),
+        )
         return records
 
     # ── Phase 2: KIADB tenders ──────────────────────────────────────────────
@@ -167,20 +199,29 @@ class LandSupplyPlugin(DataPlugin):
             with urllib.request.urlopen(req, timeout=15) as resp:
                 raw = json.loads(resp.read())
         except Exception as exc:
-            logger.debug("[LandSupplyPlugin] KIADB tender fetch failed (non-fatal): {}", exc)
+            logger.debug(
+                "[LandSupplyPlugin] KIADB tender fetch failed (non-fatal): {}", exc
+            )
             return []
 
         posts = raw if isinstance(raw, list) else raw.get("data", raw.get("posts", []))
         if not posts:
-            logger.debug("[LandSupplyPlugin] KIADB API returned empty or unexpected format for {}", market)
+            logger.debug(
+                "[LandSupplyPlugin] KIADB API returned empty or unexpected format for {}",
+                market,
+            )
             return []
 
         records: list[ParsedRecord] = []
         market_lower = market.lower()
 
-        for post in (posts or []):
-            title = str(post.get("title", {}).get("rendered", "") or post.get("title", ""))
-            content = str(post.get("content", {}).get("rendered", "") or post.get("content", ""))
+        for post in posts or []:
+            title = str(
+                post.get("title", {}).get("rendered", "") or post.get("title", "")
+            )
+            content = str(
+                post.get("content", {}).get("rendered", "") or post.get("content", "")
+            )
             combined = (title + " " + content).lower()
 
             if market_lower not in combined:
@@ -205,13 +246,15 @@ class LandSupplyPlugin(DataPlugin):
                 "raw_snippet": str(title)[:300],
             }
             cid = f"kiadb_{hash(str(post.get('id', title))) % 10**8}"
-            records.append(ParsedRecord(
-                entity_type="supply_pipeline",
-                source_id=cid,
-                market=market,
-                data=data,
-                confidence=0.5,
-            ))
+            records.append(
+                ParsedRecord(
+                    entity_type="supply_pipeline",
+                    source_id=cid,
+                    market=market,
+                    data=data,
+                    confidence=0.5,
+                )
+            )
 
         logger.info("[LandSupplyPlugin] {} KIADB tenders for {}", len(records), market)
         return records
@@ -245,7 +288,9 @@ class LandSupplyPlugin(DataPlugin):
                     {**params, "market": market_like},
                 ).fetchall()
         except Exception as exc:
-            logger.debug("[LandSupplyPlugin] BDA news detection failed for {}: {}", market, exc)
+            logger.debug(
+                "[LandSupplyPlugin] BDA news detection failed for {}: {}", market, exc
+            )
             return []
 
         records: list[ParsedRecord] = []
@@ -256,12 +301,15 @@ class LandSupplyPlugin(DataPlugin):
             # Extract unit counts: 2-5 digit number + units/plots/homes/villas/apartments/flats
             unit_match = re.search(
                 r"(\d{2,5})\s*(?:units?|plots?|homes?|villas?|apartments?|flats?)",
-                combined, re.IGNORECASE,
+                combined,
+                re.IGNORECASE,
             )
             units = int(unit_match.group(1)) if unit_match else 0
 
             # Extract acres for layout-area estimation
-            acres_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:acres?|acre)", combined, re.IGNORECASE)
+            acres_match = re.search(
+                r"(\d+(?:\.\d+)?)\s*(?:acres?|acre)", combined, re.IGNORECASE
+            )
             acres = round(float(acres_match.group(1)), 2) if acres_match else None
 
             data = {
@@ -274,11 +322,13 @@ class LandSupplyPlugin(DataPlugin):
                 "approval_date": str(published_at)[:10] if published_at else None,
                 "raw_snippet": str(title)[:300] if title else "",
             }
-            records.append(ParsedRecord(
-                entity_type="supply_pipeline",
-                source_id=f"bda_news_{art_id}",
-                market=market,
-                data=data,
-                confidence=0.5,
-            ))
+            records.append(
+                ParsedRecord(
+                    entity_type="supply_pipeline",
+                    source_id=f"bda_news_{art_id}",
+                    market=market,
+                    data=data,
+                    confidence=0.5,
+                )
+            )
         return records

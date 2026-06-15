@@ -111,24 +111,33 @@ def _lls_pedigree(pkg: IntelPackage, ctx: dict) -> str:
     try:
         from utils.db import get_engine
         from sqlalchemy import text
+
         engine = get_engine()
         with engine.connect() as conn:
-            row = conn.execute(text("""
+            row = conn.execute(
+                text("""
                 SELECT
                     COUNT(*) AS total,
                     COUNT(*) FILTER (WHERE status = 'delivered') AS delivered,
                     COALESCE(SUM(total_units) FILTER (WHERE status = 'delivered'), 0) AS total_units,
                     AVG(realized_irr_pct) FILTER (WHERE status = 'delivered' AND realized_irr_pct IS NOT NULL) AS avg_irr
                 FROM lls_portfolio
-            """)).fetchone()
+            """)
+            ).fetchone()
             total = row[0] or 0
             delivered = row[1] or 0
             total_units = row[2] or 0
             avg_irr = row[3]
             market_rows = conn.execute(
-                text("SELECT DISTINCT market FROM lls_portfolio WHERE market IS NOT NULL")
+                text(
+                    "SELECT DISTINCT market FROM lls_portfolio WHERE market IS NOT NULL"
+                )
             ).fetchall()
-            markets_str = ", ".join(r[0] for r in market_rows if r[0]) if market_rows else "North Bangalore"
+            markets_str = (
+                ", ".join(r[0] for r in market_rows if r[0])
+                if market_rows
+                else "North Bangalore"
+            )
     except Exception:
         total = _FALLBACK_PORTFOLIO_TOTAL
         delivered = _FALLBACK_PORTFOLIO_DELIVERED
@@ -166,7 +175,9 @@ def _market_position(pkg: IntelPackage, ctx: dict) -> str:
     f = ctx["financial_evaluation"]
 
     if pb and pb.positioning not in ("INSUFFICIENT_DATA",):
-        lls_psf = pb.lls_target_psf or f.get("sell_psf") or m.get("avg_listing_psf") or 0
+        lls_psf = (
+            pb.lls_target_psf or f.get("sell_psf") or m.get("avg_listing_psf") or 0
+        )
         lines = [
             f"Competitive positioning vs Grade A developers in {pkg.market}",
             "========================================================",

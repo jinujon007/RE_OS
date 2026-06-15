@@ -3,6 +3,7 @@ RE_OS — Feedback Loop (Sprint 66 — Compounding Intelligence)
 Records actual deal outcomes to close the intelligence loop.
 Writes actual_irr + outcome to opportunity_scores when a deal closes.
 """
+
 import time as _time_mod
 from datetime import datetime, timezone
 from typing import Optional
@@ -19,14 +20,14 @@ def record_outcome(
     notes: Optional[str] = None,
 ) -> bool:
     """Record the actual outcome of a scored opportunity.
-    
+
     Args:
         survey_no: The survey number (e.g. "45/2"). Must exist in opportunity_scores.
         actual_irr: Actual IRR achieved (None if deal didn't close). Clamped to [-100, 1000].
         outcome: One of: "signed", "loi", "lost", "withdrawn", "dropped".
         deal_type: Optional actual deal structure used (purchase/jd/jv).
         notes: Optional free-text notes.
-    
+
     Returns:
         True if written, False on error or if survey_no not found.
     """
@@ -34,12 +35,16 @@ def record_outcome(
     valid_outcomes = {"signed", "loi", "lost", "withdrawn", "dropped"}
     outcome = outcome.lower().strip()
     if outcome not in valid_outcomes:
-        logger.warning("[FeedbackLoop] Invalid outcome '{}' — must be one of {}", outcome, valid_outcomes)
+        logger.warning(
+            "[FeedbackLoop] Invalid outcome '{}' — must be one of {}",
+            outcome,
+            valid_outcomes,
+        )
         return False
-    
+
     if actual_irr is not None:
         actual_irr = max(-100.0, min(float(actual_irr), 1000.0))
-    
+
     try:
         from utils.db import get_engine
         from sqlalchemy import text
@@ -49,7 +54,9 @@ def record_outcome(
             try:
                 with get_engine().connect() as conn:
                     row = conn.execute(
-                        text("SELECT actual_outcome FROM opportunity_scores WHERE survey_no = :sno AND actual_outcome = 'signed' LIMIT 1"),
+                        text(
+                            "SELECT actual_outcome FROM opportunity_scores WHERE survey_no = :sno AND actual_outcome = 'signed' LIMIT 1"
+                        ),
                         {"sno": survey_no},
                     ).fetchone()
                 already_signed = row is not None
@@ -76,7 +83,10 @@ def record_outcome(
                 },
             )
             if result.rowcount == 0:
-                logger.warning("[FeedbackLoop] survey_no '{}' not found in opportunity_scores — no rows updated", survey_no)
+                logger.warning(
+                    "[FeedbackLoop] survey_no '{}' not found in opportunity_scores — no rows updated",
+                    survey_no,
+                )
                 return False
 
         try:
@@ -88,41 +98,58 @@ def record_outcome(
                     """),
                 )
         except Exception as exc:
-            logger.debug("[FeedbackLoop] Audit log insert failed (non-blocking): {}", exc)
+            logger.debug(
+                "[FeedbackLoop] Audit log insert failed (non-blocking): {}", exc
+            )
 
         elapsed = _time_mod.time() - t0
-        logger.info("[FeedbackLoop] {} | outcome={} irr={} ({:.1f}s)", survey_no, outcome, actual_irr, elapsed)
+        logger.info(
+            "[FeedbackLoop] {} | outcome={} irr={} ({:.1f}s)",
+            survey_no,
+            outcome,
+            actual_irr,
+            elapsed,
+        )
 
         if outcome == "signed" and not already_signed:
             try:
                 from utils.discord_notifier import send
+
                 irr_str = f"{actual_irr:.1f}%" if actual_irr is not None else "N/A"
-                send("bd_opportunities", f"Deal SIGNED — {survey_no}",
-                     f"Survey {survey_no} closed with outcome: SIGNED.\nActual IRR: {irr_str}")
+                send(
+                    "bd_opportunities",
+                    f"Deal SIGNED — {survey_no}",
+                    f"Survey {survey_no} closed with outcome: SIGNED.\nActual IRR: {irr_str}",
+                )
             except Exception as exc:
                 logger.warning("[FeedbackLoop] Discord alert failed: {}", exc)
         elif outcome == "signed" and already_signed:
-            logger.info("[FeedbackLoop] {} already signed — skipping repeat Discord alert", survey_no)
+            logger.info(
+                "[FeedbackLoop] {} already signed — skipping repeat Discord alert",
+                survey_no,
+            )
 
         return True
     except Exception as exc:
-        logger.error("[FeedbackLoop] Failed to record outcome for {}: {}", survey_no, exc)
+        logger.error(
+            "[FeedbackLoop] Failed to record outcome for {}: {}", survey_no, exc
+        )
         return False
 
 
 def get_outcome_history(survey_no: Optional[str] = None) -> list[dict]:
     """Query recorded outcomes.
-    
+
     Args:
         survey_no: Optional filter by survey number.
-    
+
     Returns:
         List of outcome dicts sorted by closed_at desc.
     """
     try:
         from utils.db import get_engine
         from sqlalchemy import text
-        
+
         with get_engine().connect() as conn:
             if survey_no:
                 rows = conn.execute(
@@ -144,7 +171,7 @@ def get_outcome_history(survey_no: Optional[str] = None) -> list[dict]:
                         LIMIT 50
                     """),
                 ).fetchall()
-        
+
         return [
             {
                 "survey_no": r[0],

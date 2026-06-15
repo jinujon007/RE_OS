@@ -8,6 +8,7 @@
 5. GET /shareholders returns 200
 6. Scheduler has monthly_ceo_letter job registered
 """
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -39,6 +40,7 @@ def test_performance_digest_has_all_sections():
 
         mock_conn.execute.side_effect = _side
         from utils.performance_digest import PerformanceDigest
+
         digest = PerformanceDigest.build("Q2-2026")
         assert "deal_metrics" in digest
         assert "new_projects" in digest
@@ -63,12 +65,14 @@ def test_decision_auditor_audit_quarter_returns_list():
 
         mock_conn.execute.side_effect = _side
         from utils.decision_auditor import DecisionAuditor
+
         decisions = DecisionAuditor.audit_quarter("Q2-2026")
         assert isinstance(decisions, list)
 
 
 def test_debate_triggered_on_opposing_verdicts():
     from crews.shareholder_review import _needs_debate
+
     responses = [
         {"name": "A", "verdict": "GO_ON_PLAN"},
         {"name": "B", "verdict": "NEEDS_CORRECTION"},
@@ -79,15 +83,21 @@ def test_debate_triggered_on_opposing_verdicts():
 
 
 def test_save_letter_creates_file():
-    with patch("pathlib.Path.write_text") as mock_write, \
-         patch("pathlib.Path.mkdir") as mock_mkdir:
+    with (
+        patch("pathlib.Path.write_text") as mock_write,
+        patch("pathlib.Path.mkdir") as mock_mkdir,
+    ):
         from crews.shareholder_review import ShareholderBoardCrew
-        path = ShareholderBoardCrew.save_letter("test-session-id", "CEO Letter Text Q2", "Q2-2026")
+
+        path = ShareholderBoardCrew.save_letter(
+            "test-session-id", "CEO Letter Text Q2", "Q2-2026"
+        )
         assert "CEO_Letter" in path and "shareholder_letters" in path
 
 
 def test_shareholders_panel_template_exists():
     from pathlib import Path
+
     template = Path("dashboard/templates/shareholders.html")
     assert template.exists(), "shareholders.html template not found"
     assert "Shareholder Room" in template.read_text(encoding="utf-8")
@@ -95,4 +105,5 @@ def test_shareholders_panel_template_exists():
 
 def test_monthly_ceo_scheduler_job_registered():
     from config.scheduler import monthly_ceo_letter
+
     assert callable(monthly_ceo_letter)

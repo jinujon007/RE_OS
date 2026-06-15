@@ -8,6 +8,7 @@ Revision ID: 0054_registered_transactions_karnataka_index
 Revises: 0053_registered_transactions
 Create Date: 2026-06-12
 """
+
 from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
@@ -36,5 +37,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("idx_registered_transactions_district_date", table_name="registered_transactions")
-    op.drop_index("idx_registered_transactions_jurisdiction", table_name="registered_transactions")
+    op.drop_index(
+        "idx_registered_transactions_district_date",
+        table_name="registered_transactions",
+    )
+    op.drop_index(
+        "idx_registered_transactions_jurisdiction", table_name="registered_transactions"
+    )

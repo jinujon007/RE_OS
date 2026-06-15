@@ -1,4 +1,5 @@
 """T-1051 unit tests — /api/govt/events and /api/govt/north-score endpoints."""
+
 import os
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock, PropertyMock
@@ -14,6 +15,7 @@ os.environ["DASHBOARD_API_KEY_ALLOW_EMPTY"] = "true"
 def client():
     from starlette.testclient import TestClient
     from dashboard.app_fastapi import app
+
     return TestClient(app)
 
 
@@ -27,10 +29,26 @@ def _mock_db_events(rows):
 
 def test_govt_events_returns_list(client):
     rows = [
-        (1, "Metro approved", "infrastructure", "metro", "Yelahanka",
-         ["Yelahanka"], 6100.0, "approval", 9, "high",
-         "long", "buy_now", "Test summary", "Why it matters",
-         ["https://example.com"], "2026-01-15", True, "2026-06-08 00:00:00+00"),
+        (
+            1,
+            "Metro approved",
+            "infrastructure",
+            "metro",
+            "Yelahanka",
+            ["Yelahanka"],
+            6100.0,
+            "approval",
+            9,
+            "high",
+            "long",
+            "buy_now",
+            "Test summary",
+            "Why it matters",
+            ["https://example.com"],
+            "2026-01-15",
+            True,
+            "2026-06-08 00:00:00+00",
+        ),
     ]
     with _mock_db_events(rows):
         resp = client.get("/api/govt/events", headers={"X-API-Key": "test-key"})
@@ -43,7 +61,10 @@ def test_govt_events_returns_list(client):
 
 def test_govt_events_filter_by_category(client):
     with _mock_db_events([]):
-        resp = client.get("/api/govt/events?category=infrastructure", headers={"X-API-Key": "test-key"})
+        resp = client.get(
+            "/api/govt/events?category=infrastructure",
+            headers={"X-API-Key": "test-key"},
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert "events" in data
@@ -51,7 +72,9 @@ def test_govt_events_filter_by_category(client):
 
 def test_govt_events_filter_by_signal(client):
     with _mock_db_events([]):
-        resp = client.get("/api/govt/events?signal=high", headers={"X-API-Key": "test-key"})
+        resp = client.get(
+            "/api/govt/events?signal=high", headers={"X-API-Key": "test-key"}
+        )
         assert resp.status_code == 200
 
 

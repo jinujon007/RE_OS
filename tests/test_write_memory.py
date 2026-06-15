@@ -2,6 +2,7 @@
 Unit tests for agent_memory.write_memory() — T-945/GATE-55 audit finding C3.
 Tests insert, upsert, confidence clamping, row cap pruning, error paths.
 """
+
 import pytest
 from unittest.mock import patch, MagicMock
 from sqlalchemy import text
@@ -33,14 +34,15 @@ class TestWriteMemoryCore:
         return mock_conn
 
     def _stop(self):
-        if hasattr(self, '_patcher'):
+        if hasattr(self, "_patcher"):
             self._patcher.stop()
 
     def test_writes_successfully(self):
         self._mock_engine_with_counts(initial_count=1)
         try:
-            result = write_memory("ceo", "Yelahanka",
-                                  "Test fact ₹6,200", confidence=0.7)
+            result = write_memory(
+                "ceo", "Yelahanka", "Test fact ₹6,200", confidence=0.7
+            )
             assert result is True
         finally:
             self._stop()
@@ -74,8 +76,9 @@ class TestWriteMemoryCore:
     def test_strips_whitespace_from_fact(self):
         self._mock_engine_with_counts(initial_count=1)
         try:
-            result = write_memory("ceo", "Yelahanka",
-                                  "  Fact with padding  ", confidence=0.7)
+            result = write_memory(
+                "ceo", "Yelahanka", "  Fact with padding  ", confidence=0.7
+            )
             assert result is True
         finally:
             self._stop()
@@ -109,7 +112,7 @@ class TestWriteMemoryRowCap:
         return mock_conn
 
     def _stop(self):
-        if hasattr(self, '_patcher'):
+        if hasattr(self, "_patcher"):
             self._patcher.stop()
 
     def test_row_cap_not_triggered_below_limit(self):
@@ -118,7 +121,8 @@ class TestWriteMemoryRowCap:
             write_memory("ceo", "Yelahanka", "Fact under cap", confidence=0.7)
             calls = mock_conn.execute.mock_calls
             excess_calls = [
-                c for c in calls
+                c
+                for c in calls
                 if len(c.args) >= 2
                 and isinstance(c.args[1], dict)
                 and "excess" in c.args[1]
@@ -133,7 +137,8 @@ class TestWriteMemoryRowCap:
             write_memory("ceo", "Yelahanka", "Fact at cap+1", confidence=0.7)
             calls = mock_conn.execute.mock_calls
             execute_calls_with_excess = [
-                c for c in calls
+                c
+                for c in calls
                 if len(c.args) >= 2
                 and isinstance(c.args[1], dict)
                 and "excess" in c.args[1]
@@ -154,8 +159,9 @@ class TestWriteMemoryRowCap:
         mock_engine = patcher.start()
         mock_engine.return_value.begin.return_value = mock_conn
         try:
-            result = write_memory("ceo", "Yelahanka",
-                                  "Fact with null count", confidence=0.7)
+            result = write_memory(
+                "ceo", "Yelahanka", "Fact with null count", confidence=0.7
+            )
             assert result is True
         finally:
             patcher.stop()

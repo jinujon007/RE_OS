@@ -14,6 +14,7 @@ Usage:
     notifications = parser.parse_pdf("/path/to/gazette.pdf")
     notifications = parser.parse_text(raw_text)
 """
+
 from __future__ import annotations
 
 import json
@@ -31,10 +32,23 @@ _VILLAGE_INDEX_PATH = os.environ.get(
 )
 
 _LA_KEYWORDS = [
-    "land acquisition", "preliminary notification", "final notification",
-    "section 4", "section 6", "section 17", "kiadb", "bda", "bmrcl",
-    "land aquisition", "preliminary notice", "4(1)", "6(1)", "17(1)",
-    "notification", "acquire", "acquisition of land",
+    "land acquisition",
+    "preliminary notification",
+    "final notification",
+    "section 4",
+    "section 6",
+    "section 17",
+    "kiadb",
+    "bda",
+    "bmrcl",
+    "land aquisition",
+    "preliminary notice",
+    "4(1)",
+    "6(1)",
+    "17(1)",
+    "notification",
+    "acquire",
+    "acquisition of land",
 ]
 
 _AUTHORITY_MAP = {
@@ -49,12 +63,22 @@ _AUTHORITY_MAP = {
 
 _STAGE_KEYWORDS = {
     "preliminary": [
-        "preliminary notification", "section 4", "4(1)", "intention",
-        "preliminary notice", "preliminary",
+        "preliminary notification",
+        "section 4",
+        "4(1)",
+        "intention",
+        "preliminary notice",
+        "preliminary",
     ],
     "final": [
-        "final notification", "section 6", "6(1)", "declaration",
-        "award", "section 9", "9(1)", "possession",
+        "final notification",
+        "section 6",
+        "6(1)",
+        "declaration",
+        "award",
+        "section 9",
+        "9(1)",
+        "possession",
     ],
 }
 
@@ -98,8 +122,7 @@ class LANotification:
         village_str = ", ".join(self.villages[:5])
         survey_str = ", ".join(self.survey_nos[:10])
         headline = (
-            f"LA Notification: {self.authority} — {self.purpose} "
-            f"in {village_str}"
+            f"LA Notification: {self.authority} — {self.purpose} in {village_str}"
         )
         return {
             "headline": headline[:300],
@@ -163,8 +186,16 @@ class LANotification:
 
     def _is_north_bengaluru(self) -> bool:
         """Check if any villages are in North Bengaluru."""
-        nb_keywords = ["yelahanka", "devanahalli", "hebbal", "jakkur",
-                       "thanisandra", "bagalur", "nagawara", "doddaballapur"]
+        nb_keywords = [
+            "yelahanka",
+            "devanahalli",
+            "hebbal",
+            "jakkur",
+            "thanisandra",
+            "bagalur",
+            "nagawara",
+            "doddaballapur",
+        ]
         for v in self.villages:
             vl = v.lower()
             for kw in nb_keywords:
@@ -198,7 +229,9 @@ class LAGazetteParser:
                     text += page_text + "\n"
             return self.parse_text(text)
         except Exception as exc:
-            logger.warning("[LAGazetteParser] Failed to parse PDF {}: {}", pdf_path, exc)
+            logger.warning(
+                "[LAGazetteParser] Failed to parse PDF {}: {}", pdf_path, exc
+            )
             return []
 
     def parse_text(self, text: str) -> list[LANotification]:
@@ -240,10 +273,10 @@ class LAGazetteParser:
     def _split_sections(self, text: str) -> list[str]:
         """Split gazette text into sections by notification headers."""
         patterns = [
-            r'(?=NOTIFICATION\s*(?:NO[.:]?\s*[\w/.-]+))',
-            r'(?=Government\s+of\s+Karnataka)',
-            r'(?=Karnataka\s+Government\s+Gazette)',
-            r'(?=NOTIFICATION)',
+            r"(?=NOTIFICATION\s*(?:NO[.:]?\s*[\w/.-]+))",
+            r"(?=Government\s+of\s+Karnataka)",
+            r"(?=Karnataka\s+Government\s+Gazette)",
+            r"(?=NOTIFICATION)",
         ]
         for pat in patterns:
             parts = re.split(pat, text)
@@ -257,25 +290,28 @@ class LAGazetteParser:
 
         # Notification number
         no_match = re.search(
-            r'NOTIFICATION\s*NO[.:\s]*([A-Z0-9\s./-]+?)(?:\s*Date[.:]|\s*Dated[.:]|\n)',
-            text, re.IGNORECASE,
+            r"NOTIFICATION\s*NO[.:\s]*([A-Z0-9\s./-]+?)(?:\s*Date[.:]|\s*Dated[.:]|\n)",
+            text,
+            re.IGNORECASE,
         )
         if no_match:
             notif.notification_no = no_match.group(1).strip()
 
         # Date
         date_match = re.search(
-            r'(?:Date|Dated)[.:]\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})',
-            text, re.IGNORECASE,
+            r"(?:Date|Dated)[.:]\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})",
+            text,
+            re.IGNORECASE,
         )
         if date_match:
             notif.date_str = date_match.group(1).strip()
 
         # Authority
         auth_match = re.search(
-            r'(?:by\s+the\s+)?(KIADB|BDA|BMRCL|KRDCL|Bangalore\s+(?:Development|Metro)\s+(?:Authority|Rail|Corporation)'
-            r'|Karnataka\s+Industrial\s+Areas\s+Development\s+Board)',
-            text, re.IGNORECASE,
+            r"(?:by\s+the\s+)?(KIADB|BDA|BMRCL|KRDCL|Bangalore\s+(?:Development|Metro)\s+(?:Authority|Rail|Corporation)"
+            r"|Karnataka\s+Industrial\s+Areas\s+Development\s+Board)",
+            text,
+            re.IGNORECASE,
         )
         if auth_match:
             raw = auth_match.group(1).strip()
@@ -306,8 +342,9 @@ class LAGazetteParser:
 
         # Purpose
         purpose_match = re.search(
-            r'(?:for\s+the\s+)?(?:acquisition\s+of\s+land\s+)?(?:for\s+)?(.{10,200}?)(?:\.\s*(?:\n|$|Notification))',
-            text, re.IGNORECASE | re.DOTALL,
+            r"(?:for\s+the\s+)?(?:acquisition\s+of\s+land\s+)?(?:for\s+)?(.{10,200}?)(?:\.\s*(?:\n|$|Notification))",
+            text,
+            re.IGNORECASE | re.DOTALL,
         )
         if purpose_match:
             notif.purpose = purpose_match.group(1).strip()[:200]
@@ -315,25 +352,27 @@ class LAGazetteParser:
         # Villages — match "village(s) of X, Y and Z" patterns
         village_chunks: list[str] = []
         for m in re.finditer(
-            r'village[s]?\s+of\s+([\w][\w ,]+?)(?=\s*(?:Taluk|Hobli|District|Survey|Sy\.|\.\s|\n|$))',
-            text, re.IGNORECASE,
+            r"village[s]?\s+of\s+([\w][\w ,]+?)(?=\s*(?:Taluk|Hobli|District|Survey|Sy\.|\.\s|\n|$))",
+            text,
+            re.IGNORECASE,
         ):
-            parts = re.split(r'\s*(?:,\s*(?:and\s+)?|and\s+)\s*', m.group(1).strip())
+            parts = re.split(r"\s*(?:,\s*(?:and\s+)?|and\s+)\s*", m.group(1).strip())
             village_chunks.extend(p.strip() for p in parts if len(p.strip()) > 1)
         # Kannada village markers fallback
         if not village_chunks:
-            for m in re.finditer(r'ಗ್ರಾಮ[:\s]*([^\n,]+)', text):
+            for m in re.finditer(r"ಗ್ರಾಮ[:\s]*([^\n,]+)", text):
                 village_chunks.append(m.group(1).strip())
         notif.villages = list(set(village_chunks))
 
         # Survey numbers — "Numbers?" handles plurals so "Survey numbers Sy No." doesn't
         # consume the "Sy No." anchor in the same match
         survey_matches = re.findall(
-            r'(?:Sy[.\s]*No[.\s]*[:.\s]*|Survey\s+Numbers?[.\s]*|S\.?No\.?[:.\s]*)(\d[\d\s,/&\-A-Za-z]*)',
-            text, re.IGNORECASE,
+            r"(?:Sy[.\s]*No[.\s]*[:.\s]*|Survey\s+Numbers?[.\s]*|S\.?No\.?[:.\s]*)(\d[\d\s,/&\-A-Za-z]*)",
+            text,
+            re.IGNORECASE,
         )
         for m in survey_matches:
-            nums = re.findall(r'(\d+[/\-]?\d*[A-Za-z]*)', m)
+            nums = re.findall(r"(\d+[/\-]?\d*[A-Za-z]*)", m)
             notif.survey_nos.extend(nums)
         notif.survey_nos = list(set(notif.survey_nos))
 
@@ -355,7 +394,9 @@ def run_la_notification_scan() -> int:
                 if n._is_north_bengaluru() and n.stage == "final":
                     _send_la_alert(n)
         except Exception as exc:
-            logger.warning("[LANotification] Failed to scan {}: {}", source.get("path", "?"), exc)
+            logger.warning(
+                "[LANotification] Failed to scan {}: {}", source.get("path", "?"), exc
+            )
 
     logger.info("[LANotification] Scan complete: {} notifications", total)
     return total
@@ -383,7 +424,9 @@ def _upsert_la_event(event: dict) -> bool:
 
         with get_engine().begin() as conn:
             existing = conn.execute(
-                text("SELECT id, impact_score, stage FROM govt_policy_events WHERE headline = :hl LIMIT 1"),
+                text(
+                    "SELECT id, impact_score, stage FROM govt_policy_events WHERE headline = :hl LIMIT 1"
+                ),
                 {"hl": event["headline"][:300]},
             ).fetchone()
 
@@ -451,6 +494,7 @@ def _send_la_alert(notification: LANotification) -> None:
     """Send Discord alert for LA notification in covered market village."""
     try:
         from utils.discord_notifier import send
+
         village_str = ", ".join(notification.villages[:3])
         msg = (
             f"📍 **Land Acquisition — {notification.authority}**\n"

@@ -1,4 +1,5 @@
 """Unit tests for TokenUsageTracker (T-1002 - Sprint 60)."""
+
 import pytest
 from unittest.mock import MagicMock, patch, MagicMock
 import uuid

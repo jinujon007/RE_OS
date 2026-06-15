@@ -1,11 +1,18 @@
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 from utils.discord_notifier import (
-    send, send_rera_alert, send_intel_alert,
-    send_competitor_alert, send_price_alert, send_system_alert,
-    COLOR_GREEN, COLOR_RED, COLOR_BLUE,
+    send,
+    send_rera_alert,
+    send_intel_alert,
+    send_competitor_alert,
+    send_price_alert,
+    send_system_alert,
+    COLOR_GREEN,
+    COLOR_RED,
+    COLOR_BLUE,
 )
 
 
@@ -15,21 +22,27 @@ class TestSend:
             with patch("utils.discord_notifier._log_alert") as mock_log:
                 result = send("rera_yelahanka", "Test", "body")
                 assert result is False
-                mock_log.assert_called_once_with("rera_yelahanka", "Test", "body", COLOR_BLUE, "skipped")
+                mock_log.assert_called_once_with(
+                    "rera_yelahanka", "Test", "body", COLOR_BLUE, "skipped"
+                )
 
     def test_returns_true_on_204(self):
         mock_resp = MagicMock()
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_resp.status = 204
-        with patch.dict("os.environ", {"DISCORD_WEBHOOK_RERA_YELAHANKA": "https://discord.com/fake"}):
+        with patch.dict(
+            "os.environ", {"DISCORD_WEBHOOK_RERA_YELAHANKA": "https://discord.com/fake"}
+        ):
             with patch("urllib.request.urlopen", return_value=mock_resp):
                 with patch("utils.discord_notifier._log_alert"):
                     result = send("rera_yelahanka", "Test", "body")
                     assert result is True
 
     def test_returns_false_on_exception(self):
-        with patch.dict("os.environ", {"DISCORD_WEBHOOK_RERA_YELAHANKA": "https://discord.com/fake"}):
+        with patch.dict(
+            "os.environ", {"DISCORD_WEBHOOK_RERA_YELAHANKA": "https://discord.com/fake"}
+        ):
             with patch("urllib.request.urlopen", side_effect=Exception("timeout")):
                 with patch("utils.discord_notifier._log_alert"):
                     result = send("rera_yelahanka", "Test", "body")

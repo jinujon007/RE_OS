@@ -4,6 +4,7 @@ Revision ID: 0011_add_agent_registry
 Revises: 0010_add_sentiment_columns
 Create Date: 2026-06-01
 """
+
 from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
@@ -33,8 +34,7 @@ def upgrade() -> None:
         "ON agent_registry(department)"
     )
     op.execute(
-        "CREATE INDEX IF NOT EXISTS idx_agent_registry_active "
-        "ON agent_registry(active)"
+        "CREATE INDEX IF NOT EXISTS idx_agent_registry_active ON agent_registry(active)"
     )
 
 

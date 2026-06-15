@@ -8,6 +8,7 @@ Six assertions:
 5. Multiple survey number formats handled (Sy No: 101/1A, Survey No. 45/2A/3B)
 6. survey_no blank when no regex match and AI returns null
 """
+
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -30,7 +31,9 @@ class TestSurveyNoExtraction:
         with patch("scrapers.rera_detail_scout.GROQ_API_KEY", "test-key"):
             with patch("litellm.completion") as mock_completion:
                 mock_resp = MagicMock()
-                mock_resp.choices[0].message.content = '{"survey_number": "45/2A", "total_units": 120}'
+                mock_resp.choices[
+                    0
+                ].message.content = '{"survey_number": "45/2A", "total_units": 120}'
                 mock_completion.return_value = mock_resp
                 result = _ai_extract_detail(html)
 
@@ -43,15 +46,13 @@ class TestSurveyNoExtraction:
         """Regex fallback fires when AI extraction returns empty survey_number."""
         from scrapers.rera_detail_scout import _ai_extract_detail
 
-        html = (
-            "RERA Registration Details\n"
-            "Sy. No. 101/1\n"
-            "Total Units: 200\n"
-        )
+        html = "RERA Registration Details\nSy. No. 101/1\nTotal Units: 200\n"
         with patch("scrapers.rera_detail_scout.GROQ_API_KEY", "test-key"):
             with patch("litellm.completion") as mock_completion:
                 mock_resp = MagicMock()
-                mock_resp.choices[0].message.content = '{"survey_number": null, "total_units": 200}'
+                mock_resp.choices[
+                    0
+                ].message.content = '{"survey_number": null, "total_units": 200}'
                 mock_completion.return_value = mock_resp
                 result = _ai_extract_detail(html)
 
@@ -62,24 +63,43 @@ class TestSurveyNoExtraction:
 
     def test_survey_no_persisted_in_enriched_dict(self):
         """Survey number appears in the enriched output of _enrich_project."""
-        from scrapers.rera_detail_scout import RERADetailScout, ScoutMemory, Checkpointer
+        from scrapers.rera_detail_scout import (
+            RERADetailScout,
+            ScoutMemory,
+            Checkpointer,
+        )
 
-        long_text = "Sy. No. 45/2\n" + ("Project details para " * 100) + "\nTotal Units: 100"
+        long_text = (
+            "Sy. No. 45/2\n" + ("Project details para " * 100) + "\nTotal Units: 100"
+        )
 
         with patch.object(Checkpointer, "load", return_value=[]):
             with patch.object(ScoutMemory, "is_known", return_value=False):
                 with patch.object(ScoutMemory, "mark_all", return_value=([], [])):
                     scout = RERADetailScout("Yelahanka")
-                    with patch.object(scout, "_build_detail_urls", return_value=["https://example.com"]):
-                        with patch("scrapers.rera_detail_scout._fetch_with_fallbacks",
-                                   return_value=(long_text, "https://example.com")):
-                            with patch("scrapers.rera_detail_scout._ai_extract_detail",
-                                       return_value={"survey_number": "45/2", "total_units": 100}):
-                                result = scout._enrich_project({
-                                    "rera_number": "PRM/KA/RERA/1251/446/PR/180601/001792",
-                                    "project_name": "Test Project",
-                                    "developer_name": "Test Dev",
-                                })
+                    with patch.object(
+                        scout,
+                        "_build_detail_urls",
+                        return_value=["https://example.com"],
+                    ):
+                        with patch(
+                            "scrapers.rera_detail_scout._fetch_with_fallbacks",
+                            return_value=(long_text, "https://example.com"),
+                        ):
+                            with patch(
+                                "scrapers.rera_detail_scout._ai_extract_detail",
+                                return_value={
+                                    "survey_number": "45/2",
+                                    "total_units": 100,
+                                },
+                            ):
+                                result = scout._enrich_project(
+                                    {
+                                        "rera_number": "PRM/KA/RERA/1251/446/PR/180601/001792",
+                                        "project_name": "Test Project",
+                                        "developer_name": "Test Dev",
+                                    }
+                                )
 
         assert result is not None
         assert result.get("survey_no") == "45/2", (
@@ -90,15 +110,13 @@ class TestSurveyNoExtraction:
         """Survey number extracted with 'Sy No:' format with multi-part number."""
         from scrapers.rera_detail_scout import _ai_extract_detail
 
-        html = (
-            "Project: Lake View\n"
-            "Sy No: 45/2A/3B\n"
-            "Units: 200\n"
-        )
+        html = "Project: Lake View\nSy No: 45/2A/3B\nUnits: 200\n"
         with patch("scrapers.rera_detail_scout.GROQ_API_KEY", "test-key"):
             with patch("litellm.completion") as mock_completion:
                 mock_resp = MagicMock()
-                mock_resp.choices[0].message.content = '{"survey_number": "45/2A/3B", "total_units": 200}'
+                mock_resp.choices[
+                    0
+                ].message.content = '{"survey_number": "45/2A/3B", "total_units": 200}'
                 mock_completion.return_value = mock_resp
                 result = _ai_extract_detail(html)
 
@@ -109,14 +127,13 @@ class TestSurveyNoExtraction:
         """Survey number extracted with 'Survey No.' long format."""
         from scrapers.rera_detail_scout import _ai_extract_detail
 
-        html = (
-            "Survey No.: 12/3\n"
-            "Total Units: 150\n"
-        )
+        html = "Survey No.: 12/3\nTotal Units: 150\n"
         with patch("scrapers.rera_detail_scout.GROQ_API_KEY", "test-key"):
             with patch("litellm.completion") as mock_completion:
                 mock_resp = MagicMock()
-                mock_resp.choices[0].message.content = '{"survey_number": null, "total_units": 150}'
+                mock_resp.choices[
+                    0
+                ].message.content = '{"survey_number": null, "total_units": 150}'
                 mock_completion.return_value = mock_resp
                 result = _ai_extract_detail(html)
 
@@ -133,7 +150,9 @@ class TestSurveyNoExtraction:
         with patch("scrapers.rera_detail_scout.GROQ_API_KEY", "test-key"):
             with patch("litellm.completion") as mock_completion:
                 mock_resp = MagicMock()
-                mock_resp.choices[0].message.content = '{"survey_number": null, "total_units": 50}'
+                mock_resp.choices[
+                    0
+                ].message.content = '{"survey_number": null, "total_units": 50}'
                 mock_completion.return_value = mock_resp
                 result = _ai_extract_detail(html)
 

@@ -7,6 +7,7 @@ Five assertions:
 4. developers table schema already has grade column (CHAR(1) from schema.sql)
 5. BD Head context assembly includes grade_b_pipeline key via _get_grade_b_pipeline
 """
+
 import pytest
 from unittest.mock import patch
 

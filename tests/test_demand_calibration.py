@@ -3,11 +3,13 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from datetime import date
+
 pytestmark = pytest.mark.unit
 
 
 def test_calibration_returns_result_dataclass():
     from utils.demand_calibration import DemandCalibration, CalibrationResult
+
     cal = DemandCalibration()
     with patch("utils.db.get_engine") as mock_eng:
         mock_conn = MagicMock()
@@ -21,6 +23,7 @@ def test_calibration_returns_result_dataclass():
 
 def test_calibration_returns_uncertain_on_few_points():
     from utils.demand_calibration import DemandCalibration
+
     cal = DemandCalibration()
     with patch("utils.db.get_engine") as mock_eng:
         mock_conn = MagicMock()
@@ -35,6 +38,7 @@ def test_calibration_returns_uncertain_on_few_points():
 
 def test_calibration_computes_coefficient():
     from utils.demand_calibration import DemandCalibration
+
     cal = DemandCalibration()
     with patch("utils.db.get_engine") as mock_eng:
         mock_conn = MagicMock()
@@ -54,6 +58,7 @@ def test_calibration_computes_coefficient():
 def test_apply_calibration_status_uncallibrated():
     from utils.demand_calibration import DemandCalibration, CalibrationResult
     from intelligence.demand_intel import DemandSignals
+
     ds = DemandSignals(market="Yelahanka", collected_at="2026-06-13")
     assert ds.calibration_status == "UNCALIBRATED"
     cal = DemandCalibration()
@@ -64,6 +69,7 @@ def test_apply_calibration_status_uncallibrated():
 def test_coefficient_computation_with_synthetic_data():
     """F13 fix: test _compute_coefficient with synthetic data directly."""
     from utils.demand_calibration import DemandCalibration, CalibrationResult
+
     cal = DemandCalibration()
     result = CalibrationResult()
     synthetic_rows = [
@@ -80,6 +86,7 @@ def test_coefficient_computation_with_synthetic_data():
 
 def test_get_calibration_status_returns_string():
     from utils.demand_calibration import get_calibration_status
+
     with patch("utils.demand_calibration.DemandCalibration.run") as mock_run:
         mock_result = MagicMock()
         mock_result.verdict = "UNCALIBRATED"

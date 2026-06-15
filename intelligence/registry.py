@@ -29,6 +29,7 @@ Usage::
     print(pkg.market_pulse, pkg.demand_signals)
     print(pkg.all_modules_success, pkg.errors)
 """
+
 import threading
 import time
 from collections import OrderedDict
@@ -69,6 +70,7 @@ class IntelPackage:
         all_modules_success: ``True`` iff every module returned ``"OK"``.
         deal_type:       Deal structure hint (included for downstream routing).
     """
+
     survey_no: str
     market: str
     collected_at: str
@@ -191,7 +193,9 @@ class IntelRegistry:
         return f"{survey_no}|{market}|{land_area_sqft}|{sell_psf}"
 
     def invalidate_cache(
-        self, survey_no: str | None = None, market: str | None = None,
+        self,
+        survey_no: str | None = None,
+        market: str | None = None,
     ):
         self._cache.invalidate(survey_no, market)
 
@@ -225,7 +229,11 @@ class IntelRegistry:
         Returns:
             IntelPackage — always returns, never raises.
         """
-        from intelligence._shared import sanitize_market, sanitize_survey, validate_market
+        from intelligence._shared import (
+            sanitize_market,
+            sanitize_survey,
+            validate_market,
+        )
 
         s = sanitize_survey(survey_no)
         m = sanitize_market(market)
@@ -275,18 +283,23 @@ class IntelRegistry:
                 actual_psf = pkg.market_pulse.avg_listing_psf
             else:
                 from intelligence.financial_intel import _get_market_psf_fallback
+
                 actual_psf = _get_market_psf_fallback(m)
         self._run_module(
-            pkg, "financial_evaluation", self._get_financial_evaluation,
-            m, land, actual_psf, gv, construction_cost_psf,
+            pkg,
+            "financial_evaluation",
+            self._get_financial_evaluation,
+            m,
+            land,
+            actual_psf,
+            gv,
+            construction_cost_psf,
         )
 
         peer = self._get_peer_benchmark(m, actual_psf)
         pkg.peer_benchmark = peer
 
-        pkg.all_modules_success = all(
-            v == "OK" for v in pkg.module_status.values()
-        )
+        pkg.all_modules_success = all(v == "OK" for v in pkg.module_status.values())
         pkg.elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
 
         self._cache.set(key, pkg)
@@ -311,21 +324,25 @@ class IntelRegistry:
     @staticmethod
     def _get_market_pulse(market: str):
         from intelligence.market_intel import MarketIntel
+
         return MarketIntel(caller="IntelRegistry").get_pulse(market)
 
     @staticmethod
     def _get_demand_signals(market: str):
         from intelligence.demand_intel import DemandIntel
+
         return DemandIntel(caller="IntelRegistry").get_signals(market)
 
     @staticmethod
     def _get_land_picture(survey_no: str, market: str):
         from intelligence.land_intel import LandIntel
+
         return LandIntel(caller="IntelRegistry").get_land_picture(survey_no, market)
 
     @staticmethod
     def _get_legal_picture(survey_no: str, market: str):
         from intelligence.legal_intel import LegalIntel
+
         return LegalIntel(caller="IntelRegistry").get_survey_picture(survey_no, market)
 
     @staticmethod
@@ -337,6 +354,7 @@ class IntelRegistry:
         construction_cost_psf: float,
     ):
         from intelligence.financial_intel import FinancialIntel
+
         return FinancialIntel(caller="IntelRegistry").evaluate(
             market=market,
             land_area_sqft=land_area_sqft,
@@ -345,10 +363,10 @@ class IntelRegistry:
             construction_cost_psf=construction_cost_psf,
         )
 
-
     @staticmethod
     def _get_peer_benchmark(market: str, lls_target_psf: float) -> Any:
         from intelligence.peer_benchmark import PeerBenchmarkEngine
+
         return PeerBenchmarkEngine.compute(market, lls_target_psf)
 
 

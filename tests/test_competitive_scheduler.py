@@ -1,17 +1,23 @@
 """Unit tests for weekly competitive digest scheduler job (T-976)."""
+
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 
 class TestCompetitiveScheduler:
     def test_weekly_digest_job_registered(self):
         from config.scheduler import weekly_competitive_digest
+
         assert callable(weekly_competitive_digest)
 
     def test_weekly_digest_job_sends_discord(self):
         from config.scheduler import weekly_competitive_digest
-        with patch("intelligence.competitive_intel.CompetitiveIntelEngine") as MockEngine:
+
+        with patch(
+            "intelligence.competitive_intel.CompetitiveIntelEngine"
+        ) as MockEngine:
             mock_instance = MagicMock()
             mock_instance.pulse.return_value = {
                 "new_launches": [],
@@ -28,7 +34,10 @@ class TestCompetitiveScheduler:
 
     def test_weekly_digest_logs_on_failure(self):
         from config.scheduler import weekly_competitive_digest
-        with patch("intelligence.competitive_intel.CompetitiveIntelEngine") as MockEngine:
+
+        with patch(
+            "intelligence.competitive_intel.CompetitiveIntelEngine"
+        ) as MockEngine:
             MockEngine.side_effect = Exception("Engine failure")
             with patch("config.scheduler.logger") as mock_log:
                 weekly_competitive_digest()

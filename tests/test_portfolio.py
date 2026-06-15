@@ -1,23 +1,40 @@
 """Unit tests for LLS Portfolio (T-989 — Sprint 57 GATE-65)."""
+
 import pytest
 from unittest.mock import patch, MagicMock
 import importlib
+
 pytestmark = pytest.mark.unit
 
 
 def _fresh_client():
     from dashboard import app_fastapi
+
     importlib.reload(app_fastapi)
     from starlette.testclient import TestClient
+
     return TestClient(app_fastapi.app)
 
 
 def _mock_portfolio_row(idx: int = 0) -> tuple:
     from datetime import date, datetime
+
     return (
-        f"u{idx}", f"Project {idx}", "Bangalore", "Yelahanka", "premium",
-        500, 480, date(2020, 1, 15), date(2024, 6, 30),
-        50.00, 300.00, 18.50, "delivered", "RERA/123", "Promoter track record",
+        f"u{idx}",
+        f"Project {idx}",
+        "Bangalore",
+        "Yelahanka",
+        "premium",
+        500,
+        480,
+        date(2020, 1, 15),
+        date(2024, 6, 30),
+        50.00,
+        300.00,
+        18.50,
+        "delivered",
+        "RERA/123",
+        "Promoter track record",
         datetime(2026, 6, 8, 0, 0, 0),
     )
 

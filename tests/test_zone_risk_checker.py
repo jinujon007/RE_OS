@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 _SAMPLE_ROW = (3.0, 24.0, 60.0, 4.5, 1.5, 1.5)
@@ -8,6 +9,7 @@ _SAMPLE_ROW = (3.0, 24.0, 60.0, 4.5, 1.5, 1.5)
 class TestCheckZoneRisk:
     def _make_result(self, market="Devanahalli", zone="R2"):
         from utils.zone_risk_checker import check_zone_risk
+
         return check_zone_risk(market, zone)
 
     def test_empty_market_returns_unknown(self):
@@ -54,8 +56,10 @@ class TestCheckZoneRisk:
             MagicMock(fetchall=lambda: [("airport_funnel", "Airport funnel zone")]),
             MagicMock(),
         ]
-        with patch("utils.db.get_engine") as mock_eng, \
-             patch("utils.zone_risk_checker._load_zones_gdf", return_value=(None, None)):
+        with (
+            patch("utils.db.get_engine") as mock_eng,
+            patch("utils.zone_risk_checker._load_zones_gdf", return_value=(None, None)),
+        ):
             mock_eng.return_value.connect.return_value = mock_conn
             r = self._make_result("Devanahalli", "R2")
         assert r.risk_level == "MEDIUM"
@@ -67,14 +71,18 @@ class TestCheckZoneRisk:
         mock_conn.execute.side_effect = [
             MagicMock(fetchone=lambda: _SAMPLE_ROW),
             MagicMock(),
-            MagicMock(fetchall=lambda: [
-                ("airport_funnel", "Zone A"),
-                ("green_belt", "Green belt"),
-            ]),
+            MagicMock(
+                fetchall=lambda: [
+                    ("airport_funnel", "Zone A"),
+                    ("green_belt", "Green belt"),
+                ]
+            ),
             MagicMock(),
         ]
-        with patch("utils.db.get_engine") as mock_eng, \
-             patch("utils.zone_risk_checker._load_zones_gdf", return_value=(None, None)):
+        with (
+            patch("utils.db.get_engine") as mock_eng,
+            patch("utils.zone_risk_checker._load_zones_gdf", return_value=(None, None)),
+        ):
             mock_eng.return_value.connect.return_value = mock_conn
             r = self._make_result("Devanahalli", "R2")
         assert r.risk_level == "HIGH"
@@ -104,14 +112,18 @@ class TestCheckZoneRisk:
         mock_conn = MagicMock()
         mock_conn.__enter__.return_value = mock_conn
         call_count = [0]
+
         def side_effect(*a, **kw):
             call_count[0] += 1
             if call_count[0] <= 1:
                 return MagicMock(fetchone=lambda: _SAMPLE_ROW)
             raise Exception("ST_Intersects failed")
+
         mock_conn.execute.side_effect = side_effect
-        with patch("utils.db.get_engine") as mock_eng, \
-             patch("utils.zone_risk_checker._load_zones_gdf", return_value=(None, None)):
+        with (
+            patch("utils.db.get_engine") as mock_eng,
+            patch("utils.zone_risk_checker._load_zones_gdf", return_value=(None, None)),
+        ):
             mock_eng.return_value.connect.return_value = mock_conn
             r = self._make_result("Devanahalli", "R2")
         assert r.far == 3.0
@@ -120,7 +132,14 @@ class TestCheckZoneRisk:
     def test_rear_setback_in_result(self):
         mock_conn = MagicMock()
         mock_conn.__enter__.return_value = mock_conn
-        mock_conn.execute.return_value.fetchone.return_value = (3.0, 24.0, 60.0, 4.5, 1.5, 1.5)
+        mock_conn.execute.return_value.fetchone.return_value = (
+            3.0,
+            24.0,
+            60.0,
+            4.5,
+            1.5,
+            1.5,
+        )
         with patch("utils.db.get_engine") as mock_eng:
             mock_eng.return_value.connect.return_value = mock_conn
             r = self._make_result("Devanahalli", "R2")

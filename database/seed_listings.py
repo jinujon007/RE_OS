@@ -25,10 +25,16 @@ MARKETS = {
 
 PROJECT_TEMPLATES = {
     "Yelahanka": [
-        ("Prestige", ["Prestige Lakeside Habitat", "Prestige Ficus", "Prestige Falcon City"]),
+        (
+            "Prestige",
+            ["Prestige Lakeside Habitat", "Prestige Ficus", "Prestige Falcon City"],
+        ),
         ("Sobha", ["Sobha City", "Sobha Silicon Oasis", "Sobha Forest View"]),
         ("Brigade", ["Brigade Utopia", "Brigade Lakefront", "Brigade Palm Springs"]),
-        ("Total Environment", ["Total Environment Purva Sky", "Total Environment Windmills"]),
+        (
+            "Total Environment",
+            ["Total Environment Purva Sky", "Total Environment Windmills"],
+        ),
         ("Godrej", ["Godrej Splendour", "Godrej Woodland"]),
         ("Assetz", ["Assetz Marq", "Assetz 63 Degree East"]),
         ("Shriram", ["Shriram North County", "Shriram Palm Grove"]),
@@ -42,7 +48,15 @@ PROJECT_TEMPLATES = {
     ],
     "Devanahalli": [
         ("Brigade", ["Brigade Gateway", "Brigade North Crest", "Brigade Sanctuary"]),
-        ("Prestige", ["Prestige Skyline", "Prestige Park Plaza", "Prestige Airport Village", "Prestige Air Residency"]),
+        (
+            "Prestige",
+            [
+                "Prestige Skyline",
+                "Prestige Park Plaza",
+                "Prestige Airport Village",
+                "Prestige Air Residency",
+            ],
+        ),
         ("Godrej", ["Godrej Ananda", "Godrej Frontier"]),
         ("Total Environment", ["Total Environment Canyon", "Total Environment Peaks"]),
         ("Assetz", ["Assetz Northstar", "Assetz Flight Deck"]),
@@ -78,20 +92,28 @@ BHK_CONFIGS = ["1 BHK", "2 BHK", "3 BHK", "4 BHK"]
 AREA_RANGES = [(600, 900), (900, 1300), (1300, 1800), (1800, 2500)]
 
 
-def ensure_minimum_listings(count: int, market_name: str, market_config: dict, templates: list, seed: int) -> list[dict]:
+def ensure_minimum_listings(
+    count: int, market_name: str, market_config: dict, templates: list, seed: int
+) -> list[dict]:
     """Generate at least `count` listings for a market, cycling templates as needed."""
     generated = []
     cycles = 0
     max_cycles = 5
     while len(generated) < count and cycles < max_cycles:
-        generated.extend(_generate_batch(market_name, market_config, templates, seed + cycles))
+        generated.extend(
+            _generate_batch(market_name, market_config, templates, seed + cycles)
+        )
         cycles += 1
     if len(generated) < count:
-        logger.warning(f"[SeedListings] {market_name}: only {len(generated)} after {max_cycles} cycles (need {count})")
+        logger.warning(
+            f"[SeedListings] {market_name}: only {len(generated)} after {max_cycles} cycles (need {count})"
+        )
     return generated[:count]
 
 
-def _generate_batch(market_name: str, market_config: dict, templates: list, cycle_seed: int) -> list[dict]:
+def _generate_batch(
+    market_name: str, market_config: dict, templates: list, cycle_seed: int
+) -> list[dict]:
     """Generate one listing per developer-project template entry.
 
     Deterministic within a cycle_seed so re-running with the same seed produces
@@ -111,40 +133,46 @@ def _generate_batch(market_name: str, market_config: dict, templates: list, cycl
             days_ago = local_rng.randint(0, 60)
             scraped_at = datetime.now() - timedelta(days=days_ago)
             local_id = f"{market_name}_{project}"
-            batch.append({
-                "id": str(uuid.uuid4()),
-                "source": "seed_estimated",
-                "source_listing_id": local_id,
-                "source_url": None,
-                "micro_market_id": market_id,
-                "rera_project_id": None,
-                "property_type": local_rng.choice(["Apartment", "Apartment", "Apartment", "Villa"]),
-                "transaction_type": "Sale",
-                "bhk_config": bhk,
-                "carpet_area_sqft": area,
-                "built_up_area_sqft": round(area * local_rng.uniform(1.1, 1.25)),
-                "super_built_up_sqft": round(area * local_rng.uniform(1.25, 1.4)),
-                "plot_area_sqft": None,
-                "listed_price": price,
-                "price_psf": psf,
-                "monthly_rent": None,
-                "security_deposit": None,
-                "deposit_months": None,
-                "address": None,
-                "locality": market_name,
-                "listed_at": scraped_at.date(),
-                "is_active": True,
-                "days_on_market": days_ago,
-                "is_new_launch": local_rng.random() < 0.2,
-                "is_rera_registered": local_rng.random() < 0.7,
-                "raw_rera_number": None,
-                "raw_data": None,
-                "data_source": "seed_estimated",
-            })
+            batch.append(
+                {
+                    "id": str(uuid.uuid4()),
+                    "source": "seed_estimated",
+                    "source_listing_id": local_id,
+                    "source_url": None,
+                    "micro_market_id": market_id,
+                    "rera_project_id": None,
+                    "property_type": local_rng.choice(
+                        ["Apartment", "Apartment", "Apartment", "Villa"]
+                    ),
+                    "transaction_type": "Sale",
+                    "bhk_config": bhk,
+                    "carpet_area_sqft": area,
+                    "built_up_area_sqft": round(area * local_rng.uniform(1.1, 1.25)),
+                    "super_built_up_sqft": round(area * local_rng.uniform(1.25, 1.4)),
+                    "plot_area_sqft": None,
+                    "listed_price": price,
+                    "price_psf": psf,
+                    "monthly_rent": None,
+                    "security_deposit": None,
+                    "deposit_months": None,
+                    "address": None,
+                    "locality": market_name,
+                    "listed_at": scraped_at.date(),
+                    "is_active": True,
+                    "days_on_market": days_ago,
+                    "is_new_launch": local_rng.random() < 0.2,
+                    "is_rera_registered": local_rng.random() < 0.7,
+                    "raw_rera_number": None,
+                    "raw_data": None,
+                    "data_source": "seed_estimated",
+                }
+            )
     return batch
 
 
-def generate_listings(market_name: str, market_config: dict, seed: int = 42, minimum: int = 30) -> list[dict]:
+def generate_listings(
+    market_name: str, market_config: dict, seed: int = 42, minimum: int = 30
+) -> list[dict]:
     """Generate seed listings for one market with reproducible randomness.
 
     Args:
@@ -157,20 +185,42 @@ def generate_listings(market_name: str, market_config: dict, seed: int = 42, min
         List of listing dicts ready for DB insertion.
     """
     templates = PROJECT_TEMPLATES[market_name]
-    listings = ensure_minimum_listings(minimum, market_name, market_config, templates, seed)
+    listings = ensure_minimum_listings(
+        minimum, market_name, market_config, templates, seed
+    )
     logger.info(f"[SeedListings] Generated {len(listings)} listings for {market_name}")
     return listings
 
 
 _INSERT_COLUMNS = [
-    "id", "source", "source_listing_id", "source_url",
-    "micro_market_id", "rera_project_id", "property_type",
-    "transaction_type", "bhk_config", "carpet_area_sqft",
-    "built_up_area_sqft", "super_built_up_sqft", "plot_area_sqft",
-    "listed_price", "price_psf", "monthly_rent", "security_deposit",
-    "deposit_months", "address", "locality", "listed_at",
-    "is_active", "days_on_market", "is_new_launch",
-    "is_rera_registered", "raw_rera_number", "raw_data", "data_source",
+    "id",
+    "source",
+    "source_listing_id",
+    "source_url",
+    "micro_market_id",
+    "rera_project_id",
+    "property_type",
+    "transaction_type",
+    "bhk_config",
+    "carpet_area_sqft",
+    "built_up_area_sqft",
+    "super_built_up_sqft",
+    "plot_area_sqft",
+    "listed_price",
+    "price_psf",
+    "monthly_rent",
+    "security_deposit",
+    "deposit_months",
+    "address",
+    "locality",
+    "listed_at",
+    "is_active",
+    "days_on_market",
+    "is_new_launch",
+    "is_rera_registered",
+    "raw_rera_number",
+    "raw_data",
+    "data_source",
 ]
 
 _INSERT_SQL = (
@@ -197,29 +247,56 @@ def _insert_listings(conn, listings: list[dict]) -> int:
         except Exception as exc:
             conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
             conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
-            logger.warning("[SeedListings] Skipped {}/{}: {}", listing.get("locality", "?"), listing.get("source_listing_id", "?"), exc)
+            logger.warning(
+                "[SeedListings] Skipped {}/{}: {}",
+                listing.get("locality", "?"),
+                listing.get("source_listing_id", "?"),
+                exc,
+            )
             errors += 1
     if errors:
-        logger.warning("[SeedListings] {} insert(s) failed out of {}", errors, len(listings))
+        logger.warning(
+            "[SeedListings] {} insert(s) failed out of {}", errors, len(listings)
+        )
     return inserted
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate and insert seed listing data for RE_OS markets.")
-    parser.add_argument("--markets", nargs="*", default=list(MARKETS.keys()),
-                        help="Markets to seed (default: all)")
-    parser.add_argument("--minimum", type=int, default=30,
-                        help="Minimum listings per market (default: 30)")
-    parser.add_argument("--seed", type=int, default=42,
-                        help="Random seed for reproducible generation (default: 42)")
-    parser.add_argument("--force", action="store_true",
-                        help="Delete existing seed_estimated listings before inserting")
+    parser = argparse.ArgumentParser(
+        description="Generate and insert seed listing data for RE_OS markets."
+    )
+    parser.add_argument(
+        "--markets",
+        nargs="*",
+        default=list(MARKETS.keys()),
+        help="Markets to seed (default: all)",
+    )
+    parser.add_argument(
+        "--minimum",
+        type=int,
+        default=30,
+        help="Minimum listings per market (default: 30)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducible generation (default: 42)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Delete existing seed_estimated listings before inserting",
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
     selected_markets = {k: v for k, v in MARKETS.items() if k in args.markets}
     if not selected_markets:
-        logger.error("[SeedListings] No valid markets specified. Choose from: {}", list(MARKETS.keys()))
+        logger.error(
+            "[SeedListings] No valid markets specified. Choose from: {}",
+            list(MARKETS.keys()),
+        )
         return
 
     engine = get_engine()
@@ -227,31 +304,52 @@ def main():
     with engine.begin() as conn:
         deleted = 0
         if args.force:
-            result = conn.execute(text("DELETE FROM listings WHERE data_source = 'seed_estimated'"))
+            result = conn.execute(
+                text("DELETE FROM listings WHERE data_source = 'seed_estimated'")
+            )
             deleted = result.rowcount
-            logger.info("[SeedListings] Deleted {} existing seed_estimated listings", deleted)
+            logger.info(
+                "[SeedListings] Deleted {} existing seed_estimated listings", deleted
+            )
 
         all_listings = {}
         for market_name, market_config in selected_markets.items():
-            all_listings[market_name] = generate_listings(market_name, market_config, args.seed, args.minimum)
-            logger.info("[SeedListings] {}: {} listings generated", market_name, len(all_listings[market_name]))
+            all_listings[market_name] = generate_listings(
+                market_name, market_config, args.seed, args.minimum
+            )
+            logger.info(
+                "[SeedListings] {}: {} listings generated",
+                market_name,
+                len(all_listings[market_name]),
+            )
 
         total_inserted = 0
         for market_name, listings in all_listings.items():
             inserted = _insert_listings(conn, listings)
             total_inserted += inserted
 
-        logger.info("[SeedListings] Inserted {} total listings ({} markets)", total_inserted, len(selected_markets))
+        logger.info(
+            "[SeedListings] Inserted {} total listings ({} markets)",
+            total_inserted,
+            len(selected_markets),
+        )
 
     with engine.connect() as conn:
         for market_name, market_config in selected_markets.items():
             cnt = conn.execute(
-                text("SELECT COUNT(*) FROM listings WHERE micro_market_id = :mid AND data_source = 'seed_estimated'"),
+                text(
+                    "SELECT COUNT(*) FROM listings WHERE micro_market_id = :mid AND data_source = 'seed_estimated'"
+                ),
                 {"mid": market_config["id"]},
             ).scalar()
             logger.info("[SeedListings] {}: {} seed listings in DB", market_name, cnt)
             if cnt < args.minimum:
-                logger.warning("[SeedListings] {} has {} listings (below minimum {})", market_name, cnt, args.minimum)
+                logger.warning(
+                    "[SeedListings] {} has {} listings (below minimum {})",
+                    market_name,
+                    cnt,
+                    args.minimum,
+                )
 
 
 if __name__ == "__main__":

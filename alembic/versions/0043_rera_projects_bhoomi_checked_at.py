@@ -6,6 +6,7 @@ to avoid redundant lookups and rate-limit issues.
 Migration chain:
     0042_rera_projects_survey_no -> 0043_rera_projects_bhoomi_checked_at
 """
+
 from typing import Union
 
 import sqlalchemy as sa

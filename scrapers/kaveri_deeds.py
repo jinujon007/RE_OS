@@ -28,6 +28,7 @@ Known limitations:
 - Buyer/seller names with Kannada text or (cid:NNN) encoding get low confidence
   but the raw text is preserved for downstream fuzzy matching.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -41,9 +42,13 @@ from typing import Any
 from loguru import logger
 
 __all__ = [
-    "parse_pdf_file", "parse_inbox_file", "parse_inbox_all",
-    "write_checkpoint", "read_latest_checkpoint",
-    "run_inbox_mode", "run_live_mode",
+    "parse_pdf_file",
+    "parse_inbox_file",
+    "parse_inbox_all",
+    "write_checkpoint",
+    "read_latest_checkpoint",
+    "run_inbox_mode",
+    "run_live_mode",
 ]
 
 # Paths
@@ -70,9 +75,7 @@ _ARTICLE_NAME_RE = re.compile(r"Article\s*Name:\s*([^;]+)")
 _MARKET_VALUE_RE = re.compile(r"Market\s*Value:\s*([\d,]+)", re.IGNORECASE)
 
 # Consideration Amount from col4
-_CONSIDERATION_RE = re.compile(
-    r"Consideration\s*Amount\s*:?\s*([\d,]+)", re.IGNORECASE
-)
+_CONSIDERATION_RE = re.compile(r"Consideration\s*Amount\s*:?\s*([\d,]+)", re.IGNORECASE)
 
 # Village from col2: "Index-II Village: Venkatala"
 _VILLAGE_RE = re.compile(r"Index-II\s*Village:\s*([^,\n]+)")
@@ -283,7 +286,8 @@ def _extract_extent(col2: str) -> float | None:
     # Prefer "in all measuring" pattern (actual land extent)
     m_inall = re.search(
         r"in\s+all\s+measuring\s+([\d,]+)\s*Sq\s*\.?\s*ft",
-        col2, re.IGNORECASE,
+        col2,
+        re.IGNORECASE,
     )
     if m_inall:
         try:
@@ -313,7 +317,8 @@ def _extract_extent(col2: str) -> float | None:
 
 
 def _extract_parties(
-    col5: str, col6: str,
+    col5: str,
+    col6: str,
 ) -> tuple[str, str, str]:
     """Extract seller/buyer from columns 5/6.
 
@@ -373,11 +378,11 @@ def _parse_ec_form15_rows(all_rows: list[list[str | None]]) -> list[dict[str, An
     prev_desc_parts: list[str] = []
 
     for row in data_rows:
-        sl_no_col = (row[0] or "").strip()        # column 1 — serial no
-        prop_desc = (row[1] or "").strip()         # column 2 — property description
-        date_col = (row[2] or "").strip()          # column 3 — execution date
-        deed_val_col = (row[3] or "").strip()      # column 4 — deed type + values
-        doc_no_col = (row[8] or "").strip()        # column 9 — doc_no
+        sl_no_col = (row[0] or "").strip()  # column 1 — serial no
+        prop_desc = (row[1] or "").strip()  # column 2 — property description
+        date_col = (row[2] or "").strip()  # column 3 — execution date
+        deed_val_col = (row[3] or "").strip()  # column 4 — deed type + values
+        doc_no_col = (row[8] or "").strip()  # column 9 — doc_no
         doc_no = _extract_doc_no(doc_no_col)
 
         has_sl_no = bool(sl_no_col) and sl_no_col.isdigit()
@@ -435,9 +440,7 @@ def _parse_ec_form15_rows(all_rows: list[list[str | None]]) -> list[dict[str, An
     return transactions
 
 
-def _finalize_transaction(
-    current: dict[str, Any], desc_parts: list[str]
-) -> None:
+def _finalize_transaction(current: dict[str, Any], desc_parts: list[str]) -> None:
     """Stitch property description parts and re-extract fields from full text."""
     if not desc_parts:
         return
@@ -483,10 +486,10 @@ def _extract_sro_from_doc_no(doc_no: str) -> str | None:
     # Complete for test markets (Yelahanka/Gandhinagar, Hebbal/Rajajinagar, Devanahalli/Bangalore Rural).
     # Extend for Karnataka scope: add entry per SRO district.
     sro_map = {
-        "BYP": "Gandhinagar",    # Yelahanka SRO
-        "YAN": "Gandhinagar",    # Yelahanka SRO (alternate)
-        "HBB": "Rajajinagar",    # Hebbal SRO
-        "HSR": "Rajajinagar",    # Hebbal (Hesaraghatta) SRO
+        "BYP": "Gandhinagar",  # Yelahanka SRO
+        "YAN": "Gandhinagar",  # Yelahanka SRO (alternate)
+        "HBB": "Rajajinagar",  # Hebbal SRO
+        "HSR": "Rajajinagar",  # Hebbal (Hesaraghatta) SRO
         "BDA": "Bangalore Rural",  # Devanahalli SRO
     }
     return sro_map.get(prefix)
@@ -511,7 +514,9 @@ def _extract_tables_from_pdf(pdf_path: str) -> list[list[str | None]]:
                             padded.append(None)
                         all_rows.append(padded)
     except Exception as exc:
-        logger.error("[KaveriDeedScout] Failed to extract tables from {}: {}", pdf_path, exc)
+        logger.error(
+            "[KaveriDeedScout] Failed to extract tables from {}: {}", pdf_path, exc
+        )
         raise
     return all_rows
 
@@ -621,7 +626,9 @@ def write_checkpoint(records: list[dict[str, Any]], mode: str) -> Path:
         "records": records,
     }
     fpath.write_text(json.dumps(checkpoint, indent=2, default=str))
-    logger.info("[KaveriDeedScout] Checkpoint written: {} ({} records)", fpath, len(records))
+    logger.info(
+        "[KaveriDeedScout] Checkpoint written: {} ({} records)", fpath, len(records)
+    )
 
     if "wal_" not in mode:
         for f in _CHECKPOINT_DIR.glob("kaveri_deeds_inbox_wal_*.json"):

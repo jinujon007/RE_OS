@@ -10,6 +10,7 @@ pytestmark = pytest.mark.unit
 def test_get_appreciation_forecast_hoskote():
     """Test STRR node pincode 562114 returns infrastructure events and forecast."""
     import sys
+
     sys.path.insert(0, ".")
     from utils.appreciation_model import get_appreciation_forecast
 
@@ -28,6 +29,7 @@ def test_get_appreciation_forecast_hoskote():
 def test_get_appreciation_forecast_yelahanka():
     """Test Yelahanka pincode 560009 returns forecast (no infra events for this pincode)."""
     import sys
+
     sys.path.insert(0, ".")
     from utils.appreciation_model import get_appreciation_forecast
 
@@ -40,6 +42,7 @@ def test_get_appreciation_forecast_yelahanka():
 def test_get_pincodes_for_market():
     """Test that Devanahalli and Yelahanka returns correct pincodes."""
     import sys
+
     sys.path.insert(0, ".")
     from utils.appreciation_model import get_pincodes_for_market
 

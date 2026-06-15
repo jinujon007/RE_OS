@@ -13,6 +13,7 @@ Portal strategy:
 Usage:
   python scrapers/bhoomi_scraper.py --survey 45/2 --market Devanahalli
 """
+
 import json
 import os
 import re
@@ -43,7 +44,9 @@ def _lookup_district_taluk(market: str) -> dict:
     for k, v in _MARKET_DIST_TALUK.items():
         if k.lower() == s:
             return v
-    logger.warning("[BhoomiScraper] Unknown market '{}' — using default district/taluk", market)
+    logger.warning(
+        "[BhoomiScraper] Unknown market '{}' — using default district/taluk", market
+    )
     return {"district_id": 1, "taluk_id": 5}
 
 
@@ -82,7 +85,10 @@ def fetch(survey_no: str, market: str | None = None) -> dict:
     sn = survey_no.strip()
     if not _SURVEY_NO_RE.match(sn):
         logger.warning("[BhoomiScraper] Invalid survey_no format: '{}'", sn)
-        return {"bhoomi_status": "unavailable", "error": f"invalid survey_no format: {sn}"}
+        return {
+            "bhoomi_status": "unavailable",
+            "error": f"invalid survey_no format: {sn}",
+        }
     dt = _lookup_district_taluk(market) if market else {"district_id": 1, "taluk_id": 5}
     params = {
         "district_id": str(dt["district_id"]),
@@ -95,7 +101,9 @@ def fetch(survey_no: str, market: str | None = None) -> dict:
             raw = _do_request(params)
         except urllib.error.HTTPError as exc:
             if exc.code == 429:
-                logger.warning("[BhoomiScraper] Rate limited (429) — returning unavailable")
+                logger.warning(
+                    "[BhoomiScraper] Rate limited (429) — returning unavailable"
+                )
                 return {"bhoomi_status": "unavailable", "error": "rate_limited"}
             last_error = exc
             if attempt < _MAX_RETRIES:
@@ -103,13 +111,22 @@ def fetch(survey_no: str, market: str | None = None) -> dict:
             continue
         except Exception as exc:
             last_error = exc
-            logger.warning("[BhoomiScraper] Attempt {}/{} failed: {}", attempt + 1, _MAX_RETRIES + 1, exc)
+            logger.warning(
+                "[BhoomiScraper] Attempt {}/{} failed: {}",
+                attempt + 1,
+                _MAX_RETRIES + 1,
+                exc,
+            )
             if attempt < _MAX_RETRIES:
                 time.sleep(_RETRY_DELAY_S * (attempt + 1))
             continue
         break
     else:
-        logger.warning("[BhoomiScraper] Portal unreachable after {} attempts: {}", _MAX_RETRIES + 1, last_error)
+        logger.warning(
+            "[BhoomiScraper] Portal unreachable after {} attempts: {}",
+            _MAX_RETRIES + 1,
+            last_error,
+        )
         return {"bhoomi_status": "unavailable"}
 
     try:
@@ -133,7 +150,13 @@ def _parse_response(body: dict | list, survey_no: str, market: str | None) -> di
     record = body if isinstance(body, dict) else {"raw": str(body)[:500]}
 
     land_nature = (record.get("land_nature") or "").strip().lower()
-    if land_nature not in ("agricultural", "converted", "revenue", "notional", "unknown"):
+    if land_nature not in (
+        "agricultural",
+        "converted",
+        "revenue",
+        "notional",
+        "unknown",
+    ):
         land_nature = "unknown"
 
     encumbrances = record.get("encumbrances")
@@ -151,7 +174,9 @@ def _parse_response(body: dict | list, survey_no: str, market: str | None) -> di
         "owner_name": (record.get("owner_name") or record.get("owner", "")).strip(),
         "land_nature": land_nature,
         "khata_no": (record.get("khata_no") or record.get("khata", "")).strip(),
-        "area_guntas": _parse_guntas(record.get("area_guntas") or record.get("area", 0)),
+        "area_guntas": _parse_guntas(
+            record.get("area_guntas") or record.get("area", 0)
+        ),
         "encumbrances": encumbrances,
         "bhoomi_status": "live",
         "bhoomi_fetched_at": None,
@@ -169,6 +194,7 @@ def _parse_guntas(val) -> float | None:
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Karnataka Bhoomi RTC Fetcher")
     parser.add_argument("--survey", default="45/2", help="Survey number")
     parser.add_argument("--market", default="Devanahalli", help="Market name")

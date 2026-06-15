@@ -292,6 +292,7 @@ def _fetch_et_realty(query: str, session: requests.Session) -> list[dict]:
 def _parse_et_realty_markdown(content: str) -> list[dict]:
     """Extract article headlines and links from Jina Reader markdown output."""
     import re
+
     articles = []
     # Match markdown links: [Title](URL) pattern
     for match in re.finditer(r"\[([^\]]{20,200})\]\((https?://[^\)]+)\)", content):
@@ -301,7 +302,15 @@ def _parse_et_realty_markdown(content: str) -> list[dict]:
             continue
         if len(title) < 15:
             continue
-        articles.append({"title": title, "url": url, "published": "", "snippet": "", "source": "et_realty"})
+        articles.append(
+            {
+                "title": title,
+                "url": url,
+                "published": "",
+                "snippet": "",
+                "source": "et_realty",
+            }
+        )
         if len(articles) >= 10:
             break
     return articles
@@ -426,6 +435,7 @@ def _normalize_article(raw: dict, market: str) -> dict | None:
     if HF_API_KEY and headline:
         try:
             from utils.sentiment import score_headline
+
             text_for_sentiment = headline
             key_insight = (raw.get("key_insight") or "").strip()
             if key_insight:

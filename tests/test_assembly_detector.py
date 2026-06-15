@@ -8,14 +8,17 @@
 (5) Dedup updates existing signal, no duplicates
 (6) Discord alert payload format is correct
 """
+
 from unittest.mock import patch, MagicMock, ANY
 from datetime import date, timedelta
 import pytest
+
 pytestmark = pytest.mark.unit
 
 
-def _make_mock_row(id_val, buyer, village, survey_no, reg_date,
-                    extent=1000.0, consideration=5000000.0):
+def _make_mock_row(
+    id_val, buyer, village, survey_no, reg_date, extent=1000.0, consideration=5000000.0
+):
     """Helper to create a mock DB row-like object."""
     row = MagicMock()
     row.id = id_val
@@ -31,11 +34,16 @@ def _make_mock_row(id_val, buyer, village, survey_no, reg_date,
 def test_fires_on_3_parcel_assembly():
     """Assertion 1: detector fires on 3 deeds same buyer same village proximal."""
     from utils.assembly_detector import detect_assemblies
+
     base = date.today() - timedelta(days=30)
     mock_rows = [
         _make_mock_row("a1", "Brigade Group", "Yelahanka", "45/1", base),
-        _make_mock_row("a2", "Brigade Group", "Yelahanka", "45/2", base + timedelta(days=15)),
-        _make_mock_row("a3", "Brigade Group", "Yelahanka", "45/3", base + timedelta(days=30)),
+        _make_mock_row(
+            "a2", "Brigade Group", "Yelahanka", "45/2", base + timedelta(days=15)
+        ),
+        _make_mock_row(
+            "a3", "Brigade Group", "Yelahanka", "45/3", base + timedelta(days=30)
+        ),
     ]
     mock_engine = MagicMock()
     mock_conn = MagicMock()
@@ -55,10 +63,13 @@ def test_fires_on_3_parcel_assembly():
 def test_does_not_fire_on_unrelated_buyers():
     """Assertion 2: 2 deeds from different buyers in same village no assembly."""
     from utils.assembly_detector import detect_assemblies
+
     base = date.today() - timedelta(days=30)
     mock_rows = [
         _make_mock_row("b1", "Prestige Group", "Yelahanka", "50/1", base),
-        _make_mock_row("b2", "Sobha Ltd", "Yelahanka", "55/1", base + timedelta(days=10)),
+        _make_mock_row(
+            "b2", "Sobha Ltd", "Yelahanka", "55/1", base + timedelta(days=10)
+        ),
     ]
     mock_engine = MagicMock()
     mock_conn = MagicMock()
@@ -75,10 +86,13 @@ def test_does_not_fire_on_unrelated_buyers():
 def test_does_not_fire_across_villages():
     """Assertion 3: same buyer different villages does not fire."""
     from utils.assembly_detector import detect_assemblies
+
     base = date.today() - timedelta(days=30)
     mock_rows = [
         _make_mock_row("c1", "Brigade Group", "Yelahanka", "45/1", base),
-        _make_mock_row("c2", "Brigade Group", "Devanahalli", "60/1", base + timedelta(days=10)),
+        _make_mock_row(
+            "c2", "Brigade Group", "Devanahalli", "60/1", base + timedelta(days=10)
+        ),
     ]
     mock_engine = MagicMock()
     mock_conn = MagicMock()
@@ -95,6 +109,7 @@ def test_does_not_fire_across_villages():
 def test_fuzzy_buyer_match():
     """Assertion 4: similar buyer names match (Brigade Group vs Brigade Enterprises)."""
     from utils.assembly_detector import _fuzzy_match
+
     assert _fuzzy_match("Brigade Group", "Brigade Enterprises", threshold=0.5)
     assert _fuzzy_match("Brigade Group", "Brigade Group")
     assert not _fuzzy_match("Prestige", "Sobha")
@@ -103,10 +118,13 @@ def test_fuzzy_buyer_match():
 def test_dedup_updates_existing():
     """Assertion 5: existing signal is updated not duplicated."""
     from utils.assembly_detector import detect_assemblies
+
     base = date.today() - timedelta(days=30)
     mock_rows = [
         _make_mock_row("d1", "Brigade Group", "Yelahanka", "45/1", base),
-        _make_mock_row("d2", "Brigade Group", "Yelahanka", "45/2", base + timedelta(days=15)),
+        _make_mock_row(
+            "d2", "Brigade Group", "Yelahanka", "45/2", base + timedelta(days=15)
+        ),
     ]
     mock_engine = MagicMock()
     mock_conn = MagicMock()
@@ -126,6 +144,7 @@ def test_dedup_updates_existing():
 def test_discord_alert_format():
     """Assertion 6: Discord alert payload has correct format."""
     from utils.assembly_detector import _format_assembly_alert
+
     signal = {
         "buyer_name_norm": "BRIGADE GROUP",
         "parcel_count": 3,

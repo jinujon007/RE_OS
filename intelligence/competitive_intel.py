@@ -16,6 +16,7 @@ Risk Register:
 | market empty string vs None | Wrong filter applied | Empty string treated same as None (no market clause) |
 | Concurrent pulse() calls | Race per-method on engine.connect() | Each method opens own connection; engine is thread-safe singleton |
 """
+
 from datetime import datetime, timezone
 from loguru import logger
 
@@ -35,6 +36,7 @@ class CompetitiveIntelEngine:
         days = max(days, 1)
         from utils.db import get_engine
         from sqlalchemy import text
+
         engine = get_engine()
         try:
             if market:
@@ -48,20 +50,26 @@ class CompetitiveIntelEngine:
 
     def _query_new_launches_all(self, engine, days: int):
         from sqlalchemy import text
+
         with engine.connect() as conn:
-            return conn.execute(text(f"""
+            return conn.execute(
+                text(f"""
                 SELECT rp.project_name, d.name, d.grade, mm.name,
                        rp.total_units, rp.price_min_psf, rp.price_max_psf, rp.rera_number
                 FROM rera_projects rp
                 {_DEV_JOIN}
                 {_MARKET_JOIN}
                 WHERE rp.created_at >= NOW() - CAST(:days || ' days' AS INTERVAL)
-            """), {"days": days}).fetchall()
+            """),
+                {"days": days},
+            ).fetchall()
 
     def _query_new_launches_market(self, engine, market: str, days: int):
         from sqlalchemy import text
+
         with engine.connect() as conn:
-            return conn.execute(text(f"""
+            return conn.execute(
+                text(f"""
                 SELECT rp.project_name, d.name, d.grade, mm.name,
                        rp.total_units, rp.price_min_psf, rp.price_max_psf, rp.rera_number
                 FROM rera_projects rp
@@ -69,11 +77,16 @@ class CompetitiveIntelEngine:
                 {_MARKET_JOIN}
                 WHERE rp.created_at >= NOW() - CAST(:days || ' days' AS INTERVAL)
                 {_MARKET_FILTER_SQL}
-            """), {"days": days, "market": market}).fetchall()
+            """),
+                {"days": days, "market": market},
+            ).fetchall()
 
-    def psf_movers(self, market: str | None = None, threshold_pct: float = 5.0) -> list[dict]:
+    def psf_movers(
+        self, market: str | None = None, threshold_pct: float = 5.0
+    ) -> list[dict]:
         from utils.db import get_engine
         from sqlalchemy import text
+
         engine = get_engine()
         try:
             if market:
@@ -87,8 +100,10 @@ class CompetitiveIntelEngine:
 
     def _query_psf_movers_all(self, engine, threshold_pct: float):
         from sqlalchemy import text
+
         with engine.connect() as conn:
-            return conn.execute(text(f"""
+            return conn.execute(
+                text(f"""
                 SELECT rp.project_name, d.name, mm.name,
                        snap.price_min_psf, rp.price_min_psf,
                        (rp.price_min_psf - snap.price_min_psf) / NULLIF(snap.price_min_psf, 0) AS change_ratio,
@@ -110,12 +125,16 @@ class CompetitiveIntelEngine:
                   AND snap.price_min_psf > 0
                   AND ABS((rp.price_min_psf - snap.price_min_psf) / snap.price_min_psf) >= :threshold
                 ORDER BY change_ratio DESC
-            """), {"threshold": threshold_pct / 100.0}).fetchall()
+            """),
+                {"threshold": threshold_pct / 100.0},
+            ).fetchall()
 
     def _query_psf_movers_market(self, engine, market: str, threshold_pct: float):
         from sqlalchemy import text
+
         with engine.connect() as conn:
-            return conn.execute(text(f"""
+            return conn.execute(
+                text(f"""
                 SELECT rp.project_name, d.name, mm.name,
                        snap.price_min_psf, rp.price_min_psf,
                        (rp.price_min_psf - snap.price_min_psf) / NULLIF(snap.price_min_psf, 0) AS change_ratio,
@@ -138,11 +157,16 @@ class CompetitiveIntelEngine:
                   AND ABS((rp.price_min_psf - snap.price_min_psf) / snap.price_min_psf) >= :threshold
                 {_MARKET_FILTER_SQL}
                 ORDER BY change_ratio DESC
-            """), {"threshold": threshold_pct / 100.0, "market": market}).fetchall()
+            """),
+                {"threshold": threshold_pct / 100.0, "market": market},
+            ).fetchall()
 
-    def absorption_leaders(self, market: str | None = None, top_n: int = 5, min_units: int = 50) -> list[dict]:
+    def absorption_leaders(
+        self, market: str | None = None, top_n: int = 5, min_units: int = 50
+    ) -> list[dict]:
         from utils.db import get_engine
         from sqlalchemy import text
+
         engine = get_engine()
         try:
             if market:
@@ -156,8 +180,10 @@ class CompetitiveIntelEngine:
 
     def _query_absorption_all(self, engine, top_n: int, min_units: int):
         from sqlalchemy import text
+
         with engine.connect() as conn:
-            return conn.execute(text(f"""
+            return conn.execute(
+                text(f"""
                 SELECT rp.project_name, d.name, d.grade, mm.name,
                        rp.absorption_pct, rp.total_units, rp.unsold_units, rp.possession_date
                 FROM rera_projects rp
@@ -167,12 +193,16 @@ class CompetitiveIntelEngine:
                   AND rp.total_units >= :min_units
                 ORDER BY rp.absorption_pct DESC
                 LIMIT :top_n
-            """), {"top_n": top_n, "min_units": min_units}).fetchall()
+            """),
+                {"top_n": top_n, "min_units": min_units},
+            ).fetchall()
 
     def _query_absorption_market(self, engine, market: str, top_n: int, min_units: int):
         from sqlalchemy import text
+
         with engine.connect() as conn:
-            return conn.execute(text(f"""
+            return conn.execute(
+                text(f"""
                 SELECT rp.project_name, d.name, d.grade, mm.name,
                        rp.absorption_pct, rp.total_units, rp.unsold_units, rp.possession_date
                 FROM rera_projects rp
@@ -183,7 +213,9 @@ class CompetitiveIntelEngine:
                 {_MARKET_FILTER_SQL}
                 ORDER BY rp.absorption_pct DESC
                 LIMIT :top_n
-            """), {"top_n": top_n, "min_units": min_units, "market": market}).fetchall()
+            """),
+                {"top_n": top_n, "min_units": min_units, "market": market},
+            ).fetchall()
 
     def pulse(self, market: str | None = None, days: int = 7, top_n: int = 5) -> dict:
         now = datetime.now(timezone.utc).isoformat()

@@ -1,4 +1,5 @@
 """T-1122: Alembic check scheduled job (R8) — unit tests."""
+
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -9,15 +10,18 @@ def test_alembic_check_job_registered():
     """Assert scheduler has alembic_weekly_check job ID in config/scheduler.py."""
     with open("config/scheduler.py") as f:
         content = f.read()
-    assert "alembic_weekly_check" in content, \
+    assert "alembic_weekly_check" in content, (
         "scheduler.py must register job with id='alembic_weekly_check'"
-    assert "replace_existing=True" in content, \
+    )
+    assert "replace_existing=True" in content, (
         "scheduler job must have replace_existing=True to survive restarts"
+    )
 
 
 def test_migration_0052_down_revision_is_correct():
     """Assert migration 0052's down_revision points to 0051_market_forecasts."""
     import importlib.util
+
     spec = importlib.util.spec_from_file_location(
         "migration_0052",
         "alembic/versions/0052_board_session_timing.py",
@@ -25,8 +29,7 @@ def test_migration_0052_down_revision_is_correct():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     assert mod.down_revision == "0051_market_forecasts", (
-        f"Expected down_revision='0051_market_forecasts', "
-        f"got '{mod.down_revision}'"
+        f"Expected down_revision='0051_market_forecasts', got '{mod.down_revision}'"
     )
 
 
@@ -55,7 +58,10 @@ def test_alembic_check_oserror_returns_skipped():
         result = run_alembic_check()
 
     assert result["status"] == "skipped"
-    assert "alembic CLI not available" in result["detail"] or "not available" in result["detail"]
+    assert (
+        "alembic CLI not available" in result["detail"]
+        or "not available" in result["detail"]
+    )
 
 
 @patch("utils.alembic_check.subprocess.run")

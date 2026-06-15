@@ -8,6 +8,7 @@ avg transaction PSF, guidance gap %; uses DB-first, Kaveri portal fallback.
 Also exposes parse_document() — converts any PDF/DOCX/XLSX to markdown via MarkItDown,
 used by the Legal Head to read EC certificates, RERA approval PDFs, and sale deeds.
 """
+
 import os
 import time
 from dataclasses import dataclass
@@ -36,7 +37,7 @@ class EncumbranceResult:
     registration_count_180d: int
     avg_transaction_psf: float | None
     guidance_gap_pct: float | None  # (txn_psf - gv_psf) / gv_psf * 100
-    data_source: str                # "db" | "kaveri_portal" | "unavailable"
+    data_source: str  # "db" | "kaveri_portal" | "unavailable"
     risk_flags: list[str]
 
 
@@ -65,9 +66,12 @@ def check_encumbrance(
     if not market:
         logger.warning("[Encumbrance] Empty market — returning unavailable")
         return EncumbranceResult(
-            market="", survey_no=survey_no,
-            avg_guidance_value_psf=None, registration_count_180d=0,
-            avg_transaction_psf=None, guidance_gap_pct=None,
+            market="",
+            survey_no=survey_no,
+            avg_guidance_value_psf=None,
+            registration_count_180d=0,
+            avg_transaction_psf=None,
+            guidance_gap_pct=None,
             data_source="unavailable",
             risk_flags=["Market name is empty"],
         )
@@ -89,11 +93,17 @@ def check_encumbrance(
             ).fetchone()
 
             if not mm_row:
-                logger.info("[Encumbrance] Market '%s' not found in DB — cannot check encumbrance", market)
+                logger.info(
+                    "[Encumbrance] Market '%s' not found in DB — cannot check encumbrance",
+                    market,
+                )
                 return EncumbranceResult(
-                    market=market, survey_no=survey_no,
-                    avg_guidance_value_psf=None, registration_count_180d=0,
-                    avg_transaction_psf=None, guidance_gap_pct=None,
+                    market=market,
+                    survey_no=survey_no,
+                    avg_guidance_value_psf=None,
+                    registration_count_180d=0,
+                    avg_transaction_psf=None,
+                    guidance_gap_pct=None,
                     data_source="unavailable",
                     risk_flags=["Market not found in DB"],
                 )
@@ -108,34 +118,48 @@ def check_encumbrance(
                 if survey_no_clean:
                     survey_clause = " AND r.survey_number = :survey"
                     survey_params["survey"] = survey_no_clean
-                    logger.info("[Encumbrance] Filtering by survey_no=%s", survey_no_clean)
+                    logger.info(
+                        "[Encumbrance] Filtering by survey_no=%s", survey_no_clean
+                    )
 
             # Get avg guidance value PSF for this market
-            gv_row = conn.execute(text("""
+            gv_row = conn.execute(
+                text("""
                 SELECT AVG(guidance_value_psf)::numeric
                 FROM guidance_values
                 WHERE micro_market_id = :mm_id AND guidance_value_psf > 0
-            """), {"mm_id": mm_id}).scalar()
+            """),
+                {"mm_id": mm_id},
+            ).scalar()
             avg_gv = float(gv_row) if gv_row else None
 
             # Registration count in configurable window
             cutoff = datetime.now() - timedelta(days=window_days)
-            reg_count = conn.execute(text(f"""
+            reg_count = (
+                conn.execute(
+                    text(f"""
                 SELECT COUNT(*) FROM kaveri_registrations
                 WHERE micro_market_id = :mm_id
                   AND transaction_date >= :cutoff
                   {survey_clause}
-            """), {"mm_id": mm_id, "cutoff": cutoff.date(), **survey_params}).scalar() or 0
+            """),
+                    {"mm_id": mm_id, "cutoff": cutoff.date(), **survey_params},
+                ).scalar()
+                or 0
+            )
 
             # Avg transaction PSF (from area_sqft and transaction_amount)
-            txn_row = conn.execute(text(f"""
+            txn_row = conn.execute(
+                text(f"""
                 SELECT AVG(transaction_amount / NULLIF(area_sqft, 0))::numeric
                 FROM kaveri_registrations
                 WHERE micro_market_id = :mm_id
                   AND area_sqft > 0 AND transaction_amount > 0
                   AND transaction_date >= :cutoff
                   {survey_clause}
-            """), {"mm_id": mm_id, "cutoff": cutoff.date(), **survey_params}).scalar()
+            """),
+                {"mm_id": mm_id, "cutoff": cutoff.date(), **survey_params},
+            ).scalar()
             avg_txn_psf = float(txn_row) if txn_row else None
 
             if avg_gv is not None or avg_txn_psf is not None:
@@ -144,19 +168,29 @@ def check_encumbrance(
     except Exception as exc:
         logger.warning("[Encumbrance] DB query failed for market=%s: %s", market, exc)
         return EncumbranceResult(
-            market=market, survey_no=survey_no,
-            avg_guidance_value_psf=None, registration_count_180d=0,
-            avg_transaction_psf=None, guidance_gap_pct=None,
+            market=market,
+            survey_no=survey_no,
+            avg_guidance_value_psf=None,
+            registration_count_180d=0,
+            avg_transaction_psf=None,
+            guidance_gap_pct=None,
             data_source="unavailable",
             risk_flags=[f"DB query failed: {exc}"],
         )
 
     # Kaveri portal fallback — only when DB returned nothing for this market
     if avg_gv is None and avg_txn_psf is None:
-        logger.info("[Encumbrance] DB has no data for market=%s — trying Kaveri portal fallback", market)
+        logger.info(
+            "[Encumbrance] DB has no data for market=%s — trying Kaveri portal fallback",
+            market,
+        )
         portal_records = _fetch_from_kaveri_portal(market)
         if portal_records.get("guidance_values"):
-            values = [r.get("guidance_value_psf", 0) for r in portal_records["guidance_values"] if r.get("guidance_value_psf", 0) > 0]
+            values = [
+                r.get("guidance_value_psf", 0)
+                for r in portal_records["guidance_values"]
+                if r.get("guidance_value_psf", 0) > 0
+            ]
             if values:
                 avg_gv = round(sum(values) / len(values), 1)
                 data_source = "kaveri_portal"
@@ -178,20 +212,35 @@ def check_encumbrance(
 
     # Risk flags
     if reg_count == 0:
-        risk_flags.append(f"No registrations in {window_days}-day window — possible low liquidity or stale data")
+        risk_flags.append(
+            f"No registrations in {window_days}-day window — possible low liquidity or stale data"
+        )
     if avg_txn_psf is None:
         risk_flags.append("Unable to compute avg transaction PSF — sparse data")
     if gap_pct is not None and gap_pct > _GUIDANCE_GAP_THRESHOLD_PCT:
-        risk_flags.append(f"Guidance gap {gap_pct}% exceeds {_GUIDANCE_GAP_THRESHOLD_PCT}% threshold — "
-                          "price growth may significantly exceed circle rates")
+        risk_flags.append(
+            f"Guidance gap {gap_pct}% exceeds {_GUIDANCE_GAP_THRESHOLD_PCT}% threshold — "
+            "price growth may significantly exceed circle rates"
+        )
     if survey_no and reg_count == 0:
-        risk_flags.append(f"Survey no '{survey_no}' has no matching registrations — manual title search recommended")
+        risk_flags.append(
+            f"Survey no '{survey_no}' has no matching registrations — manual title search recommended"
+        )
 
-    logger.info("[Encumbrance] market=%s survey=%s data_source=%s gv=%s regs=%d txn_psf=%s gap=%s%%",
-                market, survey_no, data_source, avg_gv, reg_count, avg_txn_psf, gap_pct)
+    logger.info(
+        "[Encumbrance] market=%s survey=%s data_source=%s gv=%s regs=%d txn_psf=%s gap=%s%%",
+        market,
+        survey_no,
+        data_source,
+        avg_gv,
+        reg_count,
+        avg_txn_psf,
+        gap_pct,
+    )
 
     return EncumbranceResult(
-        market=market, survey_no=survey_no,
+        market=market,
+        survey_no=survey_no,
         avg_guidance_value_psf=avg_gv,
         registration_count_180d=reg_count,
         avg_transaction_psf=avg_txn_psf,
@@ -221,15 +270,23 @@ def _fetch_from_kaveri_portal(market: str) -> dict:
     cached = _portal_cache.get(cache_key)
     now = time.time()
     if cached and (now - cached["ts"]) < _portal_cache_ttl:
-        logger.debug("[Encumbrance] Using cached Kaveri portal data for market=%s", market)
+        logger.debug(
+            "[Encumbrance] Using cached Kaveri portal data for market=%s", market
+        )
         return cached["data"]
 
     try:
         from scrapers.kaveri_karnataka import KaveriScraper
+
         scraper = KaveriScraper()
         gv = scraper.scrape_guidance_values(market)
         reg = scraper.scrape_registrations(market, months_back=6)
-        logger.info("[Encumbrance] Kaveri portal returned gv=%d reg=%d for market=%s", len(gv), len(reg), market)
+        logger.info(
+            "[Encumbrance] Kaveri portal returned gv=%d reg=%d for market=%s",
+            len(gv),
+            len(reg),
+            market,
+        )
         result: dict = {}
         if gv:
             result["guidance_values"] = gv
@@ -238,7 +295,9 @@ def _fetch_from_kaveri_portal(market: str) -> dict:
         _portal_cache[cache_key] = {"data": result, "ts": now}
         return result
     except Exception as exc:
-        logger.warning("[Encumbrance] Kaveri portal fallback failed for market=%s: %s", market, exc)
+        logger.warning(
+            "[Encumbrance] Kaveri portal fallback failed for market=%s: %s", market, exc
+        )
         return {}
 
 
@@ -264,12 +323,17 @@ def parse_document(file_path: str, max_chars: int = _DOCUMENT_MAX_CHARS) -> str:
 
     try:
         from markitdown import MarkItDown
+
         md_converter = MarkItDown()
         result = md_converter.convert(file_path)
         text = result.text_content or ""
         if len(text) > max_chars:
             text = text[:max_chars] + f"\n\n[...truncated at {max_chars} chars]"
-        logger.info("[parse_document] Parsed file={} chars={}", os.path.basename(file_path), len(text))
+        logger.info(
+            "[parse_document] Parsed file={} chars={}",
+            os.path.basename(file_path),
+            len(text),
+        )
         return text
     except Exception as exc:
         logger.warning("[parse_document] Failed to parse '%s': %s", file_path, exc)
@@ -278,7 +342,12 @@ def parse_document(file_path: str, max_chars: int = _DOCUMENT_MAX_CHARS) -> str:
 
 if __name__ == "__main__":
     import json
+
     for m in ("Yelahanka", "Devanahalli", "Hebbal", "Nonexistent"):
         result = check_encumbrance(m)
         print(f"\n[{m}]")
-        print(json.dumps({k: v for k, v in result.__dict__.items()}, indent=2, default=str))
+        print(
+            json.dumps(
+                {k: v for k, v in result.__dict__.items()}, indent=2, default=str
+            )
+        )

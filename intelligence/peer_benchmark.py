@@ -3,6 +3,7 @@
 Computes competitive positioning vs Grade A developers in a market.
 Queries rera_projects JOIN developers for Grade A pricing, absorption, and unit data.
 """
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -40,7 +41,8 @@ class PeerBenchmarkEngine:
 
             engine = get_engine()
             with engine.connect() as conn:
-                rows = conn.execute(text("""
+                rows = conn.execute(
+                    text("""
                     SELECT rp.price_min_psf, rp.price_max_psf, rp.price_avg_psf,
                            rp.absorption_pct, rp.total_units,
                            rp.project_name, d.name AS dev_name
@@ -53,7 +55,9 @@ class PeerBenchmarkEngine:
                           SELECT id FROM micro_markets WHERE name ILIKE :mkt
                       )
                     ORDER BY rp.price_min_psf DESC
-                """), {"mkt": market}).fetchall()
+                """),
+                    {"mkt": market},
+                ).fetchall()
 
             if not rows or len(rows) < 3:
                 result.positioning = "INSUFFICIENT_DATA"
@@ -69,9 +73,14 @@ class PeerBenchmarkEngine:
             sorted_abs = sorted(abs_pcts)
             mid = len(sorted_abs) // 2
             result.median_absorption_pct_grade_a = (
-                sorted_abs[mid] if len(sorted_abs) % 2
-                else (sorted_abs[mid - 1] + sorted_abs[mid]) / 2
-            ) if sorted_abs else 0.0
+                (
+                    sorted_abs[mid]
+                    if len(sorted_abs) % 2
+                    else (sorted_abs[mid - 1] + sorted_abs[mid]) / 2
+                )
+                if sorted_abs
+                else 0.0
+            )
             result.avg_units_grade_a = sum(units) / len(units) if units else 0.0
 
             result.lls_target_psf = lls_target_psf

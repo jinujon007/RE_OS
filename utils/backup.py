@@ -13,6 +13,7 @@ Public API:
     verify_remote_backup    — download + pg_restore --list on remote dump
     check_remote_backup_staleness — checks if remote copy >8 days stale
 """
+
 import os
 import subprocess
 import threading as _threading
@@ -98,7 +99,11 @@ class DBBackup:
         acquired = _backup_lock.acquire(blocking=False)
         if not acquired:
             logger.warning("[DBBackup] Previous backup still running — skipping")
-            return {"status": "failed", "error": "concurrent backup skipped (already running)", "elapsed_s": 0}
+            return {
+                "status": "failed",
+                "error": "concurrent backup skipped (already running)",
+                "elapsed_s": 0,
+            }
         try:
             return self._run_backup(t0)
         finally:
@@ -113,11 +118,16 @@ class DBBackup:
         cmd = [
             "/usr/bin/pg_dump",
             "-Fc",
-            "-h", db["host"],
-            "-p", str(db["port"]),
-            "-U", db["user"],
-            "-d", db["dbname"],
-            "-f", filepath,
+            "-h",
+            db["host"],
+            "-p",
+            str(db["port"]),
+            "-U",
+            db["user"],
+            "-d",
+            db["dbname"],
+            "-f",
+            filepath,
         ]
         env = {**os.environ, "PGPASSWORD": db["password"]}
 
@@ -141,12 +151,26 @@ class DBBackup:
                     # Late import to avoid pulling discord dependency at module load
                     from utils.discord_notifier import send_ops_alert
 
-                    send_ops_alert("DB_BACKUP_CORRUPT", f"{filepath}: {v.get('error', 'unknown')}")
-                    logger.error("[DBBackup] Corrupt backup deleted: {} — {}", filepath, v.get("error"))
-                    return {"status": "failed", "error": f"corrupt backup: {v.get('error', '')}", "elapsed_s": elapsed}
+                    send_ops_alert(
+                        "DB_BACKUP_CORRUPT", f"{filepath}: {v.get('error', 'unknown')}"
+                    )
+                    logger.error(
+                        "[DBBackup] Corrupt backup deleted: {} — {}",
+                        filepath,
+                        v.get("error"),
+                    )
+                    return {
+                        "status": "failed",
+                        "error": f"corrupt backup: {v.get('error', '')}",
+                        "elapsed_s": elapsed,
+                    }
                 logger.info(
                     "[DBBackup] Backup complete: {} ({} bytes, {} objects) | pruned {} old | {:.1f}s",
-                    filepath, size, v["object_count"], deleted, elapsed,
+                    filepath,
+                    size,
+                    v["object_count"],
+                    deleted,
+                    elapsed,
                 )
                 return {
                     "status": "ok",
@@ -161,10 +185,17 @@ class DBBackup:
                 logger.warning("[DBBackup] pg_dump failed: {}", stderr)
                 return {"status": "failed", "error": stderr}
         except subprocess.TimeoutExpired:
-            logger.warning("[DBBackup] pg_dump timed out after {}s", self._PG_DUMP_TIMEOUT)
-            return {"status": "failed", "error": f"timeout after {self._PG_DUMP_TIMEOUT}s"}
+            logger.warning(
+                "[DBBackup] pg_dump timed out after {}s", self._PG_DUMP_TIMEOUT
+            )
+            return {
+                "status": "failed",
+                "error": f"timeout after {self._PG_DUMP_TIMEOUT}s",
+            }
         except FileNotFoundError:
-            logger.error("[DBBackup] pg_dump binary not found — is postgresql-client installed?")
+            logger.error(
+                "[DBBackup] pg_dump binary not found — is postgresql-client installed?"
+            )
             return {"status": "failed", "error": "pg_dump binary not found"}
         except Exception as exc:
             logger.warning("[DBBackup] Backup failed: {}", exc)
@@ -183,7 +214,11 @@ def check_backup_staleness() -> dict:
     if not os.path.isdir(_BACKUP_DIR):
         return {"stale": True, "age_hours": None, "latest_file": None}
 
-    dumps = [f for f in os.listdir(_BACKUP_DIR) if f.startswith("re_os_") and f.endswith(".dump")]
+    dumps = [
+        f
+        for f in os.listdir(_BACKUP_DIR)
+        if f.startswith("re_os_") and f.endswith(".dump")
+    ]
     if not dumps:
         return {"stale": True, "age_hours": None, "latest_file": None}
 
@@ -211,7 +246,11 @@ def enforce_retention(max_files: int = 7) -> int:
         return 0
 
     dumps = sorted(
-        [f for f in os.listdir(_BACKUP_DIR) if f.startswith("re_os_") and f.endswith(".dump")],
+        [
+            f
+            for f in os.listdir(_BACKUP_DIR)
+            if f.startswith("re_os_") and f.endswith(".dump")
+        ],
         key=lambda f: os.path.getmtime(os.path.join(_BACKUP_DIR, f)),
         reverse=True,
     )
@@ -253,18 +292,38 @@ def verify_backup(filepath: str) -> dict:
         )
         if result.returncode != 0:
             stderr = result.stderr.decode("utf-8", errors="replace")[:500]
-            return {"valid": False, "object_count": 0, "error": f"pg_restore exit {result.returncode}: {stderr}"}
+            return {
+                "valid": False,
+                "object_count": 0,
+                "error": f"pg_restore exit {result.returncode}: {stderr}",
+            }
 
         stdout = result.stdout.decode("utf-8", errors="replace")
-        lines = [line for line in stdout.split("\n") if line.strip() and not line.startswith(";")]
+        lines = [
+            line
+            for line in stdout.split("\n")
+            if line.strip() and not line.startswith(";")
+        ]
         if len(lines) < 10 or "TABLE" not in stdout:
-            return {"valid": False, "object_count": len(lines), "error": f"Too few objects ({len(lines)} lines, need >=10 with TABLE)"}
+            return {
+                "valid": False,
+                "object_count": len(lines),
+                "error": f"Too few objects ({len(lines)} lines, need >=10 with TABLE)",
+            }
 
         return {"valid": True, "object_count": len(lines), "error": None}
     except subprocess.TimeoutExpired:
-        return {"valid": False, "object_count": 0, "error": f"pg_restore --list timed out after {_VERIFY_TIMEOUT_S}s"}
+        return {
+            "valid": False,
+            "object_count": 0,
+            "error": f"pg_restore --list timed out after {_VERIFY_TIMEOUT_S}s",
+        }
     except FileNotFoundError:
-        return {"valid": False, "object_count": 0, "error": "pg_restore binary not found"}
+        return {
+            "valid": False,
+            "object_count": 0,
+            "error": "pg_restore binary not found",
+        }
     except Exception as exc:
         return {"valid": False, "object_count": 0, "error": str(exc)[:500]}
 
@@ -277,7 +336,11 @@ def _get_latest_local_dump() -> str | None:
     if not os.path.isdir(_BACKUP_DIR):
         return None
     dumps = sorted(
-        [f for f in os.listdir(_BACKUP_DIR) if f.startswith("re_os_") and f.endswith(".dump")],
+        [
+            f
+            for f in os.listdir(_BACKUP_DIR)
+            if f.startswith("re_os_") and f.endswith(".dump")
+        ],
         key=lambda f: os.path.getmtime(os.path.join(_BACKUP_DIR, f)),
         reverse=True,
     )
@@ -300,12 +363,18 @@ def push_to_remote(local_path: str | None = None) -> dict:
         dict with keys: status (ok/skipped/failed), detail (str).
     """
     if not _BACKUP_REMOTE:
-        return {"status": "skipped", "detail": "BACKUP_REMOTE not configured — no remote push"}
+        return {
+            "status": "skipped",
+            "detail": "BACKUP_REMOTE not configured — no remote push",
+        }
 
     acquired = _backup_lock.acquire(blocking=False)
     if not acquired:
         logger.warning("[RemoteBackup] Local backup in progress — skipping remote push")
-        return {"status": "skipped", "detail": "Local backup running — deferred to next window"}
+        return {
+            "status": "skipped",
+            "detail": "Local backup running — deferred to next window",
+        }
     try:
         local_path = local_path or _get_latest_local_dump()
         if not local_path or not os.path.isfile(local_path):
@@ -320,20 +389,33 @@ def push_to_remote(local_path: str | None = None) -> dict:
                     timeout=300,
                 )
                 if result.returncode == 0:
-                    logger.info("[RemoteBackup] Push complete: {} → {}", local_path, _BACKUP_REMOTE)
-                    return {"status": "ok", "detail": f"Pushed {os.path.basename(local_path)} to remote"}
+                    logger.info(
+                        "[RemoteBackup] Push complete: {} → {}",
+                        local_path,
+                        _BACKUP_REMOTE,
+                    )
+                    return {
+                        "status": "ok",
+                        "detail": f"Pushed {os.path.basename(local_path)} to remote",
+                    }
                 else:
                     last_error = result.stderr.decode("utf-8", errors="replace")[:500]
-                    logger.warning("[RemoteBackup] rclone copy attempt {} failed: {}", attempt + 1, last_error)
+                    logger.warning(
+                        "[RemoteBackup] rclone copy attempt {} failed: {}",
+                        attempt + 1,
+                        last_error,
+                    )
                     if attempt < 2:
-                        _time.sleep(2 ** attempt * 5)
+                        _time.sleep(2**attempt * 5)
             except subprocess.TimeoutExpired:
                 last_error = f"rclone copy timed out after 300s (attempt {attempt + 1})"
                 logger.warning("[RemoteBackup] {}", last_error)
                 if attempt < 2:
-                    _time.sleep(2 ** attempt * 5)
+                    _time.sleep(2**attempt * 5)
             except FileNotFoundError:
-                logger.warning("[RemoteBackup] rclone binary not found — remote push unavailable")
+                logger.warning(
+                    "[RemoteBackup] rclone binary not found — remote push unavailable"
+                )
                 return {"status": "failed", "detail": "rclone binary not found"}
 
         return {"status": "failed", "detail": last_error}
@@ -368,14 +450,24 @@ def verify_remote_backup() -> dict:
         )
         if list_result.returncode != 0:
             stderr = list_result.stderr.decode("utf-8", errors="replace")[:300]
-            return {"status": "failed", "valid": False, "object_count": 0,
-                    "error": f"rclone lsf failed: {stderr}"}
+            return {
+                "status": "failed",
+                "valid": False,
+                "object_count": 0,
+                "error": f"rclone lsf failed: {stderr}",
+            }
 
-        remote_files = list_result.stdout.decode("utf-8", errors="replace").strip().split("\n")
+        remote_files = (
+            list_result.stdout.decode("utf-8", errors="replace").strip().split("\n")
+        )
         remote_dumps = [f.strip() for f in remote_files if f.strip().endswith(".dump")]
         if not remote_dumps:
-            return {"status": "failed", "valid": False, "object_count": 0,
-                    "error": "No remote dump files found"}
+            return {
+                "status": "failed",
+                "valid": False,
+                "object_count": 0,
+                "error": "No remote dump files found",
+            }
 
         latest_remote = max(remote_dumps)
         tmp = tempfile.NamedTemporaryFile(suffix=".dump", delete=False)
@@ -390,8 +482,12 @@ def verify_remote_backup() -> dict:
             )
             if dl_result.returncode != 0:
                 stderr = dl_result.stderr.decode("utf-8", errors="replace")[:300]
-                return {"status": "failed", "valid": False, "object_count": 0,
-                        "error": f"rclone download failed: {stderr}"}
+                return {
+                    "status": "failed",
+                    "valid": False,
+                    "object_count": 0,
+                    "error": f"rclone download failed: {stderr}",
+                }
 
             v = verify_backup(tmp_path)
             return {
@@ -402,8 +498,12 @@ def verify_remote_backup() -> dict:
                 "file": latest_remote,
             }
         except Exception as exc:
-            return {"status": "failed", "valid": False, "object_count": 0,
-                    "error": str(exc)[:500]}
+            return {
+                "status": "failed",
+                "valid": False,
+                "object_count": 0,
+                "error": str(exc)[:500],
+            }
         finally:
             try:
                 os.unlink(tmp_path)
@@ -411,14 +511,26 @@ def verify_remote_backup() -> dict:
                 pass
 
     except FileNotFoundError:
-        return {"status": "failed", "valid": False, "object_count": 0,
-                "error": "rclone binary not found"}
+        return {
+            "status": "failed",
+            "valid": False,
+            "object_count": 0,
+            "error": "rclone binary not found",
+        }
     except subprocess.TimeoutExpired:
-        return {"status": "failed", "valid": False, "object_count": 0,
-                "error": "rclone operation timed out"}
+        return {
+            "status": "failed",
+            "valid": False,
+            "object_count": 0,
+            "error": "rclone operation timed out",
+        }
     except Exception as exc:
-        return {"status": "failed", "valid": False, "object_count": 0,
-                "error": str(exc)[:500]}
+        return {
+            "status": "failed",
+            "valid": False,
+            "object_count": 0,
+            "error": str(exc)[:500],
+        }
 
 
 def verify_remote_backup_integrity_via_checksum() -> dict:
@@ -435,7 +547,11 @@ def verify_remote_backup_integrity_via_checksum() -> dict:
 
     local_path = _get_latest_local_dump()
     if not local_path:
-        return {"valid": False, "errors": 0, "detail": "No local dump to compare against"}
+        return {
+            "valid": False,
+            "errors": 0,
+            "detail": "No local dump to compare against",
+        }
 
     try:
         result = subprocess.run(
@@ -445,12 +561,15 @@ def verify_remote_backup_integrity_via_checksum() -> dict:
         )
         stdout = result.stdout.decode("utf-8", errors="replace")
         import re as _re
-        err_match = _re.search(r'(\d+)\s+errors? found', stdout)
+
+        err_match = _re.search(r"(\d+)\s+errors? found", stdout)
         error_count = int(err_match.group(1)) if err_match else 0
         return {
             "valid": result.returncode == 0 or error_count == 0,
             "errors": error_count,
-            "detail": "Integrity passed" if error_count == 0 else f"{error_count} file mismatches",
+            "detail": "Integrity passed"
+            if error_count == 0
+            else f"{error_count} file mismatches",
         }
     except FileNotFoundError:
         return {"valid": False, "errors": 0, "detail": "rclone binary not found"}
@@ -469,7 +588,12 @@ def check_remote_backup_staleness() -> dict:
             status (str): ok/skipped/failed.
     """
     if not _BACKUP_REMOTE:
-        return {"status": "skipped", "stale": True, "age_days": None, "latest_file": None}
+        return {
+            "status": "skipped",
+            "stale": True,
+            "age_days": None,
+            "latest_file": None,
+        }
 
     try:
         result = subprocess.run(
@@ -478,8 +602,13 @@ def check_remote_backup_staleness() -> dict:
             timeout=60,
         )
         if result.returncode != 0:
-            return {"status": "failed", "stale": True, "age_days": None,
-                    "latest_file": None, "error": result.stderr.decode()[:200]}
+            return {
+                "status": "failed",
+                "stale": True,
+                "age_days": None,
+                "latest_file": None,
+                "error": result.stderr.decode()[:200],
+            }
 
         lines = result.stdout.decode("utf-8", errors="replace").strip().split("\n")
         # rclone lsf --format t outputs: "timestamp;filename"
@@ -496,7 +625,12 @@ def check_remote_backup_staleness() -> dict:
                         pass
 
         if not entries:
-            return {"status": "ok", "stale": True, "age_days": None, "latest_file": None}
+            return {
+                "status": "ok",
+                "stale": True,
+                "age_days": None,
+                "latest_file": None,
+            }
 
         latest = max(entries, key=lambda x: x[0])
         age = (datetime.now() - latest[0]).days
@@ -507,11 +641,26 @@ def check_remote_backup_staleness() -> dict:
             "latest_file": latest[1],
         }
     except FileNotFoundError:
-        return {"status": "failed", "stale": True, "age_days": None,
-                "latest_file": None, "error": "rclone binary not found"}
+        return {
+            "status": "failed",
+            "stale": True,
+            "age_days": None,
+            "latest_file": None,
+            "error": "rclone binary not found",
+        }
     except subprocess.TimeoutExpired:
-        return {"status": "failed", "stale": True, "age_days": None,
-                "latest_file": None, "error": "rclone lsf timed out"}
+        return {
+            "status": "failed",
+            "stale": True,
+            "age_days": None,
+            "latest_file": None,
+            "error": "rclone lsf timed out",
+        }
     except Exception as exc:
-        return {"status": "failed", "stale": True, "age_days": None,
-                "latest_file": None, "error": str(exc)[:500]}
+        return {
+            "status": "failed",
+            "stale": True,
+            "age_days": None,
+            "latest_file": None,
+            "error": str(exc)[:500],
+        }

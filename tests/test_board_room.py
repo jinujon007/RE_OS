@@ -31,22 +31,33 @@ def patched_board():
         patch("crews.board_room._run_dept_heads", return_value=MOCK_DEPT_RESPONSES),
         patch("crews.board_room._create_session_row", return_value=True),
         patch("crews.board_room._update_session_row", return_value=True),
-        patch("crews.board_room._ceo_decompose", return_value={
-            "bd": "Assess Yelahanka market absorption and entry PSF",
-            "finance": "Calculate break-even PSF and IRR for Yelahanka entry",
-            "engineering": "Identify approval blockers and construction cost risk",
-            "ops": "Recommend channel mix and launch KPIs",
-            "legal": "Evaluate RERA compliance and title risk for Yelahanka entry",
-        }),
-        patch("crews.board_room._extract_actions", return_value=[
-            {"action": "Acquire land in Yelahanka North", "owner": "bd", "priority": "high"},
-        ]),
+        patch(
+            "crews.board_room._ceo_decompose",
+            return_value={
+                "bd": "Assess Yelahanka market absorption and entry PSF",
+                "finance": "Calculate break-even PSF and IRR for Yelahanka entry",
+                "engineering": "Identify approval blockers and construction cost risk",
+                "ops": "Recommend channel mix and launch KPIs",
+                "legal": "Evaluate RERA compliance and title risk for Yelahanka entry",
+            },
+        ),
+        patch(
+            "crews.board_room._extract_actions",
+            return_value=[
+                {
+                    "action": "Acquire land in Yelahanka North",
+                    "owner": "bd",
+                    "priority": "high",
+                },
+            ],
+        ),
     ):
         yield
 
 
 def test_run_board_session_returns_session_id(patched_board):
     from crews.board_room import run_board_session
+
     result = run_board_session("Should LLS enter Yelahanka at PSF 6500?", "Yelahanka")
     assert "session_id" in result
     # Must be a valid UUID
@@ -55,18 +66,21 @@ def test_run_board_session_returns_session_id(patched_board):
 
 def test_run_board_session_status_pending(patched_board):
     from crews.board_room import run_board_session
+
     result = run_board_session("Should LLS enter Yelahanka at PSF 6500?", "Yelahanka")
     assert result["status"] == "pending"
 
 
 def test_run_board_session_market_preserved(patched_board):
     from crews.board_room import run_board_session
+
     result = run_board_session("Should LLS enter Yelahanka at PSF 6500?", "Yelahanka")
     assert result["market"] == "Yelahanka"
 
 
 def test_run_board_session_devanahalli(patched_board):
     from crews.board_room import run_board_session
+
     result = run_board_session("Enter Devanahalli at 5800 PSF?", "Devanahalli")
     assert result["status"] == "pending"
     assert result["market"] == "Devanahalli"
@@ -76,12 +90,14 @@ def test_run_board_session_db_failure_returns_error():
     """If DB row creation fails, result has status error."""
     with patch("crews.board_room._create_session_row", return_value=False):
         from crews.board_room import run_board_session
+
         result = run_board_session("test pitch", "Yelahanka")
     assert result["status"] == "error"
     assert "session_id" in result
 
 
 # ── get_board_session ──────────────────────────────────────────────────────────
+
 
 def test_get_board_session_returns_none_for_missing(monkeypatch):
     """Non-existent session_id → None."""
@@ -94,6 +110,7 @@ def test_get_board_session_returns_none_for_missing(monkeypatch):
 
     with patch("crews.board_room.get_engine", return_value=mock_engine):
         from crews.board_room import get_board_session
+
         result = get_board_session("00000000-0000-0000-0000-000000000000")
     assert result is None
 
@@ -120,27 +137,35 @@ def test_get_board_session_returns_all_fields(monkeypatch):
     mock_conn = MagicMock()
     mock_conn.__enter__ = MagicMock(return_value=mock_conn)
     mock_conn.__exit__ = MagicMock(return_value=False)
-    mock_conn.execute.return_value.mappings.return_value.fetchone.return_value = fake_row
+    mock_conn.execute.return_value.mappings.return_value.fetchone.return_value = (
+        fake_row
+    )
     mock_engine.connect.return_value = mock_conn
 
     with patch("crews.board_room.get_engine", return_value=mock_engine):
         from crews.board_room import get_board_session
+
         result = get_board_session(session_id)
 
     assert result["session_id"] == session_id
     assert result["status"] == "complete"
     assert result["market"] == "Yelahanka"
-    assert result["pitch"] == "Enter Yelahanka?"   # mapped from pitch_text column
+    assert result["pitch"] == "Enter Yelahanka?"  # mapped from pitch_text column
     assert result["completed_at"] == "2026-05-29 06:01:30"
     assert "responses" in result["transcript"]
     assert result["transcript"]["responses"]["bd"] == "GO — strong absorption"
-    assert result["transcript"]["responses"]["legal"] == "CLEAR — RERA registered, BDA approved, clear title, no encumbrances."
+    assert (
+        result["transcript"]["responses"]["legal"]
+        == "CLEAR — RERA registered, BDA approved, clear title, no encumbrances."
+    )
 
 
 # ── dept-head task templates ───────────────────────────────────────────────────
 
+
 def test_dept_task_templates_all_five_keys():
     from crews.board_room import _DEPT_TASK_TEMPLATES
+
     for key in ("bd", "finance", "engineering", "ops", "legal"):
         assert key in _DEPT_TASK_TEMPLATES
         assert "{market}" in _DEPT_TASK_TEMPLATES[key]
@@ -149,25 +174,30 @@ def test_dept_task_templates_all_five_keys():
 
 def test_bd_template_requires_go_nogo():
     from crews.board_room import _DEPT_TASK_TEMPLATES
+
     assert "GO / NO-GO" in _DEPT_TASK_TEMPLATES["bd"]
 
 
 def test_finance_template_requires_viable():
     from crews.board_room import _DEPT_TASK_TEMPLATES
+
     assert "VIABLE" in _DEPT_TASK_TEMPLATES["finance"]
 
 
 def test_engineering_template_requires_feasible():
     from crews.board_room import _DEPT_TASK_TEMPLATES
+
     assert "FEASIBLE" in _DEPT_TASK_TEMPLATES["engineering"]
 
 
 def test_ops_template_requires_channel_mix():
     from crews.board_room import _DEPT_TASK_TEMPLATES
+
     assert "channel mix" in _DEPT_TASK_TEMPLATES["ops"].lower()
 
 
 # ── T-1071: GV source + freshness in Finance Head context (GATE-78) ──────────
+
 
 def _make_gv_mock_conn(gv_row: tuple | None = None):
     """Create a mock DB connection that returns a GV row for guidance_values query."""
@@ -178,9 +208,9 @@ def _make_gv_mock_conn(gv_row: tuple | None = None):
 
     def _mock_execute(*args, **kwargs):
         sql = args[0] if args else kwargs.get("statement", "")
-        sql_str = str(sql) if hasattr(sql, '__str__') else str(sql)
+        sql_str = str(sql) if hasattr(sql, "__str__") else str(sql)
         result = MagicMock()
-        if 'guidance_values' in sql_str and 'gv' in sql_str.lower():
+        if "guidance_values" in sql_str and "gv" in sql_str.lower():
             result.fetchone.return_value = gv_row
         else:
             result.fetchone.return_value = None
@@ -211,19 +241,31 @@ def test_board_room_finance_head_receives_gv_source_string():
     with (
         patch("utils.db.get_engine", return_value=mock_engine),
         patch("crews.board_room.get_engine", return_value=mock_engine),
-        patch("crews.board_room._DEPT_TASK_TEMPLATES", {
-            "finance": "Market: {market}\n{dept_question}",
-        }),
-        patch("crews.board_room._extract_pitch_params", return_value={
-            "area_sqft": None, "psf": None, "acreage": None,
-        }),
+        patch(
+            "crews.board_room._DEPT_TASK_TEMPLATES",
+            {
+                "finance": "Market: {market}\n{dept_question}",
+            },
+        ),
+        patch(
+            "crews.board_room._extract_pitch_params",
+            return_value={
+                "area_sqft": None,
+                "psf": None,
+                "acreage": None,
+            },
+        ),
         patch("utils.psf_forecaster.PSFForecaster", return_value=MagicMock()),
         patch("utils.irr_model.GDVEstimator"),
         patch("utils.irr_model.compare_scenarios"),
         patch("crews.board_room._query_market_supply", return_value=(None, "N/A")),
-        patch("crewai.Task", side_effect=lambda *a, **kw: (captured_tasks.append(kw), MagicMock())[1]),
+        patch(
+            "crewai.Task",
+            side_effect=lambda *a, **kw: (captured_tasks.append(kw), MagicMock())[1],
+        ),
     ):
         from crews.board_room import _run_dept_heads
+
         result = _run_dept_heads(
             pitch="5 acres Yelahanka",
             market="Yelahanka",
@@ -247,19 +289,31 @@ def test_board_room_flags_stale_gv_when_over_18_months():
     with (
         patch("utils.db.get_engine", return_value=mock_engine),
         patch("crews.board_room.get_engine", return_value=mock_engine),
-        patch("crews.board_room._DEPT_TASK_TEMPLATES", {
-            "finance": "Market: {market}\n{dept_question}",
-        }),
-        patch("crews.board_room._extract_pitch_params", return_value={
-            "area_sqft": None, "psf": None, "acreage": None,
-        }),
+        patch(
+            "crews.board_room._DEPT_TASK_TEMPLATES",
+            {
+                "finance": "Market: {market}\n{dept_question}",
+            },
+        ),
+        patch(
+            "crews.board_room._extract_pitch_params",
+            return_value={
+                "area_sqft": None,
+                "psf": None,
+                "acreage": None,
+            },
+        ),
         patch("utils.psf_forecaster.PSFForecaster", return_value=MagicMock()),
         patch("utils.irr_model.GDVEstimator"),
         patch("utils.irr_model.compare_scenarios"),
         patch("crews.board_room._query_market_supply", return_value=(None, "N/A")),
-        patch("crewai.Task", side_effect=lambda *a, **kw: (captured_tasks.append(kw), MagicMock())[1]),
+        patch(
+            "crewai.Task",
+            side_effect=lambda *a, **kw: (captured_tasks.append(kw), MagicMock())[1],
+        ),
     ):
         from crews.board_room import _run_dept_heads
+
         result = _run_dept_heads(
             pitch="5 acres Yelahanka",
             market="Yelahanka",

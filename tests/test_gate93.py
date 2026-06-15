@@ -7,6 +7,7 @@ Assertions:
     4. LA parser extracts ≥1 from fixture text
     5. verify_remote_backup callable (mocked)
 """
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -20,15 +21,23 @@ def test_gate93_assertion1_scheduler_jobs_registered():
     the full scheduler, which would require APScheduler runtime.
     """
     config_text = open("config/scheduler.py", encoding="utf-8").read()
-    assert 'id="offsite_backup_weekly"' in config_text, "offsite_backup_weekly job missing"
+    assert 'id="offsite_backup_weekly"' in config_text, (
+        "offsite_backup_weekly job missing"
+    )
     assert 'id="ledger_check_weekly"' in config_text, "ledger_check_weekly job missing"
     assert 'id="tender_daily_scan"' in config_text, "tender_daily_scan job missing"
-    assert 'id="la_notification_scan"' in config_text, "la_notification_scan job missing"
+    assert 'id="la_notification_scan"' in config_text, (
+        "la_notification_scan job missing"
+    )
 
 
 def test_gate93_assertion2_prediction_ledger_importable():
     """Assertion 2: prediction_ledger importable + insert+verdict round-trip."""
-    from utils.prediction_ledger import write_prediction_ledger, get_pending_claims, resolve_verdicts
+    from utils.prediction_ledger import (
+        write_prediction_ledger,
+        get_pending_claims,
+        resolve_verdicts,
+    )
     from datetime import date
 
     with patch("utils.prediction_ledger.get_engine") as mock_eng:
@@ -58,6 +67,7 @@ def test_gate93_assertion2_prediction_ledger_importable():
 def test_gate93_assertion3_tender_plugin_parses_3_records():
     """Assertion 3: TenderPlugin returns ≥3 records (seed fallback)."""
     from ingest.plugins.tender_plugin import TenderPlugin
+
     with patch.object(TenderPlugin, "_scrape_portal", return_value=[]):
         plugin = TenderPlugin()
         records = plugin.run("Yelahanka")
@@ -67,6 +77,7 @@ def test_gate93_assertion3_tender_plugin_parses_3_records():
 def test_gate93_assertion4_la_parser_extracts_from_fixture():
     """Assertion 4: LA parser extracts ≥1 notification from fixture text."""
     from scrapers.la_gazette_parser import LAGazetteParser
+
     parser = LAGazetteParser()
     text = """NOTIFICATION NO. KIADB/LAQ/2026/789
     Date: 15-03-2026
@@ -81,6 +92,7 @@ def test_gate93_assertion4_la_parser_extracts_from_fixture():
 def test_gate93_assertion5_verify_remote_backup_callable():
     """Assertion 5: verify_remote_backup is callable (mocked)."""
     from utils.backup import verify_remote_backup
+
     assert callable(verify_remote_backup)
 
     with patch.dict("os.environ", {}, clear=True):

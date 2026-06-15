@@ -11,6 +11,7 @@ Adds:
 Migration chain:
    0022_fix_mos_view -> 0023_unified_psf_view
 """
+
 from typing import Sequence, Union
 from alembic import op
 

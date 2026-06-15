@@ -5,6 +5,7 @@ Three assertions:
 2. run_bhoomi_auto_survey marks bhoomi_checked_at on success
 3. run_bhoomi_auto_survey skips gracefully on 429
 """
+
 import pytest
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timezone
@@ -31,7 +32,10 @@ class TestBhoomiAutoSurvey:
         with patch("config.scheduler.get_engine", return_value=mock_engine):
             with patch("config.scheduler._bhoomi_already_ran", return_value=False):
                 with patch("config.scheduler._mark_bhoomi_ran"):
-                    with patch("scrapers.bhoomi_scraper.fetch", return_value={"bhoomi_status": "unavailable"}):
+                    with patch(
+                        "scrapers.bhoomi_scraper.fetch",
+                        return_value={"bhoomi_status": "unavailable"},
+                    ):
                         run_bhoomi_auto_survey(market="Yelahanka")
 
         rera_calls = 0
@@ -39,7 +43,9 @@ class TestBhoomiAutoSurvey:
             sql_str = str(call_args[0]) if call_args else ""
             if "rera_projects" in sql_str:
                 rera_calls += 1
-        assert rera_calls >= 1, f"Expected rera_projects in query, got calls: {mock_conn.execute.call_args_list}"
+        assert rera_calls >= 1, (
+            f"Expected rera_projects in query, got calls: {mock_conn.execute.call_args_list}"
+        )
 
     def test_bhoomi_auto_survey_marks_bhoomi_checked_at_on_success(self):
         """Assertion 2: sets bhoomi_checked_at on successful Bhoomi fetch."""
@@ -57,11 +63,14 @@ class TestBhoomiAutoSurvey:
         with patch("config.scheduler.get_engine", return_value=mock_engine):
             with patch("config.scheduler._bhoomi_already_ran", return_value=False):
                 with patch("config.scheduler._mark_bhoomi_ran"):
-                    with patch("scrapers.bhoomi_scraper.fetch", return_value={
-                        "bhoomi_status": "live",
-                        "owner_name": "Test Owner",
-                        "survey_no": "45/2",
-                    }):
+                    with patch(
+                        "scrapers.bhoomi_scraper.fetch",
+                        return_value={
+                            "bhoomi_status": "live",
+                            "owner_name": "Test Owner",
+                            "survey_no": "45/2",
+                        },
+                    ):
                         run_bhoomi_auto_survey(market="Yelahanka")
 
         # Should have at least one UPDATE rera_projects SET bhoomi_checked_at
@@ -70,7 +79,9 @@ class TestBhoomiAutoSurvey:
             sql_str = str(call_args[0]) if call_args else ""
             if "UPDATE rera_projects" in sql_str:
                 update_calls += 1
-        assert update_calls >= 1, f"Expected UPDATE rera_projects for bhoomi_checked_at, got calls: {mock_conn.execute.call_args_list}"
+        assert update_calls >= 1, (
+            f"Expected UPDATE rera_projects for bhoomi_checked_at, got calls: {mock_conn.execute.call_args_list}"
+        )
 
     def test_bhoomi_auto_survey_skips_gracefully_on_429(self):
         """Assertion 3: stops batch on 429 rate limit, does not crash."""
@@ -102,7 +113,9 @@ class TestBhoomiAutoSurvey:
         with patch("config.scheduler.get_engine", return_value=mock_engine):
             with patch("config.scheduler._bhoomi_already_ran", return_value=False):
                 with patch("config.scheduler._mark_bhoomi_ran"):
-                    with patch("scrapers.bhoomi_scraper.fetch", side_effect=_mock_bhoomi_fetch):
+                    with patch(
+                        "scrapers.bhoomi_scraper.fetch", side_effect=_mock_bhoomi_fetch
+                    ):
                         run_bhoomi_auto_survey(market="Yelahanka")
 
         # Only 1 bhoomi call should be made (second skipped due to 429)

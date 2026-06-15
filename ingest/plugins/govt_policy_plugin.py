@@ -16,6 +16,7 @@ Scoring:
     signal_strength: high/emerging/risk
     actionability: buy_now/accumulate/monitor/avoid
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -31,16 +32,41 @@ from ingest.base import DataPlugin, ParsedRecord
 __all__ = ["GovtPolicyPlugin"]
 
 GOVT_KEYWORDS = [
-    "metro", "STRR", "suburban rail", "KIADB", "aerospace", "industrial park",
-    "data centre", "GCC park", "ring road", "airport", "highway", "corridor",
-    "policy", "FSI", "master plan", "stamp duty", "housing scheme",
-    "investment", "crore", "tender", "foundation stone",
+    "metro",
+    "STRR",
+    "suburban rail",
+    "KIADB",
+    "aerospace",
+    "industrial park",
+    "data centre",
+    "GCC park",
+    "ring road",
+    "airport",
+    "highway",
+    "corridor",
+    "policy",
+    "FSI",
+    "master plan",
+    "stamp duty",
+    "housing scheme",
+    "investment",
+    "crore",
+    "tender",
+    "foundation stone",
 ]
 
 _NORTH_BENGALURU_KEYWORDS = [
-    "Yelahanka", "Devanahalli", "Hebbal", "Bagalur", "Doddaballapur",
-    "KIADB", "Airport Corridor", "North Bengaluru", "Jakkur",
-    "Thanisandra", "Nagawara",
+    "Yelahanka",
+    "Devanahalli",
+    "Hebbal",
+    "Bagalur",
+    "Doddaballapur",
+    "KIADB",
+    "Airport Corridor",
+    "North Bengaluru",
+    "Jakkur",
+    "Thanisandra",
+    "Nagawara",
 ]
 
 _SEED_EVENTS: list[dict[str, Any]] = [
@@ -59,7 +85,9 @@ _SEED_EVENTS: list[dict[str, Any]] = [
         "actionability": "buy_now",
         "summary": "JICA funding approved for Bengaluru Metro Phase 3 extending to Kempegowda International Airport via Yelahanka. 38 km elevated corridor with 22 stations.",
         "why_it_matters": "Metro connectivity to airport corridor will transform Yelahanka and Devanahalli micro-markets, bringing transit-oriented development uplift.",
-        "source_urls": ["https://economictimes.indiatimes.com/industry/transportation/railways/bengaluru-metro-phase-3"],
+        "source_urls": [
+            "https://economictimes.indiatimes.com/industry/transportation/railways/bengaluru-metro-phase-3"
+        ],
         "published_date": "2025-12-15",
         "is_north_bengaluru": True,
     },
@@ -78,7 +106,9 @@ _SEED_EVENTS: list[dict[str, Any]] = [
         "actionability": "buy_now",
         "summary": "Foxconn's $2.56B manufacturing facility at KIADB Aerospace Park, Devanahalli — 14,000+ direct jobs expected.",
         "why_it_matters": "Single largest employment generator in North Bengaluru history. 14k+ high-income jobs will create massive residential demand within 15 km radius.",
-        "source_urls": ["https://economictimes.indiatimes.com/industry/cons-products/electronics"],
+        "source_urls": [
+            "https://economictimes.indiatimes.com/industry/cons-products/electronics"
+        ],
         "published_date": "2025-10-18",
         "is_north_bengaluru": True,
     },
@@ -97,7 +127,9 @@ _SEED_EVENTS: list[dict[str, Any]] = [
         "actionability": "buy_now",
         "summary": "AxisCades building India's largest data centre park at KIADB Aerospace Park, 3,000+ jobs, 200 MW capacity.",
         "why_it_matters": "Data centre parks create sustained high-income employment and ancillary ecosystem demand.",
-        "source_urls": ["https://economictimes.indiatimes.com/industry/cons-products/electronics"],
+        "source_urls": [
+            "https://economictimes.indiatimes.com/industry/cons-products/electronics"
+        ],
         "published_date": "2025-09-20",
         "is_north_bengaluru": True,
     },
@@ -116,7 +148,9 @@ _SEED_EVENTS: list[dict[str, Any]] = [
         "actionability": "accumulate",
         "summary": "Bengaluru Suburban Rail Project orders Rs 1,514 crore coaches for Corridor 1 (KSR–Devanahalli) — 150 km network spanning North Bengaluru.",
         "why_it_matters": "Suburban rail will make Devanahalli and Yelahanka 30-minute commutes from city centre, dramatically expanding catchment area.",
-        "source_urls": ["https://economictimes.indiatimes.com/industry/transportation/railways"],
+        "source_urls": [
+            "https://economictimes.indiatimes.com/industry/transportation/railways"
+        ],
         "published_date": "2025-08-05",
         "is_north_bengaluru": True,
     },
@@ -154,7 +188,9 @@ _SEED_EVENTS: list[dict[str, Any]] = [
         "actionability": "accumulate",
         "summary": "Karnataka GCC Policy targets 500 new Global Capability Centers and 50 lakh jobs by 2030. Incentives for North Bengaluru corridors.",
         "why_it_matters": "GCC policy will concentrate office demand in North Bengaluru corridors near airports, benefiting Yelahanka and Devanahalli residential markets.",
-        "source_urls": ["https://economictimes.indiatimes.com/industry/services/consultancy"],
+        "source_urls": [
+            "https://economictimes.indiatimes.com/industry/services/consultancy"
+        ],
         "published_date": "2025-06-10",
         "is_north_bengaluru": True,
     },
@@ -192,7 +228,9 @@ _SEED_EVENTS: list[dict[str, Any]] = [
         "actionability": "buy_now",
         "summary": "KIADB acquires 1,200 acres near Devanahalli for Phase 2 of Aerospace Park expansion. Land acquisition notice issued.",
         "why_it_matters": "Additional 1,200 acres of industrial development will boost land prices in surrounding Devanahalli villages and create 20,000+ indirect jobs.",
-        "source_urls": ["https://economictimes.indiatimes.com/news/economy/infrastructure"],
+        "source_urls": [
+            "https://economictimes.indiatimes.com/news/economy/infrastructure"
+        ],
         "published_date": "2025-11-15",
         "is_north_bengaluru": True,
     },
@@ -303,7 +341,9 @@ class GovtPolicyPlugin(DataPlugin):
         """Return seed event dicts directly (used by GATE-75 test assertions)."""
         return list(_SEED_EVENTS)
 
-    def _get_seed_events(self, seen_hashes: set[str] | None = None) -> list[ParsedRecord]:
+    def _get_seed_events(
+        self, seen_hashes: set[str] | None = None
+    ) -> list[ParsedRecord]:
         """Phase 1: return seed events as ParsedRecords."""
         seen = seen_hashes or set()
         records: list[ParsedRecord] = []
@@ -317,7 +357,9 @@ class GovtPolicyPlugin(DataPlugin):
             records.append(self._event_to_record(evt))
         return records
 
-    def _scan_news(self, market: str | None, seen_hashes: set[str]) -> list[ParsedRecord]:
+    def _scan_news(
+        self, market: str | None, seen_hashes: set[str]
+    ) -> list[ParsedRecord]:
         """Phase 2: scan news_articles for govt/infra/policy keywords."""
         try:
             from utils.db import get_engine
@@ -375,12 +417,18 @@ class GovtPolicyPlugin(DataPlugin):
                         "summary": extracted.get("summary", headline),
                         "why_it_matters": extracted.get("why_it_matters", ""),
                         "source_urls": [source_url] if source_url else [],
-                        "published_date": str(published_at.date()) if hasattr(published_at, "date") else str(published_at),
-                        "is_north_bengaluru": self._is_north_bengaluru(headline, extracted.get("micro_markets", [])),
+                        "published_date": str(published_at.date())
+                        if hasattr(published_at, "date")
+                        else str(published_at),
+                        "is_north_bengaluru": self._is_north_bengaluru(
+                            headline, extracted.get("micro_markets", [])
+                        ),
                     }
                     records.append(self._event_to_record(evt))
             except Exception as exc:
-                logger.debug("[GovtPolicyPlugin] LLM extract failed for {}: {}", headline, exc)
+                logger.debug(
+                    "[GovtPolicyPlugin] LLM extract failed for {}: {}", headline, exc
+                )
                 # Fallback: basic classification
                 evt = self._basic_classify(headline, str(published_at), source_url)
                 if evt:
@@ -427,7 +475,9 @@ class GovtPolicyPlugin(DataPlugin):
         except Exception:
             return None
 
-    def _basic_classify(self, headline: str, published_date: str, source_url: str | None) -> dict[str, Any] | None:
+    def _basic_classify(
+        self, headline: str, published_date: str, source_url: str | None
+    ) -> dict[str, Any] | None:
         """Fallback classification when LLM unavailable."""
         hl_lower = headline.lower()
         category = "infrastructure"
@@ -438,7 +488,9 @@ class GovtPolicyPlugin(DataPlugin):
         if any(kw in hl_lower for kw in ["metro", "suburban rail", "railway", "train"]):
             subcategory = "metro"
             impact_score = 7
-        elif any(kw in hl_lower for kw in ["ring road", "strr", "highway", "expressway"]):
+        elif any(
+            kw in hl_lower for kw in ["ring road", "strr", "highway", "expressway"]
+        ):
             subcategory = "ring_road"
             impact_score = 6
         elif any(kw in hl_lower for kw in ["kiadb", "industrial park", "aerospace"]):
@@ -515,6 +567,8 @@ class GovtPolicyPlugin(DataPlugin):
         return ParsedRecord(
             entity_type="govt_policy_event",
             source_id=f"govt_policy_{hashlib.sha256(evt['headline'].encode()).hexdigest()[:16]}",
-            market=evt.get("micro_markets", [None])[0] if evt.get("micro_markets") else "unknown",
+            market=evt.get("micro_markets", [None])[0]
+            if evt.get("micro_markets")
+            else "unknown",
             data=data,
         )

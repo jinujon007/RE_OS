@@ -10,7 +10,11 @@ from typing import Any
 from statistics import mean, StatisticsError
 from loguru import logger
 
-_RUN_HISTORY_PATH = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "logs" / "run_history.jsonl"
+_RUN_HISTORY_PATH = (
+    Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    / "logs"
+    / "run_history.jsonl"
+)
 
 # Bottleneck detection thresholds
 # Stage1 (scraping) is a bottleneck when its avg duration exceeds STAGE1_RATIO_THRESHOLD × Stage2 avg
@@ -29,7 +33,9 @@ class PipelineRunAnalyzer:
 
     def _load_runs(self, n_runs: int = 20) -> list[dict[str, Any]]:
         if not self._history_path.exists():
-            logger.warning("[LogAnalyzer] Run history not found: {}", self._history_path)
+            logger.warning(
+                "[LogAnalyzer] Run history not found: {}", self._history_path
+            )
             return []
         runs: list[dict[str, Any]] = []
         with open(self._history_path, encoding="utf-8") as f:
@@ -48,8 +54,10 @@ class PipelineRunAnalyzer:
     def _stage_split(total_sec: float, n_agents: int) -> dict[str, float]:
         if total_sec <= 0.0:
             return {
-                "total_duration_s": 0.0, "stage1_duration_s": 0.0,
-                "stage2_duration_s": 0.0, "stage3_duration_s": 0.0,
+                "total_duration_s": 0.0,
+                "stage1_duration_s": 0.0,
+                "stage2_duration_s": 0.0,
+                "stage3_duration_s": 0.0,
             }
         if n_agents <= 1:
             s1, s2, s3 = 0.65, 0.20, 0.15
@@ -77,7 +85,9 @@ class PipelineRunAnalyzer:
                 "run_date": r.get("start_time", ""),
                 "status": r.get("status", "unknown"),
                 **self._stage_split(
-                    float(r["duration_seconds"]) if r.get("duration_seconds") is not None else 0.0,
+                    float(r["duration_seconds"])
+                    if r.get("duration_seconds") is not None
+                    else 0.0,
                     len(r.get("agents_completed") or []),
                 ),
             }
@@ -111,7 +121,11 @@ class PipelineRunAnalyzer:
                 ),
             }
 
-        if avg_s2 > 0 and avg_s1 > _STAGE1_RATIO_THRESHOLD * avg_s2 and avg_s1 > _MIN_BOTTLENECK_DURATION_S:
+        if (
+            avg_s2 > 0
+            and avg_s1 > _STAGE1_RATIO_THRESHOLD * avg_s2
+            and avg_s1 > _MIN_BOTTLENECK_DURATION_S
+        ):
             return {
                 "bottleneck": "scraping",
                 "avg_s": round(avg_s1, 1),

@@ -43,8 +43,8 @@ from config.settings import RERA_PLAYWRIGHT_LOCALITY_VALUES
 
 _RERA_MODEL_NAME = "rera-extractor:3b"
 _RERA_OLLAMA_URL = "http://ollama:11434/api/generate"
-_MODEL_BATCH_SIZE = 8        # rows per batch for parallel model calls (H-2 fix)
-_MODEL_MAX_WORKERS = 4       # parallel Ollama requests
+_MODEL_BATCH_SIZE = 8  # rows per batch for parallel model calls (H-2 fix)
+_MODEL_MAX_WORKERS = 4  # parallel Ollama requests
 
 # Alternate subdistrict spellings to try when first attempt returns 0 results.
 # Ordered by decreasing likelihood. Scraper walks this list until non-zero results.
@@ -89,6 +89,7 @@ _UA_CYCLE = itertools.cycle(_UA_POOL)
 
 class _FakeCookie:
     """T-1063: requests-compatible cookie object from Playwright cookie dict."""
+
     def __init__(self, name, value, domain, path):
         self.name = name
         self.value = value
@@ -103,6 +104,7 @@ _last_fallback_alert: dict[str, float] = {}
 def _should_fire_fallback_alert(market: str, cooldown_seconds: int = 3600) -> bool:
     """Returns True if cooldown has elapsed since last FALLBACK_SEED alert for this market."""
     import time as _time
+
     last = _last_fallback_alert.get(market, 0.0)
     if _time.time() - last >= cooldown_seconds:
         _last_fallback_alert[market] = _time.time()
@@ -127,14 +129,23 @@ def _cleanup_stale_alert_tracking(max_entries: int = 100) -> None:
         _last_fallback_alert.clear()
 
 
-def _log_agent_run(market: str, record_count: int, fallback_triggered: bool, data_source: str, path_used: str, duration_ms: int) -> None:
+def _log_agent_run(
+    market: str,
+    record_count: int,
+    fallback_triggered: bool,
+    data_source: str,
+    path_used: str,
+    duration_ms: int,
+) -> None:
     """Log per-market scraper health metric to agent_runs (T-1064). Non-fatal on failure."""
     import json as _json
+
     record_count = _validate_positive("record_count", record_count)
     duration_ms = _validate_positive("duration_ms", duration_ms)
     try:
         from utils.db import get_engine
         from sqlalchemy import text as _sa_text
+
         engine = get_engine()
         with engine.begin() as conn:
             conn.execute(
@@ -151,17 +162,21 @@ def _log_agent_run(market: str, record_count: int, fallback_triggered: bool, dat
                     "agent_name": "rera_scraper",
                     "market": market,
                     "record_count": record_count,
-                    "metadata": _json.dumps({
-                        "record_count": record_count,
-                        "fallback_triggered": fallback_triggered,
-                        "data_source": data_source,
-                        "path_used": path_used,
-                        "duration_ms": duration_ms,
-                    }),
+                    "metadata": _json.dumps(
+                        {
+                            "record_count": record_count,
+                            "fallback_triggered": fallback_triggered,
+                            "data_source": data_source,
+                            "path_used": path_used,
+                            "duration_ms": duration_ms,
+                        }
+                    ),
                 },
             )
     except Exception as exc:
-        logger.warning(f"[RERA][AgentRun] Failed to log health metric for {market}: {exc}")
+        logger.warning(
+            f"[RERA][AgentRun] Failed to log health metric for {market}: {exc}"
+        )
 
 
 class RERAKarnatakaScraper:
@@ -216,6 +231,7 @@ class RERAKarnatakaScraper:
 
         try:
             from bs4 import BeautifulSoup as _BS
+
             soup = _BS(html, "lxml")
             rows = soup.select("table tbody tr")
         except Exception as exc:
@@ -226,23 +242,27 @@ class RERAKarnatakaScraper:
             logger.debug("[RERA][Model] No table rows found in HTML — falling back")
             return None
 
-        logger.info(f"[RERA][Model] Attempting extraction on {len(rows)} rows (batch={_MODEL_BATCH_SIZE}, workers={_MODEL_MAX_WORKERS})")
+        logger.info(
+            f"[RERA][Model] Attempting extraction on {len(rows)} rows (batch={_MODEL_BATCH_SIZE}, workers={_MODEL_MAX_WORKERS})"
+        )
 
         projects: list[dict] = []
         errors = 0
 
         def _call_model(row_html: str) -> dict | None:
             """Single Ollama model call for one HTML row."""
-            payload = json.dumps({
-                "model": _RERA_MODEL_NAME,
-                "prompt": (
-                    "Extract RERA fields as JSON from this record:\n"
-                    f"{row_html}\n\n"
-                    "Return ONLY JSON: {\"project_name\":...,\"developer\":...,\"units\":...,\"completion_date\":...,\"rera_id\":...}"
-                ),
-                "stream": False,
-                "options": {"temperature": 0.1, "top_p": 0.9},
-            }).encode("utf-8")
+            payload = json.dumps(
+                {
+                    "model": _RERA_MODEL_NAME,
+                    "prompt": (
+                        "Extract RERA fields as JSON from this record:\n"
+                        f"{row_html}\n\n"
+                        'Return ONLY JSON: {"project_name":...,"developer":...,"units":...,"completion_date":...,"rera_id":...}'
+                    ),
+                    "stream": False,
+                    "options": {"temperature": 0.1, "top_p": 0.9},
+                }
+            ).encode("utf-8")
 
             req = urllib.request.Request(
                 _RERA_OLLAMA_URL,
@@ -278,7 +298,9 @@ class RERAKarnatakaScraper:
                         "rera_number": parsed.get("rera_id", ""),
                         "project_name": parsed.get("project_name", ""),
                         "developer_name": parsed.get("developer", ""),
-                        "total_units": int(parsed["units"]) if parsed.get("units") else 0,
+                        "total_units": int(parsed["units"])
+                        if parsed.get("units")
+                        else 0,
                         "possession_date": str(parsed.get("completion_date", "")),
                         "data_source": "rera_karnataka_live",
                         "scraped_at": datetime.now().isoformat(),
@@ -289,11 +311,15 @@ class RERAKarnatakaScraper:
                     logger.debug(f"[RERA][Model] Row {idx} failed: {exc}")
 
         if errors > len(rows) * 0.5:
-            logger.warning(f"[RERA][Model] {errors}/{len(rows)} rows failed — model may not be loaded. Falling back.")
+            logger.warning(
+                f"[RERA][Model] {errors}/{len(rows)} rows failed — model may not be loaded. Falling back."
+            )
             return None
 
         if projects:
-            logger.info(f"[RERA][Model] Extracted {len(projects)}/{len(rows)} projects via rera-extractor:3b ({errors} errors)")
+            logger.info(
+                f"[RERA][Model] Extracted {len(projects)}/{len(rows)} projects via rera-extractor:3b ({errors} errors)"
+            )
             return projects
 
         return None
@@ -304,6 +330,7 @@ class RERAKarnatakaScraper:
         Falls back to hardcoded sample data if portal unreachable.
         """
         import time as _time
+
         _start_ts = _time.time()
         logger.info(f"Starting RERA scrape for: {market_name}")
 
@@ -329,14 +356,20 @@ class RERAKarnatakaScraper:
         if not projects:
             # Try alternate district spellings (original subdistrict + all alt subdistricts)
             alt_districts = ALT_DISTRICTS.get(market_name, [])
-            subdistricts_to_try = [config["subdistrict"]] + ALT_SUBDISTRICTS.get(market_name, [])
+            subdistricts_to_try = [config["subdistrict"]] + ALT_SUBDISTRICTS.get(
+                market_name, []
+            )
             for alt_district in alt_districts:
                 for sub in subdistricts_to_try:
-                    logger.info(f"  Trying district='{alt_district}' subdistrict='{sub}'")
+                    logger.info(
+                        f"  Trying district='{alt_district}' subdistrict='{sub}'"
+                    )
                     alt_projects = self._post_search(alt_district, sub, market_name)
                     if alt_projects:
                         projects = alt_projects
-                        logger.info(f"  Live data found with district='{alt_district}' sub='{sub}'")
+                        logger.info(
+                            f"  Live data found with district='{alt_district}' sub='{sub}'"
+                        )
                         break
                 if projects:
                     break
@@ -347,25 +380,39 @@ class RERAKarnatakaScraper:
             # T-1062: Try Playwright fallback for markets where POST fails
             pw_projects, pw_cookies = self._playwright_scrape(market_name)
             if pw_projects:
-                logger.info(f"  Playwright fallback succeeded for {market_name} ({len(pw_projects)} projects)")
+                logger.info(
+                    f"  Playwright fallback succeeded for {market_name} ({len(pw_projects)} projects)"
+                )
                 projects = pw_projects
                 cookies = pw_cookies
                 used_playwright = True
             else:
-                logger.warning("  Portal and Playwright both returned 0 results — using fallback sample data")
+                logger.warning(
+                    "  Portal and Playwright both returned 0 results — using fallback sample data"
+                )
                 # T-1065: Fire Discord alert when falling back to hardcoded seed (rate-limited to 1/hr)
                 _cleanup_stale_alert_tracking()
                 if _should_fire_fallback_alert(market_name):
                     try:
                         from utils.discord_notifier import send_scraper_alert
-                        send_scraper_alert(market_name, "rera_karnataka", "FALLBACK_SEED", record_count=8)
+
+                        send_scraper_alert(
+                            market_name,
+                            "rera_karnataka",
+                            "FALLBACK_SEED",
+                            record_count=8,
+                        )
                     except Exception:
                         logger.debug("[RERA] Discord scraper alert failed (non-fatal)")
                 else:
-                    logger.debug(f"[RERA] Fallback alert for {market_name} suppressed (rate-limited)")
+                    logger.debug(
+                        f"[RERA] Fallback alert for {market_name} suppressed (rate-limited)"
+                    )
                 # Log health metric before returning — even fallback runs must be tracked (T-1064)
                 _duration_ms = int((_time.time() - _start_ts) * 1000)
-                _log_agent_run(market_name, 8, True, "fallback_sample", "seed", _duration_ms)
+                _log_agent_run(
+                    market_name, 8, True, "fallback_sample", "seed", _duration_ms
+                )
                 return self._fallback_rera_data(market_name), []
 
         # Deduplicate by RERA number
@@ -385,10 +432,24 @@ class RERAKarnatakaScraper:
 
         # T-1064: Log scraper health metric to agent_runs
         _duration_ms = int((_time.time() - _start_ts) * 1000)
-        _is_fallback = any(p.get("data_source", "") == "fallback_sample" for p in unique)
-        _data_source = "fallback_sample" if _is_fallback else (unique[0].get("data_source", "rera_karnataka_live") if unique else "unknown")
-        _path = "seed" if _is_fallback else ("playwright" if used_playwright else "post")
-        _log_agent_run(market_name, len(unique), _is_fallback, _data_source, _path, _duration_ms)
+        _is_fallback = any(
+            p.get("data_source", "") == "fallback_sample" for p in unique
+        )
+        _data_source = (
+            "fallback_sample"
+            if _is_fallback
+            else (
+                unique[0].get("data_source", "rera_karnataka_live")
+                if unique
+                else "unknown"
+            )
+        )
+        _path = (
+            "seed" if _is_fallback else ("playwright" if used_playwright else "post")
+        )
+        _log_agent_run(
+            market_name, len(unique), _is_fallback, _data_source, _path, _duration_ms
+        )
 
         return unique, cookies
 
@@ -426,7 +487,9 @@ class RERAKarnatakaScraper:
             projects = self._extract_with_rera_model(resp.text)
             extraction_path = "rera_model"
             if projects is None:
-                logger.info("  [RERA] Model extraction returned None — falling back to HTML parser")
+                logger.info(
+                    "  [RERA] Model extraction returned None — falling back to HTML parser"
+                )
                 projects = self._parse_html_table(resp.text, market_name)
                 extraction_path = "html_parser"
 
@@ -695,7 +758,9 @@ class RERAKarnatakaScraper:
         Returns ([], []) on any failure — caller falls through to hardcoded seed.
         """
         if market_name not in RERA_USE_PLAYWRIGHT_MARKETS:
-            logger.debug(f"[RERA][Playwright] {market_name} not in Playwright markets — skipping")
+            logger.debug(
+                f"[RERA][Playwright] {market_name} not in Playwright markets — skipping"
+            )
             return [], []
 
         loc = RERA_PLAYWRIGHT_LOCALITY_VALUES.get(market_name)
@@ -704,12 +769,16 @@ class RERAKarnatakaScraper:
             return [], []
 
         district_val, subdistrict_val = loc
-        logger.info(f"[RERA][Playwright] Launching browser for {market_name} ({district_val}/{subdistrict_val})")
+        logger.info(
+            f"[RERA][Playwright] Launching browser for {market_name} ({district_val}/{subdistrict_val})"
+        )
 
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
-            logger.warning("[RERA][Playwright] playwright not installed — skipping fallback")
+            logger.warning(
+                "[RERA][Playwright] playwright not installed — skipping fallback"
+            )
             return [], []
 
         try:
@@ -736,9 +805,15 @@ class RERAKarnatakaScraper:
 
                 # Step 1: Navigate to the search form to establish session
                 try:
-                    page.goto(f"{self.BASE_URL}/viewAllProjects", wait_until="domcontentloaded", timeout=_PW_NAVIGATE_TIMEOUT)
+                    page.goto(
+                        f"{self.BASE_URL}/viewAllProjects",
+                        wait_until="domcontentloaded",
+                        timeout=_PW_NAVIGATE_TIMEOUT,
+                    )
                 except PlaywrightTimeout:
-                    logger.warning(f"[RERA][Playwright] {market_name}: navigation timed out")
+                    logger.warning(
+                        f"[RERA][Playwright] {market_name}: navigation timed out"
+                    )
                     browser.close()
                     return [], []
                 page.wait_for_timeout(_PW_FORM_FILL_DELAY)
@@ -748,7 +823,9 @@ class RERAKarnatakaScraper:
                 try:
                     page.select_option(district_selector, district_val)
                 except PlaywrightTimeout:
-                    logger.warning(f"[RERA][Playwright] {market_name}: district dropdown '{district_val}' not found")
+                    logger.warning(
+                        f"[RERA][Playwright] {market_name}: district dropdown '{district_val}' not found"
+                    )
                     browser.close()
                     return [], []
                 page.wait_for_timeout(_PW_FORM_FILL_DELAY)
@@ -767,10 +844,16 @@ class RERAKarnatakaScraper:
 
                 # Step 5: Click Search button
                 try:
-                    page.click("input[type='submit'], button[type='submit'], input[name='btn1']")
-                    page.wait_for_load_state("networkidle", timeout=_PW_NAVIGATE_TIMEOUT)
+                    page.click(
+                        "input[type='submit'], button[type='submit'], input[name='btn1']"
+                    )
+                    page.wait_for_load_state(
+                        "networkidle", timeout=_PW_NAVIGATE_TIMEOUT
+                    )
                 except PlaywrightTimeout:
-                    logger.warning(f"[RERA][Playwright] {market_name}: search submission timed out")
+                    logger.warning(
+                        f"[RERA][Playwright] {market_name}: search submission timed out"
+                    )
                     browser.close()
                     return [], []
                 page.wait_for_timeout(_PW_RESULTS_DELAY)
@@ -784,7 +867,9 @@ class RERAKarnatakaScraper:
 
                 projects = self._parse_html_table(html, market_name)
                 if not projects:
-                    logger.warning(f"[RERA][Playwright] 0 projects parsed for {market_name}")
+                    logger.warning(
+                        f"[RERA][Playwright] 0 projects parsed for {market_name}"
+                    )
                     return [], []
 
                 # Mark projects with playwright path metadata
@@ -797,27 +882,41 @@ class RERAKarnatakaScraper:
                 pw_cookies_req = []
                 session_cookie_value = ""
                 for c in pw_raw_cookies:
-                    pw_cookies_req.append(_FakeCookie(
-                        name=c.get("name", ""),
-                        value=c.get("value", ""),
-                        domain=c.get("domain", ".karnataka.gov.in"),
-                        path=c.get("path", "/"),
-                    ))
-                    if c.get("name", "").lower() in ("session", "jsessionid", "iplanetdirectorypro"):
+                    pw_cookies_req.append(
+                        _FakeCookie(
+                            name=c.get("name", ""),
+                            value=c.get("value", ""),
+                            domain=c.get("domain", ".karnataka.gov.in"),
+                            path=c.get("path", "/"),
+                        )
+                    )
+                    if c.get("name", "").lower() in (
+                        "session",
+                        "jsessionid",
+                        "iplanetdirectorypro",
+                    ):
                         session_cookie_value = c.get("value", "")
 
                 # T-1063: Save session cookie to separate checkpoint for detail scout
                 if session_cookie_value:
                     try:
                         cp = Checkpointer()
-                        cp.save(market_name, "rera_session", {"session_cookie": session_cookie_value})
+                        cp.save(
+                            market_name,
+                            "rera_session",
+                            {"session_cookie": session_cookie_value},
+                        )
                     except Exception as exc:
-                        logger.debug(f"[RERA][Playwright] Session checkpoint save failed (non-fatal): {exc}")
+                        logger.debug(
+                            f"[RERA][Playwright] Session checkpoint save failed (non-fatal): {exc}"
+                        )
 
                 return projects, pw_cookies_req
 
         except Exception as exc:
-            logger.warning(f"[RERA][Playwright] Browser automation failed for {market_name}: {exc}")
+            logger.warning(
+                f"[RERA][Playwright] Browser automation failed for {market_name}: {exc}"
+            )
             return [], []
 
 

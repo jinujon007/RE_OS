@@ -16,7 +16,11 @@ __all__ = ["PRBrief", "PRHeadAgent"]
 _LLM_LOCK = threading.Lock()
 _LLM_IMPORTED = False
 try:
-    from config.llm_router import get_analysis_llm as _get_analysis_llm, get_light_llm as _get_light_llm
+    from config.llm_router import (
+        get_analysis_llm as _get_analysis_llm,
+        get_light_llm as _get_light_llm,
+    )
+
     _LLM_IMPORTED = True
 except ImportError:
     logger.warning("[PRHead] config.llm_router not available — will use fallback only")
@@ -114,7 +118,9 @@ class PRHeadAgent:
 
     def _build_prompt(self, inp: PRHeadInput, positioning_stmt: str) -> str:
         diffs = inp.key_differentiators or []
-        diffs_str = "\n".join(f"  - {d}" for d in diffs) if diffs else "  - (not specified)"
+        diffs_str = (
+            "\n".join(f"  - {d}" for d in diffs) if diffs else "  - (not specified)"
+        )
 
         irr_str = ""
         if inp.irr_scenarios:
@@ -155,6 +161,7 @@ class PRHeadAgent:
         except Exception:
             logger.debug("[PRHead] Light LLM unavailable, trying heavy tier")
         from config.llm_router import get_heavy_llm
+
         return get_heavy_llm(temperature=self.temperature)
 
     def _parse_llm_response(self, raw: str) -> PRBrief:
@@ -167,7 +174,9 @@ class PRHeadAgent:
                 end = raw.rindex("}") + 1
                 data = json.loads(raw[start:end])
             except (ValueError, json.JSONDecodeError):
-                logger.warning("[PRHead] Failed to parse LLM output as JSON, using fallback")
+                logger.warning(
+                    "[PRHead] Failed to parse LLM output as JSON, using fallback"
+                )
                 return self._fallback_brief()
 
         return PRBrief(
@@ -233,11 +242,14 @@ class PRHeadAgent:
             user_prompt = self._build_prompt(inp, positioning_stmt)
 
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(
                     llm.invoke,
-                    [{"role": "system", "content": system_prompt},
-                     {"role": "user", "content": user_prompt}]
+                    [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
                 )
                 response = future.result(timeout=self._LLM_TIMEOUT_S)
 
@@ -252,12 +264,17 @@ class PRHeadAgent:
             brief = self._parse_llm_response(raw_text)
             logger.info(
                 "[PRHead] Brief generated for %s/%s — tagline: %s",
-                inp.market, inp.survey_no, brief.project_tagline,
+                inp.market,
+                inp.survey_no,
+                brief.project_tagline,
             )
             return brief
 
         except concurrent.futures.TimeoutError:
-            logger.warning("[PRHead] LLM call timed out after %ds — using fallback", self._LLM_TIMEOUT_S)
+            logger.warning(
+                "[PRHead] LLM call timed out after %ds — using fallback",
+                self._LLM_TIMEOUT_S,
+            )
             return self._fallback_brief()
         except (ImportError, ConnectionError, OSError, ValueError) as exc:
             logger.warning("[PRHead] LLM call failed: %s — using fallback brief", exc)

@@ -6,6 +6,7 @@ indexes are insufficient for single-column lookups at 10,000+ row scale.
 Migration chain:
     0047_check_constraints_integrity -> 0048_idx_rera_projects_developer_id
 """
+
 from typing import Union
 
 from alembic import op

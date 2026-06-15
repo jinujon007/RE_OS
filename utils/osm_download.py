@@ -11,6 +11,7 @@ Graceful degradation:
   - Cache file corrupted → force=True re-downloads, overwrites silently
   - Called concurrently → safe: download_market is stateless, file write atomic
 """
+
 import os
 from pathlib import Path
 from loguru import logger
@@ -50,7 +51,9 @@ def download_market(market: str, force: bool = False) -> bool:
     place = get_osm_place(market_safe)
     if place is None:
         known = get_market_names()
-        logger.warning("[OSMDownload] Unknown market: {} (known: {})", market_safe, known)
+        logger.warning(
+            "[OSMDownload] Unknown market: {} (known: {})", market_safe, known
+        )
         return False
 
     out_path = get_graphml_path(market_safe)
@@ -63,8 +66,12 @@ def download_market(market: str, force: bool = False) -> bool:
     try:
         G = ox.graph_from_place(place, network_type="drive_service", simplify=True)
         ox.save_graphml(G, str(out_path))
-        logger.info("[OSMDownload] Saved {}: {} nodes, {} edges",
-                     out_path, G.number_of_nodes(), G.number_of_edges())
+        logger.info(
+            "[OSMDownload] Saved {}: {} nodes, {} edges",
+            out_path,
+            G.number_of_nodes(),
+            G.number_of_edges(),
+        )
         return True
     except Exception as exc:
         logger.error("[OSMDownload] Download failed for {}: {}", market_safe, exc)

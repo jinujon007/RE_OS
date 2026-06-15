@@ -7,6 +7,7 @@ where survey_no numeric prefixes are within ±3 of each other.
 
 Writes to assembly_signals table and fires Discord alert to #competitor-launches.
 """
+
 import re
 from datetime import date, timedelta
 from loguru import logger
@@ -50,11 +51,13 @@ def _fuzzy_match(name_a: str, name_b: str, threshold: float = _FUZZY_THRESHOLD) 
 
 def _parse_survey_prefix(survey_no: str) -> int | None:
     """Extract numeric prefix from survey number for proximity check. '45/2A' -> 45."""
-    m = re.match(r'(\d+)', survey_no)
+    m = re.match(r"(\d+)", survey_no)
     return int(m.group(1)) if m else None
 
 
-def _surveys_are_proximal(survey_nos: list[str], proximity: int = _PARCEL_PROXIMITY) -> bool:
+def _surveys_are_proximal(
+    survey_nos: list[str], proximity: int = _PARCEL_PROXIMITY
+) -> bool:
     """Check if survey number numeric prefixes span a contiguous range.
 
     Uses range-based check: max(prefix) - min(prefix) ≤ proximity.
@@ -107,16 +110,20 @@ def detect_assemblies(markets: list[str] | None = None) -> list[dict]:
         key = (row.village, norm)
         if key not in groups:
             groups[key] = []
-        groups[key].append({
-            "id": str(row.id),
-            "buyer_name_raw": row.buyer_name_raw,
-            "buyer_name_norm": norm,
-            "village": row.village,
-            "survey_no": row.survey_no,
-            "reg_date": row.reg_date,
-            "extent_sqft": float(row.extent_sqft) if row.extent_sqft else None,
-            "consideration_inr": float(row.consideration_inr) if row.consideration_inr else None,
-        })
+        groups[key].append(
+            {
+                "id": str(row.id),
+                "buyer_name_raw": row.buyer_name_raw,
+                "buyer_name_norm": norm,
+                "village": row.village,
+                "survey_no": row.survey_no,
+                "reg_date": row.reg_date,
+                "extent_sqft": float(row.extent_sqft) if row.extent_sqft else None,
+                "consideration_inr": float(row.consideration_inr)
+                if row.consideration_inr
+                else None,
+            }
+        )
 
     # Second pass: merge groups within same village whose buyer names fuzzy-match
     # O(n²) but n = distinct buyer names per village, typically < 20
@@ -135,7 +142,9 @@ def detect_assemblies(markets: list[str] | None = None) -> list[dict]:
                     continue
                 name_a = k_a[1]
                 name_b = k_b[1]
-                if name_a != name_b and _fuzzy_match(name_a, name_b, threshold=_FUZZY_THRESHOLD):
+                if name_a != name_b and _fuzzy_match(
+                    name_a, name_b, threshold=_FUZZY_THRESHOLD
+                ):
                     # Merge smaller into larger
                     if len(groups[k_a]) >= len(groups[k_b]):
                         primary, secondary = k_a, k_b
@@ -158,11 +167,15 @@ def detect_assemblies(markets: list[str] | None = None) -> list[dict]:
                 continue
 
             total_extent = sum(d["extent_sqft"] for d in deeds if d["extent_sqft"])
-            total_consideration = sum(d["consideration_inr"] for d in deeds if d["consideration_inr"])
+            total_consideration = sum(
+                d["consideration_inr"] for d in deeds if d["consideration_inr"]
+            )
             first_date = min(d["reg_date"] for d in deeds)
             last_date = max(d["reg_date"] for d in deeds)
             days_span = (last_date - first_date).days if first_date and last_date else 0
-            confidence = min(1.0, 0.5 + (len(deeds) - 2) * 0.15 + min(days_span, 180) / 180 * 0.2)
+            confidence = min(
+                1.0, 0.5 + (len(deeds) - 2) * 0.15 + min(days_span, 180) / 180 * 0.2
+            )
 
             existing = conn.execute(
                 text("""
@@ -184,10 +197,13 @@ def detect_assemblies(markets: list[str] | None = None) -> list[dict]:
                         WHERE id = :eid
                     """),
                     {
-                        "cnt": len(deeds), "ext": total_extent,
+                        "cnt": len(deeds),
+                        "ext": total_extent,
                         "cons": total_consideration,
-                        "fd": first_date, "ld": last_date,
-                        "sn": survey_nos, "conf": confidence,
+                        "fd": first_date,
+                        "ld": last_date,
+                        "sn": survey_nos,
+                        "conf": confidence,
                         "eid": existing[0],
                     },
                 )
@@ -211,28 +227,35 @@ def detect_assemblies(markets: list[str] | None = None) -> list[dict]:
                             updated_at = NOW()
                     """),
                     {
-                        "b": norm_buyer, "v": village, "cnt": len(deeds),
-                        "ext": total_extent, "cons": total_consideration,
-                        "fd": first_date, "ld": last_date,
-                        "sn": survey_nos, "conf": confidence,
+                        "b": norm_buyer,
+                        "v": village,
+                        "cnt": len(deeds),
+                        "ext": total_extent,
+                        "cons": total_consideration,
+                        "fd": first_date,
+                        "ld": last_date,
+                        "sn": survey_nos,
+                        "conf": confidence,
                     },
                 )
             written += 1
 
             raw_buyer = deeds[0]["buyer_name_raw"]
-            signals.append({
-                "buyer_name_norm": norm_buyer,
-                "buyer_name_raw": raw_buyer,
-                "village": village,
-                "parcel_count": len(deeds),
-                "total_extent_sqft": total_extent,
-                "total_consideration_inr": total_consideration,
-                "first_deed_date": str(first_date) if first_date else None,
-                "last_deed_date": str(last_date) if last_date else None,
-                "days_span": days_span,
-                "confidence": round(confidence, 3),
-                "survey_nos": survey_nos,
-            })
+            signals.append(
+                {
+                    "buyer_name_norm": norm_buyer,
+                    "buyer_name_raw": raw_buyer,
+                    "village": village,
+                    "parcel_count": len(deeds),
+                    "total_extent_sqft": total_extent,
+                    "total_consideration_inr": total_consideration,
+                    "first_deed_date": str(first_date) if first_date else None,
+                    "last_deed_date": str(last_date) if last_date else None,
+                    "days_span": days_span,
+                    "confidence": round(confidence, 3),
+                    "survey_nos": survey_nos,
+                }
+            )
 
     # Write falsifiable claims to prediction_ledger (GATE-93, T-1148)
     try:
@@ -271,13 +294,21 @@ def detect_assemblies(markets: list[str] | None = None) -> list[dict]:
     except Exception:
         logger.debug("[AssemblyDetector] prediction_ledger write skipped (non-fatal)")
 
-    logger.info("[AssemblyDetector] {} assemblies detected, {} written to DB", len(signals), written)
+    logger.info(
+        "[AssemblyDetector] {} assemblies detected, {} written to DB",
+        len(signals),
+        written,
+    )
     return signals
 
 
 def _format_assembly_alert(signal: dict) -> str:
     """Format an assembly signal into a Discord alert message."""
-    extent_str = f"{signal['total_extent_sqft']:,.0f} sqft" if signal.get("total_extent_sqft") else "unknown extent"
+    extent_str = (
+        f"{signal['total_extent_sqft']:,.0f} sqft"
+        if signal.get("total_extent_sqft")
+        else "unknown extent"
+    )
     return (
         f"LAND ASSEMBLY: {signal['buyer_name_norm']} — "
         f"{signal['parcel_count']} parcels, {extent_str} "
@@ -299,6 +330,7 @@ def run_assembly_detection():
             return
 
         from utils.discord_notifier import send
+
         engine = get_engine()
 
         for sig in signals:
@@ -311,19 +343,32 @@ def run_assembly_detection():
                     {"b": sig["buyer_name_norm"], "v": sig["village"]},
                 ).fetchone()
                 if row and row[0]:
-                    logger.debug("[AssemblyDetector] Dedup skip: {}/{}", sig["buyer_name_norm"], sig["village"])
+                    logger.debug(
+                        "[AssemblyDetector] Dedup skip: {}/{}",
+                        sig["buyer_name_norm"],
+                        sig["village"],
+                    )
                     continue
 
                 alert = _format_assembly_alert(sig)
                 try:
-                    send("competitor-launches", f"Land Assembly — {sig['buyer_name_norm']}", alert)
+                    send(
+                        "competitor-launches",
+                        f"Land Assembly — {sig['buyer_name_norm']}",
+                        alert,
+                    )
                     conn.execute(
-                        text("UPDATE assembly_signals SET discord_alerted = true WHERE buyer_name_norm = :b AND village = :v"),
+                        text(
+                            "UPDATE assembly_signals SET discord_alerted = true WHERE buyer_name_norm = :b AND village = :v"
+                        ),
                         {"b": sig["buyer_name_norm"], "v": sig["village"]},
                     )
                 except Exception as exc:
                     logger.warning("[AssemblyDetector] Discord send failed: {}", exc)
 
-        logger.info("[AssemblyDetector] Scheduled run complete — {} assemblies alerted", len(signals))
+        logger.info(
+            "[AssemblyDetector] Scheduled run complete — {} assemblies alerted",
+            len(signals),
+        )
     except Exception as exc:
         logger.warning("[AssemblyDetector] Scheduled run failed: {}", exc)

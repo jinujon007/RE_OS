@@ -46,7 +46,9 @@ def _write_digest(results: list, digest_type: str, date_str: str | None = None) 
     if not date_str:
         date_str = datetime.now().strftime("%Y-%m-%d")
     if not os.path.isdir(OBSIDIAN_SYNC_PATH):
-        logger.info(f"[ObsidianExport] Sync path not mounted — skipping {digest_type} export")
+        logger.info(
+            f"[ObsidianExport] Sync path not mounted — skipping {digest_type} export"
+        )
         return ""
 
     tmpl = _DIGEST_TEMPLATES.get(digest_type)
@@ -57,7 +59,9 @@ def _write_digest(results: list, digest_type: str, date_str: str | None = None) 
     expected_type = tmpl["result_type"]
     for r in results:
         if not isinstance(r, expected_type):
-            logger.warning(f"[ObsidianExport] Expected {expected_type.__name__}, got {type(r).__name__} — skipping")
+            logger.warning(
+                f"[ObsidianExport] Expected {expected_type.__name__}, got {type(r).__name__} — skipping"
+            )
             return ""
 
     lines = [
@@ -82,17 +86,25 @@ def _write_digest(results: list, digest_type: str, date_str: str | None = None) 
             lines.append(f"**{label}:** {fn(r)}")
         if tmpl["list_launches"]:
             for c in r.competitor_launches[:5]:
-                lines.append(f"- {c['developer_name']} — {c['project_name']} (Grade {c['grade']}, {c['units']} units)")
+                lines.append(
+                    f"- {c['developer_name']} — {c['project_name']} (Grade {c['grade']}, {c['units']} units)"
+                )
         if tmpl["list_distressed"]:
             for d in r.distressed_developers[:5]:
-                lines.append(f"- {d['developer_name']} (score: {d['distress_score']:.2f})")
+                lines.append(
+                    f"- {d['developer_name']} (score: {d['distress_score']:.2f})"
+                )
         if tmpl["show_top_opp"] == "single":
             if r.top_opportunity:
                 t = r.top_opportunity
-                lines.append(f"**Top Opportunity:** {t['survey_no']} — composite score {t['composite_score']:.4f}")
+                lines.append(
+                    f"**Top Opportunity:** {t['survey_no']} — composite score {t['composite_score']:.4f}"
+                )
         elif tmpl["show_top_opp"] == "multiple":
             for o in r.top_opportunities[:3]:
-                lines.append(f"**Top Opp:** {o['survey_no']} — composite {o['composite_score']:.4f}")
+                lines.append(
+                    f"**Top Opp:** {o['survey_no']} — composite {o['composite_score']:.4f}"
+                )
         if tmpl["show_synthesis"]:
             if r.llm_synthesis:
                 lines.append(f"**Synthesis:** {r.llm_synthesis}")

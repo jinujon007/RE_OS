@@ -1,7 +1,9 @@
 """Tests for RERAExtractor — T-965."""
+
 import json
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 
@@ -36,6 +38,7 @@ SAMPLE_HTML_TABLE = """<table><tbody>
 
 def _extractor():
     from utils.rera_extractor import RERAExtractor
+
     ext = RERAExtractor()
     ext._model_available = False
     ext._model_last_check = 0
@@ -47,8 +50,14 @@ class TestRERAExtractorOutputSchema:
         ext = _extractor()
         result = ext.extract(SAMPLE_RERA_TEXT)
         expected_keys = {
-            "project_name", "developer_name", "survey_no", "units",
-            "launch_date", "completion_date", "status", "market",
+            "project_name",
+            "developer_name",
+            "survey_no",
+            "units",
+            "launch_date",
+            "completion_date",
+            "status",
+            "market",
         }
         assert set(result.keys()) == expected_keys
         assert result["project_name"] == "Green Valley Enclave"
@@ -85,20 +94,22 @@ class TestRERAExtractorOutputSchema:
 
     def test_rera_extractor_ollama_fallback_on_failure(self):
         ext = _extractor()
-        with patch.object(ext, '_extract_via_ollama', return_value=None):
+        with patch.object(ext, "_extract_via_ollama", return_value=None):
             result = ext.extract(SAMPLE_RERA_TEXT)
         assert result["project_name"] == "Green Valley Enclave"
         assert result["developer_name"] == "Brigade Group"
 
     def test_parse_json_from_text_handles_code_block(self):
         ext = _extractor()
-        text = "```json\n{\"project_name\": \"Test\"}\n```"
+        text = '```json\n{"project_name": "Test"}\n```'
         parsed = ext._parse_json_from_text(text)
         assert parsed == {"project_name": "Test"}
 
     def test_parse_json_from_text_handles_braces(self):
         ext = _extractor()
-        parsed = ext._parse_json_from_text('Some text {"project_name": "Brigade"} trailing')
+        parsed = ext._parse_json_from_text(
+            'Some text {"project_name": "Brigade"} trailing'
+        )
         assert parsed == {"project_name": "Brigade"}
 
 
@@ -178,8 +189,11 @@ class TestGenerateTrainingData:
         with patch("utils.db.get_engine") as mock_engine:
             mock_conn = MagicMock()
             mock_conn.execute.return_value.fetchall.return_value = mock_rows
-            mock_engine.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_engine.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             from scripts.generate_rera_training_data import generate_training_data
+
             records = generate_training_data("Yelahanka")
             assert len(records) == 200
             assert records[0]["project_name"] == "Project 0"
@@ -189,13 +203,17 @@ class TestGenerateTrainingData:
         with patch("utils.db.get_engine") as mock_engine:
             mock_conn = MagicMock()
             mock_conn.execute.return_value.fetchall.return_value = []
-            mock_engine.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_engine.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             from scripts.generate_rera_training_data import generate_training_data
+
             records = generate_training_data("Yelahanka")
             assert records == []
 
     def test_training_data_build_raw_text_format(self):
         from scripts.generate_rera_training_data import _build_raw_text
+
         rec = {
             "project_name": "Test",
             "developer_name": "Dev",
@@ -215,6 +233,7 @@ class TestGenerateTrainingData:
 
     def test_training_data_build_output_format(self):
         from scripts.generate_rera_training_data import _build_output
+
         rec = {
             "project_name": "Test",
             "developer_name": "Dev",
@@ -253,8 +272,15 @@ class TestGenerateTrainingData:
         with patch("utils.db.get_engine") as mock_engine:
             mock_conn = MagicMock()
             mock_conn.execute.return_value.fetchall.return_value = mock_rows
-            mock_engine.return_value.connect.return_value.__enter__.return_value = mock_conn
-            from scripts.generate_rera_training_data import generate_training_data, _build_raw_text, _build_output
+            mock_engine.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
+            from scripts.generate_rera_training_data import (
+                generate_training_data,
+                _build_raw_text,
+                _build_output,
+            )
+
             records = generate_training_data("Yelahanka")
             assert len(records) == 1
             rec = records[0]

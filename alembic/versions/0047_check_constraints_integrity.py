@@ -9,6 +9,7 @@ Pre-cleans existing garbage before adding constraints.
 Migration chain:
     0046_fk_on_delete_set_null -> 0047_check_constraints_integrity
 """
+
 from typing import Union
 
 from alembic import op
@@ -47,5 +48,9 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_constraint("ck_kaveri_reg_no_nonempty", "kaveri_registrations", type_="check")
-    op.drop_constraint("ck_guidance_values_psf_positive", "guidance_values", type_="check")
+    op.drop_constraint(
+        "ck_kaveri_reg_no_nonempty", "kaveri_registrations", type_="check"
+    )
+    op.drop_constraint(
+        "ck_guidance_values_psf_positive", "guidance_values", type_="check"
+    )

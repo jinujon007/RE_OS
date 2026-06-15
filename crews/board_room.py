@@ -39,7 +39,7 @@ _SQFT_RE = re.compile(
     r"(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:sq\s*\.?\s*ft|sqft|square\s*feet|sft)",
     re.I,
 )
-_PSF_RE  = re.compile(
+_PSF_RE = re.compile(
     # Alternative 1: prefix (psf/per sq ft/Rs/₹) before number
     r"(?:(?:psf|per\s+sq\.?\s*ft|Rs\.?\s*|[\u20B9])\s*(\d+(?:,\d{3})*(?:\.\d+)?)|"
     # Alternative 2: number before "psf" suffix
@@ -54,7 +54,9 @@ _DEFAULT_NEG_DISCOUNT_PCT: float = 10.0
 _DEFAULT_FSI_EFFICIENCY: float = 0.65
 _DEFAULT_FSI_VALUE: float = 2.5
 _DEFAULT_PSF_BY_MARKET: dict = {
-    "Yelahanka": 6500, "Devanahalli": 5500, "Hebbal": 7500,
+    "Yelahanka": 6500,
+    "Devanahalli": 5500,
+    "Hebbal": 7500,
 }
 
 
@@ -67,11 +69,15 @@ def _parse_psf(match: re.Match) -> float:
 def _pitch_mentions_land(pitch: str) -> bool:
     """Return True if pitch mentions land/development/acquisition keywords.
     Used to skip expensive DB lookups when pitch is unrelated."""
-    return bool(re.search(
-        r"\b(land|site|acre|acres|sq\.?\s*ft|sqft|development|"
-        r"project|acquisition|purchase|buy|invest|enter|entry|"
-        r"plot|parcel|survey)\b", pitch, re.I
-    ))
+    return bool(
+        re.search(
+            r"\b(land|site|acre|acres|sq\.?\s*ft|sqft|development|"
+            r"project|acquisition|purchase|buy|invest|enter|entry|"
+            r"plot|parcel|survey)\b",
+            pitch,
+            re.I,
+        )
+    )
 
 
 def _query_market_supply(market: str) -> tuple[str, str]:
@@ -83,10 +89,15 @@ def _query_market_supply(market: str) -> tuple[str, str]:
     try:
         from utils.db import get_engine as _ge, db_query_duration_seconds
         from sqlalchemy import text as _st
+
         with _ge().connect() as _c:
-            with db_query_duration_seconds.labels(query_name="v_market_brief_mat").time():
+            with db_query_duration_seconds.labels(
+                query_name="v_market_brief_mat"
+            ).time():
                 row = _c.execute(
-                    _st("SELECT months_of_supply, supply_label FROM v_market_brief_mat WHERE micro_market ILIKE :m LIMIT 1"),
+                    _st(
+                        "SELECT months_of_supply, supply_label FROM v_market_brief_mat WHERE micro_market ILIKE :m LIMIT 1"
+                    ),
                     {"m": f"%{market}%"},
                 ).fetchone()
             if row:
@@ -116,12 +127,13 @@ def _extract_pitch_params(pitch: str) -> dict:
 
 # ── Data contract ─────────────────────────────────────────────────────────────
 
+
 @dataclass
 class BoardSession:
     session_id: str
     pitch: str
     market: Optional[str] = None
-    status: str = "pending"          # pending | active | complete | failed
+    status: str = "pending"  # pending | active | complete | failed
     ceo_decomposition: Optional[str] = None
     bd_response: Optional[str] = None
     engineering_response: Optional[str] = None
@@ -145,10 +157,15 @@ def _ceo_decompose(pitch: str, market: str, _session_excluded: set) -> Optional[
         try:
             from utils.db import get_engine as _mos_ge, db_query_duration_seconds
             from sqlalchemy import text as _mos_st
+
             with _mos_ge().connect() as _mos_c:
-                with db_query_duration_seconds.labels(query_name="v_market_brief_mat").time():
+                with db_query_duration_seconds.labels(
+                    query_name="v_market_brief_mat"
+                ).time():
                     _mos_row = _mos_c.execute(
-                        _mos_st("SELECT months_of_supply, supply_label FROM v_market_brief_mat WHERE micro_market ILIKE :m LIMIT 1"),
+                        _mos_st(
+                            "SELECT months_of_supply, supply_label FROM v_market_brief_mat WHERE micro_market ILIKE :m LIMIT 1"
+                        ),
                         {"m": f"%{market}%"},
                     ).fetchone()
                 if _mos_row and _mos_row[0] is not None:
@@ -175,14 +192,18 @@ def _ceo_decompose(pitch: str, market: str, _session_excluded: set) -> Optional[
         # Try to parse the JSON
         decomposed = json.loads(response)
         # Validate that we have the five keys and they are strings
-        if isinstance(decomposed, dict) and all(k in decomposed for k in ("bd", "finance", "engineering", "ops", "legal")):
+        if isinstance(decomposed, dict) and all(
+            k in decomposed for k in ("bd", "finance", "engineering", "ops", "legal")
+        ):
             # Ensure each value is a string (or convert to string)
             for key in ("bd", "finance", "engineering", "ops", "legal"):
                 if not isinstance(decomposed[key], str):
                     decomposed[key] = str(decomposed[key])
             return decomposed
         else:
-            logger.warning(f"board_room: CEO decomposition returned invalid structure: {decomposed}")
+            logger.warning(
+                f"board_room: CEO decomposition returned invalid structure: {decomposed}"
+            )
             return None
     except Exception as exc:
         logger.warning(f"board_room: CEO decomposition failed: {exc}")
@@ -328,6 +349,7 @@ _DEPT_RESPONSE_TIMES: dict[str, list[float]] = {
 def _dept_response_times() -> dict:
     """Return median response time per dept for health monitoring."""
     import statistics
+
     result = {}
     for dept, times in _DEPT_RESPONSE_TIMES.items():
         if times:
@@ -338,8 +360,12 @@ def _dept_response_times() -> dict:
     return result
 
 
-def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = None,
-                    _session_excluded: set = None) -> dict:
+def _run_dept_heads(
+    pitch: str,
+    market: str,
+    decomposition: Optional[dict] = None,
+    _session_excluded: set = None,
+) -> dict:
     """Run five department-head agents (BD, Finance, Engineering, Ops, Legal) concurrently.
     Returns a dict with keys 'bd', 'finance', 'engineering', 'ops', 'legal'.
     Enforces a 90-second timeout guard.
@@ -347,7 +373,11 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
     _session_excluded: per-session exclusion set — never mutates global _EXCLUDED.
     """
     from crewai import Task, Crew, Process
-    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
+    from concurrent.futures import (
+        ThreadPoolExecutor,
+        as_completed,
+        TimeoutError as FuturesTimeoutError,
+    )
 
     _excl = _session_excluded if _session_excluded is not None else set()
 
@@ -368,7 +398,9 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                     scanner = DistressedDeveloperScanner()
                     top = scanner.top_n(market_safe, n=3, min_score=0.3)
                     if top:
-                        lines = [f"\n\n[DISTRESSED DEVELOPERS in {market_safe} — JD/JV targets]"]
+                        lines = [
+                            f"\n\n[DISTRESSED DEVELOPERS in {market_safe} — JD/JV targets]"
+                        ]
                         for i, d in enumerate(top, 1):
                             lines.append(
                                 f"  {i}. {d.developer_name} — score {d.distress_score:.2f} "
@@ -376,12 +408,20 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                                 f"{d.complaint_count} complaints"
                             )
                         bd_context = "\n".join(lines) + "\n"
-                        logger.info("[board_room] BD context: {} distressed dev(s) in {}",
-                                    len(top), market_safe)
+                        logger.info(
+                            "[board_room] BD context: {} distressed dev(s) in {}",
+                            len(top),
+                            market_safe,
+                        )
                     else:
-                        logger.debug("[board_room] No distressed developers found in {}", market_safe)
+                        logger.debug(
+                            "[board_room] No distressed developers found in {}",
+                            market_safe,
+                        )
                 except Exception:
-                    logger.debug("[board_room] Distressed dev lookup failed for {}", market_safe)
+                    logger.debug(
+                        "[board_room] Distressed dev lookup failed for {}", market_safe
+                    )
 
             # Infrastructure score (T-718) — only for land-related pitches (expensive: DB + OSM)
             if market_safe and _pitch_mentions_land(pitch):
@@ -389,21 +429,26 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                     from utils.infrastructure_scorer import InfrastructureScorer
                     from utils.db import get_engine as _infra_ge
                     from sqlalchemy import text as _infra_st
+
                     with _infra_ge().connect() as _infra_c:
                         _centroid = _infra_c.execute(
-                            _infra_st("SELECT ST_X(centroid::geometry), ST_Y(centroid::geometry) FROM micro_markets WHERE name ILIKE :m LIMIT 1"),
+                            _infra_st(
+                                "SELECT ST_X(centroid::geometry), ST_Y(centroid::geometry) FROM micro_markets WHERE name ILIKE :m LIMIT 1"
+                            ),
                             {"m": f"%{market_safe}%"},
                         ).fetchone()
                     if _centroid:
                         _lng, _lat = float(_centroid[0]), float(_centroid[1])
                         _scorer = InfrastructureScorer()
                         _infra_r = _scorer.score(_lat, _lng, market_safe)
-                        logger.info("[board_room] Infrastructure score for {}: metro={}m NH44={}m BIAL={}km walk={}/10",
-                                     market_safe,
-                                     _infra_r.dist_to_nearest_metro_m or "N/A",
-                                     _infra_r.dist_to_nh44_m or "N/A",
-                                     _infra_r.dist_to_bial_km or "N/A",
-                                     _infra_r.walkability_score or "N/A")
+                        logger.info(
+                            "[board_room] Infrastructure score for {}: metro={}m NH44={}m BIAL={}km walk={}/10",
+                            market_safe,
+                            _infra_r.dist_to_nearest_metro_m or "N/A",
+                            _infra_r.dist_to_nh44_m or "N/A",
+                            _infra_r.dist_to_bial_km or "N/A",
+                            _infra_r.walkability_score or "N/A",
+                        )
                         bd_context += (
                             f"\n[INFRASTRUCTURE — {market_safe}] "
                             f"Metro: {_infra_r.dist_to_nearest_metro_m or 'N/A'}m | "
@@ -413,7 +458,9 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                             f"Walkability: {_infra_r.walkability_score or 'N/A'}/10\n"
                         )
                 except Exception:
-                    logger.debug("[board_room] Infrastructure score failed for %s", market_safe)
+                    logger.debug(
+                        "[board_room] Infrastructure score failed for %s", market_safe
+                    )
 
             # months_of_supply signal for BD (T-485)
             if market_safe:
@@ -430,14 +477,18 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
             params = _extract_pitch_params(pitch)
             if params["area_sqft"] is not None:
                 sqft = params["area_sqft"]
-                psf_val = params["psf"] if params["psf"] is not None else _DEFAULT_PSF_BY_MARKET.get(market, 6500)
+                psf_val = (
+                    params["psf"]
+                    if params["psf"] is not None
+                    else _DEFAULT_PSF_BY_MARKET.get(market, 6500)
+                )
                 fsi_r = calculate_fsi(sqft, zone="R2", market=market)
                 mix_r = recommend_unit_mix(psf_val)
                 gc_r = calculate_green_coverage(sqft, fsi_r.plot_coverage)
                 area_label = (
                     f"{params['acreage']} acres / {sqft:,.0f} sqft"
                     if params["acreage"]
-                    else f"{sqft:,.0f} sqft / {sqft/_ACRE_TO_SQFT:.2f} acres"
+                    else f"{sqft:,.0f} sqft / {sqft / _ACRE_TO_SQFT:.2f} acres"
                 )
                 dept_question = (
                     f"\n\n[AUTO FSI CALC — {area_label}, Zone R2, ₹{psf_val:,.0f} PSF]\n"
@@ -454,6 +505,7 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
             if market_safe:
                 try:
                     from utils.psf_forecaster import PSFForecaster
+
                     fc = PSFForecaster()
                     f_result = fc.forecast(market_safe)
                     if f_result.status == "ok":
@@ -471,15 +523,22 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                             "— use current market PSF as static estimate.\n"
                         )
                 except Exception as exc:
-                    logger.debug("[board_room] PSF forecast lookup failed for %s: %s", market_safe, exc)
+                    logger.debug(
+                        "[board_room] PSF forecast lookup failed for %s: %s",
+                        market_safe,
+                        exc,
+                    )
 
             # Registered-vs-ask spread injection (T-1138)
             try:
                 from utils.psf_truth import compute_psf_spread
+
                 spread_result = compute_psf_spread(market_safe, window_days=180)
                 irr_context += "\n\n" + spread_result.one_line_summary() + "\n"
             except Exception as exc:
-                logger.debug("[board_room] PSF spread lookup failed for %s: %s", market_safe, exc)
+                logger.debug(
+                    "[board_room] PSF spread lookup failed for %s: %s", market_safe, exc
+                )
 
             params = _extract_pitch_params(pitch)
             if params["area_sqft"] is not None and params["psf"] is not None:
@@ -496,22 +555,39 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                         try:
                             est = GDVEstimator()
                             gdv_r = est.estimate(sellable, market_safe)
-                            if gdv_r.igr_source and gdv_r.igr_record_count >= GDVEstimator.MIN_IGR_RECORDS:
+                            if (
+                                gdv_r.igr_source
+                                and gdv_r.igr_record_count
+                                >= GDVEstimator.MIN_IGR_RECORDS
+                            ):
                                 sell_psf = gdv_r.sell_psf
                                 igr_psf_used = True
                                 igr_source = gdv_r.igr_source
                                 igr_count = gdv_r.igr_record_count
-                                log_igr_lookup(market_safe, igr_source, igr_count, gdv_r.sell_psf,
-                                               "BoardRoomFinance")
+                                log_igr_lookup(
+                                    market_safe,
+                                    igr_source,
+                                    igr_count,
+                                    gdv_r.sell_psf,
+                                    "BoardRoomFinance",
+                                )
                         except Exception:
-                            logger.debug("[board_room] IGR PSF lookup failed, using pitch PSF")
+                            logger.debug(
+                                "[board_room] IGR PSF lookup failed, using pitch PSF"
+                            )
 
-                    land_cost = sqft * _DEFAULT_GUIDANCE_PSF * (1 - _DEFAULT_NEG_DISCOUNT_PCT / 100)
+                    land_cost = (
+                        sqft
+                        * _DEFAULT_GUIDANCE_PSF
+                        * (1 - _DEFAULT_NEG_DISCOUNT_PCT / 100)
+                    )
                     scenarios = compare_scenarios(land_cost, sellable, sell_psf)
 
                     psf_source_note = ""
                     if igr_psf_used:
-                        psf_source_note = f" (IGR transaction PSF — {igr_count} records)"
+                        psf_source_note = (
+                            f" (IGR transaction PSF — {igr_count} records)"
+                        )
                     elif not market_safe:
                         psf_source_note = " (listing PSF — no market for IGR lookup)"
 
@@ -527,13 +603,17 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                         f"Bear: {worst_irr:.1f}% ({scenarios.bear.verdict})\n"
                         f"Risk bands: best {best_irr:.1f}% / base {base_irr:.1f}% / worst {worst_irr:.1f}%"
                         f", max drawdown {drawdown:.1f}%, Sharpe {sharpe:.2f}\n"
-                        f"Land cost est.: ₹{scenarios.base.land_cost/1e7:.1f}Cr | "
-                        f"GDV est.: ₹{scenarios.base.gdv/1e7:.1f}Cr\n"
+                        f"Land cost est.: ₹{scenarios.base.land_cost / 1e7:.1f}Cr | "
+                        f"GDV est.: ₹{scenarios.base.gdv / 1e7:.1f}Cr\n"
                         f"Recommendation: {scenarios.recommendation}\n"
                     )
                 except Exception as exc:
-                    logger.warning("[board_room] finance auto-IRR calc failed for market=%s pitch=%s: %s",
-                                   market, pitch[:80], exc)
+                    logger.warning(
+                        "[board_room] finance auto-IRR calc failed for market=%s pitch=%s: %s",
+                        market,
+                        pitch[:80],
+                        exc,
+                    )
                     irr_context = (
                         f"\n\n[AUTO IRR CALC — {sqft:,.0f} sqft site, ₹{sell_psf:,.0f} PSF]\n"
                         f"[IRR computation failed — {exc}]. Finance assessment will be based on LLM reasoning alone."
@@ -547,7 +627,7 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                     irr_context += (
                         f"\n[INVENTORY SIGNAL — {market_safe}] "
                         f"Inventory signal: {mos_val} months ({mos_label}) — "
-                        f"{'buyer' if mos_label == 'UNDERSUPPLY' else 'seller' if mos_label == 'OVERSUPPLY' else 'balanced'}" 
+                        f"{'buyer' if mos_label == 'UNDERSUPPLY' else 'seller' if mos_label == 'OVERSUPPLY' else 'balanced'}"
                         f" market conditions\n"
                     )
 
@@ -556,6 +636,7 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
             try:
                 from utils.db import get_engine as _gv_engine
                 from sqlalchemy import text as _gv_text
+
                 if market_safe:
                     with _gv_engine().connect() as _gv_c:
                         _gv_row = _gv_c.execute(
@@ -577,6 +658,7 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                         conf = _gv_row[2] or 0.0
                         psf = _gv_row[3] or 0.0
                         from datetime import date as _gv_date
+
                         cy = _gv_date.today().year
                         months_old = (cy - gy) * 12 if gy else 0
                         gv_source_context = (
@@ -593,10 +675,15 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                             )
                         logger.info(
                             "[board_room] GV context injected for {}: source={}, year={}, months_old={}",
-                            market, ds, gy, months_old,
+                            market,
+                            ds,
+                            gy,
+                            months_old,
                         )
             except Exception as _gv_exc:
-                logger.debug("[board_room] GV source lookup failed for {}: {}", market, _gv_exc)
+                logger.debug(
+                    "[board_room] GV source lookup failed for {}: {}", market, _gv_exc
+                )
 
             dept_question = gv_source_context + irr_context + dept_question
 
@@ -606,6 +693,7 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                 from utils.rera_compliance_checker import check_developer_compliance
                 from utils.zone_risk_checker import check_zone_risk
                 from utils.kaveri_encumbrance import check_encumbrance
+
                 params = _extract_pitch_params(pitch)
 
                 # Detect developer — DB primary, regex fallback
@@ -613,15 +701,24 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                 try:
                     from utils.db import get_engine as _get_engine
                     from sqlalchemy import text as _sa_text
-                    first_word = (pitch.split()[0] if pitch.split() else "").rstrip(",:;.!?")
+
+                    first_word = (pitch.split()[0] if pitch.split() else "").rstrip(
+                        ",:;.!?"
+                    )
                     with _get_engine().connect() as _conn:
                         _row = _conn.execute(
-                            _sa_text("SELECT name FROM developers WHERE name ILIKE :name LIMIT 1"),
+                            _sa_text(
+                                "SELECT name FROM developers WHERE name ILIKE :name LIMIT 1"
+                            ),
                             {"name": f"%{first_word}%"},
                         ).fetchone()
                         if _row:
-                            dev_match = type("_RegexStub", (), {"group": lambda s, _: _row[0]})()
-                            logger.info("[board_room] developer detected via DB: %s", _row[0])
+                            dev_match = type(
+                                "_RegexStub", (), {"group": lambda s, _: _row[0]}
+                            )()
+                            logger.info(
+                                "[board_room] developer detected via DB: %s", _row[0]
+                            )
                 except Exception as _db_exc:
                     logger.debug("[board_room] developer DB lookup failed: {}", _db_exc)
                 if not dev_match:
@@ -629,7 +726,8 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                         r"\b(Brigade|Prestige|Sobha|Godrej|Adarsh|Salarpuria"
                         r"|Shriram|Mantri|Puravankara|Total Environment"
                         r"|Embassy|Concorde|Assetz)\b",
-                        pitch, re.I
+                        pitch,
+                        re.I,
                     )
 
                 # Detect zone from pitch text
@@ -666,27 +764,36 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
                             f"Avg GV: ₹{enc_r.avg_guidance_value_psf:,.0f}/sqft"
                         )
                     if enc_r.avg_transaction_psf:
-                        enc_txt += (
-                            f" | Avg Txn PSF: ₹{enc_r.avg_transaction_psf:,.0f}"
-                        )
+                        enc_txt += f" | Avg Txn PSF: ₹{enc_r.avg_transaction_psf:,.0f}"
                     if enc_r.guidance_gap_pct is not None:
                         enc_txt += f" | Gap: {enc_r.guidance_gap_pct:+.1f}%"
                     if enc_r.risk_flags:
-                        enc_txt += f"\n⚠ Encumbrance flags: {'; '.join(enc_r.risk_flags)}"
+                        enc_txt += (
+                            f"\n⚠ Encumbrance flags: {'; '.join(enc_r.risk_flags)}"
+                        )
                 except Exception as enc_exc:
-                    logger.warning("[board_room] encumbrance auto-context failed: %s", enc_exc)
+                    logger.warning(
+                        "[board_room] encumbrance auto-context failed: %s", enc_exc
+                    )
 
                 legal_context = f"\n\n[AUTO LEGAL CONTEXT — {market} | Zone {detected_zone}]\n{zone_txt}{dev_txt}{enc_txt}\n"
             except ImportError as imp_exc:
-                logger.error("[board_room] legal module import failed — check dependencies: %s", imp_exc)
+                logger.error(
+                    "[board_room] legal module import failed — check dependencies: %s",
+                    imp_exc,
+                )
             except Exception as exc:
                 logger.warning("[board_room] legal auto-context failed: %s", exc)
             dept_question = legal_context + dept_question
 
         template = _DEPT_TASK_TEMPLATES.get(key)
-        task_description = template.format(market=market, dept_question=dept_question) if template else (
-            f"Market: {market}\nSub-question: {dept_question}\n\n"
-            "Provide a structured one-page assessment with a clear verdict."
+        task_description = (
+            template.format(market=market, dept_question=dept_question)
+            if template
+            else (
+                f"Market: {market}\nSub-question: {dept_question}\n\n"
+                "Provide a structured one-page assessment with a clear verdict."
+            )
         )
 
         task = Task(
@@ -697,7 +804,9 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
             ),
             agent=agent,
         )
-        crew = Crew(agents=[agent], tasks=[task], process=Process.sequential, verbose=False)
+        crew = Crew(
+            agents=[agent], tasks=[task], process=Process.sequential, verbose=False
+        )
         result = crew.kickoff()
         _elapsed = time.time() - _start_s
         _DEPT_RESPONSE_TIMES[key].append(_elapsed)
@@ -714,14 +823,19 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
     }
     responses: dict = {}
     with ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_key = {executor.submit(run_single_agent, fn, key): key for key, fn in builders.items()}
+        future_to_key = {
+            executor.submit(run_single_agent, fn, key): key
+            for key, fn in builders.items()
+        }
         try:
             for future in as_completed(future_to_key, timeout=90):
                 key = future_to_key[future]
                 try:
                     responses[key] = future.result()
                 except Exception as exc:
-                    responses[key] = f"[{key.upper()} HEAD] Error processing request — check logs for details."
+                    responses[key] = (
+                        f"[{key.upper()} HEAD] Error processing request — check logs for details."
+                    )
                     logger.warning(f"board_room: dept-head '{key}' raised: {exc}")
         except FuturesTimeoutError:
             for f in future_to_key:
@@ -729,12 +843,19 @@ def _run_dept_heads(pitch: str, market: str, decomposition: Optional[dict] = Non
             logger.warning("board_room: dept-head timeout — partial responses returned")
     return responses
 
+
 def _to_uuid(s: str):
     from uuid import UUID
+
     return UUID(s)
 
 
-def _create_session_row(session_id: str, pitch: str, market: Optional[str], response_time_s: Optional[float] = None) -> bool:
+def _create_session_row(
+    session_id: str,
+    pitch: str,
+    market: Optional[str],
+    response_time_s: Optional[float] = None,
+) -> bool:
     """Insert a pending session row into board_sessions. Non-fatal on failure.
 
     Schema: pitch_text, individual dept columns, no JSONB transcript.
@@ -778,7 +899,9 @@ def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
         "ceo_decomposition": transcript.get("ceo_decomposition"),
         "error": transcript.get("error"),
     }
-    ceo_synthesis = json.dumps(ceo_extra, default=str) if any(ceo_extra.values()) else None
+    ceo_synthesis = (
+        json.dumps(ceo_extra, default=str) if any(ceo_extra.values()) else None
+    )
     try:
         with get_engine().begin() as conn:
             conn.execute(
@@ -812,14 +935,25 @@ def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
         if is_terminal:
             try:
                 from config.metrics import board_session_duration_seconds
-                market_val = conn.execute(
-                    text("SELECT market FROM board_sessions WHERE session_id = :sid"),
-                    {"sid": _to_uuid(session_id)},
-                ).scalar() or "unknown"
-                duration = conn.execute(
-                    text("SELECT EXTRACT(EPOCH FROM (NOW() - created_at)) FROM board_sessions WHERE session_id = :sid"),
-                    {"sid": _to_uuid(session_id)},
-                ).scalar() or 0
+
+                market_val = (
+                    conn.execute(
+                        text(
+                            "SELECT market FROM board_sessions WHERE session_id = :sid"
+                        ),
+                        {"sid": _to_uuid(session_id)},
+                    ).scalar()
+                    or "unknown"
+                )
+                duration = (
+                    conn.execute(
+                        text(
+                            "SELECT EXTRACT(EPOCH FROM (NOW() - created_at)) FROM board_sessions WHERE session_id = :sid"
+                        ),
+                        {"sid": _to_uuid(session_id)},
+                    ).scalar()
+                    or 0
+                )
                 board_session_duration_seconds.labels(
                     market=market_val, status=status
                 ).observe(float(duration))
@@ -833,6 +967,7 @@ def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+
 def _extract_actions(dept_responses: dict, pitch: str, market: str) -> list:
     """Extract concrete actions from department responses using Cerebras 8b (LIGHT tier).
     Returns a list of action dicts or empty list on failure.
@@ -845,7 +980,7 @@ def _extract_actions(dept_responses: dict, pitch: str, market: str) -> list:
 
         prompt = (
             "Extract 3-5 concrete actions from these board department responses. "
-            "Return ONLY a JSON array, each item: {\"action\": \"...\", \"owner\": \"bd|finance|engineering|ops|legal\", \"priority\": \"high|medium|low\", \"timeline\": \"...\"}. "
+            'Return ONLY a JSON array, each item: {"action": "...", "owner": "bd|finance|engineering|ops|legal", "priority": "high|medium|low", "timeline": "..."}. '
             "If insufficient information, return [].\n\n"
             f"Market: {market}\nPitch: {pitch}\n"
             f"BD: {dept_responses.get('bd', '')[:500]}\n"
@@ -873,8 +1008,10 @@ def _extract_actions(dept_responses: dict, pitch: str, market: str) -> list:
         except Exception as exc:
             err_str = str(exc)
             if "rate" in err_str.lower() or "traffic" in err_str.lower():
-                time.sleep(2 ** attempt * 2)
-                logger.warning(f"board_room: action extraction attempt {attempt+1} rate limited, retrying...")
+                time.sleep(2**attempt * 2)
+                logger.warning(
+                    f"board_room: action extraction attempt {attempt + 1} rate limited, retrying..."
+                )
                 continue
             logger.warning(f"board_room: action extraction LLM failed: {exc}")
             break
@@ -885,7 +1022,7 @@ def _extract_actions(dept_responses: dict, pitch: str, market: str) -> list:
             raw = raw[bracket:]
         close = raw.rfind("]")
         if close > 0:
-            raw = raw[:close+1]
+            raw = raw[: close + 1]
         try:
             actions = json.loads(raw)
             if isinstance(actions, list):
@@ -893,12 +1030,14 @@ def _extract_actions(dept_responses: dict, pitch: str, market: str) -> list:
                 for item in actions:
                     if not isinstance(item, dict):
                         continue
-                    cleaned.append({
-                        "owner": str(item.get("owner") or ""),
-                        "action": str(item.get("action") or ""),
-                        "priority": str(item.get("priority") or "medium"),
-                        "timeline": str(item.get("timeline") or "TBD"),
-                    })
+                    cleaned.append(
+                        {
+                            "owner": str(item.get("owner") or ""),
+                            "action": str(item.get("action") or ""),
+                            "priority": str(item.get("priority") or "medium"),
+                            "timeline": str(item.get("timeline") or "TBD"),
+                        }
+                    )
                 if cleaned:
                     return cleaned
         except Exception:
@@ -913,22 +1052,45 @@ def _fallback_actions(dept_responses: dict) -> list:
     dept_patterns = {
         "bd": ["recommend", "price", "entry", "land", "go", "target", "focus"],
         "finance": ["irr", "break-even", "margin", "debt", "equity", "funding", "cost"],
-        "engineering": ["far", "bda", "bbmp", "rera", "approval", "zoning", "construction", "design"],
+        "engineering": [
+            "far",
+            "bda",
+            "bbmp",
+            "rera",
+            "approval",
+            "zoning",
+            "construction",
+            "design",
+        ],
         "ops": ["launch", "channel", "sales", "partner", "digital", "kpi", "velocity"],
-        "legal": ["title", "encumbrance", "registration", "conversion", "clearance", "compliance"],
+        "legal": [
+            "title",
+            "encumbrance",
+            "registration",
+            "conversion",
+            "clearance",
+            "compliance",
+        ],
     }
     for dept, keywords in dept_patterns.items():
         text = (dept_responses.get(dept) or "")[:3000].lower()
         matched = [kw for kw in keywords if kw in text]
         if matched:
-            priority = "high" if any(kw in text for kw in ["risk", "critical", "urgent", "blocker"]) else "medium"
-            actions.append({
-                "owner": dept,
-                "action": f"Review {dept.upper()} findings on {matched[0].replace('-', ' ')} — see response for {', '.join(matched[1:3])}",
-                "priority": priority,
-                "timeline": "TBD",
-            })
+            priority = (
+                "high"
+                if any(kw in text for kw in ["risk", "critical", "urgent", "blocker"])
+                else "medium"
+            )
+            actions.append(
+                {
+                    "owner": dept,
+                    "action": f"Review {dept.upper()} findings on {matched[0].replace('-', ' ')} — see response for {', '.join(matched[1:3])}",
+                    "priority": priority,
+                    "timeline": "TBD",
+                }
+            )
     return actions[:5]
+
 
 def _run_board_session_bg(session_id: str, pitch: str, market: str) -> None:
     """Background worker: run dept heads, extract actions, update session row to complete or failed.
@@ -937,50 +1099,75 @@ def _run_board_session_bg(session_id: str, pitch: str, market: str) -> None:
     try:
         _update_session_row(session_id, "active", {"status": "active", "responses": {}})
         decomposition = _ceo_decompose(pitch, market, _session_excluded)
-        dept_responses = _run_dept_heads(pitch, market, decomposition, _session_excluded)
+        dept_responses = _run_dept_heads(
+            pitch, market, decomposition, _session_excluded
+        )
 
         # Board Room coherence self-evaluation (T-453)
         try:
             evaluator = BoardRoomEvaluator()
-            flagged = evaluator.flag_low_coherence(decomposition or {}, dept_responses, threshold=0.35)
+            flagged = evaluator.flag_low_coherence(
+                decomposition or {}, dept_responses, threshold=0.35
+            )
             if flagged:
                 for dept_key in flagged:
-                    warning = "\n\n⚠ [AUTO-FLAG: response coherence low — verify manually]"
+                    warning = (
+                        "\n\n⚠ [AUTO-FLAG: response coherence low — verify manually]"
+                    )
                     if dept_key in dept_responses:
                         dept_responses[dept_key] = dept_responses[dept_key] + warning
                 # Log flagged depts to agent_runs
                 try:
                     with get_engine().begin() as conn:
-                        conn.execute(text("""
+                        conn.execute(
+                            text("""
                             INSERT INTO agent_runs
                                 (agent_name, task_type, micro_market, status, metadata, started_at, completed_at)
                             VALUES
                                 ('board_coherence_flag', 'board_coherence_flag', :market, 'completed',
                                  CAST(:metadata AS jsonb), NOW(), NOW())
-                        """), {
-                            "market": market,
-                            "metadata": json.dumps({
-                                "session_id": session_id,
-                                "flagged_depts": flagged,
+                        """),
+                            {
                                 "market": market,
-                            }),
-                        })
+                                "metadata": json.dumps(
+                                    {
+                                        "session_id": session_id,
+                                        "flagged_depts": flagged,
+                                        "market": market,
+                                    }
+                                ),
+                            },
+                        )
                 except Exception as log_exc:
-                    logger.debug(f"[board_room] Failed to log coherence flags: {log_exc}")
+                    logger.debug(
+                        f"[board_room] Failed to log coherence flags: {log_exc}"
+                    )
         except Exception as eval_exc:
-            logger.debug(f"[board_room] Coherence evaluation failed (non-blocking): {eval_exc}")
+            logger.debug(
+                f"[board_room] Coherence evaluation failed (non-blocking): {eval_exc}"
+            )
 
         actions = _extract_actions(dept_responses, pitch, market)
-        transcript = {"status": "complete", "responses": dept_responses, "actions": actions}
+        transcript = {
+            "status": "complete",
+            "responses": dept_responses,
+            "actions": actions,
+        }
         if decomposition is not None:
             transcript["ceo_decomposition"] = decomposition
         _update_session_row(session_id, "complete", transcript)
     except (ImportError, KeyError, AttributeError, TypeError) as exc:
         logger.error(f"board_room bg worker PERMANENT FAILURE for {session_id}: {exc}")
-        _update_session_row(session_id, "failed", {"status": "failed", "error": f"[PERMANENT] {exc}"})
+        _update_session_row(
+            session_id, "failed", {"status": "failed", "error": f"[PERMANENT] {exc}"}
+        )
     except Exception as exc:
-        logger.warning(f"board_room bg worker transient failure for {session_id}: {exc}")
-        _update_session_row(session_id, "failed", {"status": "failed", "error": f"[TRANSIENT] {exc}"})
+        logger.warning(
+            f"board_room bg worker transient failure for {session_id}: {exc}"
+        )
+        _update_session_row(
+            session_id, "failed", {"status": "failed", "error": f"[TRANSIENT] {exc}"}
+        )
 
 
 def run_board_session(pitch: str, market: str) -> dict:
@@ -1021,8 +1208,9 @@ def get_board_session(session_id: str) -> Optional[dict]:
     """
     try:
         with get_engine().connect() as conn:
-            row = conn.execute(
-                text("""
+            row = (
+                conn.execute(
+                    text("""
                 SELECT session_id, pitch_text, market, status,
                        bd_response, finance_response, engineering_response,
                        ops_response, legal_response, ceo_synthesis,
@@ -1030,8 +1218,11 @@ def get_board_session(session_id: str) -> Optional[dict]:
                 FROM board_sessions
                 WHERE session_id = :session_id
                 """),
-                {"session_id": _to_uuid(session_id)},
-            ).mappings().fetchone()
+                    {"session_id": _to_uuid(session_id)},
+                )
+                .mappings()
+                .fetchone()
+            )
             if row is None:
                 return None
 
@@ -1046,7 +1237,11 @@ def get_board_session(session_id: str) -> Optional[dict]:
             ceo_extra = {}
             if row["ceo_synthesis"]:
                 try:
-                    ceo_extra = json.loads(row["ceo_synthesis"]) if isinstance(row["ceo_synthesis"], str) else dict(row["ceo_synthesis"])
+                    ceo_extra = (
+                        json.loads(row["ceo_synthesis"])
+                        if isinstance(row["ceo_synthesis"], str)
+                        else dict(row["ceo_synthesis"])
+                    )
                 except Exception:
                     pass
 
@@ -1067,8 +1262,12 @@ def get_board_session(session_id: str) -> Optional[dict]:
                 "status": row["status"],
                 "transcript": transcript,
                 "created_at": str(row["created_at"]),
-                "completed_at": str(row["completed_at"]) if row["completed_at"] else None,
-                "response_time_s": float(row["response_time_s"]) if row["response_time_s"] is not None else None,
+                "completed_at": str(row["completed_at"])
+                if row["completed_at"]
+                else None,
+                "response_time_s": float(row["response_time_s"])
+                if row["response_time_s"] is not None
+                else None,
             }
     except Exception as exc:
         logger.warning(f"board_room: get_board_session failed for {session_id}: {exc}")

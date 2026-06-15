@@ -3,6 +3,7 @@ RE_OS — PSF Forecaster (Sprint 85, GATE-85)
 numpy-based linear trend forecaster for monthly median PSF.
 No new dependencies — uses numpy.polyfit.
 """
+
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from loguru import logger
@@ -36,7 +37,11 @@ class ForecastResult:
 
     @property
     def error_range_6m(self) -> int:
-        return int(abs(self.conf_high_6m - self.conf_low_6m) / 2) if self.conf_high_6m or self.conf_low_6m else 0
+        return (
+            int(abs(self.conf_high_6m - self.conf_low_6m) / 2)
+            if self.conf_high_6m or self.conf_low_6m
+            else 0
+        )
 
 
 class PSFForecaster:
@@ -80,9 +85,15 @@ class PSFForecaster:
                     """),
                     {"mm_id": mm_id},
                 ).fetchall()
-            return [(r[0], float(r[1])) for r in rows if r[0] is not None and r[1] is not None]
+            return [
+                (r[0], float(r[1]))
+                for r in rows
+                if r[0] is not None and r[1] is not None
+            ]
         except Exception as exc:
-            logger.warning("[PSFForecaster] _load_monthly_series failed for {}: {}", market, exc)
+            logger.warning(
+                "[PSFForecaster] _load_monthly_series failed for {}: {}", market, exc
+            )
             return []
 
     def forecast(self, market: str) -> ForecastResult:
@@ -121,7 +132,7 @@ class PSFForecaster:
             result.current_psf = round(float(raw_y[-1]))
 
             if len(raw_y) >= self._SMOOTH_THRESHOLD:
-                y = np.convolve(raw_y, [1/3, 1/3, 1/3], mode="valid")
+                y = np.convolve(raw_y, [1 / 3, 1 / 3, 1 / 3], mode="valid")
                 x = np.arange(1, len(y) + 1, dtype=float)
                 last_x = float(x[-1])
                 raw_used = raw_y  # keep raw for walk-forward
@@ -161,8 +172,16 @@ class PSFForecaster:
                 (12, "conf_low_12m", "conf_high_12m"),
             ]:
                 f_val = getattr(result, f"forecast_{horizon}m", 0)
-                setattr(result, attr_low, round(max(0, f_val - self._CONF_SIGMA_MULTIPLIER * sigma)))
-                setattr(result, attr_high, round(f_val + self._CONF_SIGMA_MULTIPLIER * sigma))
+                setattr(
+                    result,
+                    attr_low,
+                    round(max(0, f_val - self._CONF_SIGMA_MULTIPLIER * sigma)),
+                )
+                setattr(
+                    result,
+                    attr_high,
+                    round(f_val + self._CONF_SIGMA_MULTIPLIER * sigma),
+                )
 
             # Walk-forward MAE: 1-step-ahead for last 3 months of raw data
             # Uses raw (unsmoothed) y to reflect real forecast error
@@ -191,22 +210,27 @@ class PSFForecaster:
             try:
                 from utils.prediction_ledger import write_prediction_ledger
                 from datetime import date, timedelta
+
                 write_prediction_ledger(
                     source_module="psf_forecaster",
                     claim_type="psf_forecast",
                     market=market,
                     claim_text=f"{result.trend_direction} PSF trend for {market}: "
-                               f"current={result.current_psf}, "
-                               f"6m forecast={result.forecast_6m} ±{result.error_range_6m}",
+                    f"current={result.current_psf}, "
+                    f"6m forecast={result.forecast_6m} ±{result.error_range_6m}",
                     falsifiable_metric=(
                         f"registered_transactions PSF median for {market} "
                         f"within {result.conf_low_6m}–{result.conf_high_6m} range"
                     ),
                     predicted_value=float(result.forecast_6m),
                     check_date=date.today() + timedelta(days=180),
-                    confidence=max(0.0, min(1.0, 1.0 - (result.mae_pct or 0.0) / 100.0)),
+                    confidence=max(
+                        0.0, min(1.0, 1.0 - (result.mae_pct or 0.0) / 100.0)
+                    ),
                 )
             except Exception:
-                logger.debug("[PSFForecaster] prediction_ledger write skipped (non-fatal)")
+                logger.debug(
+                    "[PSFForecaster] prediction_ledger write skipped (non-fatal)"
+                )
 
         return result

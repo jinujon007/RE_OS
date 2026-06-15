@@ -4,6 +4,7 @@ Revision ID: 0021_compliance_feedback
 Revises: 0020_add_igr_gazette_data_source
 Create Date: 2026-06-05
 """
+
 from typing import Sequence, Union
 from alembic import op
 

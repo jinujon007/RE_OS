@@ -2,6 +2,7 @@
 RE_OS — Decision Auditor (Phase 14 - Sprint 62)
 Reviews past board decisions for quarterly shareholder review.
 """
+
 import logging
 from datetime import date, timedelta
 from typing import Any
@@ -56,19 +57,21 @@ def _deal_decisions(start: date, end: date) -> list[dict[str, Any]]:
         memo_text = ""
         if sections and isinstance(sections, list) and sections:
             memo_text = str(sections[0])[:200]
-        results.append({
-            "deal_id": str(r[0]),
-            "deal_name": r[1],
-            "survey_no": r[2],
-            "deal_type": r[3],
-            "irr_base_pct": float(r[4]) if r[4] is not None else None,
-            "board_verdict": r[5] or "UNKNOWN",
-            "deal_memo_summary": memo_text,
-            "shareholder_verdicts": None,
-            "source": "deal",
-            "created_at": r[6].isoformat() if r[6] else None,
-            "_created_ts": r[6],
-        })
+        results.append(
+            {
+                "deal_id": str(r[0]),
+                "deal_name": r[1],
+                "survey_no": r[2],
+                "deal_type": r[3],
+                "irr_base_pct": float(r[4]) if r[4] is not None else None,
+                "board_verdict": r[5] or "UNKNOWN",
+                "deal_memo_summary": memo_text,
+                "shareholder_verdicts": None,
+                "source": "deal",
+                "created_at": r[6].isoformat() if r[6] else None,
+                "_created_ts": r[6],
+            }
+        )
     return results
 
 

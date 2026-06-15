@@ -2,6 +2,7 @@
 RE_OS — Performance Digest (Phase 14 - Sprint 62)
 Quarterly performance aggregator for shareholder board review.
 """
+
 import logging
 import re
 from datetime import date, datetime, timedelta
@@ -103,8 +104,11 @@ def _deal_velocity_summary(start: date, end: date) -> list[dict[str, Any]]:
         {"start": start, "end_date": _end_param(end)},
     )
     return [
-        {"from_status": r[0], "to_status": r[1],
-         "avg_days_elapsed": float(r[2]) if r[2] is not None else None}
+        {
+            "from_status": r[0],
+            "to_status": r[1],
+            "avg_days_elapsed": float(r[2]) if r[2] is not None else None,
+        }
         for r in rows
     ]
 

@@ -87,7 +87,9 @@ def test_claude_md_open_issues_cleared() -> None:
 
 @pytest.mark.test_id("A3")
 @pytest.mark.integration
-@pytest.mark.skipif(not db_reachable(), reason="PostgreSQL not reachable — requires live DB")
+@pytest.mark.skipif(
+    not db_reachable(), reason="PostgreSQL not reachable — requires live DB"
+)
 def test_alembic_check_passes() -> None:
     """A3: ``alembic check`` exits 0 — no pending migrations after Sprint 83.
 
@@ -146,7 +148,16 @@ def test_unit_test_count_meets_floor() -> None:
     all tests are integration-marked (should not happen in practice).
     """
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests/", "-m", "not integration", "--collect-only", "-q"],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/",
+            "-m",
+            "not integration",
+            "--collect-only",
+            "-q",
+        ],
         capture_output=True,
         text=True,
         cwd=str(REPO),
@@ -180,7 +191,9 @@ def test_data_integrity_imports_clean() -> None:
     """
     integrity_path = REPO / "tests" / "test_data_integrity.py"
     if not integrity_path.exists():
-        pytest.skip("test_data_integrity.py not found — GATE-81 not yet present (non-blocking)")
+        pytest.skip(
+            "test_data_integrity.py not found — GATE-81 not yet present (non-blocking)"
+        )
     result = subprocess.run(
         [sys.executable, "-m", "py_compile", str(integrity_path)],
         capture_output=True,

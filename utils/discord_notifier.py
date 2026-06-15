@@ -17,6 +17,7 @@ Discord channel map (set webhook URLs in .env):
   health           → DISCORD_WEBHOOK_SYSTEM  (alias)
   bd_opportunities → DISCORD_WEBHOOK_BD_OPPORTUNITIES
 """
+
 import json
 import os
 import time as _time
@@ -27,25 +28,27 @@ from loguru import logger
 
 class ConfigurationError(Exception):
     """Raised when a required Discord webhook URL is not configured."""
+
     pass
 
-COLOR_GREEN  = 3066993
-COLOR_RED    = 15158332
-COLOR_AMBER  = 16750848
-COLOR_BLUE   = 3447003
+
+COLOR_GREEN = 3066993
+COLOR_RED = 15158332
+COLOR_AMBER = 16750848
+COLOR_BLUE = 3447003
 COLOR_PURPLE = 10181046
 
 _CHANNEL_ENV_MAP = {
-    "rera_yelahanka":   "DISCORD_WEBHOOK_RERA_YELAHANKA",
+    "rera_yelahanka": "DISCORD_WEBHOOK_RERA_YELAHANKA",
     "rera_devanahalli": "DISCORD_WEBHOOK_RERA_DEVANAHALLI",
-    "rera_hebbal":      "DISCORD_WEBHOOK_RERA_HEBBAL",
-    "competitor":       "DISCORD_WEBHOOK_COMPETITOR",
-    "price":            "DISCORD_WEBHOOK_PRICE",
-    "intel":            "DISCORD_WEBHOOK_INTEL",
-    "system":           "DISCORD_WEBHOOK_SYSTEM",
-    "health":           "DISCORD_WEBHOOK_SYSTEM",  # alias — maps to same webhook as system
+    "rera_hebbal": "DISCORD_WEBHOOK_RERA_HEBBAL",
+    "competitor": "DISCORD_WEBHOOK_COMPETITOR",
+    "price": "DISCORD_WEBHOOK_PRICE",
+    "intel": "DISCORD_WEBHOOK_INTEL",
+    "system": "DISCORD_WEBHOOK_SYSTEM",
+    "health": "DISCORD_WEBHOOK_SYSTEM",  # alias — maps to same webhook as system
     "bd_opportunities": "DISCORD_WEBHOOK_BD_OPPORTUNITIES",
-    "gcc_intel":        "DISCORD_WEBHOOK_GCC_INTEL",
+    "gcc_intel": "DISCORD_WEBHOOK_GCC_INTEL",
     "govt_policy_scout": "DISCORD_WEBHOOK_GOVT_POLICY",
     "intel_reports": "DISCORD_WEBHOOK_INTEL_REPORTS",
 }
@@ -79,15 +82,20 @@ def _log_alert(channel: str, title: str, message: str, color: int, status: str) 
     try:
         from utils.db import get_engine
         from sqlalchemy import text
+
         with get_engine().begin() as conn:
             conn.execute(
                 text("""
                 INSERT INTO alerts (channel, title, message, color, status)
                 VALUES (:channel, :title, :message, :color, :status)
                 """),
-                {"channel": channel, "title": title,
-                 "message": message[:2000] if message else None,
-                 "color": color, "status": status},
+                {
+                    "channel": channel,
+                    "title": title,
+                    "message": message[:2000] if message else None,
+                    "color": color,
+                    "status": status,
+                },
             )
     except Exception as exc:
         logger.warning(f"[Discord] Failed to log alert to DB: {exc}")
@@ -98,7 +106,9 @@ def send(channel: str, title: str, message: str = "", color: int = COLOR_BLUE) -
     import urllib.error
 
     if channel not in _VALID_CHANNELS:
-        logger.warning(f"[Discord] Unknown channel '{channel}' — valid: {sorted(_VALID_CHANNELS)}")
+        logger.warning(
+            f"[Discord] Unknown channel '{channel}' — valid: {sorted(_VALID_CHANNELS)}"
+        )
         return False
 
     # Health/system channels require a webhook — raise if missing so tests + alerts catch it
@@ -113,23 +123,32 @@ def send(channel: str, title: str, message: str = "", color: int = COLOR_BLUE) -
     else:
         url = _get_webhook_url(channel)
         if not url:
-            logger.debug(f"[Discord] Channel '{channel}' not configured — skipping alert: {title}")
+            logger.debug(
+                f"[Discord] Channel '{channel}' not configured — skipping alert: {title}"
+            )
             _log_alert(channel, title, message, color, "skipped")
             return False
 
     # Discord embed description limit is 4096 chars; truncate at word boundary
     if message and len(message) > 4080:
-        message = message[:4080].rsplit(" ", 1)[0] + "\n\n[Truncated — full details in agent_runs table]"
+        message = (
+            message[:4080].rsplit(" ", 1)[0]
+            + "\n\n[Truncated — full details in agent_runs table]"
+        )
 
-    payload = json.dumps({
-        "embeds": [{
-            "title": title[:256],
-            "description": message[:4096] if message else "",
-            "color": color,
-            "footer": {"text": "RE_OS · LLS Intelligence"},
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }]
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "embeds": [
+                {
+                    "title": title[:256],
+                    "description": message[:4096] if message else "",
+                    "color": color,
+                    "footer": {"text": "RE_OS · LLS Intelligence"},
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            ]
+        }
+    ).encode("utf-8")
 
     try:
         req = urllib.request.Request(
@@ -157,19 +176,22 @@ def send(channel: str, title: str, message: str = "", color: int = COLOR_BLUE) -
 
 def send_rera_alert(market: str, new_count: int, developers: list[str]) -> bool:
     channel = f"rera_{market.lower()}"
-    title   = f"New RERA project{'s' if new_count != 1 else ''} — {market}"
-    devs    = ", ".join(developers[:5]) + ("…" if len(developers) > 5 else "")
+    title = f"New RERA project{'s' if new_count != 1 else ''} — {market}"
+    devs = ", ".join(developers[:5]) + ("…" if len(developers) > 5 else "")
     message = f"**{new_count}** new RERA registration{'s' if new_count != 1 else ''} detected in **{market}**.\nDevelopers: {devs}"
     return send(channel, title, message, COLOR_GREEN)
 
 
-def send_intel_alert(market: str, run_id: str, synopsis: str, avg_psf: int | None) -> bool:
+def send_intel_alert(
+    market: str, run_id: str, synopsis: str, avg_psf: int | None
+) -> bool:
     psf_str = f"₹{avg_psf:,}/sqft" if avg_psf else "PSF unavailable"
-    title   = f"Intel report ready — {market}"
+    title = f"Intel report ready — {market}"
     # 4-hour cooldown: one intel digest per market per half-day, suppresses dev-run spam
     try:
         from utils.db import get_engine
         from sqlalchemy import text
+
         with get_engine().connect() as _conn:
             _row = _conn.execute(
                 text("""
@@ -181,7 +203,9 @@ def send_intel_alert(market: str, run_id: str, synopsis: str, avg_psf: int | Non
                 {"title": title},
             ).fetchone()
         if _row:
-            logger.debug("[Discord] Intel dedup: '{}' already sent within 4h — skip", title)
+            logger.debug(
+                "[Discord] Intel dedup: '{}' already sent within 4h — skip", title
+            )
             return False
     except Exception as _exc:
         logger.debug("[Discord] Intel dedup check failed (allowing send): {}", _exc)
@@ -190,7 +214,7 @@ def send_intel_alert(market: str, run_id: str, synopsis: str, avg_psf: int | Non
 
 
 def send_competitor_alert(developer: str, project: str, market: str) -> bool:
-    title   = f"New competitor project — {market}"
+    title = f"New competitor project — {market}"
     message = f"**{developer}** has launched **{project}** in {market}."
     return send("competitor", title, message, COLOR_PURPLE)
 
@@ -203,7 +227,7 @@ def send_price_alert(market: str, old_psf: float, new_psf: float) -> bool:
         direction = "▼"
     else:
         direction = "—"
-    title   = f"Price movement {direction} {abs(delta):.1f}% — {market}"
+    title = f"Price movement {direction} {abs(delta):.1f}% — {market}"
     message = (
         f"**{market}** avg listing PSF moved from ₹{old_psf:,.0f} to ₹{new_psf:,.0f} "
         f"({direction}{abs(delta):.1f}%)."
@@ -213,13 +237,14 @@ def send_price_alert(market: str, old_psf: float, new_psf: float) -> bool:
 
 
 def send_system_alert(job_name: str, error: str) -> bool:
-    title   = f"Scheduler error — {job_name}"
+    title = f"Scheduler error — {job_name}"
     message = f"**Job:** `{job_name}`\n**Error:** {error[:500]}"
     return send("system", title, message, COLOR_RED)
 
 
-def send_scraper_alert(market: str, scraper_name: str, alert_type: str,
-                       cooldown_hours: int = 1, **kwargs) -> bool:
+def send_scraper_alert(
+    market: str, scraper_name: str, alert_type: str, cooldown_hours: int = 1, **kwargs
+) -> bool:
     """Send a scraper-level alert to the system channel.
 
     Uses SQL cooldown dedup: same (title, channel) within cooldown_hours is skipped.
@@ -237,6 +262,7 @@ def send_scraper_alert(market: str, scraper_name: str, alert_type: str,
     try:
         from utils.db import get_engine
         from sqlalchemy import text as _sa_text
+
         with get_engine().connect() as _conn:
             _row = _conn.execute(
                 _sa_text("""
@@ -248,10 +274,16 @@ def send_scraper_alert(market: str, scraper_name: str, alert_type: str,
                 {"title": title, "hrs": cooldown_hours},
             ).fetchone()
         if _row:
-            logger.debug("[Discord] Scraper alert dedup: '{}' already sent within {}h — skip", title, cooldown_hours)
+            logger.debug(
+                "[Discord] Scraper alert dedup: '{}' already sent within {}h — skip",
+                title,
+                cooldown_hours,
+            )
             return False
     except Exception as _exc:
-        logger.debug("[Discord] Scraper alert dedup check failed (allowing send): {}", _exc)
+        logger.debug(
+            "[Discord] Scraper alert dedup check failed (allowing send): {}", _exc
+        )
 
     details = " | ".join(f"{k}={v}" for k, v in kwargs.items() if v is not None)
     message = f"⚠ **[{scraper_name}] {market}**: {alert_type}.\n{details}\nCheck portal connectivity."
@@ -260,17 +292,22 @@ def send_scraper_alert(market: str, scraper_name: str, alert_type: str,
     return send("system", title, message, COLOR_RED)
 
 
-def send_opportunity_alert(survey_no: str, score: float, components: dict,
-                           next_action: str, channel: str = "bd_opportunities") -> bool:
+def send_opportunity_alert(
+    survey_no: str,
+    score: float,
+    components: dict,
+    next_action: str,
+    channel: str = "bd_opportunities",
+) -> bool:
     """Send a structured opportunity alert to Discord bd-opportunities channel.
-    
+
     Args:
         survey_no: Survey number (e.g. "45/2").
         score: Composite score in [0, 1].
         components: Dict with keys: irr, legal, timing, distress, exclusivity.
         next_action: Human-readable action string.
         channel: Discord channel key (default bd_opportunities).
-    
+
     Returns:
         True if webhook POST succeeded, False otherwise.
     """
@@ -286,24 +323,29 @@ def send_opportunity_alert(survey_no: str, score: float, components: dict,
     return send(channel, title, message, COLOR_GREEN if score >= 0.8 else COLOR_AMBER)
 
 
-def format_deal_alert(stage: str, market: str, survey_no: str, ask_psf: float | None = None, area_acres: float | None = None) -> str:
+def format_deal_alert(
+    stage: str,
+    market: str,
+    survey_no: str,
+    ask_psf: float | None = None,
+    area_acres: float | None = None,
+) -> str:
     psf_str = f"₹{ask_psf:,.0f}/sqft" if ask_psf else "PSF TBD"
     area_str = f"{area_acres:.2f} acres" if area_acres else "Area TBD"
     return (
-        f"**{stage.upper()}** — {market} | Survey {survey_no}\n"
-        f"{area_str} | {psf_str}"
+        f"**{stage.upper()}** — {market} | Survey {survey_no}\n{area_str} | {psf_str}"
     )[:500]
 
 
 def send_quality_alert(market: str, errors: list, warnings: list) -> bool:
     """Send a data quality alert to the health channel.
-    
+
     Args:
         market: Market name (Yelahanka/Devanahalli/Hebbal).
         errors: List of error dicts, each with keys: table, column, expectation,
                 bad_values (optional list), severity='ERROR'.
         warnings: List of warning dicts, same key structure, severity='WARN'.
-    
+
     Returns:
         True if webhook POST succeeded, False otherwise.
     """
@@ -311,15 +353,22 @@ def send_quality_alert(market: str, errors: list, warnings: list) -> bool:
     parts = [f"**{len(errors)} error(s), {len(warnings)} warning(s)**"]
     if errors:
         parts.append("")
-        parts.extend(f"❌ `{e['table']}.{e['column']}`: {e.get('expectation', '?')}" for e in errors[:5])
+        parts.extend(
+            f"❌ `{e['table']}.{e['column']}`: {e.get('expectation', '?')}"
+            for e in errors[:5]
+        )
     if warnings:
         parts.append("")
-        parts.extend(f"⚠️ `{w['table']}.{w['column']}`: {w.get('expectation', '?')}" for w in warnings[:5])
+        parts.extend(
+            f"⚠️ `{w['table']}.{w['column']}`: {w.get('expectation', '?')}"
+            for w in warnings[:5]
+        )
     return send("health", title, "\n".join(parts), COLOR_RED if errors else COLOR_AMBER)
 
 
 def format_competitive_digest(pulse: dict) -> str:
     from datetime import datetime, timezone
+
     date_str = datetime.now(timezone.utc).strftime("%a %d %b %Y")
     lines = [f"**Competitive Intelligence Pulse — {date_str}**\n"]
 
@@ -388,8 +437,14 @@ def _safe_truncate(text: str | None, max_bytes: int = 100) -> str:
     return truncated + "…"
 
 
-def format_landowner_update(status: str, survey_no: str, market: str, owner_name: str,
-                             ask_psf: float | None = None, notes: str | None = None) -> str:
+def format_landowner_update(
+    status: str,
+    survey_no: str,
+    market: str,
+    owner_name: str,
+    ask_psf: float | None = None,
+    notes: str | None = None,
+) -> str:
     psf_str = f"₹{ask_psf:,.0f}/sqft" if ask_psf else "PSF TBD"
     note_str = f" | {_safe_truncate(notes)}" if notes else ""
     return (
@@ -398,8 +453,14 @@ def format_landowner_update(status: str, survey_no: str, market: str, owner_name
     )[:500]
 
 
-def send_landowner_alert(status: str, survey_no: str, market: str, owner_name: str,
-                          ask_psf: float | None = None, notes: str | None = None) -> bool:
+def send_landowner_alert(
+    status: str,
+    survey_no: str,
+    market: str,
+    owner_name: str,
+    ask_psf: float | None = None,
+    notes: str | None = None,
+) -> bool:
     msg = format_landowner_update(status, survey_no, market, owner_name, ask_psf, notes)
     try:
         return send("bd_opportunities", f"Landowner {status.upper()}: {survey_no}", msg)
@@ -430,9 +491,12 @@ def send_gcc_alert(event: dict) -> bool:
     source = event.get("source_name", "N/A")
     entrant = event.get("entrant_type", "N/A")
     sector = event.get("sector", "N/A")
-    maturity_label = {1: "PRE-PUBLIC", 2: "SEMI-PUBLIC", 3: "PUBLIC", 4: "OPERATIONAL"}.get(
-        maturity, str(maturity)
-    )
+    maturity_label = {
+        1: "PRE-PUBLIC",
+        2: "SEMI-PUBLIC",
+        3: "PUBLIC",
+        4: "OPERATIONAL",
+    }.get(maturity, str(maturity))
 
     hc_str = f"{headcount:,}" if headcount else "N/A"
     ctc_str = f"₹{ctc}L" if ctc else "N/A"
@@ -464,7 +528,9 @@ def send_gcc_alert(event: dict) -> bool:
         return False
 
 
-def send_gcc_weekly_digest(events: list[dict], corridor_scores: dict[str, float]) -> bool:
+def send_gcc_weekly_digest(
+    events: list[dict], corridor_scores: dict[str, float]
+) -> bool:
     """Send weekly GCC pipeline digest to the intel channel."""
     if not events and not corridor_scores:
         return False
@@ -597,7 +663,11 @@ def send_govt_policy_alert(event: dict) -> bool:
     try:
         msg = format_govt_policy_alert(event)
         signal = event.get("signal_strength", "emerging")
-        color = COLOR_GREEN if signal == "high" else (COLOR_RED if signal == "risk" else COLOR_AMBER)
+        color = (
+            COLOR_GREEN
+            if signal == "high"
+            else (COLOR_RED if signal == "risk" else COLOR_AMBER)
+        )
         title = f"Govt/Infra Alert — {event.get('headline', '')[:60]}"
         send("govt_policy_scout", title, msg, color)
         return True
@@ -620,8 +690,16 @@ def send_govt_policy_digest(result) -> bool:
 def format_weekly_digest(result) -> str:
     """Format a single weekly digest result as a Discord embed message. ≤400 chars."""
     market = result.market
-    psf_dir = "▲" if result.psf_direction == "up" else ("▼" if result.psf_direction == "down" else "—")
-    psf_line = f"PSF: {psf_dir} {result.psf_delta_pct:+.2f}%" if result.psf_delta_pct != 0 else "PSF: no change"
+    psf_dir = (
+        "▲"
+        if result.psf_direction == "up"
+        else ("▼" if result.psf_direction == "down" else "—")
+    )
+    psf_line = (
+        f"PSF: {psf_dir} {result.psf_delta_pct:+.2f}%"
+        if result.psf_delta_pct != 0
+        else "PSF: no change"
+    )
     rera_line = f"New RERA: {result.new_rera_count}"
     comps = result.competitor_launches or []
     if comps:
@@ -631,7 +709,9 @@ def format_weekly_digest(result) -> str:
         comp_line = "Competitors: none"
     dists = result.distressed_developers or []
     if dists:
-        dist_line = "Distressed: " + ", ".join(f"{d['developer_name']}({d['distress_score']:.2f})" for d in dists[:3])
+        dist_line = "Distressed: " + ", ".join(
+            f"{d['developer_name']}({d['distress_score']:.2f})" for d in dists[:3]
+        )
     else:
         dist_line = "Distressed: none"
     top = result.top_opportunity
@@ -649,8 +729,12 @@ def format_monthly_digest(results: list) -> str:
     lines = [f"**Monthly Intelligence Digest — {date_str}**\n"]
     for r in results:
         lines.append(f"__{r.market}__")
-        lines.append(f"PSF MoM: {r.psf_mom_pct:+.2f}% | Absorption: {r.absorption_trend}")
-        lines.append(f"Pipeline: {r.pipeline_supply_added}u | GCC: {r.gcc_events_count} | Gov: {r.govt_policy_events_count}")
+        lines.append(
+            f"PSF MoM: {r.psf_mom_pct:+.2f}% | Absorption: {r.absorption_trend}"
+        )
+        lines.append(
+            f"Pipeline: {r.pipeline_supply_added}u | GCC: {r.gcc_events_count} | Gov: {r.govt_policy_events_count}"
+        )
         if r.llm_synthesis:
             syn = r.llm_synthesis[:600]
             lines.append(f"> {syn}")
@@ -664,6 +748,7 @@ def format_monthly_digest(results: list) -> str:
 def format_forecast_digest(results: list) -> str:
     """Format PSF forecast digest — one line per market, ≤300 chars total."""
     from loguru import logger as _log
+
     lines = []
     for r in results:
         try:
@@ -676,7 +761,9 @@ def format_forecast_digest(results: list) -> str:
             else:
                 direction = getattr(r, "trend_direction", "unknown")
                 cur = getattr(r, "current_psf", 0)
-                lines.append(f"{r.market}: {direction} | ₹{int(cur):,} (insufficient data)")
+                lines.append(
+                    f"{r.market}: {direction} | ₹{int(cur):,} (insufficient data)"
+                )
         except Exception as exc:
             _log.warning("[Discord] format_forecast_digest item failed: {}", exc)
     msg = "\n".join(lines)
@@ -686,6 +773,7 @@ def format_forecast_digest(results: list) -> str:
 def send_forecast_digest(results: list) -> None:
     """Send PSF forecast digest to intel_reports channel."""
     from loguru import logger as _log
+
     try:
         msg = format_forecast_digest(results)
         send("intel_reports", "PSF Forecast Update", msg, COLOR_BLUE)
@@ -696,17 +784,21 @@ def send_forecast_digest(results: list) -> None:
 def send_weekly_digest(results: list) -> None:
     """Send weekly digest — one embed per market to intel_reports channel."""
     from loguru import logger as _log
+
     for r in results:
         try:
             msg = format_weekly_digest(r)
             send("intel_reports", f"Weekly Digest — {r.market}", msg, COLOR_GREEN)
         except Exception as exc:
-            _log.warning("[Discord] send_weekly_digest failed for {}: {}", r.market, exc)
+            _log.warning(
+                "[Discord] send_weekly_digest failed for {}: {}", r.market, exc
+            )
 
 
 def send_monthly_digest(results: list) -> None:
     """Send monthly digest — single combined embed to intel_reports channel."""
     from loguru import logger as _log
+
     try:
         msg = format_monthly_digest(results)
         send("intel_reports", "Monthly Intelligence Digest", msg, COLOR_BLUE)
@@ -734,7 +826,11 @@ def send_ops_alert(alert_type: str, detail: str) -> bool:
     now = _time.time()
     last = _OPS_ALERT_COOLDOWN.get(alert_type, 0.0)
     if now - last < _OPS_ALERT_COOLDOWN_S:
-        _log.debug("[Discord] OPS alert '{}' throttled ({}s cooldown)", alert_type, _OPS_ALERT_COOLDOWN_S)
+        _log.debug(
+            "[Discord] OPS alert '{}' throttled ({}s cooldown)",
+            alert_type,
+            _OPS_ALERT_COOLDOWN_S,
+        )
         return False
     _OPS_ALERT_COOLDOWN[alert_type] = now
 
@@ -745,4 +841,3 @@ def send_ops_alert(alert_type: str, detail: str) -> bool:
     except Exception as exc:
         _log.warning("[Discord] send_ops_alert failed: {}", exc)
         return False
-

@@ -5,6 +5,7 @@ Verifies:
 - Migration file contains expected SQL patterns
 - Supply label uses capped value for classification
 """
+
 import pytest
 import os
 
@@ -16,6 +17,7 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
 def _load_migration_sql() -> str:
     path = os.path.join(_PROJECT_ROOT, "alembic", "versions", "0022_fix_mos_view.py")
     import importlib.util
+
     spec = importlib.util.spec_from_file_location("migration_0022", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

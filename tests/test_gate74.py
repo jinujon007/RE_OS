@@ -8,6 +8,7 @@
   5. Mock infra.accessibility_score=1.0 -> _exclusivity_score() bonus >= 0.14
   6. GET /api/market/accessibility?market=Yelahanka returns 200 + JSON with destinations key
 """
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -25,10 +26,22 @@ class TestGate74:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
             "status": "OK",
-            "rows": [{"elements": [{"status": "OK", "duration": {"value": 1500}, "distance": {"value": 14000}}]}],
+            "rows": [
+                {
+                    "elements": [
+                        {
+                            "status": "OK",
+                            "duration": {"value": 1500},
+                            "distance": {"value": 14000},
+                        }
+                    ]
+                }
+            ],
         }
 
-        with patch("scrapers.mobility_scout.requests.Session.get", return_value=mock_resp):
+        with patch(
+            "scrapers.mobility_scout.requests.Session.get", return_value=mock_resp
+        ):
             results = scout.measure_travel_times("Yelahanka")
             assert isinstance(results, list)
             assert len(results) == 5, "Should measure all 5 destinations"
@@ -41,21 +54,35 @@ class TestGate74:
         ok_resp.status_code = 200
         ok_resp.json.return_value = {
             "status": "OK",
-            "rows": [{"elements": [{"status": "OK", "duration": {"value": 1500}, "distance": {"value": 14000}}]}],
+            "rows": [
+                {
+                    "elements": [
+                        {
+                            "status": "OK",
+                            "duration": {"value": 1500},
+                            "distance": {"value": 14000},
+                        }
+                    ]
+                }
+            ],
         }
 
         mock_session = MagicMock()
         mock_session.get.return_value = ok_resp
 
-        with patch("utils.db.get_engine") as mock_eng, \
-             patch("scrapers.mobility_scout.requests.Session") as mock_session_cls, \
-             patch("scrapers.mobility_scout.time.sleep"), \
-             patch("scrapers.mobility_scout.scraper_runs_total"):
+        with (
+            patch("utils.db.get_engine") as mock_eng,
+            patch("scrapers.mobility_scout.requests.Session") as mock_session_cls,
+            patch("scrapers.mobility_scout.time.sleep"),
+            patch("scrapers.mobility_scout.scraper_runs_total"),
+        ):
             mock_session_cls.return_value = mock_session
             mock_conn = MagicMock()
             mock_eng.return_value.begin.return_value.__enter__.return_value = mock_conn
             run_mobility_scout()
-            assert mock_conn.execute.call_count >= 3, "Should insert for at least 3 markets"
+            assert mock_conn.execute.call_count >= 3, (
+                "Should insert for at least 3 markets"
+            )
 
     def test_compute_market_accessibility_yelahanka_in_range(self):
         from scrapers.mobility_scout import compute_market_accessibility
@@ -70,7 +97,9 @@ class TestGate74:
 
         with patch("utils.db.get_engine") as mock_eng:
             mock_conn = MagicMock()
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             mock_conn.execute.return_value.fetchall.return_value = mock_rows
             score = compute_market_accessibility("Yelahanka")
             assert 0.4 <= score <= 0.55
@@ -118,7 +147,9 @@ class TestGate74:
         expected_base = 0.7
         expected_bonus = 0.10
         expected = min(expected_base + expected_bonus, 1.0)
-        assert score == expected, f"Expected {expected}, got {score} — backward compat failed"
+        assert score == expected, (
+            f"Expected {expected}, got {score} — backward compat failed"
+        )
 
     def test_accessibility_endpoint_returns_correct_structure(self):
         from starlette.testclient import TestClient
@@ -127,7 +158,9 @@ class TestGate74:
         client = TestClient(app)
         with patch("utils.db.get_engine") as mock_eng:
             mock_conn = MagicMock()
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             mock_rows = [
                 ("Manyata Tech Park", 25.0, 14.0, "2026-06-08T00:00:00+00:00", 0.1750),
                 ("BIAL", 30.0, 20.0, "2026-06-08T00:00:00+00:00", 0.1250),
@@ -153,7 +186,9 @@ class TestGate74:
         client = TestClient(app)
         with patch("utils.db.get_engine") as mock_eng:
             mock_conn = MagicMock()
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             mock_conn.execute.return_value.fetchall.return_value = []
             resp = client.get("/api/market/accessibility?market=Yelahanka")
             assert resp.status_code == 404

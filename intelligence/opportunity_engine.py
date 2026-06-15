@@ -45,6 +45,7 @@ Risk Register:
   | Score flapping between runs (±0.2+) | Confusing decision-layer churn | Delta >0.1 logged; board review judges direction over precision |
   | Prometheus import failure | Module crash | timed_intel_query is a safe no-op |
 """
+
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -66,8 +67,17 @@ _TIMING_WEIGHT: float = 0.20
 _DISTRESS_WEIGHT: float = 0.15
 _EXCLUSIVITY_WEIGHT: float = 0.15
 
-assert abs(_IRR_WEIGHT + _LEGAL_WEIGHT + _TIMING_WEIGHT + _DISTRESS_WEIGHT + _EXCLUSIVITY_WEIGHT - 1.0) < 0.001, \
-    "Composite weights must sum to 1.0"
+assert (
+    abs(
+        _IRR_WEIGHT
+        + _LEGAL_WEIGHT
+        + _TIMING_WEIGHT
+        + _DISTRESS_WEIGHT
+        + _EXCLUSIVITY_WEIGHT
+        - 1.0
+    )
+    < 0.001
+), "Composite weights must sum to 1.0"
 
 # ── Threshold constants ───────────────────────────────────────────────────────
 _IRR_GO_THRESHOLD: float = 20.0
@@ -105,6 +115,7 @@ def _band_name(score: float) -> str:
 @dataclass
 class ScoreComponents:
     """Five raw sub-scores before weighting. Each in [0.0, 1.0]."""
+
     irr_score: float = 0.0
     legal_score: float = 0.0
     timing_score: float = 0.0
@@ -112,10 +123,18 @@ class ScoreComponents:
     exclusivity_score: float = 0.0
 
     def __post_init__(self):
-        for name in ("irr_score", "legal_score", "timing_score", "distress_score", "exclusivity_score"):
+        for name in (
+            "irr_score",
+            "legal_score",
+            "timing_score",
+            "distress_score",
+            "exclusivity_score",
+        ):
             val = getattr(self, name)
             if not (0.0 <= val <= 1.0):
-                logger.warning("[ScoreComponents] {} clamped from {} to [0,1]", name, val)
+                logger.warning(
+                    "[ScoreComponents] {} clamped from {} to [0,1]", name, val
+                )
                 setattr(self, name, max(0.0, min(val, 1.0)))
 
     _composite: float | None = field(init=False, repr=False, default=None)
@@ -152,6 +171,7 @@ class ScoreComponents:
 @dataclass
 class OpportunityScore:
     """A scored opportunity for one survey, ready for DB persistence."""
+
     survey_id: str
     survey_no: str
     micro_market_id: str
@@ -211,7 +231,11 @@ def _irr_score(pkg: Any) -> tuple[float, str, float | None]:
         jd_irr = getattr(jd, "simple_irr_pct", None)
 
     score = min(max(irr_pct / _IRR_GO_THRESHOLD, 0.0), 1.0)
-    return (round(score, 4), best_name, round(jd_irr, 2) if jd_irr is not None else None)
+    return (
+        round(score, 4),
+        best_name,
+        round(jd_irr, 2) if jd_irr is not None else None,
+    )
 
 
 def _legal_score(pkg: Any) -> tuple[float, str]:
@@ -355,7 +379,11 @@ def _distress_score(pkg: Any) -> float:
             )
             dev_avg = max(0.0, min(dev_avg, 1.0))
     except Exception as exc:
-        logger.debug("[OpportunityEngine] developer distress blend fallback for {}: {}", getattr(pkg, "market", None), exc)
+        logger.debug(
+            "[OpportunityEngine] developer distress blend fallback for {}: {}",
+            getattr(pkg, "market", None),
+            exc,
+        )
         return round(land_score, 4)
 
     return round((0.65 * land_score) + (0.35 * (dev_avg or 0.0)), 4)
@@ -456,7 +484,9 @@ class OpportunityEngine:
             List of ``OpportunityScore`` — one per survey. Empty on severe failure.
         """
         if not markets:
-            logger.warning("[{}] score_all called with empty markets list", self._caller)
+            logger.warning(
+                "[{}] score_all called with empty markets list", self._caller
+            )
             return []
 
         all_results: list[OpportunityScore] = []
@@ -464,12 +494,20 @@ class OpportunityEngine:
 
         for market in markets:
             if market is None or not isinstance(market, str):
-                logger.warning("[{}] Skipping None/non-str market entry: {!r}", self._caller, market)
+                logger.warning(
+                    "[{}] Skipping None/non-str market entry: {!r}",
+                    self._caller,
+                    market,
+                )
                 continue
 
             m = sanitize_market(market)
             if not m:
-                logger.warning("[{}] Invalid market name after sanitize: {!r}", self._caller, market)
+                logger.warning(
+                    "[{}] Invalid market name after sanitize: {!r}",
+                    self._caller,
+                    market,
+                )
                 continue
 
             mi = validate_market(m)
@@ -480,7 +518,12 @@ class OpportunityEngine:
             try:
                 surveys = self._load_surveys(mi)
             except Exception as exc:
-                logger.warning("[{}] Failed to load surveys for {}: {}", self._caller, mi["name"], exc)
+                logger.warning(
+                    "[{}] Failed to load surveys for {}: {}",
+                    self._caller,
+                    mi["name"],
+                    exc,
+                )
                 continue
 
             total = len(surveys)
@@ -492,13 +535,17 @@ class OpportunityEngine:
 
             # Parallel scoring within this market
             market_results: list[OpportunityScore] = []
-            with ThreadPoolExecutor(max_workers=min(_MAX_CONCURRENT_WORKERS, total)) as pool:
+            with ThreadPoolExecutor(
+                max_workers=min(_MAX_CONCURRENT_WORKERS, total)
+            ) as pool:
                 future_map = {
                     pool.submit(self._score_single, survey, mi, total): survey
                     for survey in surveys
                 }
                 try:
-                    for future in as_completed(future_map, timeout=_MARKET_TIMEOUT_SECONDS):
+                    for future in as_completed(
+                        future_map, timeout=_MARKET_TIMEOUT_SECONDS
+                    ):
                         survey = future_map[future]
                         try:
                             result = future.result()
@@ -507,12 +554,22 @@ class OpportunityEngine:
                                 seen_survey_ids.add(result.survey_id)
                                 self._check_score_delta(result, previous_scores)
                         except Exception as exc:
-                            logger.warning("[{}] Survey {} in {} failed: {}",
-                                           self._caller, survey.get("survey_no", "?"), mi["name"], exc)
+                            logger.warning(
+                                "[{}] Survey {} in {} failed: {}",
+                                self._caller,
+                                survey.get("survey_no", "?"),
+                                mi["name"],
+                                exc,
+                            )
                 except TimeoutError:
-                    logger.warning("[{}] Market {} timed out after {}s — {}/{} surveys completed",
-                                   self._caller, mi["name"], _MARKET_TIMEOUT_SECONDS,
-                                   len(market_results), total)
+                    logger.warning(
+                        "[{}] Market {} timed out after {}s — {}/{} surveys completed",
+                        self._caller,
+                        mi["name"],
+                        _MARKET_TIMEOUT_SECONDS,
+                        len(market_results),
+                        total,
+                    )
 
             all_results.extend(market_results)
 
@@ -520,8 +577,13 @@ class OpportunityEngine:
             self._validate_scores(all_results)
             self._log_score_distribution(all_results)
             written = self.persist_scores(all_results)
-            logger.info("[{}] Persisted {}/{} scored opportunities across {} markets",
-                        self._caller, written, len(all_results), len(markets))
+            logger.info(
+                "[{}] Persisted {}/{} scored opportunities across {} markets",
+                self._caller,
+                written,
+                len(all_results),
+                len(markets),
+            )
             self._prune_stale(seen_survey_ids)
 
             # Write falsifiable claims to prediction_ledger for high-scoring opps (GATE-93, T-1148)
@@ -530,7 +592,13 @@ class OpportunityEngine:
                 from datetime import date, timedelta
 
                 # Batch resolve market IDs to names (one query, not per-survey)
-                mm_ids = list({r.micro_market_id for r in all_results if r.score >= _PRIORITY_THRESHOLD})
+                mm_ids = list(
+                    {
+                        r.micro_market_id
+                        for r in all_results
+                        if r.score >= _PRIORITY_THRESHOLD
+                    }
+                )
                 market_names = self._batch_market_names(mm_ids)
 
                 for r in all_results:
@@ -556,7 +624,9 @@ class OpportunityEngine:
                             confidence=dynamic_confidence,
                         )
             except Exception:
-                logger.debug("[{}] prediction_ledger write skipped (non-fatal)", self._caller)
+                logger.debug(
+                    "[{}] prediction_ledger write skipped (non-fatal)", self._caller
+                )
 
         return all_results
 
@@ -623,8 +693,13 @@ class OpportunityEngine:
         is_aggregated = survey["is_aggregated"]
 
         if not survey["total_area_sqft"] or survey["total_area_sqft"] <= 0:
-            logger.info("[{}] Survey {} in {} has zero/no area — using default {} sqft",
-                        self._caller, survey_no, mi["name"], _DEFAULT_LAND_AREA_SQFT)
+            logger.info(
+                "[{}] Survey {} in {} has zero/no area — using default {} sqft",
+                self._caller,
+                survey_no,
+                mi["name"],
+                _DEFAULT_LAND_AREA_SQFT,
+            )
 
         pkg = None
         try:
@@ -635,12 +710,21 @@ class OpportunityEngine:
                 deal_type="compare",
             )
         except Exception as exc:
-            logger.warning("[{}] IntelRegistry failed for {}/{}: {}",
-                           self._caller, mi["name"], survey_no, exc)
+            logger.warning(
+                "[{}] IntelRegistry failed for {}/{}: {}",
+                self._caller,
+                mi["name"],
+                survey_no,
+                exc,
+            )
 
         if pkg is None:
-            logger.warning("[{}] No IntelPackage for {}/{} — zero-score row",
-                           self._caller, mi["name"], survey_no)
+            logger.warning(
+                "[{}] No IntelPackage for {}/{} — zero-score row",
+                self._caller,
+                mi["name"],
+                survey_no,
+            )
             components = ScoreComponents()
             now_iso = datetime.now(timezone.utc).isoformat()
             return OpportunityScore(
@@ -662,7 +746,9 @@ class OpportunityEngine:
         legal, legal_level = _legal_score(pkg)
         timing = _timing_score(pkg)
         distress = _distress_score(pkg)
-        exclusivity = _exclusivity_score(pkg, total_surveys_in_market, encumbrance_clear, is_aggregated)
+        exclusivity = _exclusivity_score(
+            pkg, total_surveys_in_market, encumbrance_clear, is_aggregated
+        )
 
         components = ScoreComponents(
             irr_score=irr,
@@ -712,12 +798,18 @@ class OpportunityEngine:
                     ).fetchall()
             return {str(r[0]): float(r[1]) for r in rows}
         except Exception as exc:
-            logger.debug("[{}] Could not load previous scores for market {}: {}",
-                         self._caller, micro_market_id, exc)
+            logger.debug(
+                "[{}] Could not load previous scores for market {}: {}",
+                self._caller,
+                micro_market_id,
+                exc,
+            )
             return {}
 
     @staticmethod
-    def _check_score_delta(result: OpportunityScore, previous: dict[str, float]) -> None:
+    def _check_score_delta(
+        result: OpportunityScore, previous: dict[str, float]
+    ) -> None:
         """Log a warning if a survey's score changed by more than ``_SCORE_DELTA_WARN``."""
         prev_score = previous.get(result.survey_id)
         if prev_score is None:
@@ -726,8 +818,12 @@ class OpportunityEngine:
         if delta > _SCORE_DELTA_WARN:
             logger.info(
                 "[ScoreDelta] {} ({}) {:.4f} → {:.4f} (Δ{:.4f}) — {}",
-                result.survey_no, result.micro_market_id[:8],
-                prev_score, result.score, delta, result.next_action[:40],
+                result.survey_no,
+                result.micro_market_id[:8],
+                prev_score,
+                result.score,
+                delta,
+                result.next_action[:40],
             )
 
     def _market_name_from_id(self, market_id: str) -> str | None:
@@ -735,6 +831,7 @@ class OpportunityEngine:
         try:
             from utils.db import get_engine
             from sqlalchemy import text
+
             with get_engine().connect() as conn:
                 row = conn.execute(
                     text("SELECT name FROM micro_markets WHERE id = :mid"),
@@ -752,6 +849,7 @@ class OpportunityEngine:
         try:
             from utils.db import get_engine
             from sqlalchemy import text
+
             with get_engine().connect() as conn:
                 rows = conn.execute(
                     text("SELECT id, name FROM micro_markets WHERE id = ANY(:ids)"),
@@ -777,21 +875,36 @@ class OpportunityEngine:
             else:
                 bands["HOLD"] += 1
         active = [f"{k}={v}" for k, v in bands.items() if v > 0]
-        logger.info("[ScoreDistribution] {} total — {}", len(results), " | ".join(active))
+        logger.info(
+            "[ScoreDistribution] {} total — {}", len(results), " | ".join(active)
+        )
 
     @staticmethod
     def _validate_scores(results: list[OpportunityScore]) -> None:
         """Validate all scores are in [0,1]. Warns on violations but does not raise."""
         for r in results:
             if not (0.0 <= r.score <= 1.0):
-                logger.warning("[ScoreValidation] {} score={:.4f} out of range — clamped",
-                               r.survey_no, r.score)
+                logger.warning(
+                    "[ScoreValidation] {} score={:.4f} out of range — clamped",
+                    r.survey_no,
+                    r.score,
+                )
                 r.score = max(0.0, min(r.score, 1.0))
-            for name in ("irr_score", "legal_score", "timing_score", "distress_score", "exclusivity_score"):
+            for name in (
+                "irr_score",
+                "legal_score",
+                "timing_score",
+                "distress_score",
+                "exclusivity_score",
+            ):
                 val = getattr(r.components, name)
                 if not (0.0 <= val <= 1.0):
-                    logger.warning("[ScoreValidation] {} {}={:.4f} out of range — clamped",
-                                   r.survey_no, name, val)
+                    logger.warning(
+                        "[ScoreValidation] {} {}={:.4f} out of range — clamped",
+                        r.survey_no,
+                        name,
+                        val,
+                    )
                     setattr(r.components, name, max(0.0, min(val, 1.0)))
 
     # ═════════════════════════════════════════════════════════════════════════
@@ -824,7 +937,11 @@ class OpportunityEngine:
         """
         if composite <= 0.0:
             return None
-        days = _DEFAULT_EXPIRY_DAYS if composite >= _WATCH_THRESHOLD else _LOW_SCORE_EXPIRY_DAYS
+        days = (
+            _DEFAULT_EXPIRY_DAYS
+            if composite >= _WATCH_THRESHOLD
+            else _LOW_SCORE_EXPIRY_DAYS
+        )
         base = now or datetime.now(timezone.utc)
         return (base + timedelta(days=days)).date().isoformat()
 
@@ -896,41 +1013,46 @@ class OpportunityEngine:
                 for i, r in enumerate(results):
                     conn.execute(text(f"SAVEPOINT sp_opp_{i}"))
                     try:
-                        components_json = json.dumps({
-                            "irr_score": r.components.irr_score,
-                            "legal_score": r.components.legal_score,
-                            "timing_score": r.components.timing_score,
-                            "distress_score": r.components.distress_score,
-                            "exclusivity_score": r.components.exclusivity_score,
-                            "composite_score": r.score,
-                            "weights": {
-                                "irr": _IRR_WEIGHT,
-                                "legal": _LEGAL_WEIGHT,
-                                "timing": _TIMING_WEIGHT,
-                                "distress": _DISTRESS_WEIGHT,
-                                "exclusivity": _EXCLUSIVITY_WEIGHT,
-                            },
-                        })
+                        components_json = json.dumps(
+                            {
+                                "irr_score": r.components.irr_score,
+                                "legal_score": r.components.legal_score,
+                                "timing_score": r.components.timing_score,
+                                "distress_score": r.components.distress_score,
+                                "exclusivity_score": r.components.exclusivity_score,
+                                "composite_score": r.score,
+                                "weights": {
+                                    "irr": _IRR_WEIGHT,
+                                    "legal": _LEGAL_WEIGHT,
+                                    "timing": _TIMING_WEIGHT,
+                                    "distress": _DISTRESS_WEIGHT,
+                                    "exclusivity": _EXCLUSIVITY_WEIGHT,
+                                },
+                            }
+                        )
 
-                        conn.execute(stmt, {
-                            "sid": r.survey_id,
-                            "sno": r.survey_no,
-                            "mmid": r.micro_market_id,
-                            "did": r.developer_id,
-                            "score": r.score,
-                            "irr": r.components.irr_score,
-                            "legal": r.components.legal_score,
-                            "timing": r.components.timing_score,
-                            "distress": r.components.distress_score,
-                            "exclusivity": r.components.exclusivity_score,
-                            "comp": components_json,
-                            "deal": r.best_deal_type,
-                            "jd_irr": r.estimated_jd_irr,
-                            "legal_risk": r.legal_risk_level,
-                            "action": r.next_action,
-                            "expiry": r.expiry_date,
-                            "computed": r.computed_at,
-                        })
+                        conn.execute(
+                            stmt,
+                            {
+                                "sid": r.survey_id,
+                                "sno": r.survey_no,
+                                "mmid": r.micro_market_id,
+                                "did": r.developer_id,
+                                "score": r.score,
+                                "irr": r.components.irr_score,
+                                "legal": r.components.legal_score,
+                                "timing": r.components.timing_score,
+                                "distress": r.components.distress_score,
+                                "exclusivity": r.components.exclusivity_score,
+                                "comp": components_json,
+                                "deal": r.best_deal_type,
+                                "jd_irr": r.estimated_jd_irr,
+                                "legal_risk": r.legal_risk_level,
+                                "action": r.next_action,
+                                "expiry": r.expiry_date,
+                                "computed": r.computed_at,
+                            },
+                        )
                         conn.execute(text(f"RELEASE SAVEPOINT sp_opp_{i}"))
                         written += 1
                     except Exception as row_exc:
@@ -938,12 +1060,20 @@ class OpportunityEngine:
                         conn.execute(text(f"RELEASE SAVEPOINT sp_opp_{i}"))
                         logger.warning(
                             "[{}] persist row {}/{} (survey={}) failed: {} — rolled back individually",
-                            self._caller, i, len(results), r.survey_no, row_exc,
+                            self._caller,
+                            i,
+                            len(results),
+                            r.survey_no,
+                            row_exc,
                         )
 
         except Exception as exc:
-            logger.warning("[{}] persist_scores outer transaction failed after {} rows: {}",
-                           self._caller, written, exc)
+            logger.warning(
+                "[{}] persist_scores outer transaction failed after {} rows: {}",
+                self._caller,
+                written,
+                exc,
+            )
 
         return written
 
@@ -963,15 +1093,19 @@ class OpportunityEngine:
             from uuid import UUID
             from utils.db import get_engine
             from sqlalchemy import text
+
             with get_engine().begin() as conn:
-                cutoff = datetime.now(timezone.utc) - timedelta(hours=_PRUNE_GRACE_HOURS)
+                cutoff = datetime.now(timezone.utc) - timedelta(
+                    hours=_PRUNE_GRACE_HOURS
+                )
                 ids = []
                 for s in active_survey_ids:
                     try:
                         ids.append(UUID(s))
                     except ValueError:
-                        logger.warning("[{}] Skipping invalid UUID in prune: {}",
-                                       self._caller, s)
+                        logger.warning(
+                            "[{}] Skipping invalid UUID in prune: {}", self._caller, s
+                        )
                 result = conn.execute(
                     text("""
                         UPDATE opportunity_scores
@@ -984,8 +1118,12 @@ class OpportunityEngine:
                 )
                 count = result.rowcount
                 if count > 0:
-                    logger.info("[{}] Pruned {} stale opportunity scores (grace={}h)",
-                                self._caller, count, _PRUNE_GRACE_HOURS)
+                    logger.info(
+                        "[{}] Pruned {} stale opportunity scores (grace={}h)",
+                        self._caller,
+                        count,
+                        _PRUNE_GRACE_HOURS,
+                    )
         except Exception as exc:
             logger.warning("[{}] Prune failed: {}", self._caller, exc)
 
@@ -1009,25 +1147,31 @@ def main():
             f"| {r.next_action[:40]}"
         )
 
-    print(json.dumps({
-        "total": len(results),
-        "markets": markets,
-        "scores": [
+    print(
+        json.dumps(
             {
-                "survey_no": r.survey_no,
-                "score": r.score,
-                "components": {
-                    "irr": r.components.irr_score,
-                    "legal": r.components.legal_score,
-                    "timing": r.components.timing_score,
-                    "distress": r.components.distress_score,
-                    "exclusivity": r.components.exclusivity_score,
-                },
-                "next_action": r.next_action,
-            }
-            for r in sorted(results, key=lambda x: x.score, reverse=True)
-        ],
-    }, indent=2, default=str))
+                "total": len(results),
+                "markets": markets,
+                "scores": [
+                    {
+                        "survey_no": r.survey_no,
+                        "score": r.score,
+                        "components": {
+                            "irr": r.components.irr_score,
+                            "legal": r.components.legal_score,
+                            "timing": r.components.timing_score,
+                            "distress": r.components.distress_score,
+                            "exclusivity": r.components.exclusivity_score,
+                        },
+                        "next_action": r.next_action,
+                    }
+                    for r in sorted(results, key=lambda x: x.score, reverse=True)
+                ],
+            },
+            indent=2,
+            default=str,
+        )
+    )
 
 
 if __name__ == "__main__":

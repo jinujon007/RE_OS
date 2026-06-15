@@ -1,11 +1,13 @@
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 
 class TestCheckEncumbrance:
     def _make_result(self, market="Yelahanka", survey_no=None, window_days=180):
         from utils.kaveri_encumbrance import check_encumbrance
+
         return check_encumbrance(market, survey_no=survey_no, window_days=window_days)
 
     def test_empty_market_returns_unavailable(self):
@@ -82,6 +84,7 @@ class TestCheckEncumbrance:
 
     def test_portal_cache_invalidation(self):
         from utils.kaveri_encumbrance import _invalidate_portal_cache
+
         _invalidate_portal_cache("yelahanka")
 
     def test_portal_fallback_noop_when_db_has_data(self):

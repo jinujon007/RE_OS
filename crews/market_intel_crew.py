@@ -91,7 +91,12 @@ def _extract_and_write_memories(agent_id: str, market: str, text: str) -> None:
     """Extract 3 key facts from text and persist them to agent_memories table.
     Uses Cerebras 8b (LIGHT tier). Non-fatal — logged at WARNING on failure."""
     from litellm import completion as litellm_completion
-    from config.settings import CEREBRAS_API_KEY as _CKEY, CEREBRAS_BASE_URL as _CBASE, CEREBRAS_MODEL as _CMODEL
+    from config.settings import (
+        CEREBRAS_API_KEY as _CKEY,
+        CEREBRAS_BASE_URL as _CBASE,
+        CEREBRAS_MODEL as _CMODEL,
+    )
+
     try:
         extraction_prompt = (
             f"From this market brief, extract exactly 3 key facts as JSON list.\n"
@@ -111,7 +116,11 @@ def _extract_and_write_memories(agent_id: str, market: str, text: str) -> None:
         if not isinstance(facts, list):
             return
         for fact_dict in facts:
-            if isinstance(fact_dict, dict) and "fact" in fact_dict and "confidence" in fact_dict:
+            if (
+                isinstance(fact_dict, dict)
+                and "fact" in fact_dict
+                and "confidence" in fact_dict
+            ):
                 write_memory(
                     agent_id,
                     market,
@@ -122,11 +131,15 @@ def _extract_and_write_memories(agent_id: str, market: str, text: str) -> None:
         logger.warning(f"[Memory] {agent_id} write failed for {market}: {exc}")
 
 
-def _write_stage_event_to_db(run_id: str, market: str, event_name: str, status: str, stage: int = 0, **fields):
+def _write_stage_event_to_db(
+    run_id: str, market: str, event_name: str, status: str, stage: int = 0, **fields
+):
     """Fire-and-forget write to agent_runs. DB failure must NOT abort pipeline."""
     try:
         with get_engine().begin() as conn:
-            _write_stage_event(conn, run_id, market, event_name, status, stage, **fields)
+            _write_stage_event(
+                conn, run_id, market, event_name, status, stage, **fields
+            )
     except Exception as exc:
         logger.warning(f"Failed to write stage event {event_name} for {market}: {exc}")
 
@@ -188,7 +201,11 @@ def _detect_api_error_provider(exc: Exception) -> str | None:
     if "openrouter" in msg:
         return "openrouter"
     # NotFoundError with "model does not exist" or "model not found": extract provider from URL
-    if type(exc).__name__ in ("NotFoundError", "AuthenticationError", "BadRequestError"):
+    if type(exc).__name__ in (
+        "NotFoundError",
+        "AuthenticationError",
+        "BadRequestError",
+    ):
         if "cerebras" in full_msg or "cerebras" in model:
             return "cerebras"
         if "api.cerebras.ai" in full_msg or "api.cerebras" in full_msg:
@@ -212,7 +229,14 @@ def _detect_api_error_provider(exc: Exception) -> str | None:
         for prefix, provider in prefix_to_provider.items():
             if prefix in model and not _is_excluded(provider):
                 return provider
-        for provider in ("cerebras", "groq", "gemini_flash", "gemini_gemma", "nvidia", "openrouter"):
+        for provider in (
+            "cerebras",
+            "groq",
+            "gemini_flash",
+            "gemini_gemma",
+            "nvidia",
+            "openrouter",
+        ):
             if not _is_excluded(provider):
                 return provider
     # Cerebras rate limit says "OpenAIException - Requests per minute limit exceeded" (no
@@ -226,7 +250,14 @@ def _detect_api_error_provider(exc: Exception) -> str | None:
         or "none or empty" in msg
         or "invalid response from llm" in msg
     ):
-        for provider in ("cerebras", "groq", "gemini_flash", "gemini_gemma", "nvidia", "openrouter"):
+        for provider in (
+            "cerebras",
+            "groq",
+            "gemini_flash",
+            "gemini_gemma",
+            "nvidia",
+            "openrouter",
+        ):
             if not _is_excluded(provider):
                 return provider
     return None
@@ -369,15 +400,20 @@ def _build_data_crew(market_name: str) -> Crew:
 # ── Stage 3: Intel Crew ────────────────────────────────────────────────────────
 
 
-def _build_intel_crew(market_name: str, db_stats: dict, has_fallback_data: bool = False,
-                      ceo_memory_context: str = "", analyst_memory_context: str = "",
-                      appreciation_forecasts_json: str = "",
-                      news_headlines_context: str = "") -> Crew:
+def _build_intel_crew(
+    market_name: str,
+    db_stats: dict,
+    has_fallback_data: bool = False,
+    ceo_memory_context: str = "",
+    analyst_memory_context: str = "",
+    appreciation_forecasts_json: str = "",
+    news_headlines_context: str = "",
+) -> Crew:
     analyst = create_analyst_agent()
     ceo = create_ceo_agent()
     # CEO synthesizes in the intel crew — no re-delegation back to analyst
     ceo.allow_delegation = False
-    
+
     # Inject memory contexts into agent backstories
     if ceo_memory_context:
         ceo.backstory += f"\n\nINSTITUTIONAL MEMORY — confirmed facts from previous runs:\n{ceo_memory_context}"
@@ -408,12 +444,18 @@ def _build_intel_crew(market_name: str, db_stats: dict, has_fallback_data: bool 
             f"- Distressed/JD-JV signal from distressed_developer_list "
             f"(stalled_project_count, debt_flagged_projects, last_launch_date)\n"
             f"- Data quality note: state if data is LIVE or FALLBACK SAMPLE"
-            + (f"\n\n## Appreciation Forecasts (pre-computed)\n{appreciation_forecasts_json}\n\n"
-               f"Use the pre-computed appreciation forecasts in the context. "
-               f"Do not invent PSF projections — cite the forecast data."
-               if appreciation_forecasts_json else "")
-            + (f"\n\n## Headline Sentiment\n{news_headlines_context}\n"
-               if news_headlines_context else "")
+            + (
+                f"\n\n## Appreciation Forecasts (pre-computed)\n{appreciation_forecasts_json}\n\n"
+                f"Use the pre-computed appreciation forecasts in the context. "
+                f"Do not invent PSF projections — cite the forecast data."
+                if appreciation_forecasts_json
+                else ""
+            )
+            + (
+                f"\n\n## Headline Sentiment\n{news_headlines_context}\n"
+                if news_headlines_context
+                else ""
+            )
         ),
         expected_output=(
             "Formatted market brief with: inventory overview, top 5 projects, developer scorecard, "
@@ -482,6 +524,7 @@ def _kickoff_with_fallback(
     build_fn is called to rebuild the crew with fallback LLMs after excluding a provider.
     """
     from litellm.exceptions import RateLimitError, NotFoundError
+
     last_error = None
     for attempt in range(1, max_retries + 2):  # first attempt + retries
         try:
@@ -538,7 +581,9 @@ def _extract_report_body(result) -> tuple[str, str, str, str]:
     ceo_raw = ceo_raw or (result.raw if hasattr(result, "raw") else str(result))
 
     if len(ceo_raw.strip()) < 100:
-        logger.warning("[CEO] Short/placeholder output — falling back to analyst report")
+        logger.warning(
+            "[CEO] Short/placeholder output — falling back to analyst report"
+        )
         report_body = analyst_raw or str(result)
         ceo_section = "[CEO synthesis unavailable — see analyst report above]"
     else:
@@ -562,7 +607,9 @@ def run_market_intelligence(market_name: str) -> str:
 
     _header(market_name, run_id)
     _log_event(run_id, market_name, "pipeline", "start")
-    _write_stage_event_to_db(run_id, market_name, "pipeline_start", "start", stage=0, metadata={})
+    _write_stage_event_to_db(
+        run_id, market_name, "pipeline_start", "start", stage=0, metadata={}
+    )
 
     try:
         # ── STAGE 1: Data collection ───────────────────────────────────────────
@@ -619,8 +666,12 @@ def run_market_intelligence(market_name: str) -> str:
                 rl.agent_done("scrape_rera")
                 stage1_ok = True
             except Exception as s1_exc:
-                s1_duration = round((datetime.now() - stage1_started).total_seconds(), 2)
-                pipeline_stage_duration_seconds.labels(stage="data_crew").observe(s1_duration)
+                s1_duration = round(
+                    (datetime.now() - stage1_started).total_seconds(), 2
+                )
+                pipeline_stage_duration_seconds.labels(stage="data_crew").observe(
+                    s1_duration
+                )
                 _log_event(
                     run_id,
                     market_name,
@@ -650,8 +701,12 @@ def run_market_intelligence(market_name: str) -> str:
             else "  Stage 1 partial (fallback to cache)."
         )
         if stage1_ok:
-            stage1_duration = round((datetime.now() - stage1_started).total_seconds(), 2)
-            pipeline_stage_duration_seconds.labels(stage="data_crew").observe(stage1_duration)
+            stage1_duration = round(
+                (datetime.now() - stage1_started).total_seconds(), 2
+            )
+            pipeline_stage_duration_seconds.labels(stage="data_crew").observe(
+                stage1_duration
+            )
             scrape_success_total.labels(market=market_name).inc()
             _log_event(
                 run_id,
@@ -666,7 +721,9 @@ def run_market_intelligence(market_name: str) -> str:
                 "stage_1_end",
                 "success",
                 stage=1,
-                duration_seconds=round((datetime.now() - stage1_started).total_seconds(), 2),
+                duration_seconds=round(
+                    (datetime.now() - stage1_started).total_seconds(), 2
+                ),
                 metadata={"records_scraped": records_scraped},
             )
 
@@ -679,7 +736,7 @@ def run_market_intelligence(market_name: str) -> str:
         raw_projects = cp.load(market_name, "rera_scraped") or []
         valid, invalid, val_report = validate_and_log(raw_projects, market_name)
 
-        pass_rate = val_report.get('pass_rate_pct', 0)
+        pass_rate = val_report.get("pass_rate_pct", 0)
         print(
             f"\n  Validation: {val_report['valid']} valid / "
             f"{val_report['invalid']} rejected / "
@@ -696,7 +753,9 @@ def run_market_intelligence(market_name: str) -> str:
             db_stats = organizer.run(market_name, valid)
         except Exception as s2_exc:
             s2_duration = round((datetime.now() - stage2_started).total_seconds(), 2)
-            pipeline_stage_duration_seconds.labels(stage="organizer").observe(s2_duration)
+            pipeline_stage_duration_seconds.labels(stage="organizer").observe(
+                s2_duration
+            )
             _log_event(
                 run_id,
                 market_name,
@@ -713,9 +772,15 @@ def run_market_intelligence(market_name: str) -> str:
                 stage=2,
                 error=str(s2_exc),
                 duration_seconds=s2_duration,
-                metadata={"inserted": db_stats.get("inserted", 0), "updated": db_stats.get("updated", 0), "failed": db_stats.get("failed", 0)},
+                metadata={
+                    "inserted": db_stats.get("inserted", 0),
+                    "updated": db_stats.get("updated", 0),
+                    "failed": db_stats.get("failed", 0),
+                },
             )
-            market_logger.error(f"[run:{run_id}] STAGE 2 DB write FAILED: {s2_exc}\n{traceback.format_exc()}")
+            market_logger.error(
+                f"[run:{run_id}] STAGE 2 DB write FAILED: {s2_exc}\n{traceback.format_exc()}"
+            )
             print(f"\n  [!!] Stage 2 DB write failed: {s2_exc}")
             print("  [!!] Continuing to Stage 3 with cached/empty data...")
             db_stats = _DB_STATS_DEFAULT
@@ -804,7 +869,9 @@ def run_market_intelligence(market_name: str) -> str:
             logger.info("[Crew] No rera_detail_scout checkpoint — skipping")
 
         stage2_duration = round((datetime.now() - stage2_started).total_seconds(), 2)
-        pipeline_stage_duration_seconds.labels(stage="organizer").observe(stage2_duration)
+        pipeline_stage_duration_seconds.labels(stage="organizer").observe(
+            stage2_duration
+        )
         _log_event(
             run_id,
             market_name,
@@ -820,10 +887,16 @@ def run_market_intelligence(market_name: str) -> str:
             "stage_2_end",
             "success",
             stage=2,
-            duration_seconds=round((datetime.now() - stage2_started).total_seconds(), 2),
+            duration_seconds=round(
+                (datetime.now() - stage2_started).total_seconds(), 2
+            ),
             rera_inserted=db_stats.get("inserted", 0),
             rera_updated=db_stats.get("updated", 0),
-            metadata={"inserted": db_stats.get("inserted", 0), "updated": db_stats.get("updated", 0), "failed": db_stats.get("failed", 0)},
+            metadata={
+                "inserted": db_stats.get("inserted", 0),
+                "updated": db_stats.get("updated", 0),
+                "failed": db_stats.get("failed", 0),
+            },
         )
 
         # ── STAGE 3: Intelligence ──────────────────────────────────────────────
@@ -843,9 +916,11 @@ def run_market_intelligence(market_name: str) -> str:
         fallback_warning = ""
         if has_fallback_data:
             fallback_count = sum(
-                1 for r in raw_projects
+                1
+                for r in raw_projects
                 if isinstance(r, dict)
-                and str(r.get("data_source", r.get("source", ""))).strip().lower() in {"fallback_sample", "seed_estimated"}
+                and str(r.get("data_source", r.get("source", ""))).strip().lower()
+                in {"fallback_sample", "seed_estimated"}
             )
             fallback_warning = (
                 f"[DATA QUALITY WARNING: {market_name} RERA on seed fallback — "
@@ -860,21 +935,29 @@ def run_market_intelligence(market_name: str) -> str:
         analyst_memory_context = ""
         if ceo_memories:
             ceo_memory_context = "\n".join(
-                [f"- {m['fact']} (confidence: {m['confidence']:.2f})" for m in ceo_memories]
+                [
+                    f"- {m['fact']} (confidence: {m['confidence']:.2f})"
+                    for m in ceo_memories
+                ]
             )
         if analyst_memories:
             analyst_memory_context = "\n".join(
-                [f"- {m['fact']} (confidence: {m['confidence']:.2f})" for m in analyst_memories]
+                [
+                    f"- {m['fact']} (confidence: {m['confidence']:.2f})"
+                    for m in analyst_memories
+                ]
             )
 
         # T-1066: Prepend fallback warning to analyst + CEO contexts
         if fallback_warning:
             analyst_memory_context = (
-                f"{fallback_warning}\n\n{analyst_memory_context}" if analyst_memory_context
+                f"{fallback_warning}\n\n{analyst_memory_context}"
+                if analyst_memory_context
                 else fallback_warning
             )
             ceo_memory_context = (
-                f"{fallback_warning}\n\n{ceo_memory_context}" if ceo_memory_context
+                f"{fallback_warning}\n\n{ceo_memory_context}"
+                if ceo_memory_context
                 else fallback_warning
             )
 
@@ -886,21 +969,27 @@ def run_market_intelligence(market_name: str) -> str:
                 forecasts.append(get_appreciation_forecast(pincode))
             except Exception:
                 pass
-        appreciation_forecasts_json = json.dumps(forecasts, indent=2) if forecasts else ""
+        appreciation_forecasts_json = (
+            json.dumps(forecasts, indent=2) if forecasts else ""
+        )
 
         # Build news headline sentiment context (T-451)
         news_headlines_context = ""
         try:
             from utils.sentiment import aggregate_market_sentiment_tone
             from sqlalchemy import text as sa_text
+
             with get_engine().connect() as conn:
-                rows = conn.execute(sa_text("""
+                rows = conn.execute(
+                    sa_text("""
                     SELECT headline FROM news_articles
                     WHERE market ILIKE :market
                       AND headline IS NOT NULL
                       AND created_at >= NOW() - INTERVAL '14 days'
                     ORDER BY created_at DESC LIMIT 20
-                """), {"market": f"%{market_name}%"}).fetchall()
+                """),
+                    {"market": f"%{market_name}%"},
+                ).fetchall()
             headlines = [r[0] for r in rows if r[0]]
             if len(headlines) >= 3:
                 tone = aggregate_market_sentiment_tone(headlines)
@@ -914,18 +1003,26 @@ def run_market_intelligence(market_name: str) -> str:
             logger.debug(f"[Crew] News sentiment tone skipped: {exc}")
 
         try:
-            intel_crew = _build_intel_crew(market_name, db_stats, has_fallback_data=has_fallback_data,
-                                         ceo_memory_context=ceo_memory_context,
-                                         analyst_memory_context=analyst_memory_context,
-                                         appreciation_forecasts_json=appreciation_forecasts_json,
-                                         news_headlines_context=news_headlines_context)
+            intel_crew = _build_intel_crew(
+                market_name,
+                db_stats,
+                has_fallback_data=has_fallback_data,
+                ceo_memory_context=ceo_memory_context,
+                analyst_memory_context=analyst_memory_context,
+                appreciation_forecasts_json=appreciation_forecasts_json,
+                news_headlines_context=news_headlines_context,
+            )
             result = _kickoff_with_fallback(
                 intel_crew,
-                lambda: _build_intel_crew(market_name, db_stats, has_fallback_data=has_fallback_data,
-                                        ceo_memory_context=ceo_memory_context,
-                                        analyst_memory_context=analyst_memory_context,
-                                        appreciation_forecasts_json=appreciation_forecasts_json,
-                                        news_headlines_context=news_headlines_context),
+                lambda: _build_intel_crew(
+                    market_name,
+                    db_stats,
+                    has_fallback_data=has_fallback_data,
+                    ceo_memory_context=ceo_memory_context,
+                    analyst_memory_context=analyst_memory_context,
+                    appreciation_forecasts_json=appreciation_forecasts_json,
+                    news_headlines_context=news_headlines_context,
+                ),
                 "Stage 3 (intel)",
                 market_name,
             )
@@ -938,7 +1035,9 @@ def run_market_intelligence(market_name: str) -> str:
                     "stage_3_intel",
                     "failed",
                     error=str(s3_exc),
-                    duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
+                    duration_seconds=round(
+                        (datetime.now() - stage3_started).total_seconds(), 2
+                    ),
                 )
                 _write_stage_event_to_db(
                     run_id,
@@ -947,12 +1046,16 @@ def run_market_intelligence(market_name: str) -> str:
                     "failed",
                     stage=3,
                     error=str(s3_exc)[:2000],
-                    duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
+                    duration_seconds=round(
+                        (datetime.now() - stage3_started).total_seconds(), 2
+                    ),
                     metadata={"has_fallback": has_fallback_data},
                 )
             except Exception as log_exc:
                 logger.error(f"[run:{run_id}] stage_3_end logging FAILED: {log_exc}")
-            logger.error(f"[run:{run_id}] STAGE 3 FAILED: {s3_exc}\n{traceback.format_exc()}")
+            logger.error(
+                f"[run:{run_id}] STAGE 3 FAILED: {s3_exc}\n{traceback.format_exc()}"
+            )
             rl.finish(status="failed", error=f"Stage 3: {s3_exc}")
             _clear_excluded()
             raise RuntimeError(
@@ -961,7 +1064,9 @@ def run_market_intelligence(market_name: str) -> str:
         rl.agent_done("analyst")
         rl.agent_done("ceo")
         stage3_duration = round((datetime.now() - stage3_started).total_seconds(), 2)
-        pipeline_stage_duration_seconds.labels(stage="intel_crew").observe(stage3_duration)
+        pipeline_stage_duration_seconds.labels(stage="intel_crew").observe(
+            stage3_duration
+        )
         _log_event(
             run_id,
             market_name,
@@ -975,7 +1080,9 @@ def run_market_intelligence(market_name: str) -> str:
             "stage_3_end",
             "success",
             stage=3,
-            duration_seconds=round((datetime.now() - stage3_started).total_seconds(), 2),
+            duration_seconds=round(
+                (datetime.now() - stage3_started).total_seconds(), 2
+            ),
             metadata={"has_fallback": has_fallback_data},
         )
 
@@ -986,7 +1093,7 @@ def run_market_intelligence(market_name: str) -> str:
         if analyst_raw and len(analyst_raw.strip()) >= 50:
             _extract_and_write_memories("analyst", market_name, analyst_raw)
 
-         # ── Save report ────────────────────────────────────────────────────────
+        # ── Save report ────────────────────────────────────────────────────────
         output_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "outputs",
@@ -1017,13 +1124,17 @@ def run_market_intelligence(market_name: str) -> str:
         try:
             from utils.discord_notifier import send_intel_alert
             from sqlalchemy import text
+
             with get_engine().connect() as _conn:
-                row = _conn.execute(text("""
+                row = _conn.execute(
+                    text("""
                     SELECT ROUND(AVG(l.price_psf))
                     FROM listings l
                     JOIN micro_markets mm ON mm.id = l.micro_market_id
                     WHERE mm.name ILIKE :market AND l.price_psf > 1000 AND l.price_psf < 50000
-                """), {"market": f"%{market_name}%"}).fetchone()
+                """),
+                    {"market": f"%{market_name}%"},
+                ).fetchone()
             avg_psf = int(row[0]) if row and row[0] else None
             synopsis = ceo_raw[:300] if ceo_raw else ""
             send_intel_alert(market_name, run_id, synopsis, avg_psf)
@@ -1048,10 +1159,14 @@ def run_market_intelligence(market_name: str) -> str:
 
         rl.finish(status="success", report_path=report_path)
         _log_event(run_id, market_name, "pipeline", "success", report_path=report_path)
-        _write_stage_event_to_db(run_id, market_name, "pipeline_end", "success", stage=0)
+        _write_stage_event_to_db(
+            run_id, market_name, "pipeline_end", "success", stage=0
+        )
         print(f"\n  Report saved -> {report_path}\n")
         _clear_excluded()
-        logger.info("[Router] Daily counts: {}", get_router_status().get("excluded", "n/a"))
+        logger.info(
+            "[Router] Daily counts: {}", get_router_status().get("excluded", "n/a")
+        )
         return report_body
 
     except Exception as exc:
@@ -1068,7 +1183,9 @@ def run_market_intelligence(market_name: str) -> str:
         )
         logger.error(f"[run:{run_id}] traceback:\n{traceback.format_exc()}")
         _clear_excluded()
-        logger.info("[Router] Daily counts: {}", get_router_status().get("excluded", "n/a"))
+        logger.info(
+            "[Router] Daily counts: {}", get_router_status().get("excluded", "n/a")
+        )
         raise
 
 
@@ -1093,8 +1210,7 @@ def run_all_markets(markets=None):
         os.makedirs("logs", exist_ok=True)
         fh = open(log_path, "a")
         cmd = [sys.executable, __file__, "--market", market]
-        p = subprocess.Popen(cmd, stdout=fh, stderr=fh,
-                             env={**os.environ})
+        p = subprocess.Popen(cmd, stdout=fh, stderr=fh, env={**os.environ})
         procs[market] = p
         log_handles[market] = fh
         logger.info(f"Launched {market} PID {p.pid} -> {log_path}")
@@ -1151,7 +1267,9 @@ if __name__ == "__main__":
     logger.add("logs/crew.log", rotation="5 MB", retention=5, level="INFO")
     if args.market:
         market_slug = args.market.lower().replace(" ", "_")
-        logger.add(f"logs/{market_slug}.log", rotation="5 MB", retention=5, level="INFO")
+        logger.add(
+            f"logs/{market_slug}.log", rotation="5 MB", retention=5, level="INFO"
+        )
 
     if args.history:
         from config.run_logger import print_run_history

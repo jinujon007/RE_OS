@@ -27,8 +27,11 @@ from datetime import datetime, timezone
 from loguru import logger
 
 __all__ = [
-    "IngestEngine", "IngestReport", "PluginRunStats",
-    "TokenBucket", "create_engine",
+    "IngestEngine",
+    "IngestReport",
+    "PluginRunStats",
+    "TokenBucket",
+    "create_engine",
 ]
 from sqlalchemy import text
 
@@ -58,6 +61,7 @@ _MAX_RECORDS_PER_PLUGIN = 10000  # safety cap per single plugin run
 @dataclass
 class PluginRunStats:
     """Aggregated statistics for a single plugin × market execution."""
+
     plugin_id: str
     market: str
     status: str = "pending"
@@ -79,6 +83,7 @@ class PluginRunStats:
 @dataclass
 class IngestReport:
     """Top-level report returned by :meth:`IngestEngine.run_all`."""
+
     run_id: str
     started_at: datetime
     completed_at: datetime | None = None
@@ -94,7 +99,11 @@ class IngestReport:
 
     @property
     def global_records_processed(self) -> int:
-        return self.global_records_written + self.global_records_deduped + self.global_records_failed
+        return (
+            self.global_records_written
+            + self.global_records_deduped
+            + self.global_records_failed
+        )
 
     @property
     def succeeded_plugins(self) -> list[PluginRunStats]:
@@ -145,13 +154,15 @@ def _safe_json(data: dict) -> str:
     try:
         return json.dumps(data, sort_keys=True, default=str)
     except (TypeError, ValueError):
-        safe = {k: str(v) if isinstance(v, (dict, list)) else v for k, v in data.items()}
+        safe = {
+            k: str(v) if isinstance(v, (dict, list)) else v for k, v in data.items()
+        }
         return json.dumps(safe, sort_keys=True, default=str)
 
 
 def _backoff_sleep(attempt: int, base: float = 2.0, max_delay: float = 60.0) -> None:
     """Exponential backoff sleep. ``attempt`` is 0-indexed."""
-    delay = min(base * (2 ** attempt), max_delay)
+    delay = min(base * (2**attempt), max_delay)
     time.sleep(delay)
 
 
@@ -226,13 +237,17 @@ class _DedupCache:
         try:
             with get_engine().connect() as conn:
                 rows = conn.execute(
-                    text("SELECT raw_hash FROM ingest_log WHERE created_at > NOW() - INTERVAL '24 hours' AND raw_hash IS NOT NULL")
+                    text(
+                        "SELECT raw_hash FROM ingest_log WHERE created_at > NOW() - INTERVAL '24 hours' AND raw_hash IS NOT NULL"
+                    )
                 ).fetchall()
             with self._lock:
                 for (h,) in rows:
                     if h and len(self._seen) < self._maxsize:
                         self._seen.add(h)
-            logger.debug("[DedupCache] seeded with {} hashes from ingest_log", len(rows))
+            logger.debug(
+                "[DedupCache] seeded with {} hashes from ingest_log", len(rows)
+            )
         except Exception as exc:
             logger.debug("[DedupCache] DB seed skipped: {}", exc)
 
@@ -255,6 +270,7 @@ class _DedupCache:
 
 def _metrics_counter(name: str, documentation: str, labelnames: tuple[str, ...]):
     from prometheus_client import Counter
+
     return Counter(name, documentation, labelnames)
 
 
@@ -268,16 +284,22 @@ def _get_ingest_metrics():
     global _INGEST_RUNS_TOTAL, _INGEST_RECORDS_TOTAL, _INGEST_DURATION_SECONDS
     if _INGEST_RUNS_TOTAL is None:
         _INGEST_RUNS_TOTAL = _metrics_counter(
-            "ingest_runs_total", "Ingest plugin runs", ("plugin", "market", "status"),
+            "ingest_runs_total",
+            "Ingest plugin runs",
+            ("plugin", "market", "status"),
         )
         _INGEST_RECORDS_TOTAL = _metrics_counter(
-            "ingest_records_total", "Ingest records processed",
+            "ingest_records_total",
+            "Ingest records processed",
             ("plugin", "market", "action"),  # action: written / deduped / failed
         )
         from prometheus_client import Histogram
+
         _INGEST_DURATION_SECONDS = Histogram(
-            "ingest_duration_seconds", "Ingest plugin run duration",
-            ("plugin", "market"), buckets=(1, 5, 10, 30, 60, 120, 300, 600),
+            "ingest_duration_seconds",
+            "Ingest plugin run duration",
+            ("plugin", "market"),
+            buckets=(1, 5, 10, 30, 60, 120, 300, 600),
         )
     return _INGEST_RUNS_TOTAL, _INGEST_RECORDS_TOTAL, _INGEST_DURATION_SECONDS
 
@@ -348,7 +370,9 @@ class IngestEngine:
         pid = plugin.plugin_id
         with self._lock:
             if pid in self._plugins:
-                logger.warning("[IngestEngine] plugin '{}' already registered — overwriting", pid)
+                logger.warning(
+                    "[IngestEngine] plugin '{}' already registered — overwriting", pid
+                )
             self._plugins[pid] = plugin
         logger.info("[IngestEngine] registered plugin: {} ({})", pid, plugin.source_id)
 
@@ -447,7 +471,10 @@ class IngestEngine:
                 if len(raw_records) > _MAX_RECORDS_PER_PLUGIN:
                     logger.warning(
                         "[IngestEngine] {}/{} returned {} records — capping at {}",
-                        pid, norm_market, len(raw_records), _MAX_RECORDS_PER_PLUGIN,
+                        pid,
+                        norm_market,
+                        len(raw_records),
+                        _MAX_RECORDS_PER_PLUGIN,
                     )
                     raw_records = raw_records[:_MAX_RECORDS_PER_PLUGIN]
                 records = raw_records
@@ -458,13 +485,20 @@ class IngestEngine:
                 if attempt < max_retries:
                     logger.warning(
                         "[IngestEngine] {}/{} attempt {}/{} failed: {} — retrying",
-                        pid, norm_market, attempt + 1, max_retries, exc,
+                        pid,
+                        norm_market,
+                        attempt + 1,
+                        max_retries,
+                        exc,
                     )
                     _backoff_sleep(attempt)
                 else:
                     logger.error(
                         "[IngestEngine] {}/{} exhausted {} retries: {}",
-                        pid, norm_market, max_retries, exc,
+                        pid,
+                        norm_market,
+                        max_retries,
+                        exc,
                     )
                     stats.status = "failed"
                     stats.duration_seconds = time.monotonic() - start
@@ -484,10 +518,18 @@ class IngestEngine:
             if record.market and _normalize_market(record.market) != norm_market:
                 logger.warning(
                     "[IngestEngine] {}/{} record market mismatch: expected '{}', got '{}' — skipping",
-                    pid, norm_market, norm_market, record.market,
+                    pid,
+                    norm_market,
+                    norm_market,
+                    record.market,
                 )
                 failed += 1
-                self._log_ingest(record, pid, "validation_error", error_message=f"market mismatch: expected {norm_market}, got {record.market}")
+                self._log_ingest(
+                    record,
+                    pid,
+                    "validation_error",
+                    error_message=f"market mismatch: expected {norm_market}, got {record.market}",
+                )
                 continue
 
             self._rate_limiter.acquire()
@@ -502,7 +544,9 @@ class IngestEngine:
             if not validation.valid:
                 failed += 1
                 self._log_ingest(
-                    record, pid, "validation_error",
+                    record,
+                    pid,
+                    "validation_error",
                     error_message="; ".join(validation.errors),
                     validation_errors=validation.errors,
                 )
@@ -515,7 +559,9 @@ class IngestEngine:
                 self._log_ingest(record, pid, "success")
             else:
                 failed += 1
-                self._log_ingest(record, pid, "write_error", error_message="writer returned False")
+                self._log_ingest(
+                    record, pid, "write_error", error_message="writer returned False"
+                )
 
         stats.records_written = written
         stats.records_deduped = deduped
@@ -527,11 +573,21 @@ class IngestEngine:
         # ── Prometheus ──────────────────────────────────────────────────────────
         try:
             runs_counter, records_counter, duration_hist = _get_ingest_metrics()
-            runs_counter.labels(plugin=pid, market=norm_market, status=stats.status).inc()
-            records_counter.labels(plugin=pid, market=norm_market, action="written").inc(written)
-            records_counter.labels(plugin=pid, market=norm_market, action="deduped").inc(deduped)
-            records_counter.labels(plugin=pid, market=norm_market, action="failed").inc(failed)
-            duration_hist.labels(plugin=pid, market=norm_market).observe(stats.duration_seconds)
+            runs_counter.labels(
+                plugin=pid, market=norm_market, status=stats.status
+            ).inc()
+            records_counter.labels(
+                plugin=pid, market=norm_market, action="written"
+            ).inc(written)
+            records_counter.labels(
+                plugin=pid, market=norm_market, action="deduped"
+            ).inc(deduped)
+            records_counter.labels(plugin=pid, market=norm_market, action="failed").inc(
+                failed
+            )
+            duration_hist.labels(plugin=pid, market=norm_market).observe(
+                stats.duration_seconds
+            )
         except Exception as exc:
             logger.debug("[IngestEngine] metrics update failed: {}", exc)
 
@@ -550,7 +606,11 @@ class IngestEngine:
         """
         run_id = _generate_run_id()
         report = IngestReport(run_id=run_id, started_at=datetime.now(timezone.utc))
-        logger.info("[IngestEngine] run {} started — {} plugins registered", run_id, len(self._plugins))
+        logger.info(
+            "[IngestEngine] run {} started — {} plugins registered",
+            run_id,
+            len(self._plugins),
+        )
 
         if not self._plugins:
             logger.warning("[IngestEngine] no plugins registered — nothing to run")
@@ -558,7 +618,10 @@ class IngestEngine:
             return report
 
         if not self._run_lock.acquire(blocking=False):
-            logger.error("[IngestEngine] run {} — a previous run is still in progress; rejecting", run_id)
+            logger.error(
+                "[IngestEngine] run {} — a previous run is still in progress; rejecting",
+                run_id,
+            )
             report.completed_at = datetime.now(timezone.utc)
             report.total_duration_seconds = 0.0
             return report
@@ -566,6 +629,7 @@ class IngestEngine:
         try:
             if markets is None:
                 from config.settings import TARGET_MARKETS
+
                 markets = TARGET_MARKETS
 
             # Seed dedup cache at run start
@@ -581,7 +645,10 @@ class IngestEngine:
 
             with ThreadPoolExecutor(max_workers=self._max_workers) as executor:
                 future_map = {
-                    executor.submit(self._run_plugin, plugin, market): (plugin.plugin_id, market)
+                    executor.submit(self._run_plugin, plugin, market): (
+                        plugin.plugin_id,
+                        market,
+                    )
                     for plugin, market in tasks
                 }
 
@@ -595,12 +662,20 @@ class IngestEngine:
                         report.global_records_failed += stats.records_failed
                         logger.info(
                             "[IngestEngine] {}/{}: {} written + {} deduped + {} failed in {:.1f}s",
-                            pid, market,
-                            stats.records_written, stats.records_deduped,
-                            stats.records_failed, stats.duration_seconds,
+                            pid,
+                            market,
+                            stats.records_written,
+                            stats.records_deduped,
+                            stats.records_failed,
+                            stats.duration_seconds,
                         )
                     except Exception as exc:
-                        logger.error("[IngestEngine] {}/{} unhandled exception: {}", pid, market, exc)
+                        logger.error(
+                            "[IngestEngine] {}/{} unhandled exception: {}",
+                            pid,
+                            market,
+                            exc,
+                        )
 
         except Exception as exc:
             logger.error("[IngestEngine] run {} fatal error: {}", run_id, exc)
@@ -610,11 +685,15 @@ class IngestEngine:
             self._run_lock.release()
 
         report.completed_at = datetime.now(timezone.utc)
-        report.total_duration_seconds = (report.completed_at - report.started_at).total_seconds()
+        report.total_duration_seconds = (
+            report.completed_at - report.started_at
+        ).total_seconds()
         logger.info(
             "[IngestEngine] run {} complete — {} total, {} written in {:.1f}s",
-            run_id, report.global_records_written + report.global_records_deduped,
-            report.global_records_written, report.total_duration_seconds,
+            run_id,
+            report.global_records_written + report.global_records_deduped,
+            report.global_records_written,
+            report.total_duration_seconds,
         )
         return report
 
@@ -629,7 +708,9 @@ class IngestEngine:
             signal.signal(signal.SIGINT, lambda s, f: engine.cancel())
             report = engine.run_all()
         """
-        logger.warning("[IngestEngine] cancellation requested — stopping after current records")
+        logger.warning(
+            "[IngestEngine] cancellation requested — stopping after current records"
+        )
         self._shutdown.cancel()
 
 

@@ -8,6 +8,7 @@ survives a restart and results are auditable.
 Migration chain:
     0034_developer_distress_signals -> 0035_evaluate_jobs
 """
+
 from typing import Union
 
 import sqlalchemy as sa
@@ -32,8 +33,15 @@ def upgrade():
         sa.Column("status", sa.Text(), nullable=False, server_default="pending"),
         sa.Column("survey_no", sa.Text(), nullable=False),
         sa.Column("market", sa.Text(), nullable=False),
-        sa.Column("land_area_sqft", sa.Float(), nullable=False, server_default=sa.text("43560.0")),
-        sa.Column("sell_psf", sa.Float(), nullable=False, server_default=sa.text("0.0")),
+        sa.Column(
+            "land_area_sqft",
+            sa.Float(),
+            nullable=False,
+            server_default=sa.text("43560.0"),
+        ),
+        sa.Column(
+            "sell_psf", sa.Float(), nullable=False, server_default=sa.text("0.0")
+        ),
         sa.Column("deal_type", sa.Text(), nullable=False, server_default="compare"),
         sa.Column("pitch", sa.Text(), nullable=False, server_default=""),
         sa.Column(

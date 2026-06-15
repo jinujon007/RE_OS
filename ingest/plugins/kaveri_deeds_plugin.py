@@ -9,6 +9,7 @@ Key logic:
 - buyer_type inference: company/trust/individual
 - Dedup on UNIQUE(sro, doc_no, reg_date) via writer's ON CONFLICT
 """
+
 from __future__ import annotations
 
 import json
@@ -35,18 +36,30 @@ def _get_jurisdiction_index() -> dict[str, list[dict]]:
     if _jurisdiction_index is None:
         if _JURISDICTION_INDEX_PATH.exists():
             try:
-                _jurisdiction_index = json.loads(_JURISDICTION_INDEX_PATH.read_text(encoding="utf-8"))
-                logger.info("[KaveriDeedsPlugin] Loaded jurisdiction index: {} village names", len(_jurisdiction_index))
+                _jurisdiction_index = json.loads(
+                    _JURISDICTION_INDEX_PATH.read_text(encoding="utf-8")
+                )
+                logger.info(
+                    "[KaveriDeedsPlugin] Loaded jurisdiction index: {} village names",
+                    len(_jurisdiction_index),
+                )
             except Exception as exc:
-                logger.warning("[KaveriDeedsPlugin] Failed to load jurisdiction index: {}", exc)
+                logger.warning(
+                    "[KaveriDeedsPlugin] Failed to load jurisdiction index: {}", exc
+                )
                 _jurisdiction_index = {}
         else:
-            logger.warning("[KaveriDeedsPlugin] Jurisdiction index not found at {}", _JURISDICTION_INDEX_PATH)
+            logger.warning(
+                "[KaveriDeedsPlugin] Jurisdiction index not found at {}",
+                _JURISDICTION_INDEX_PATH,
+            )
             _jurisdiction_index = {}
     return _jurisdiction_index
 
 
-def _enrich_jurisdiction(village: str, raw_district: str, raw_taluk: str, raw_hobli: str) -> tuple[str, str, str]:
+def _enrich_jurisdiction(
+    village: str, raw_district: str, raw_taluk: str, raw_hobli: str
+) -> tuple[str, str, str]:
     """Fill district/taluk/hobli from village lookup index if not already set."""
     if raw_district and raw_taluk and raw_hobli:
         return raw_district, raw_taluk, raw_hobli
@@ -63,6 +76,7 @@ def _enrich_jurisdiction(village: str, raw_district: str, raw_taluk: str, raw_ho
         raw_taluk or m.get("taluk", ""),
         raw_hobli or m.get("hobli", ""),
     )
+
 
 # Buyer type inference
 _COMPANY_PATTERN = re.compile(
@@ -102,18 +116,18 @@ def _compute_psf(
     return None, "low"
 
 
-_CHECKPOINT_TS_RE = re.compile(
-    r"kaveri_deeds_\w+_(\d{8})_(\d{6})\.json$"
-)
+_CHECKPOINT_TS_RE = re.compile(r"kaveri_deeds_\w+_(\d{8})_(\d{6})\.json$")
 
 
 def _sort_checkpoints(paths: list[Path]) -> list[Path]:
     """Sort checkpoint files by extracted timestamp, newest first."""
+
     def _sort_key(p: Path) -> str:
         m = _CHECKPOINT_TS_RE.search(p.name)
         if m:
             return f"{m.group(1)}{m.group(2)}"
         return "00000000000000"
+
     return sorted(paths, key=_sort_key, reverse=True)
 
 
@@ -221,19 +235,58 @@ class KaveriDeedsPlugin(DataPlugin):
         self, raw: dict[str, Any], market: str, idx: int
     ) -> ParsedRecord | None:
         """Transform a raw deed dict into a ParsedRecord."""
-        doc_no = str(raw["doc_no"]) if "doc_no" in raw and raw["doc_no"] is not None else ""
-        reg_date = str(raw["reg_date"]) if "reg_date" in raw and raw["reg_date"] is not None else ""
+        doc_no = (
+            str(raw["doc_no"]) if "doc_no" in raw and raw["doc_no"] is not None else ""
+        )
+        reg_date = (
+            str(raw["reg_date"])
+            if "reg_date" in raw and raw["reg_date"] is not None
+            else ""
+        )
         sro = str(raw["sro"]) if "sro" in raw and raw["sro"] is not None else ""
-        village = str(raw["village"]) if "village" in raw and raw["village"] is not None else ""
-        survey_no = str(raw["survey_no"]) if "survey_no" in raw and raw["survey_no"] is not None else ""
+        village = (
+            str(raw["village"])
+            if "village" in raw and raw["village"] is not None
+            else ""
+        )
+        survey_no = (
+            str(raw["survey_no"])
+            if "survey_no" in raw and raw["survey_no"] is not None
+            else ""
+        )
         extent_sqft = raw.get("extent_sqft")
         consideration_inr = raw.get("consideration_inr")
-        deed_type = str(raw["deed_type"]) if "deed_type" in raw and raw["deed_type"] is not None else ""
-        buyer_name = str(raw["buyer_name_raw"]) if "buyer_name_raw" in raw and raw["buyer_name_raw"] is not None else ""
-        seller_name = str(raw["seller_name_raw"]) if "seller_name_raw" in raw and raw["seller_name_raw"] is not None else ""
-        data_source = str(raw["data_source"]) if "data_source" in raw and raw["data_source"] is not None else "kaveri_inbox"
-        source_ref = str(raw["source_ref"]) if "source_ref" in raw and raw["source_ref"] is not None else ""
-        extraction_confidence = str(raw["extraction_confidence"]) if "extraction_confidence" in raw and raw["extraction_confidence"] is not None else "medium"
+        deed_type = (
+            str(raw["deed_type"])
+            if "deed_type" in raw and raw["deed_type"] is not None
+            else ""
+        )
+        buyer_name = (
+            str(raw["buyer_name_raw"])
+            if "buyer_name_raw" in raw and raw["buyer_name_raw"] is not None
+            else ""
+        )
+        seller_name = (
+            str(raw["seller_name_raw"])
+            if "seller_name_raw" in raw and raw["seller_name_raw"] is not None
+            else ""
+        )
+        data_source = (
+            str(raw["data_source"])
+            if "data_source" in raw and raw["data_source"] is not None
+            else "kaveri_inbox"
+        )
+        source_ref = (
+            str(raw["source_ref"])
+            if "source_ref" in raw and raw["source_ref"] is not None
+            else ""
+        )
+        extraction_confidence = (
+            str(raw["extraction_confidence"])
+            if "extraction_confidence" in raw
+            and raw["extraction_confidence"] is not None
+            else "medium"
+        )
 
         # Convert to float if present
         try:

@@ -14,6 +14,7 @@ Data format in PDFs (multilingual — Kannada + English):
 The BDA Corrigendum Gazette has revision rates for BDA-layout areas —
 parsed the same way; supersedes base gazette where available.
 """
+
 from __future__ import annotations
 
 import io
@@ -85,7 +86,7 @@ IGR_GAZETTE_PDFS: dict[str, list[dict]] = {
 
 # Kaveri API SRO codes for registration volume
 SRO_CODES: dict[str, int] = {
-    "Yelahanka": 224,      # Jala SRO covers Yelahanka New Town corridor
+    "Yelahanka": 224,  # Jala SRO covers Yelahanka New Town corridor
     "Devanahalli": 118,
     "Hebbal": 208,
 }
@@ -101,10 +102,17 @@ class GVRecord:
     """One guidance-value row extracted from a gazette PDF."""
 
     __slots__ = (
-        "locality", "property_type", "road_type",
-        "guidance_value_psf", "guidance_value_per_sqm",
-        "effective_from", "source_document", "sro", "gazette_year",
-        "gazette_year_int", "gazette_published_date",
+        "locality",
+        "property_type",
+        "road_type",
+        "guidance_value_psf",
+        "guidance_value_per_sqm",
+        "effective_from",
+        "source_document",
+        "sro",
+        "gazette_year",
+        "gazette_year_int",
+        "gazette_published_date",
         "extraction_confidence",
     )
 
@@ -173,7 +181,9 @@ class GazetteParser:
         """
         pdfs = IGR_GAZETTE_PDFS.get(market, [])
         if not pdfs:
-            logger.warning("[GazetteParser] No gazette PDFs configured for market={}", market)
+            logger.warning(
+                "[GazetteParser] No gazette PDFs configured for market={}", market
+            )
             return []
 
         all_records: list[dict] = []
@@ -182,17 +192,22 @@ class GazetteParser:
                 records = self._parse_pdf(pdf_spec)
                 logger.info(
                     "[GazetteParser][{}][{}] {} GV records from gazette PDF",
-                    market, pdf_spec["sro"], len(records),
+                    market,
+                    pdf_spec["sro"],
+                    len(records),
                 )
                 all_records.extend(records)
             except Exception as exc:
                 logger.warning(
                     "[GazetteParser] Failed to parse {} gazette: {}",
-                    pdf_spec.get("sro", "?"), exc,
+                    pdf_spec.get("sro", "?"),
+                    exc,
                 )
 
         if not all_records:
-            logger.warning("[GazetteParser] All gazette PDFs failed for market={}", market)
+            logger.warning(
+                "[GazetteParser] All gazette PDFs failed for market={}", market
+            )
         return all_records
 
     def scrape_registration_velocity_signal(
@@ -244,7 +259,9 @@ class GazetteParser:
                     "source": "kaveri_api",
                 }
         except Exception as exc:
-            logger.debug("[GazetteParser] Registration volume API failed for {}: {}", market, exc)
+            logger.debug(
+                "[GazetteParser] Registration volume API failed for {}: {}", market, exc
+            )
         return {}
 
     @staticmethod
@@ -257,6 +274,7 @@ class GazetteParser:
           3. Fallback: current_year - 1
         """
         from datetime import date
+
         m = _GAZETTE_YEAR_HEADER_RE.search(text)
         if m:
             return int(m.group(1))
@@ -272,7 +290,9 @@ class GazetteParser:
         try:
             import pdfplumber
         except ImportError:
-            raise RuntimeError("pdfplumber not installed — required for gazette parsing")
+            raise RuntimeError(
+                "pdfplumber not installed — required for gazette parsing"
+            )
 
         url = pdf_spec["url"]
         resp = requests.get(url, headers=_HEADERS, timeout=45)
@@ -298,9 +318,7 @@ class GazetteParser:
         """Clamp extraction_confidence to [0.0, 1.0]."""
         return max(0.0, min(1.0, conf))
 
-    def _extract_records_from_page(
-        self, text: str, pdf_spec: dict
-    ) -> Iterator[dict]:
+    def _extract_records_from_page(self, text: str, pdf_spec: dict) -> Iterator[dict]:
         """
         Yield GV records from one page of gazette text.
 
@@ -329,33 +347,51 @@ class GazetteParser:
                 if "extraction_confidence" not in rec:
                     rec["extraction_confidence"] = page_confidence
                 else:
-                    rec["extraction_confidence"] = self._clamp_confidence(rec["extraction_confidence"])
+                    rec["extraction_confidence"] = self._clamp_confidence(
+                        rec["extraction_confidence"]
+                    )
                 yield rec
 
-    _SKIP_PHRASES = frozenset([
-        "hobli", "village/area", "property id", "per sq", "sqm", "built",
-        "sl.no", "sl no", "gazette", "karnataka", "department", "revised",
-        "guideline", "registration", "office", "ward", "division",
-    ])
+    _SKIP_PHRASES = frozenset(
+        [
+            "hobli",
+            "village/area",
+            "property id",
+            "per sq",
+            "sqm",
+            "built",
+            "sl.no",
+            "sl no",
+            "gazette",
+            "karnataka",
+            "department",
+            "revised",
+            "guideline",
+            "registration",
+            "office",
+            "ward",
+            "division",
+        ]
+    )
 
     # Regex: last standalone 4–6 digit integer on a line, not part of a fraction or ID
-    _PSM_RE = re.compile(r'(?<![/\-\w])(\d{4,6})(?!\s*[/\-\w])\s*$')
+    _PSM_RE = re.compile(r"(?<![/\-\w])(\d{4,6})(?!\s*[/\-\w])\s*$")
 
     # Kannada Unicode block (U+0C80–U+0CFF)
-    _KANNADA_RE = re.compile(r'[ಀ-೿‌‍]+')
+    _KANNADA_RE = re.compile(r"[ಀ-೿‌‍]+")
 
     # Characters to keep in _extract_english_only: ASCII printable + ₹
-    _ENGLISH_ONLY_KEEP = re.compile(r'[^\x20-\x7E\u20B9\r\n]')
+    _ENGLISH_ONLY_KEEP = re.compile(r"[^\x20-\x7E\u20B9\r\n]")
 
     @staticmethod
     def _extract_english_only(text: str) -> str:
         """Strip all characters outside ASCII printable + ₹ + newlines."""
-        return GazetteParser._ENGLISH_ONLY_KEEP.sub('', text)
+        return GazetteParser._ENGLISH_ONLY_KEEP.sub("", text)
 
     # Property ID patterns to discard as locality names
     _PROP_ID_RE = re.compile(
-        r'^(?:PID|SY|No\.?|Sy\.?|No|khata|katha)'
-        r'|\d{3}-[WwMm]\d{4,}',
+        r"^(?:PID|SY|No\.?|Sy\.?|No|khata|katha)"
+        r"|\d{3}-[WwMm]\d{4,}",
         re.I,
     )
 
@@ -368,27 +404,31 @@ class GazetteParser:
         with the real English text. We filter these out by requiring word-length ≥ 3.
         """
         # Remove Kannada Unicode block characters
-        name = self._KANNADA_RE.sub(' ', raw)
+        name = self._KANNADA_RE.sub(" ", raw)
         # Remove property ID patterns like "003-W0022-6", "004-M0010-1", "003-W-0178-1"
-        name = re.sub(r'\b\d{3}-[WwMmCc]-?\d[\d\-]+\b', '', name)
+        name = re.sub(r"\b\d{3}-[WwMmCc]-?\d[\d\-]+\b", "", name)
         # Remove survey number suffixes like "Sy No. 30/2B", "Sy Nos. 78 79 80"
-        name = re.sub(r'\b(?:Sy|SY|sy)\.?\s+No(?:s)?\.?\s*[\d/\-,\s]+', '', name)
+        name = re.sub(r"\b(?:Sy|SY|sy)\.?\s+No(?:s)?\.?\s*[\d/\-,\s]+", "", name)
         # Remove CVC approval codes like "(CVC/235/2018-19, 20/4/2019)"
-        name = re.sub(r'\(?CVC/[^)]+\)?', '', name)
-        name = re.sub(r'\(D\.R\.O[^)]+\)', '', name)
+        name = re.sub(r"\(?CVC/[^)]+\)?", "", name)
+        name = re.sub(r"\(D\.R\.O[^)]+\)", "", name)
         # Remove katha/khata references
-        name = re.sub(r'\b(?:Katha|Khata)\s+No\.?\s*[\d/\-,\s]+', '', name, flags=re.I)
+        name = re.sub(r"\b(?:Katha|Khata)\s+No\.?\s*[\d/\-,\s]+", "", name, flags=re.I)
         # Remove trailing standalone numbers (survey counts, plot IDs)
-        name = re.sub(r'\s+\d{1,6}(\s+\d{1,6})*\s*$', '', name)
+        name = re.sub(r"\s+\d{1,6}(\s+\d{1,6})*\s*$", "", name)
         # Remove trailing/leading punctuation
-        name = re.sub(r'[,\-\.()]+$', '', name)
-        name = re.sub(r'^[,\-\.\s()]+', '', name)
+        name = re.sub(r"[,\-\.()]+$", "", name)
+        name = re.sub(r"^[,\-\.\s()]+", "", name)
         # Collapse multiple spaces
-        name = re.sub(r'\s{2,}', ' ', name).strip()
+        name = re.sub(r"\s{2,}", " ", name).strip()
 
         # Drop single/double-character tokens (Kannada font artifacts)
         tokens = name.split()
-        clean_tokens = [t for t in tokens if len(t) >= 3 or (len(t) >= 2 and t.isdigit() is False and not t.isupper())]
+        clean_tokens = [
+            t
+            for t in tokens
+            if len(t) >= 3 or (len(t) >= 2 and t.isdigit() is False and not t.isupper())
+        ]
         name = " ".join(clean_tokens).strip()
 
         # Final quality check
@@ -415,7 +455,7 @@ class GazetteParser:
         used_fallback = False
         rate_match = self._PSM_RE.search(line)
         if not rate_match:
-            alt = re.search(r'(?<![/\-\w])(\d{4,6})\s+\d{1,3}\s*$', line)
+            alt = re.search(r"(?<![/\-\w])(\d{4,6})\s+\d{1,3}\s*$", line)
             if alt:
                 rate_match = alt
                 used_fallback = True
@@ -435,7 +475,7 @@ class GazetteParser:
         raw_locality = " ".join(p.strip() for p in english_parts)
 
         # Strip the rate value itself if it ended up in the name
-        raw_locality = re.sub(rf'\b{psm}\b', '', raw_locality).strip()
+        raw_locality = re.sub(rf"\b{psm}\b", "", raw_locality).strip()
 
         locality = self._clean_locality(raw_locality)
         if not locality:

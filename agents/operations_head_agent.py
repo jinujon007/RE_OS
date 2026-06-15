@@ -13,6 +13,7 @@ __all__ = ["TaskDelegatorResult", "OperationsHeadAgent"]
 _LLM_IMPORTED = False
 try:
     from config.llm_router import get_analysis_llm as _get_analysis_llm
+
     _LLM_IMPORTED = True
 except ImportError:
     logger.warning("[OpsHead] config.llm_router not available — will use fallback only")
@@ -29,8 +30,9 @@ class TaskDelegatorResult:
         return asdict(self)
 
 
-def _task_delegator_tool(project_id: str, task_title: str, dept: str,
-                         due_days: int = 7) -> TaskDelegatorResult:
+def _task_delegator_tool(
+    project_id: str, task_title: str, dept: str, due_days: int = 7
+) -> TaskDelegatorResult:
     if due_days < 1:
         due_days = 1
     """Write a task to project_tasks DB table. Returns TaskDelegatorResult."""
@@ -38,7 +40,10 @@ def _task_delegator_tool(project_id: str, task_title: str, dept: str,
         from utils.db import get_engine
         from sqlalchemy import text
         from datetime import datetime, timedelta, timezone
-        due = (datetime.now(timezone.utc) + timedelta(days=due_days)).strftime("%Y-%m-%d")
+
+        due = (datetime.now(timezone.utc) + timedelta(days=due_days)).strftime(
+            "%Y-%m-%d"
+        )
         with get_engine().begin() as conn:
             row = conn.execute(
                 text("""
@@ -51,8 +56,10 @@ def _task_delegator_tool(project_id: str, task_title: str, dept: str,
             if row:
                 logger.info("[OpsHead] Task created: {} ({})", task_title, dept)
                 return TaskDelegatorResult(
-                    task_id=str(row[0]), title=str(row[1]),
-                    dept=str(row[2]), status=str(row[3]),
+                    task_id=str(row[0]),
+                    title=str(row[1]),
+                    dept=str(row[2]),
+                    status=str(row[3]),
                 )
     except Exception as exc:
         logger.warning("[OpsHead] Task delegation failed: {}", exc)
@@ -90,20 +97,32 @@ class OperationsHeadAgent:
         )
 
     def _build_prompt(self, actions: list[str], project_context: str) -> str:
-        actions_str = "\n".join(f"{i+1}. {a}" for i, a in enumerate(actions))
+        actions_str = "\n".join(f"{i + 1}. {a}" for i, a in enumerate(actions))
         return (
             f"Approved Board Room actions for project:\n{project_context}\n\n"
             f"Actions to decompose:\n{actions_str}\n\n"
             "Return a JSON array of tasks, each with 'title', 'dept', 'due_days'."
         )
 
-    def _fallback_decompose(self, actions: list[str], project_id: str) -> list[TaskDelegatorResult]:
+    def _fallback_decompose(
+        self, actions: list[str], project_id: str
+    ) -> list[TaskDelegatorResult]:
         dept_map = {
-            "land": "bd", "owner": "bd", "survey": "bd",
-            "legal": "legal", "rera": "legal", "encumbrance": "legal",
-            "financial": "finance", "irr": "finance", "psf": "finance",
-            "design": "engineering", "architect": "engineering", "fsi": "engineering",
-            "due diligence": "ops", "site visit": "ops", "coordinate": "ops",
+            "land": "bd",
+            "owner": "bd",
+            "survey": "bd",
+            "legal": "legal",
+            "rera": "legal",
+            "encumbrance": "legal",
+            "financial": "finance",
+            "irr": "finance",
+            "psf": "finance",
+            "design": "engineering",
+            "architect": "engineering",
+            "fsi": "engineering",
+            "due diligence": "ops",
+            "site visit": "ops",
+            "coordinate": "ops",
         }
         results = []
         for action in actions:
@@ -135,8 +154,9 @@ class OperationsHeadAgent:
             return []
         return data
 
-    def decompose_actions(self, actions: list[str], project_id: str,
-                           project_context: str = "") -> list[TaskDelegatorResult]:
+    def decompose_actions(
+        self, actions: list[str], project_id: str, project_context: str = ""
+    ) -> list[TaskDelegatorResult]:
         if not actions:
             logger.info("[OpsHead] No actions to decompose")
             return []
@@ -154,11 +174,14 @@ class OperationsHeadAgent:
             user_prompt = self._build_prompt(actions, project_context)
 
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(
                     llm.invoke,
-                    [{"role": "system", "content": system_prompt},
-                     {"role": "user", "content": user_prompt}]
+                    [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
                 )
                 response = future.result(timeout=self._LLM_TIMEOUT_S)
 
@@ -176,7 +199,9 @@ class OperationsHeadAgent:
                 title = str(t.get("title", ""))[:80]
                 dept = str(t.get("dept", "ops"))
                 due_days = int(t.get("due_days", 7))
-                result = _task_delegator_tool(project_id, title, dept, due_days=due_days)
+                result = _task_delegator_tool(
+                    project_id, title, dept, due_days=due_days
+                )
                 results.append(result)
             if results:
                 return results

@@ -2,6 +2,7 @@
 RE_OS — Redundancy Detector (Phase 9 - Sprint 60)
 Detects wasteful LLM calls that can be eliminated for efficiency.
 """
+
 import hashlib
 from typing import Any
 
@@ -14,6 +15,7 @@ __all__ = ["RedundancyDetector", "detect_redundancies", "compute_task_hash"]
 def compute_task_hash(task: str) -> str:
     """Compute SHA256 hash of task (first 500 chars) for dedup detection."""
     from utils.token_tracker import compute_task_hash as _hash
+
     return _hash(task)
 
 
@@ -53,9 +55,7 @@ class RedundancyDetector:
 
         return findings
 
-    def _detect_prompt_duplicates(
-        self, conn, days: int
-    ) -> list[dict[str, Any]]:
+    def _detect_prompt_duplicates(self, conn, days: int) -> list[dict[str, Any]]:
         """Find duplicate prompts (same hash + agent within 2hr)."""
         findings = []
         try:
@@ -82,23 +82,23 @@ class RedundancyDetector:
             for r in rows:
                 count = r[2] if r[2] else 0
                 if count >= 2:
-                    findings.append({
-                        "type": "prompt_duplicate",
-                        "agent": r[0],
-                        "count": count,
-                        "first_run_id": str(r[3]) if r[3] else None,
-                        "duplicate_run_id": str(r[4]) if r[4] else None,
-                        "tokens_wasted": count * 1500,  # rough estimate
-                        "severity": "HIGH" if count > 2 else "MEDIUM",
-                        "recommendation": f"Cache or dedup prompt for {r[0]} - {count} identical calls detected",
-                    })
+                    findings.append(
+                        {
+                            "type": "prompt_duplicate",
+                            "agent": r[0],
+                            "count": count,
+                            "first_run_id": str(r[3]) if r[3] else None,
+                            "duplicate_run_id": str(r[4]) if r[4] else None,
+                            "tokens_wasted": count * 1500,  # rough estimate
+                            "severity": "HIGH" if count > 2 else "MEDIUM",
+                            "recommendation": f"Cache or dedup prompt for {r[0]} - {count} identical calls detected",
+                        }
+                    )
         except Exception:
             pass
         return findings
 
-    def _detect_cache_misses(
-        self, conn, days: int
-    ) -> list[dict[str, Any]]:
+    def _detect_cache_misses(self, conn, days: int) -> list[dict[str, Any]]:
         """Find cache misses: same (market, survey_no) called >=3x in same hour."""
         findings = []
         try:
@@ -120,21 +120,21 @@ class RedundancyDetector:
             ).fetchall()
 
             for r in rows:
-                findings.append({
-                    "type": "cache_miss",
-                    "market": r[0],
-                    "survey_no": r[1],
-                    "agent_count": r[2] if r[2] else 0,
-                    "severity": "HIGH" if r[2] and r[2] >= 3 else "MEDIUM",
-                    "recommendation": f"IntelRegistry cache may be ineffective for {r[0]}/{r[1]} - {r[2]} agents hit in same hour",
-                })
+                findings.append(
+                    {
+                        "type": "cache_miss",
+                        "market": r[0],
+                        "survey_no": r[1],
+                        "agent_count": r[2] if r[2] else 0,
+                        "severity": "HIGH" if r[2] and r[2] >= 3 else "MEDIUM",
+                        "recommendation": f"IntelRegistry cache may be ineffective for {r[0]}/{r[1]} - {r[2]} agents hit in same hour",
+                    }
+                )
         except Exception:
             pass
         return findings
 
-    def _detect_empty_outputs(
-        self, conn, days: int
-    ) -> list[dict[str, Any]]:
+    def _detect_empty_outputs(self, conn, days: int) -> list[dict[str, Any]]:
         """Find empty-output runs: output IS NULL or len(output) < 10."""
         findings = []
         try:
@@ -149,14 +149,16 @@ class RedundancyDetector:
             ).fetchall()
 
             for r in rows:
-                findings.append({
-                    "type": "empty_output",
-                    "run_id": str(r[0]) if r[0] else None,
-                    "agent": r[1],
-                    "task_type": r[2],
-                    "severity": "LOW",
-                    "recommendation": f"Review {r[1]} output handling - potential wasted LLM call",
-                })
+                findings.append(
+                    {
+                        "type": "empty_output",
+                        "run_id": str(r[0]) if r[0] else None,
+                        "agent": r[1],
+                        "task_type": r[2],
+                        "severity": "LOW",
+                        "recommendation": f"Review {r[1]} output handling - potential wasted LLM call",
+                    }
+                )
         except Exception:
             pass
         return findings

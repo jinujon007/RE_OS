@@ -14,6 +14,7 @@ __all__ = ["ProjectStatusReport", "ProjectManagerAgent"]
 _LLM_IMPORTED = False
 try:
     from config.llm_router import get_light_llm as _get_light_llm
+
     _LLM_IMPORTED = True
 except ImportError:
     logger.warning("[PM] config.llm_router not available — will use fallback only")
@@ -126,7 +127,9 @@ def _generate_weekly_brief_file(project_id: str, content: str) -> str:
         logger.info("[PM] Weekly brief written: {}", path)
         # Rotate: keep max 20 briefs per project
         existing = sorted(
-            p for p in os.listdir(brief_dir) if p.startswith(project_id) and p.endswith(".md")
+            p
+            for p in os.listdir(brief_dir)
+            if p.startswith(project_id) and p.endswith(".md")
         )
         while len(existing) > 20:
             oldest = existing.pop(0)
@@ -174,14 +177,17 @@ class ProjectManagerAgent:
             )
 
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(
                     llm.invoke,
                     [
-                        {"role": "system",
-                         "content": "You are a Project Manager writing a weekly status brief."},
+                        {
+                            "role": "system",
+                            "content": "You are a Project Manager writing a weekly status brief.",
+                        },
                         {"role": "user", "content": prompt},
-                    ]
+                    ],
                 )
                 response = future.result(timeout=self._LLM_TIMEOUT_S)
 

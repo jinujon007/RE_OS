@@ -5,6 +5,7 @@ For each candidate, takes the MAX F1 across all references (best-match scoring).
 Appends results to outputs/eval_scores.jsonl for weekly trend tracking.
 First-ever run downloads roberta-base (~500MB) — requires network.
 """
+
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,15 +19,17 @@ class ReportEvaluator:
 
     Multi-reference scoring: for each candidate, computes BERTScore against
     every reference and uses the MAX F1 (best-match). Averages across candidates.
-    
+
     Reference corpus: manually selected best reports in outputs/references/.
     Downloads roberta-base on first call (~500MB, cached after).
     Fails gracefully if evaluate library or model unavailable.
     """
 
-    def load_references(self, ref_dir: str = "outputs/references") -> tuple[list[str], int]:
+    def load_references(
+        self, ref_dir: str = "outputs/references"
+    ) -> tuple[list[str], int]:
         """Load reference texts from ref_dir.
-        
+
         Returns (texts, failed_count). Returns empty list if dir missing.
         Corrupt files are skipped with a warning.
         """
@@ -42,7 +45,9 @@ class ReportEvaluator:
             except Exception as exc:
                 logger.warning(f"[ReportEvaluator] Failed to read {f.name}: {exc}")
                 failed += 1
-        logger.debug(f"[ReportEvaluator] Loaded {len(texts)} reference(s), {failed} failed from {ref_dir}")
+        logger.debug(
+            f"[ReportEvaluator] Loaded {len(texts)} reference(s), {failed} failed from {ref_dir}"
+        )
         return texts, failed
 
     def evaluate_latest(
@@ -70,16 +75,30 @@ class ReportEvaluator:
         refs, ref_failed = self.load_references(ref_dir)
         if not refs:
             logger.warning("[ReportEvaluator] No references — skipping evaluation")
-            return {"score": None, "delta": None, "alert": False, "status": "skipped",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "candidates": 0, "references": 0, "ref_failed": ref_failed}
+            return {
+                "score": None,
+                "delta": None,
+                "alert": False,
+                "status": "skipped",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "candidates": 0,
+                "references": 0,
+                "ref_failed": ref_failed,
+            }
 
         output_path = Path(outputs_dir)
         if not output_path.exists():
             logger.debug(f"[ReportEvaluator] Outputs dir not found: {outputs_dir}")
-            return {"score": None, "delta": None, "alert": False, "status": "skipped",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "candidates": 0, "references": len(refs), "ref_failed": ref_failed}
+            return {
+                "score": None,
+                "delta": None,
+                "alert": False,
+                "status": "skipped",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "candidates": 0,
+                "references": len(refs),
+                "ref_failed": ref_failed,
+            }
 
         candidates = sorted(output_path.rglob("intel_report_*.txt"))
         candidates = candidates[-10:]
@@ -98,16 +117,32 @@ class ReportEvaluator:
 
         if not cand_texts:
             logger.info("[ReportEvaluator] No candidate intel reports found")
-            return {"score": None, "delta": None, "alert": False, "status": "skipped",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "candidates": 0, "references": len(refs), "ref_failed": ref_failed}
+            return {
+                "score": None,
+                "delta": None,
+                "alert": False,
+                "status": "skipped",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "candidates": 0,
+                "references": len(refs),
+                "ref_failed": ref_failed,
+            }
 
         avg_f1 = self._compute_bertscore(cand_texts, refs)
         if avg_f1 is None:
-            logger.warning("[ReportEvaluator] BERTScore computation failed — no score written")
-            return {"score": None, "delta": None, "alert": False, "status": "failed",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "candidates": len(cand_texts), "references": len(refs), "ref_failed": ref_failed}
+            logger.warning(
+                "[ReportEvaluator] BERTScore computation failed — no score written"
+            )
+            return {
+                "score": None,
+                "delta": None,
+                "alert": False,
+                "status": "failed",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "candidates": len(cand_texts),
+                "references": len(refs),
+                "ref_failed": ref_failed,
+            }
 
         timestamp = datetime.now(timezone.utc).isoformat()
         previous_score = self._load_previous_score(scores_path)
@@ -122,9 +157,11 @@ class ReportEvaluator:
         }
         self._append_score(scores_path, entry)
 
-        logger.info(f"[ReportEvaluator] BERTScore F1={avg_f1:.4f} delta={delta:+.4f} "
-                     f"{'⚠ ALERT' if alert else 'OK'} "
-                     f"({len(cand_texts)} candidates, {len(refs)} refs)")
+        logger.info(
+            f"[ReportEvaluator] BERTScore F1={avg_f1:.4f} delta={delta:+.4f} "
+            f"{'⚠ ALERT' if alert else 'OK'} "
+            f"({len(cand_texts)} candidates, {len(refs)} refs)"
+        )
         return {
             "score": avg_f1,
             "delta": delta,
@@ -137,7 +174,9 @@ class ReportEvaluator:
             "candidates_skipped": skipped_files,
         }
 
-    def _compute_bertscore(self, cand_texts: list[str], refs: list[str]) -> float | None:
+    def _compute_bertscore(
+        self, cand_texts: list[str], refs: list[str]
+    ) -> float | None:
         """Compute BERTScore F1 for candidates against all references.
 
         Filters out empty texts first (would produce NaN).
@@ -156,7 +195,9 @@ class ReportEvaluator:
             import evaluate
 
             def _load_and_score():
-                bertscore = evaluate.load("bertscore", lang="en", model_type="roberta-base")
+                bertscore = evaluate.load(
+                    "bertscore", lang="en", model_type="roberta-base"
+                )
                 max_f1s = []
                 for cand in cand_texts:
                     cand_max = 0.0

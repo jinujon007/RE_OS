@@ -1,4 +1,5 @@
 """Tests for Content Pipeline (Sprint 53 — PR & Brand Department)."""
+
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -8,9 +9,9 @@ CONTENT_STUDIO_MARKER = pytest.mark.integration
 
 
 class TestContentPipeline:
-
     def test_content_pipeline_run_returns_dict(self):
         from utils.content_pipeline import ContentPipeline
+
         pipeline = ContentPipeline()
         with patch.object(pipeline.pr_head, "run") as mock_pr:
             mock_pr.return_value.project_tagline = "Test tagline"
@@ -22,11 +23,14 @@ class TestContentPipeline:
                 mock_cw.return_value.linkedin_post = "LinkedIn post test"
                 mock_cw.return_value.instagram_caption = "Insta caption #test"
                 mock_cw.return_value.project_brief_sections = [
-                    {"title": f"S{i}", "body": "body", "word_count": 2} for i in range(7)
+                    {"title": f"S{i}", "body": "body", "word_count": 2}
+                    for i in range(7)
                 ]
                 mock_cw.return_value.email_subject = "Test subject"
 
-                result = pipeline.run(market="Yelahanka", survey_no="45/2", deal_type="jd")
+                result = pipeline.run(
+                    market="Yelahanka", survey_no="45/2", deal_type="jd"
+                )
 
         assert isinstance(result, dict)
         assert result["status"] == "done"
@@ -41,6 +45,7 @@ class TestContentPipeline:
 
     def test_content_pipeline_run_pr_head_called(self):
         from utils.content_pipeline import ContentPipeline
+
         pipeline = ContentPipeline()
         with patch.object(pipeline.pr_head, "run") as mock_pr:
             mock_pr.return_value.project_tagline = ""
@@ -52,7 +57,8 @@ class TestContentPipeline:
                 mock_cw.return_value.linkedin_post = ""
                 mock_cw.return_value.instagram_caption = ""
                 mock_cw.return_value.project_brief_sections = [
-                    {"title": f"S{i}", "body": "body", "word_count": 2} for i in range(7)
+                    {"title": f"S{i}", "body": "body", "word_count": 2}
+                    for i in range(7)
                 ]
                 mock_cw.return_value.email_subject = ""
 
@@ -63,6 +69,7 @@ class TestContentPipeline:
 
     def test_content_pipeline_uses_existing_job_id(self):
         from utils.content_pipeline import ContentPipeline
+
         pipeline = ContentPipeline()
         mock_job = {
             "status": "done",
@@ -82,13 +89,16 @@ class TestContentPipeline:
                     mock_cw.return_value.linkedin_post = "Post"
                     mock_cw.return_value.instagram_caption = "#test"
                     mock_cw.return_value.project_brief_sections = [
-                        {"title": f"S{i}", "body": "body", "word_count": 2} for i in range(7)
+                        {"title": f"S{i}", "body": "body", "word_count": 2}
+                        for i in range(7)
                     ]
                     mock_cw.return_value.email_subject = "Subject"
 
                     pipeline.run(
-                        market="Yelahanka", survey_no="45/2",
-                        deal_type="compare", job_id="test-job-123",
+                        market="Yelahanka",
+                        survey_no="45/2",
+                        deal_type="compare",
+                        job_id="test-job-123",
                     )
 
         mock_pr.assert_called_once()
@@ -99,6 +109,7 @@ class TestContentPipeline:
 
     def test_content_pipeline_fallback_on_missing_job_id(self):
         from utils.content_pipeline import ContentPipeline
+
         pipeline = ContentPipeline()
         with patch("crews.evaluate_pipeline.get_evaluate_job", return_value=None):
             with patch.object(pipeline.pr_head, "run") as mock_pr:
@@ -111,13 +122,16 @@ class TestContentPipeline:
                     mock_cw.return_value.linkedin_post = ""
                     mock_cw.return_value.instagram_caption = ""
                     mock_cw.return_value.project_brief_sections = [
-                        {"title": f"S{i}", "body": "body", "word_count": 2} for i in range(7)
+                        {"title": f"S{i}", "body": "body", "word_count": 2}
+                        for i in range(7)
                     ]
                     mock_cw.return_value.email_subject = ""
 
                     result = pipeline.run(
-                        market="Devanahalli", survey_no="10/1",
-                        deal_type="purchase", job_id="nonexistent-job",
+                        market="Devanahalli",
+                        survey_no="10/1",
+                        deal_type="purchase",
+                        job_id="nonexistent-job",
                     )
 
         assert result["status"] == "done"
@@ -126,7 +140,12 @@ class TestContentPipeline:
 
     def test_content_pipeline_cache_hit(self):
         """Second identical call returns cached result."""
-        from utils.content_pipeline import ContentPipeline, _content_cache_clear, _cache_key
+        from utils.content_pipeline import (
+            ContentPipeline,
+            _content_cache_clear,
+            _cache_key,
+        )
+
         _content_cache_clear()
         pipeline = ContentPipeline()
         with patch.object(pipeline.pr_head, "run") as mock_pr:
@@ -148,7 +167,9 @@ class TestContentPipeline:
                 mock_cw.reset_mock()
 
                 # Second call should hit cache and skip agent calls
-                result2 = pipeline.run(market="Yelahanka", survey_no="45/2", deal_type="compare")
+                result2 = pipeline.run(
+                    market="Yelahanka", survey_no="45/2", deal_type="compare"
+                )
                 mock_pr.assert_not_called()
                 mock_cw.assert_not_called()
                 assert result2["project_tagline"] == "Cached"
@@ -156,6 +177,7 @@ class TestContentPipeline:
     def test_content_pipeline_data_source_tracking(self):
         """Pipeline tracks data source correctly."""
         from utils.content_pipeline import ContentPipeline
+
         pipeline = ContentPipeline()
         with patch.object(pipeline.pr_head, "run") as mock_pr:
             mock_pr.return_value.project_tagline = "T"
@@ -172,14 +194,16 @@ class TestContentPipeline:
                 mock_cw.return_value.email_subject = "E"
 
                 result = pipeline.run(
-                    market="Hebbal", survey_no="10/1", deal_type="jd", job_id="job-123",
+                    market="Hebbal",
+                    survey_no="10/1",
+                    deal_type="jd",
+                    job_id="job-123",
                 )
 
         assert "data_source" in result
 
 
 class TestContentEndpoint:
-
     def test_content_endpoint_returns_200(self, monkeypatch):
         monkeypatch.setenv("DASHBOARD_API_KEY", "test-key")
         from starlette.testclient import TestClient
@@ -205,7 +229,11 @@ class TestContentEndpoint:
             MockPipeline.return_value = mock_instance
             resp = client.post(
                 "/api/content/generate",
-                json={"market": "Yelahanka", "survey_no": "45/2", "deal_type": "compare"},
+                json={
+                    "market": "Yelahanka",
+                    "survey_no": "45/2",
+                    "deal_type": "compare",
+                },
                 headers={"X-API-Key": "test-key"},
             )
         assert resp.status_code == 200
@@ -228,7 +256,6 @@ class TestContentEndpoint:
 
 
 class TestContentStudioRoute:
-
     @CONTENT_STUDIO_MARKER
     def test_content_studio_route_returns_html(self):
         """GET /content returns 200 with text/html content type."""

@@ -61,11 +61,13 @@ HEADERS = {
     "Referer": "https://rera.karnataka.gov.in/viewAllProjects",
 }
 
+
 # T-1063: load session cookie from Playwright checkpoint
 def _load_session_cookie(market: str) -> str | None:
     """Load session_cookie from checkpoint saved by Playwright fallback (T-1063)."""
     try:
         from config.checkpointer import Checkpointer
+
         cp = Checkpointer()
         data = cp.load(market, "rera_session")
         if isinstance(data, dict):
@@ -74,11 +76,13 @@ def _load_session_cookie(market: str) -> str | None:
         pass
     return None
 
+
 def _apply_session_cookie(headers: dict, cookie_value: str | None) -> dict:
     """Inject session cookie into request headers if available."""
     if cookie_value:
         headers = {**headers, "Cookie": cookie_value}
     return headers
+
 
 DETAIL_EXTRACTION_PROMPT = """\
 Extract real estate project details from this RERA Karnataka detail page text.
@@ -156,8 +160,8 @@ def _ai_extract_detail(text: str) -> dict:
     # Regex pre-pass to assist AI: extract survey number from raw page text
     # Handles: Sy. No. 45/2, Sy No: 101/1A, Survey No. 45/2A/3B, S. No. 12/3
     survey_match = re.search(
-        r'(?:[Ss]y\.?\s*[Nn]o\.?|[Ss]urvey\s+[Nn]o\.?|S\.\s*[Nn]o\.?)'
-        r'\s*[:.]?\s*([\d]+/[\dA-Za-z]+(?:/[\dA-Za-z]+)*)',
+        r"(?:[Ss]y\.?\s*[Nn]o\.?|[Ss]urvey\s+[Nn]o\.?|S\.\s*[Nn]o\.?)"
+        r"\s*[:.]?\s*([\d]+/[\dA-Za-z]+(?:/[\dA-Za-z]+)*)",
         text,
     )
     try:
@@ -171,7 +175,11 @@ def _ai_extract_detail(text: str) -> dict:
         if match:
             try:
                 obj = json.loads(match.group())
-                if isinstance(obj, dict) and (not obj.get("survey_number")) and survey_match:
+                if (
+                    isinstance(obj, dict)
+                    and (not obj.get("survey_number"))
+                    and survey_match
+                ):
                     obj["survey_number"] = survey_match.group(1).strip()
                 return obj
             except json.JSONDecodeError:
@@ -255,11 +263,11 @@ def _fetch_with_fallbacks(
 
 def _fetch_detail_page_playwright(detail_url: str, cookies: list | None = None) -> str:
     """Fetch RERA detail page using Playwright with optional session cookies.
-    
+
     Args:
         detail_url: URL to fetch
         cookies: Optional cookies from requests.Session for session sharing (T-800)
-    
+
     Returns:
         Cleaned HTML text or empty string on failure
     """
@@ -278,14 +286,22 @@ def _fetch_detail_page_playwright(detail_url: str, cookies: list | None = None) 
             if cookies:
                 try:
                     pw_cookies = [
-                        {"name": c.name, "value": c.value, "domain": c.domain or ".karnataka.gov.in", "path": c.path or "/"}
+                        {
+                            "name": c.name,
+                            "value": c.value,
+                            "domain": c.domain or ".karnataka.gov.in",
+                            "path": c.path or "/",
+                        }
                         for c in cookies
-                        if hasattr(c, 'name') and hasattr(c, 'value')  # Validate cookie object
+                        if hasattr(c, "name")
+                        and hasattr(c, "value")  # Validate cookie object
                     ]
                     if pw_cookies:
                         ctx.add_cookies(pw_cookies)
                 except Exception as exc:
-                    logger.debug(f"[RERADetailScout][Playwright] Cookie conversion failed (non-fatal): {exc}")
+                    logger.debug(
+                        f"[RERADetailScout][Playwright] Cookie conversion failed (non-fatal): {exc}"
+                    )
             page = ctx.new_page()
             page.set_default_timeout(30_000)
             page.goto(detail_url, wait_until="domcontentloaded", timeout=30_000)
@@ -391,12 +407,16 @@ class RERADetailScout:
 
         logger.info(f"[RERADetailScout] Diving: {project_name} ({rera_number})")
 
-        text, used_url = _fetch_with_fallbacks(candidate_urls, self.session, self._session_cookie, project_name)
+        text, used_url = _fetch_with_fallbacks(
+            candidate_urls, self.session, self._session_cookie, project_name
+        )
         if used_url:
             detail_url = used_url
         if len(text) < 200:
             for url in candidate_urls:
-                ptext = _fetch_detail_page_playwright(url, self.session.cookies)  # T-800: pass cookies for session sharing
+                ptext = _fetch_detail_page_playwright(
+                    url, self.session.cookies
+                )  # T-800: pass cookies for session sharing
                 if len(ptext) > len(text):
                     text = ptext
                     detail_url = url
@@ -465,12 +485,13 @@ class RERADetailScout:
             "completion_pct": details.get("completion_pct"),
             "no_of_floors": details.get("no_of_floors"),
             "amenities": details.get("amenities") or [],
-            "survey_no": details.get("survey_number")
-            or project.get("survey_no", ""),
+            "survey_no": details.get("survey_number") or project.get("survey_no", ""),
         }
         sn = enriched["survey_no"]
         if sn:
-            logger.info(f"[RERADetailScout] Survey No. {sn} extracted for {rera_number}")
+            logger.info(
+                f"[RERADetailScout] Survey No. {sn} extracted for {rera_number}"
+            )
         else:
             logger.debug(f"[RERADetailScout] No survey number found for {rera_number}")
         return enriched

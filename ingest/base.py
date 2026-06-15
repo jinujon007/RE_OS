@@ -21,7 +21,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 __all__ = [
-    "DataPlugin", "ParsedRecord", "ValidationResult",
+    "DataPlugin",
+    "ParsedRecord",
+    "ValidationResult",
 ]
 
 
@@ -38,6 +40,7 @@ class ParsedRecord:
         confidence:  [0,1] estimate of data quality (default 1.0).
         scraped_at:  Timestamp of the original scrape (defaults to now UTC).
     """
+
     entity_type: str
     source_id: str
     market: str
@@ -79,6 +82,7 @@ class ValidationResult:
 
     ``valid`` is ``True`` only when the errors list is empty.
     """
+
     valid: bool
     errors: list[str] = field(default_factory=list)
 

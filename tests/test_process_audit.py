@@ -27,6 +27,7 @@ def test_process_audit_report_endpoint():
 
 def test_weekly_process_audit_job_registered():
     from config.scheduler import weekly_process_audit
+
     assert callable(weekly_process_audit)
 
 
@@ -43,5 +44,6 @@ def test_process_automation_metrics_import():
         process_audit_llm_calls_total,
         process_audit_tasks_created_total,
     )
+
     assert process_audit_reports_total._type == "counter"
     assert process_audit_bottlenecks_total._type == "counter"

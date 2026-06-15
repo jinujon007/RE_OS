@@ -3,6 +3,7 @@ Revision ID: 0015_add_memory_fact_type
 Revises: 0014_add_osm_edges
 Create Date: 2026-06-02
 """
+
 from typing import Sequence, Union
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
@@ -20,7 +21,7 @@ def upgrade() -> None:
         "agent_memories",
         sa.Column("fact_type", sa.String(20), nullable=False, server_default="fact"),
     )
-    
+
     # Add metadata column — stores conflict details as JSON: source_a, value_a, source_b, value_b, pct_gap
     op.add_column(
         "agent_memories",

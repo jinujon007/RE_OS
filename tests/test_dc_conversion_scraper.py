@@ -2,11 +2,13 @@
 
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 
 def test_parse_dc_html_extracts_records():
     from scrapers.dc_conversion_scraper import _parse_dc_html
+
     html = """
     <table>
         <tr><th>App No</th><th>Village</th><th>Survey</th><th>Extent</th><th>From</th><th>To</th><th>Applicant</th><th>Status</th><th>Date</th></tr>
@@ -23,12 +25,14 @@ def test_parse_dc_html_extracts_records():
 
 def test_parse_dc_html_empty_on_no_table():
     from scrapers.dc_conversion_scraper import _parse_dc_html
+
     records = _parse_dc_html("<html>No data</html>")
     assert records == []
 
 
 def test_market_for_village():
     from scrapers.dc_conversion_scraper import market_for_village
+
     assert market_for_village("Venkatala") == "Yelahanka"
     assert market_for_village("Devanahalli") == "Devanahalli"
     assert market_for_village("Unknown") is None
@@ -36,6 +40,7 @@ def test_market_for_village():
 
 def test_scraper_returns_empty_on_http_error():
     from scrapers.dc_conversion_scraper import run_scan
+
     with patch("scrapers.dc_conversion_scraper.HAS_HTTPX", True):
         with patch("httpx.Client") as mock_client:
             mock_instance = MagicMock()

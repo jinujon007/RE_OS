@@ -472,7 +472,9 @@ class GCCPlugin(DataPlugin):
         records.extend(news_records)
 
         # Source 3: hiring snapshots (GATE-94, T-1152)
-        snapshot_records = self._scan_hiring_snapshots(market, existing, snapshot_employers)
+        snapshot_records = self._scan_hiring_snapshots(
+            market, existing, snapshot_employers
+        )
         records.extend(snapshot_records)
 
         logger.info(
@@ -626,10 +628,13 @@ class GCCPlugin(DataPlugin):
             from utils.db import get_engine
             from sqlalchemy import text
             from datetime import date, timedelta
+
             cutoff = date.today() - timedelta(days=14)
             with get_engine(pool_size=1, max_overflow=0).connect() as conn:
                 rows = conn.execute(
-                    text("SELECT DISTINCT employer FROM gcc_hiring_snapshots WHERE snapshot_date >= :cutoff AND posting_count > 0"),
+                    text(
+                        "SELECT DISTINCT employer FROM gcc_hiring_snapshots WHERE snapshot_date >= :cutoff AND posting_count > 0"
+                    ),
                     {"cutoff": cutoff},
                 ).fetchall()
             return {str(r[0]).lower() for r in rows}
@@ -650,6 +655,7 @@ class GCCPlugin(DataPlugin):
             from utils.db import get_engine
             from sqlalchemy import text
             from datetime import date, timedelta
+
             cutoff = date.today() - timedelta(days=7)
             with get_engine(pool_size=1, max_overflow=0).connect() as conn:
                 rows = conn.execute(
@@ -671,7 +677,9 @@ class GCCPlugin(DataPlugin):
                     continue
                 seen.add(cid)
 
-                headcount = int(posting_count) * 5  # rough multiplier: 1 posting ≈ 5 hires
+                headcount = (
+                    int(posting_count) * 5
+                )  # rough multiplier: 1 posting ≈ 5 hires
                 if headcount < 10:
                     continue
 

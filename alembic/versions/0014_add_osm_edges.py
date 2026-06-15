@@ -3,6 +3,7 @@ Revision ID: 0014_add_osm_edges
 Revises: 0013_add_igr_transactions
 Create Date: 2026-06-02
 """
+
 from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
@@ -25,7 +26,9 @@ def upgrade() -> None:
         sa.Column("length", sa.Float(), nullable=True),
         sa.Column("name", sa.Text(), nullable=True),
         sa.Column("highway", sa.Text(), nullable=True),
-        sa.Column("geom", sa.dialects.postgresql.GEOMETRY("LineString", 4326), nullable=True),
+        sa.Column(
+            "geom", sa.dialects.postgresql.GEOMETRY("LineString", 4326), nullable=True
+        ),
     )
     op.create_index(
         "idx_osm_edges_market_geom",

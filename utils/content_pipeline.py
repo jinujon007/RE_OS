@@ -59,6 +59,7 @@ def _log_content_run(result_id: str, market: str, survey_no: str, status: str) -
     try:
         from utils.db import get_engine
         from sqlalchemy import text
+
         with get_engine().begin() as conn:
             conn.execute(
                 text("""
@@ -161,6 +162,7 @@ class ContentPipeline:
         if job_id:
             try:
                 from crews.evaluate_pipeline import get_evaluate_job
+
                 job = get_evaluate_job(job_id)
                 if job and job.get("status") == "done":
                     board_session = job.get("board_session") or {}
@@ -171,26 +173,30 @@ class ContentPipeline:
                     avg_psf = float(
                         board_session.get("avg_psf", deal_memo.get("avg_psf", 0)) or 0
                     )
-                    irr = float(
-                        board_session.get("irr", deal_memo.get("irr", 0)) or 0
-                    )
+                    irr = float(board_session.get("irr", deal_memo.get("irr", 0)) or 0)
                     data_source = "evaluate_job"
                     logger.info(
                         "[ContentPipeline] Loaded data from job %s: PSF=%.0f, IRR=%.1f",
-                        job_id, avg_psf, irr,
+                        job_id,
+                        avg_psf,
+                        irr,
                     )
             except Exception as exc:
                 logger.warning(
                     "[ContentPipeline] Failed to load job %s: %s — falling back to IntelRegistry",
-                    job_id, exc,
+                    job_id,
+                    exc,
                 )
 
         if avg_psf == 0.0 or pkg is None:
             try:
                 from intelligence.registry import IntelRegistry
+
                 reg = IntelRegistry()
                 pkg = reg.get_full_picture(
-                    survey_no=survey_no, market=market, deal_type=deal_type,
+                    survey_no=survey_no,
+                    market=market,
+                    deal_type=deal_type,
                 )
                 fetched = self._get_financial_eval_data(pkg)
                 avg_psf, irr, psf_low, psf_high = fetched
@@ -200,12 +206,17 @@ class ContentPipeline:
                     psf_low = float(defaults[1])
                     psf_high = float(defaults[2])
                     irr = 14.0
-                    logger.info("[ContentPipeline] Using market defaults for %s: PSF=%.0f", market, avg_psf)
+                    logger.info(
+                        "[ContentPipeline] Using market defaults for %s: PSF=%.0f",
+                        market,
+                        avg_psf,
+                    )
                 if data_source == "default":
                     data_source = "intel_registry"
                 logger.info(
                     "[ContentPipeline] IntelRegistry data: PSF=%.0f, IRR=%.1f",
-                    avg_psf, irr,
+                    avg_psf,
+                    irr,
                 )
             except Exception as exc:
                 logger.warning(
@@ -239,7 +250,10 @@ class ContentPipeline:
         brief: PRBrief = self.pr_head.run(input_data)
 
         content_pack: ContentPack = self.content_writer.run(
-            brief=brief, psf=avg_psf, irr=irr, market=market,
+            brief=brief,
+            psf=avg_psf,
+            irr=irr,
+            market=market,
         )
 
         result = {
@@ -263,14 +277,18 @@ class ContentPipeline:
 
         try:
             from config.metrics import content_generation_total
+
             content_generation_total.labels(market=market, status="success").inc()
         except Exception:
             pass
 
         logger.info(
             "[ContentPipeline] Complete: %s/%s — LinkedIn %d chars, %d sections (source=%s, cache=%s)",
-            market, survey_no, len(content_pack.linkedin_post),
-            len(content_pack.project_brief_sections), data_source,
+            market,
+            survey_no,
+            len(content_pack.linkedin_post),
+            len(content_pack.project_brief_sections),
+            data_source,
             "yes" if cached else "no",
         )
 

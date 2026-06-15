@@ -1,6 +1,8 @@
 """Unit tests for InvestorBriefGenerator v2 (T-991 — Sprint 57 GATE-65)."""
+
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 
@@ -126,6 +128,7 @@ def test_section_6_pedigree_non_empty():
         mock_conn.execute.side_effect = _mock_pedigree_db()
 
         from utils.investor_brief_v2 import generate_investor_brief
+
         pkg = _make_pkg()
         result = generate_investor_brief(pkg)
         sections = result["sections"]
@@ -157,6 +160,7 @@ def test_section_7_includes_psf_comparison():
         mock_conn.execute.side_effect = _mock_pedigree_db()
 
         from utils.investor_brief_v2 import generate_investor_brief
+
         pkg = _make_pkg(peer_benchmark=pb)
         result = generate_investor_brief(pkg)
         sections = result["sections"]
@@ -172,6 +176,7 @@ def test_lls_pedigree_db_fallback_on_error():
     """Edge case: when lls_portfolio query fails, _lls_pedigree falls back to constants."""
     with patch("utils.db.get_engine", side_effect=Exception("DB unavailable")):
         from utils.investor_brief_v2 import generate_investor_brief
+
         pkg = _make_pkg()
         pkg.all_modules_success = True
         result = generate_investor_brief(pkg)
@@ -190,6 +195,7 @@ def test_all_7_sections_non_empty():
         mock_conn.execute.side_effect = _mock_pedigree_db()
 
         from utils.investor_brief_v2 import generate_investor_brief
+
         pkg = _make_pkg()
         result = generate_investor_brief(pkg)
         sections = result["sections"]

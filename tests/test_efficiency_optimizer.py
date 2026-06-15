@@ -2,7 +2,10 @@
 
 import pytest
 from agents.efficiency_optimizer_agent import (
-    EfficiencyOptimizerAgent, ImprovementProposal, _fallback_proposal, _auto_create_task,
+    EfficiencyOptimizerAgent,
+    ImprovementProposal,
+    _fallback_proposal,
+    _auto_create_task,
 )
 from unittest.mock import patch, MagicMock
 
@@ -37,11 +40,14 @@ def test_priority_assignment():
     assert result["proposal"]["priority"] in ("HIGH", "MEDIUM", "LOW")
 
 
-@pytest.mark.parametrize("priority,expected_call", [
-    ("HIGH", True),
-    ("MEDIUM", True),
-    ("LOW", False),
-])
+@pytest.mark.parametrize(
+    "priority,expected_call",
+    [
+        ("HIGH", True),
+        ("MEDIUM", True),
+        ("LOW", False),
+    ],
+)
 @patch("agents.efficiency_optimizer_agent._httpx")
 def test_auto_task_created_on_medium_or_high(mock_httpx, priority, expected_call):
     mock_httpx.post.return_value = MagicMock(status_code=201)
@@ -91,4 +97,7 @@ def test_failure_rate_proposal():
         },
     )
     assert result["proposal"]["priority"] == "MEDIUM"
-    assert "failure" in result["proposal"]["title"].lower() or "investigate" in result["proposal"]["title"].lower()
+    assert (
+        "failure" in result["proposal"]["title"].lower()
+        or "investigate" in result["proposal"]["title"].lower()
+    )

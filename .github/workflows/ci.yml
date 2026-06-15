@@ -241,10 +241,9 @@ jobs:
       - name: Alembic migration drift check
         env:
           DB_PASSWORD: re_os_test
+          DATABASE_URL: postgresql://re_os_user:re_os_test@localhost:5432/re_os_test
         run: |
           pip install alembic>=1.13.0 psycopg2-binary sqlalchemy
-          # Overwrite alembic.ini DB URL to point at the test DB
-          sed -i 's|re_os|re_os_test|g' alembic.ini
           # Run all pending migrations
           alembic upgrade head
           echo "Migrations applied successfully"
@@ -302,9 +301,9 @@ jobs:
         env:
           PGPASSWORD: re_os_test
           DB_PASSWORD: re_os_test
+          DATABASE_URL: postgresql://re_os_user:re_os_test@localhost:5432/re_os_test
         run: |
           psql -h localhost -U re_os_user -d re_os_test -f database/schema.sql
-          sed -i 's|re_os|re_os_test|g' alembic.ini
           alembic upgrade head
 
       - name: Run data integrity checks

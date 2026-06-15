@@ -1,12 +1,15 @@
 """T-1111: PSF forecast scheduler job + upsert + Discord digest tests."""
+
 import pytest
 from unittest.mock import MagicMock, patch
+
 pytestmark = pytest.mark.unit
 
 
 def test_psf_forecast_job_registered():
     """Verify run_psf_forecast_update function exists and is callable."""
     from config.scheduler import run_psf_forecast_update
+
     assert callable(run_psf_forecast_update)
 
 
@@ -25,11 +28,18 @@ def test_upsert_writes_3_horizon_rows():
         mock_conn.execute.side_effect = _fake_execute
 
         mock_result = MagicMock(
-            status="ok", market="Yelahanka", current_psf=6500.0,
-            trend_direction="rising", slope_pct_per_month=1.2,
-            data_points=6, mae_pct=3.5,
-            forecast_3m=6800, forecast_6m=7100, forecast_12m=7700,
-            conf_low_6m=6500, conf_high_6m=7700,
+            status="ok",
+            market="Yelahanka",
+            current_psf=6500.0,
+            trend_direction="rising",
+            slope_pct_per_month=1.2,
+            data_points=6,
+            mae_pct=3.5,
+            forecast_3m=6800,
+            forecast_6m=7100,
+            forecast_12m=7700,
+            conf_low_6m=6500,
+            conf_high_6m=7700,
         )
 
         with patch("utils.psf_forecaster.PSFForecaster") as mock_fc_cls:

@@ -111,6 +111,7 @@ _CLEANUP_INTERVAL_S = 300
 
 # ── DB persistence helpers ────────────────────────────────────────────────────
 
+
 def _db_insert_job(job: EvaluateJob) -> None:
     try:
         with get_engine().begin() as conn:
@@ -139,7 +140,9 @@ def _db_insert_job(job: EvaluateJob) -> None:
                 },
             )
     except Exception as exc:
-        logger.warning("[Evaluate] DB insert failed for job {}: {}", job.job_id[:8], exc)
+        logger.warning(
+            "[Evaluate] DB insert failed for job {}: {}", job.job_id[:8], exc
+        )
 
 
 def _db_update_job(job: EvaluateJob) -> None:
@@ -164,16 +167,26 @@ def _db_update_job(job: EvaluateJob) -> None:
                     "status": job.status,
                     "progress_msg": job.progress_msg,
                     "completed_at": job.completed_at,
-                    "board_session": json.dumps(job.board_session) if job.board_session is not None else None,
-                    "deal_memo": json.dumps(job.deal_memo) if job.deal_memo is not None else None,
-                    "investor_brief": json.dumps(job.investor_brief) if job.investor_brief is not None else None,
-                    "shareholder_round": json.dumps(job.shareholder_round) if job.shareholder_round is not None else None,
+                    "board_session": json.dumps(job.board_session)
+                    if job.board_session is not None
+                    else None,
+                    "deal_memo": json.dumps(job.deal_memo)
+                    if job.deal_memo is not None
+                    else None,
+                    "investor_brief": json.dumps(job.investor_brief)
+                    if job.investor_brief is not None
+                    else None,
+                    "shareholder_round": json.dumps(job.shareholder_round)
+                    if job.shareholder_round is not None
+                    else None,
                     "deal_id": job.deal_id,
                     "error": job.error,
                 },
             )
     except Exception as exc:
-        logger.warning("[Evaluate] DB update failed for job {}: {}", job.job_id[:8], exc)
+        logger.warning(
+            "[Evaluate] DB update failed for job {}: {}", job.job_id[:8], exc
+        )
 
 
 def _db_fetch_job(job_id: str) -> dict | None:
@@ -196,7 +209,9 @@ def _db_fetch_job(job_id: str) -> dict | None:
                 "deal_type": row.deal_type,
                 "pitch": row.pitch or "",
                 "created_at": row.created_at.isoformat() if row.created_at else None,
-                "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+                "completed_at": row.completed_at.isoformat()
+                if row.completed_at
+                else None,
                 "board_session": row.board_session,
                 "deal_memo": row.deal_memo,
                 "investor_brief": row.investor_brief,
@@ -211,6 +226,7 @@ def _db_fetch_job(job_id: str) -> dict | None:
 
 # ── In-memory helpers ─────────────────────────────────────────────────────────
 
+
 def _periodic_cleanup() -> None:
     global _last_cleanup_ts
     now = _time_mod.time()
@@ -222,13 +238,18 @@ def _periodic_cleanup() -> None:
             return
         cutoff = datetime.now(timezone.utc) - timedelta(hours=_JOBS_MAX_AGE_HOURS)
         stale = [
-            jid for jid, j in _jobs.items()
+            jid
+            for jid, j in _jobs.items()
             if j.completed_at and datetime.fromisoformat(j.completed_at) < cutoff
         ]
         for jid in stale:
             del _jobs[jid]
         if stale:
-            logger.info("[Evaluate] cleaned {} stale jobs from cache (retained {})", len(stale), len(_jobs))
+            logger.info(
+                "[Evaluate] cleaned {} stale jobs from cache (retained {})",
+                len(stale),
+                len(_jobs),
+            )
 
 
 def _get_market_id(market: str) -> str | None:
@@ -287,18 +308,26 @@ def _create_deal_entry(
                     "survey_no": pkg.survey_no,
                     "market_id": market_id,
                     "deal_type": pkg.deal_type,
-                    "area_acres": pkg.land_picture.land_area_acres if pkg.land_picture else None,
+                    "area_acres": pkg.land_picture.land_area_acres
+                    if pkg.land_picture
+                    else None,
                     "ask_psf": fe.sell_psf if fe else None,
                     "irr_base": irr_base,
                     "irr_bull": irr_bull,
                     "irr_bear": irr_bear,
                     "verdict": verdict,
-                    "metadata": json.dumps({
-                        "session_id": None,
-                        "memo_sections": [s["title"] for s in memo.get("sections", [])],
-                        "investor_brief_sections": [s["title"] for s in brief.get("sections", [])],
-                        "module_status": pkg.module_status,
-                    }),
+                    "metadata": json.dumps(
+                        {
+                            "session_id": None,
+                            "memo_sections": [
+                                s["title"] for s in memo.get("sections", [])
+                            ],
+                            "investor_brief_sections": [
+                                s["title"] for s in brief.get("sections", [])
+                            ],
+                            "module_status": pkg.module_status,
+                        }
+                    ),
                 },
             )
             deal_id = str(result.fetchone()[0])
@@ -329,10 +358,17 @@ def run_shareholder_round(pkg: IntelPackage, deal_summary: str = "") -> list[dic
     """
     try:
         from agents.shareholder_agent import build_all_shareholders
+
         shareholders = build_all_shareholders()
         if not shareholders:
-            return [{"name": "No Shareholders", "verdict": "ABSTAIN",
-                      "key_question": "N/A", "response": "J-2 not complete"}]
+            return [
+                {
+                    "name": "No Shareholders",
+                    "verdict": "ABSTAIN",
+                    "key_question": "N/A",
+                    "response": "J-2 not complete",
+                }
+            ]
 
         context = (
             f"Market: {pkg.market}\n"
@@ -369,39 +405,57 @@ def run_shareholder_round(pkg: IntelPackage, deal_summary: str = "") -> list[dic
                 name = spec.get("name", "Shareholder")
                 try:
                     raw = future.result(timeout=60)
-                    json_match = _re.search(r'(?:```)?(?:json)?\s*(\{.*?\})\s*(?:```)?', raw.strip(), _re.DOTALL)
+                    json_match = _re.search(
+                        r"(?:```)?(?:json)?\s*(\{.*?\})\s*(?:```)?",
+                        raw.strip(),
+                        _re.DOTALL,
+                    )
                     if not json_match:
-                        raise ValueError("No JSON found in response: {}".format(raw[:200]))
+                        raise ValueError(
+                            "No JSON found in response: {}".format(raw[:200])
+                        )
                     parsed = _json.loads(json_match.group(1))
                     verdict = parsed.get("verdict", "CONDITIONAL")
                     if verdict not in ("GO", "NO-GO", "CONDITIONAL"):
                         verdict = "CONDITIONAL"
-                    results.append({
-                        "name": name,
-                        "verdict": verdict,
-                        "key_question": parsed.get("key_question", "")[:200],
-                        "response": parsed.get("response", "")[:200],
-                    })
+                    results.append(
+                        {
+                            "name": name,
+                            "verdict": verdict,
+                            "key_question": parsed.get("key_question", "")[:200],
+                            "response": parsed.get("response", "")[:200],
+                        }
+                    )
                 except Exception as exc:
-                    logger.warning("[ShareholderRound] {} failed/timeout: {}", name, exc)
-                    results.append({
-                        "name": name,
-                        "verdict": "ABSTAIN",
-                        "key_question": "",
-                        "response": "Unable to respond",
-                        "error": "timeout" if any(w in str(exc).lower() for w in ["timeout", "timed out"]) else str(exc)[:100],
-                    })
+                    logger.warning(
+                        "[ShareholderRound] {} failed/timeout: {}", name, exc
+                    )
+                    results.append(
+                        {
+                            "name": name,
+                            "verdict": "ABSTAIN",
+                            "key_question": "",
+                            "response": "Unable to respond",
+                            "error": "timeout"
+                            if any(
+                                w in str(exc).lower() for w in ["timeout", "timed out"]
+                            )
+                            else str(exc)[:100],
+                        }
+                    )
         except TimeoutError:
             # Overall 90s wall-clock exceeded — mark all pending futures as ABSTAIN
             pending = {future_map[f] for f in future_map if not f.done()}
             for spec in pending:
-                results.append({
-                    "name": spec.get("name", "Shareholder"),
-                    "verdict": "ABSTAIN",
-                    "key_question": "",
-                    "response": "Unable to respond",
-                    "error": "timeout",
-                })
+                results.append(
+                    {
+                        "name": spec.get("name", "Shareholder"),
+                        "verdict": "ABSTAIN",
+                        "key_question": "",
+                        "response": "Unable to respond",
+                        "error": "timeout",
+                    }
+                )
         finally:
             # Do NOT wait for dangling LLM threads — they have no internal timeout.
             executor.shutdown(wait=False, cancel_futures=True)
@@ -431,38 +485,59 @@ def _run_pipeline(
             sell_psf=sell_psf,
             deal_type=deal_type,
         )
-        logger.info("[Evaluate] {} | IntelRegistry {:.1f}s | all_modules={}", ctx, _time_mod.time() - t0, pkg.all_modules_success)
+        logger.info(
+            "[Evaluate] {} | IntelRegistry {:.1f}s | all_modules={}",
+            ctx,
+            _time_mod.time() - t0,
+            pkg.all_modules_success,
+        )
 
         _update_job(job_id, status="running", msg="Board Room")
         t1 = _time_mod.time()
         from crews.board_room_v2 import run_board_session_v2
+
         board_result = run_board_session_v2(pkg, pitch=pitch)
         dept_count = len(board_result.responses)
-        logger.info("[Evaluate] {} | BoardRoom {:.1f}s | {} depts", ctx, _time_mod.time() - t1, dept_count)
+        logger.info(
+            "[Evaluate] {} | BoardRoom {:.1f}s | {} depts",
+            ctx,
+            _time_mod.time() - t1,
+            dept_count,
+        )
 
         _update_job(job_id, status="running", msg="Deal Memo")
         from utils.deal_memo_v2 import generate_deal_memo
+
         memo = generate_deal_memo(pkg)
         memo_section_count = len(memo.get("sections", []))
 
         _update_job(job_id, status="running", msg="Investor Brief")
         from utils.investor_brief_v2 import generate_investor_brief
+
         brief = generate_investor_brief(pkg)
         brief_section_count = len(brief.get("sections", []))
 
         _update_job(job_id, status="running", msg="Shareholder round")
         shareholder_round = run_shareholder_round(pkg, pitch)
-        logger.info("[Evaluate] {} | Shareholder round: {} responses", ctx, len(shareholder_round))
+        logger.info(
+            "[Evaluate] {} | Shareholder round: {} responses",
+            ctx,
+            len(shareholder_round),
+        )
 
         # Auto-trigger quarterly review hook: ≥2 NO-GO + high IRR → WARNING
         if shareholder_round:
-            nogo_count = sum(1 for s in shareholder_round if s.get("verdict") == "NO-GO")
+            nogo_count = sum(
+                1 for s in shareholder_round if s.get("verdict") == "NO-GO"
+            )
             fe = pkg.financial_evaluation
             irr_base = fe.purchase.simple_irr_pct if (fe and fe.purchase) else None
             if nogo_count >= 2 and irr_base is not None and irr_base > 20:
                 logger.warning(
                     "[Evaluate] {} High-IRR deal ({:.1f}%) with {} NO-GO shareholders — recommend quarterly board review",
-                    ctx, irr_base, nogo_count,
+                    ctx,
+                    irr_base,
+                    nogo_count,
                 )
 
         _update_job(job_id, status="running", msg="Deals entry")
@@ -486,8 +561,14 @@ def _run_pipeline(
             _db_update_job(job)
 
         elapsed = _time_mod.time() - t0
-        logger.info("[Evaluate] {} complete | deal={} | {}memos/{}briefs | {:.1f}s",
-                    ctx, deal_id, memo_section_count, brief_section_count, elapsed)
+        logger.info(
+            "[Evaluate] {} complete | deal={} | {}memos/{}briefs | {:.1f}s",
+            ctx,
+            deal_id,
+            memo_section_count,
+            brief_section_count,
+            elapsed,
+        )
 
     except Exception as exc:
         elapsed = _time_mod.time() - t0
@@ -495,7 +576,9 @@ def _run_pipeline(
         _update_job(job_id, status="failed", error=str(exc))
 
 
-def _update_job(job_id: str, status: str, msg: str = "", error: str | None = None) -> None:
+def _update_job(
+    job_id: str, status: str, msg: str = "", error: str | None = None
+) -> None:
     with _jobs_lock:
         job = _jobs.get(job_id)
         if job:
@@ -549,7 +632,15 @@ def start_evaluate(
 
     t = threading.Thread(
         target=_run_pipeline,
-        args=(job_id, survey_no, market, land_area_sqft, safe_sell_psf, deal_type, pitch),
+        args=(
+            job_id,
+            survey_no,
+            market,
+            land_area_sqft,
+            safe_sell_psf,
+            deal_type,
+            pitch,
+        ),
         daemon=True,
         name=f"eval-{job_id[:8]}",
     )

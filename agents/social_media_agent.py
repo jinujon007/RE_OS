@@ -17,8 +17,12 @@ from loguru import logger
 from agents.pr_head_agent import PRBrief, LLS_BRAND_VOICE_CONSTRAINTS
 
 __all__ = [
-    "PostDraft", "WeekPlan", "SocialCalendar",
-    "ContentCalendarGenerator", "PostFormatter", "SocialMediaAgent",
+    "PostDraft",
+    "WeekPlan",
+    "SocialCalendar",
+    "ContentCalendarGenerator",
+    "PostFormatter",
+    "SocialMediaAgent",
 ]
 
 _LLM_IMPORTED = False
@@ -26,9 +30,12 @@ _LLM_IMPORT_LOCK = Lock()
 try:
     from config.llm_router import get_light_llm as _get_light_llm
     from config.llm_router import get_analysis_llm as _get_analysis_llm
+
     _LLM_IMPORTED = True
 except ImportError:
-    logger.warning("[SocialMedia] config.llm_router not available — will use fallback only")
+    logger.warning(
+        "[SocialMedia] config.llm_router not available — will use fallback only"
+    )
 
 
 @dataclass
@@ -67,7 +74,11 @@ class SocialCalendar:
 
 
 _WEEK_CHANNEL_PATTERN = [
-    "linkedin", "instagram", "linkedin", "instagram", "instagram",
+    "linkedin",
+    "instagram",
+    "linkedin",
+    "instagram",
+    "instagram",
 ]
 
 
@@ -80,12 +91,19 @@ class ContentCalendarGenerator:
         "instagram": ["08:00 IST", "13:00 IST", "19:00 IST"],
     }
     DEFAULT_HASHTAGS = [
-        "#BengaluruRealEstate", "#NorthBengaluru",
-        "#LLS", "#RealEstateInvestment", "#Property",
+        "#BengaluruRealEstate",
+        "#NorthBengaluru",
+        "#LLS",
+        "#RealEstateInvestment",
+        "#Property",
     ]
 
-    def generate(self, month: str, active_projects: list[str] | None = None,
-                 brief: PRBrief | None = None) -> SocialCalendar:
+    def generate(
+        self,
+        month: str,
+        active_projects: list[str] | None = None,
+        brief: PRBrief | None = None,
+    ) -> SocialCalendar:
         weeks = []
         proj = active_projects or ["VEL"]
         for w in range(1, 5):
@@ -96,30 +114,35 @@ class ContentCalendarGenerator:
                 post_time = times[time_idx]
                 post_content = _placeholder_content(channel, proj[0], brief)
                 hashtags = list(self.DEFAULT_HASHTAGS) if channel == "instagram" else []
-                posts.append(PostDraft(
-                    channel=channel,
-                    content=post_content,
-                    best_post_time=post_time,
-                    hashtags=hashtags,
-                ))
-            weeks.append(WeekPlan(
-                week_label=f"Week {w}",
-                posts=posts,
-            ))
+                posts.append(
+                    PostDraft(
+                        channel=channel,
+                        content=post_content,
+                        best_post_time=post_time,
+                        hashtags=hashtags,
+                    )
+                )
+            weeks.append(
+                WeekPlan(
+                    week_label=f"Week {w}",
+                    posts=posts,
+                )
+            )
         return SocialCalendar(month=month, weeks=weeks)
 
 
 def _placeholder_content(channel: str, project: str, brief: PRBrief | None) -> str:
-    tagline = brief.project_tagline if brief and brief.project_tagline else "Premium living, naturally."
+    tagline = (
+        brief.project_tagline
+        if brief and brief.project_tagline
+        else "Premium living, naturally."
+    )
     if channel == "linkedin":
         return (
             f"{tagline} — {project} represents a new benchmark in North Bengaluru living. "
             "DM for a detailed project brief."
         )[:1300]
-    return (
-        f"{tagline} — {project}. "
-        "Your sanctuary in North Bengaluru awaits."
-    )[:2200]
+    return (f"{tagline} — {project}. Your sanctuary in North Bengaluru awaits.")[:2200]
 
 
 class PostFormatter:
@@ -131,9 +154,9 @@ class PostFormatter:
 
     def format(self, content: str, channel: str) -> str:
         if channel == "linkedin":
-            return content[:self.LINKEDIN_MAX]
+            return content[: self.LINKEDIN_MAX]
         if channel == "instagram":
-            return content[:self.INSTAGRAM_MAX]
+            return content[: self.INSTAGRAM_MAX]
         return content
 
 
@@ -141,14 +164,19 @@ def _log_agent_run(project: str, market: str, post_count: int, status: str) -> N
     try:
         from utils.db import get_engine
         from sqlalchemy import text
+
         with get_engine().begin() as conn:
             conn.execute(
                 text("""
                     INSERT INTO agent_runs (agent_id, market, event_type, status, records_inserted, notes)
                     VALUES ('social_media_agent', :m, 'calendar_generation', :s, :n, :notes)
                 """),
-                {"m": market, "s": status, "n": post_count,
-                 "notes": f"project={project}"},
+                {
+                    "m": market,
+                    "s": status,
+                    "n": post_count,
+                    "notes": f"project={project}",
+                },
             )
     except Exception as exc:
         logger.debug("[SocialMedia] Failed to log agent run: {}", exc)
@@ -194,12 +222,18 @@ class SocialMediaAgent:
             logger.debug("[SocialMedia] Analysis LLM unavailable, trying heavy tier")
         try:
             from config.llm_router import get_heavy_llm
+
             return get_heavy_llm(temperature=self.temperature)
         except Exception:
             raise ImportError("No LLM tier available in config.llm_router")
 
-    def _try_llm_enrichment(self, project_label: str, market: str,
-                             brief: PRBrief | None, cal: SocialCalendar) -> SocialCalendar:
+    def _try_llm_enrichment(
+        self,
+        project_label: str,
+        market: str,
+        brief: PRBrief | None,
+        cal: SocialCalendar,
+    ) -> SocialCalendar:
         """Attempt LLM enrichment of calendar posts. Returns original on failure."""
         import concurrent.futures
 
@@ -207,8 +241,12 @@ class SocialMediaAgent:
         system_prompt = self._build_system_prompt()
 
         tagline = brief.project_tagline if brief and brief.project_tagline else ""
-        narrative = brief.investor_narrative[:300] if brief and brief.investor_narrative else ""
-        diffs = brief.key_differentiators[:3] if brief and brief.key_differentiators else []
+        narrative = (
+            brief.investor_narrative[:300] if brief and brief.investor_narrative else ""
+        )
+        diffs = (
+            brief.key_differentiators[:3] if brief and brief.key_differentiators else []
+        )
 
         user_prompt = (
             f"Generate social media posts for {project_label} in {market}.\n"
@@ -222,8 +260,10 @@ class SocialMediaAgent:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(
                 llm.invoke,
-                [{"role": "system", "content": system_prompt},
-                 {"role": "user", "content": user_prompt}]
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
             )
             response = future.result(timeout=self._LLM_TIMEOUT_S)
 
@@ -253,8 +293,9 @@ class SocialMediaAgent:
 
         return cal
 
-    def generate_week(self, project_label: str, market: str,
-                      brief: PRBrief | None = None) -> SocialCalendar:
+    def generate_week(
+        self, project_label: str, market: str, brief: PRBrief | None = None
+    ) -> SocialCalendar:
         """Generate a full month (4 weeks) of social media posts.
 
         Args:
@@ -274,20 +315,28 @@ class SocialMediaAgent:
             try:
                 cal = self._try_llm_enrichment(project_label, market, brief, cal)
             except concurrent.futures.TimeoutError:
-                logger.warning("[SocialMedia] LLM timed out — using structured calendar")
+                logger.warning(
+                    "[SocialMedia] LLM timed out — using structured calendar"
+                )
             except Exception as exc:
-                logger.warning("[SocialMedia] LLM error: {} — using structured calendar", exc)
+                logger.warning(
+                    "[SocialMedia] LLM error: {} — using structured calendar", exc
+                )
 
         post_count = sum(len(w.posts) for w in cal.weeks)
         logger.info(
             "[SocialMedia] Calendar generated for {}/{} — {} weeks, {} total posts",
-            project_label, market, len(cal.weeks), post_count,
+            project_label,
+            market,
+            len(cal.weeks),
+            post_count,
         )
         _log_agent_run(project_label, market, post_count, "success")
         return cal
 
-    def _merge_llm_posts(self, cal: SocialCalendar,
-                          linkedin_posts: list[str], instagram_posts: list[str]) -> SocialCalendar:
+    def _merge_llm_posts(
+        self, cal: SocialCalendar, linkedin_posts: list[str], instagram_posts: list[str]
+    ) -> SocialCalendar:
         li_iter = iter(linkedin_posts)
         ig_iter = iter(instagram_posts)
 

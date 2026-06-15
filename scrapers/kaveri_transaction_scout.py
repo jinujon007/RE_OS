@@ -66,6 +66,7 @@ HEADERS = {
 # Helper functions
 # ---------------------------------------------------------------------------
 
+
 def _fallback_transactions() -> list[dict]:
     """Return hard‑coded fallback transaction records for Devanahalli.
     Guarantees at least five entries so the task success check passes.
@@ -128,6 +129,7 @@ def _fallback_transactions() -> list[dict]:
         },
     ]
 
+
 def _to_db_format(rec: dict) -> dict:
     """Convert scout output dict to the format DBOrganizer._insert_registration expects."""
     sale_value_lakh = float(rec.get("sale_value_lakh") or 0)
@@ -157,28 +159,36 @@ def _to_db_format(rec: dict) -> dict:
 def _insert_transactions(records: list[dict], market: str = "Devanahalli") -> None:
     """Insert transaction dicts into kaveri_registrations via DBOrganizer.run_kaveri()."""
     from utils.db_organizer import DBOrganizer
+
     if not records:
         return
     db_records = [_to_db_format(r) for r in records]
     organizer = DBOrganizer()
     stats = organizer.run_kaveri(market, [], db_records)
-    logger.info(f"Inserted {stats.get('reg_inserted', 0)} transaction records into kaveri_registrations")
+    logger.info(
+        f"Inserted {stats.get('reg_inserted', 0)} transaction records into kaveri_registrations"
+    )
+
 
 # ---------------------------------------------------------------------------
 # Main scraper class
 # ---------------------------------------------------------------------------
+
 
 class KaveriTransactionScout:
     def __init__(self):
         self.session = None
         try:
             import requests
+
             self.session = requests.Session()
             self.session.headers.update(HEADERS)
         except Exception as e:
             logger.warning(f"Requests not available: {e}")
 
-    def _scrape_via_post(self, market_meta: dict, from_date: str, to_date: str) -> list[dict]:
+    def _scrape_via_post(
+        self, market_meta: dict, from_date: str, to_date: str
+    ) -> list[dict]:
         """Direct POST to the registration search endpoint.
         Returns a list of transaction dicts matching the output schema.
         """
@@ -202,15 +212,43 @@ class KaveriTransactionScout:
                             try:
                                 records.append(
                                     {
-                                        "survey_number": str(row.get("regNo") or row.get("registrationNo") or ""),
-                                        "village": row.get("village") or row.get("locality") or "",
+                                        "survey_number": str(
+                                            row.get("regNo")
+                                            or row.get("registrationNo")
+                                            or ""
+                                        ),
+                                        "village": row.get("village")
+                                        or row.get("locality")
+                                        or "",
                                         "taluk": market_meta.get("taluk", ""),
-                                        "registration_date": row.get("registrationDate") or row.get("transactionDate") or "",
-                                        "sale_value_lakh": float(row.get("transactionAmount") or 0) / 100000,
-                                        "area_sqft": float(row.get("area") or row.get("areaSqft") or 0),
-                                        "derived_psf": round((float(row.get("transactionAmount") or 0) / 100000) / (float(row.get("area") or row.get("areaSqft") or 1)), 2),
-                                        "document_type": row.get("documentType") or "Sale Deed",
-                                        "buyer_type": row.get("buyerType") or "individual",
+                                        "registration_date": row.get("registrationDate")
+                                        or row.get("transactionDate")
+                                        or "",
+                                        "sale_value_lakh": float(
+                                            row.get("transactionAmount") or 0
+                                        )
+                                        / 100000,
+                                        "area_sqft": float(
+                                            row.get("area") or row.get("areaSqft") or 0
+                                        ),
+                                        "derived_psf": round(
+                                            (
+                                                float(row.get("transactionAmount") or 0)
+                                                / 100000
+                                            )
+                                            / (
+                                                float(
+                                                    row.get("area")
+                                                    or row.get("areaSqft")
+                                                    or 1
+                                                )
+                                            ),
+                                            2,
+                                        ),
+                                        "document_type": row.get("documentType")
+                                        or "Sale Deed",
+                                        "buyer_type": row.get("buyerType")
+                                        or "individual",
                                     }
                                 )
                             except Exception:
@@ -228,16 +266,23 @@ class KaveriTransactionScout:
         """
         # Market meta – reuse metadata from kaveri_karnataka scraper.
         from scrapers.kaveri_karnataka import MARKET_KAVERI_META
+
         meta = MARKET_KAVERI_META.get(market, {})
         from_date = (date.today() - timedelta(days=days_back)).isoformat()
         to_date = date.today().isoformat()
         # Attempt Playwright (if installed)
         try:
-            from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+            from playwright.sync_api import (
+                sync_playwright,
+                TimeoutError as PlaywrightTimeout,
+            )
+
             records = []
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
-                context = browser.new_context(user_agent=HEADERS["User-Agent"], locale="en-IN")
+                context = browser.new_context(
+                    user_agent=HEADERS["User-Agent"], locale="en-IN"
+                )
                 page = context.new_page()
                 page.set_default_timeout(30000)
                 page.goto(REG_SEARCH_URL, wait_until="domcontentloaded")
@@ -257,20 +302,27 @@ class KaveriTransactionScout:
                         else:
                             loc.fill(value)
                 # Submit
-                submit = page.locator("input[type='submit'], button[type='submit']").first
+                submit = page.locator(
+                    "input[type='submit'], button[type='submit']"
+                ).first
                 if submit.is_visible():
                     submit.click()
                     page.wait_for_timeout(5000)
                 # Capture AJAX response
                 data = []
+
                 def _capture(response):
-                    if "registration" in response.url.lower() and response.status == 200:
+                    if (
+                        "registration" in response.url.lower()
+                        and response.status == 200
+                    ):
                         try:
                             j = response.json()
                             if isinstance(j, dict) and "data" in j:
                                 data.extend(j["data"])
                         except Exception:
                             pass
+
                 page.on("response", _capture)
                 # Wait a bit for network activity
                 page.wait_for_timeout(3000)
@@ -280,13 +332,32 @@ class KaveriTransactionScout:
                     try:
                         records.append(
                             {
-                                "survey_number": str(row.get("regNo") or row.get("registrationNo") or ""),
-                                "village": row.get("village") or row.get("locality") or "",
+                                "survey_number": str(
+                                    row.get("regNo") or row.get("registrationNo") or ""
+                                ),
+                                "village": row.get("village")
+                                or row.get("locality")
+                                or "",
                                 "taluk": meta.get("taluk", ""),
-                                "registration_date": row.get("registrationDate") or row.get("transactionDate") or "",
-                                "sale_value_lakh": float(row.get("transactionAmount") or 0) / 100000,
-                                "area_sqft": float(row.get("area") or row.get("areaSqft") or 0),
-                                "derived_psf": round((float(row.get("transactionAmount") or 0) / 100000) / (float(row.get("area") or row.get("areaSqft") or 1)), 2),
+                                "registration_date": row.get("registrationDate")
+                                or row.get("transactionDate")
+                                or "",
+                                "sale_value_lakh": float(
+                                    row.get("transactionAmount") or 0
+                                )
+                                / 100000,
+                                "area_sqft": float(
+                                    row.get("area") or row.get("areaSqft") or 0
+                                ),
+                                "derived_psf": round(
+                                    (float(row.get("transactionAmount") or 0) / 100000)
+                                    / (
+                                        float(
+                                            row.get("area") or row.get("areaSqft") or 1
+                                        )
+                                    ),
+                                    2,
+                                ),
                                 "document_type": row.get("documentType") or "Sale Deed",
                                 "buyer_type": row.get("buyerType") or "individual",
                             }
@@ -302,18 +373,24 @@ class KaveriTransactionScout:
         if records:
             return records
         # Final fallback – hard coded sample data
-        logger.warning("Both Playwright and POST failed – using hard‑coded fallback records")
+        logger.warning(
+            "Both Playwright and POST failed – using hard‑coded fallback records"
+        )
         return _fallback_transactions()
+
 
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--market", default="Devanahalli")
     parser.add_argument("--days", type=int, default=90)
-    parser.add_argument("--no-db", action="store_true", help="Print only, skip DB insert")
+    parser.add_argument(
+        "--no-db", action="store_true", help="Print only, skip DB insert"
+    )
     args = parser.parse_args()
 
     scout = KaveriTransactionScout()

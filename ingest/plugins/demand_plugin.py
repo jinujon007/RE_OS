@@ -11,6 +11,7 @@ Detects demand-side signals from real estate portals and the listings DB:
 All signals are best-effort. Network errors are caught silently. Portal scraping
 uses Scrapling Fetcher (HTTP) with rate-limited backoff between sources.
 """
+
 from __future__ import annotations
 
 import json
@@ -57,12 +58,21 @@ def _fetch_with_backoff(url: str, headers: dict, timeout: int = 15) -> str | Non
         except Exception as exc:
             last_error = exc
             if attempt < _MAX_RETRIES:
-                delay = _BACKOFF_BASE_S ** attempt + random.uniform(0, 1)
-                logger.debug("[DemandPlugin] retry {} for {} in {:.1f}s: {}",
-                             attempt + 1, url, delay, exc)
+                delay = _BACKOFF_BASE_S**attempt + random.uniform(0, 1)
+                logger.debug(
+                    "[DemandPlugin] retry {} for {} in {:.1f}s: {}",
+                    attempt + 1,
+                    url,
+                    delay,
+                    exc,
+                )
                 time.sleep(delay)
-    logger.debug("[DemandPlugin] fetch failed after {} retries: {} | {}",
-                 _MAX_RETRIES, url, last_error)
+    logger.debug(
+        "[DemandPlugin] fetch failed after {} retries: {} | {}",
+        _MAX_RETRIES,
+        url,
+        last_error,
+    )
     return None
 
 
@@ -74,11 +84,12 @@ def _detect_nri_count(body: str, market: str) -> int:
     listing content client-side, so the server HTML may have limited data.
     """
     import re
+
     market_lower = market.lower()
     count = 0
-    for match in re.finditer(r'(?i)(nri|property|plot|apartment|villa)', body):
+    for match in re.finditer(r"(?i)(nri|property|plot|apartment|villa)", body):
         pos = max(0, match.start() - 60)
-        snippet = body[pos:match.end() + 60].lower()
+        snippet = body[pos : match.end() + 60].lower()
         if market_lower in snippet:
             count += 1
     return count
@@ -107,23 +118,34 @@ def _fetch_nri_listings(market: str) -> list[dict]:
             listings_found = _detect_nri_count(body, market_lower)
 
             if listings_found >= 5:
-                results.append({
-                    "portal": portal,
-                    "market": market,
-                    "nri_listings_found": listings_found,
-                    "detected_at": datetime.now(timezone.utc).isoformat(),
-                })
-                logger.info("[DemandPlugin] {}: {} NRI listings found on {}",
-                            market, listings_found, portal)
+                results.append(
+                    {
+                        "portal": portal,
+                        "market": market,
+                        "nri_listings_found": listings_found,
+                        "detected_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                logger.info(
+                    "[DemandPlugin] {}: {} NRI listings found on {}",
+                    market,
+                    listings_found,
+                    portal,
+                )
             else:
-                logger.debug("[DemandPlugin] {}: only {} NRI hints on {} (need >=5)",
-                             market, listings_found, portal)
+                logger.debug(
+                    "[DemandPlugin] {}: only {} NRI hints on {} (need >=5)",
+                    market,
+                    listings_found,
+                    portal,
+                )
 
         except (MemoryError, KeyboardInterrupt, SystemExit):
             raise
         except Exception as exc:
-            logger.debug("[DemandPlugin] NRI fetch failed for {} on {}: {}",
-                         market, portal, exc)
+            logger.debug(
+                "[DemandPlugin] NRI fetch failed for {} on {}: {}", market, portal, exc
+            )
 
     return results
 
@@ -136,8 +158,10 @@ def _check_listing_surge(market: str) -> dict | None:
     try:
         from utils.db import get_engine
         from sqlalchemy import text
+
         with get_engine().connect() as conn:
-            row = conn.execute(text("""
+            row = conn.execute(
+                text("""
                 SELECT
                     COUNT(*) FILTER (WHERE last_seen_at >= NOW() - INTERVAL '7 days') AS recent,
                     COUNT(*) FILTER (
@@ -147,7 +171,9 @@ def _check_listing_surge(market: str) -> dict | None:
                 FROM listings l
                 JOIN micro_markets mm ON mm.id = l.micro_market_id
                 WHERE mm.name ILIKE :m AND l.is_active = TRUE
-            """), {"m": f"%{market}%"}).fetchone()
+            """),
+                {"m": f"%{market}%"},
+            ).fetchone()
         if row and row[0] and row[1] and row[1] > 0:
             surge_pct = ((row[0] - row[1]) / row[1]) * 100
             if surge_pct > 30:
@@ -160,7 +186,9 @@ def _check_listing_surge(market: str) -> dict | None:
                     "prior_listings": row[1],
                 }
     except Exception as exc:
-        logger.debug("[DemandPlugin] listing surge check failed for {}: {}", market, exc)
+        logger.debug(
+            "[DemandPlugin] listing surge check failed for {}: {}", market, exc
+        )
     return None
 
 
@@ -172,8 +200,10 @@ def _check_price_cuts(market: str) -> dict | None:
     try:
         from utils.db import get_engine
         from sqlalchemy import text
+
         with get_engine().connect() as conn:
-            row = conn.execute(text("""
+            row = conn.execute(
+                text("""
                 SELECT COUNT(*) AS cut_count
                 FROM listings l
                 JOIN micro_markets mm ON mm.id = l.micro_market_id
@@ -188,7 +218,9 @@ def _check_price_cuts(market: str) -> dict | None:
                         AND l2.last_seen_at >= NOW() - INTERVAL '30 days'
                         AND l2.last_seen_at < NOW() - INTERVAL '7 days'
                   )
-            """), {"m": f"%{market}%"}).fetchone()
+            """),
+                {"m": f"%{market}%"},
+            ).fetchone()
         if row and row[0] and int(row[0]) >= 3:
             return {
                 "event_type": "price_cut",
@@ -222,19 +254,22 @@ class DemandPlugin(DataPlugin):
 
         nri_listings = _fetch_nri_listings(market)
         for entry in nri_listings:
-            records.append(ParsedRecord(
-                entity_type="demand_event",
-                source_id=f"nri_{entry['portal']}_{market}",
-                market=market,
-                data={
-                    "event_type": "nri_query",
-                    "market": market,
-                    "count": entry.get("nri_listings_found", 0),
-                    "source": f"portal:{entry['portal']}",
-                    "recorded_at": entry.get("detected_at",
-                                             datetime.now(timezone.utc).isoformat()),
-                },
-            ))
+            records.append(
+                ParsedRecord(
+                    entity_type="demand_event",
+                    source_id=f"nri_{entry['portal']}_{market}",
+                    market=market,
+                    data={
+                        "event_type": "nri_query",
+                        "market": market,
+                        "count": entry.get("nri_listings_found", 0),
+                        "source": f"portal:{entry['portal']}",
+                        "recorded_at": entry.get(
+                            "detected_at", datetime.now(timezone.utc).isoformat()
+                        ),
+                    },
+                )
+            )
 
         surge: dict | None = None
         price_cut: dict | None = None
@@ -242,46 +277,54 @@ class DemandPlugin(DataPlugin):
         try:
             surge = _check_listing_surge(market)
             if surge:
-                records.append(ParsedRecord(
-                    entity_type="demand_event",
-                    source_id=f"surge_{market}_{now_ts:.0f}",
-                    market=market,
-                    data={
-                        "event_type": "listing_surge",
-                        "market": market,
-                        "count": surge["count"],
-                        "value_cr": surge.get("value_cr"),
-                        "source": "db:listings",
-                        "recorded_at": datetime.now(timezone.utc).isoformat(),
-                        "surge_pct": surge.get("surge_pct"),
-                    },
-                ))
+                records.append(
+                    ParsedRecord(
+                        entity_type="demand_event",
+                        source_id=f"surge_{market}_{now_ts:.0f}",
+                        market=market,
+                        data={
+                            "event_type": "listing_surge",
+                            "market": market,
+                            "count": surge["count"],
+                            "value_cr": surge.get("value_cr"),
+                            "source": "db:listings",
+                            "recorded_at": datetime.now(timezone.utc).isoformat(),
+                            "surge_pct": surge.get("surge_pct"),
+                        },
+                    )
+                )
         except Exception as exc:
-            logger.debug("[DemandPlugin] listing_surge check failed for {}: {}",
-                         market, exc)
+            logger.debug(
+                "[DemandPlugin] listing_surge check failed for {}: {}", market, exc
+            )
 
         try:
             price_cut = _check_price_cuts(market)
             if price_cut:
-                records.append(ParsedRecord(
-                    entity_type="demand_event",
-                    source_id=f"pricecut_{market}_{now_ts:.0f}",
-                    market=market,
-                    data={
-                        "event_type": "price_cut",
-                        "market": market,
-                        "count": price_cut["count"],
-                        "source": "db:listings",
-                        "recorded_at": datetime.now(timezone.utc).isoformat(),
-                    },
-                ))
+                records.append(
+                    ParsedRecord(
+                        entity_type="demand_event",
+                        source_id=f"pricecut_{market}_{now_ts:.0f}",
+                        market=market,
+                        data={
+                            "event_type": "price_cut",
+                            "market": market,
+                            "count": price_cut["count"],
+                            "source": "db:listings",
+                            "recorded_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
+                )
         except Exception as exc:
-            logger.debug("[DemandPlugin] price_cut check failed for {}: {}",
-                         market, exc)
+            logger.debug(
+                "[DemandPlugin] price_cut check failed for {}: {}", market, exc
+            )
 
         logger.info(
             "[DemandPlugin] {} records for {} ({} NRI, {} surge, {} price_cut)",
-            len(records), market, len(nri_listings),
+            len(records),
+            market,
+            len(nri_listings),
             1 if surge and surge.get("count") else 0,
             1 if price_cut and price_cut.get("count") else 0,
         )

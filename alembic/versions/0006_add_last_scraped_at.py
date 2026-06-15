@@ -1,4 +1,5 @@
 """add last_scraped_at to micro_markets"""
+
 from typing import Union
 
 import sqlalchemy as sa

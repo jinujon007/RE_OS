@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 from utils.sentiment import score_headline, label_from_score, aggregate_market_sentiment
@@ -16,12 +17,16 @@ class TestScoreHeadline:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = [
-            [{"label": "positive", "score": 0.95},
-             {"label": "negative", "score": 0.03},
-             {"label": "neutral", "score": 0.02}]
+            [
+                {"label": "positive", "score": 0.95},
+                {"label": "negative", "score": 0.03},
+                {"label": "neutral", "score": 0.02},
+            ]
         ]
         with patch("requests.post", return_value=mock_resp):
-            result = score_headline("Property values soar in North Bengaluru", api_key=API_KEY)
+            result = score_headline(
+                "Property values soar in North Bengaluru", api_key=API_KEY
+            )
             assert result is not None
             assert result > 0
 
@@ -29,9 +34,11 @@ class TestScoreHeadline:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = [
-            [{"label": "negative", "score": 0.88},
-             {"label": "neutral", "score": 0.10},
-             {"label": "positive", "score": 0.02}]
+            [
+                {"label": "negative", "score": 0.88},
+                {"label": "neutral", "score": 0.10},
+                {"label": "positive", "score": 0.02},
+            ]
         ]
         with patch("requests.post", return_value=mock_resp):
             result = score_headline("Real estate market crashes", api_key=API_KEY)
@@ -63,9 +70,11 @@ class TestScoreHeadline:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = [
-            [{"label": "neutral", "score": 0.90},
-             {"label": "positive", "score": 0.05},
-             {"label": "negative", "score": 0.05}]
+            [
+                {"label": "neutral", "score": 0.90},
+                {"label": "positive", "score": 0.05},
+                {"label": "negative", "score": 0.05},
+            ]
         ]
         with patch("requests.post", return_value=mock_resp):
             result = score_headline("RERA publishes guidelines", api_key=API_KEY)
@@ -104,13 +113,14 @@ class TestScoreHeadline:
                 result = score_headline("Test", api_key=API_KEY)
                 assert result is None
 
-
     def test_unicode_headline(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = [[{"label": "positive", "score": 0.7}]]
         with patch("requests.post", return_value=mock_resp):
-            result = score_headline("Prestige launches 500 units in यelahanka at ₹7,500", api_key=API_KEY)
+            result = score_headline(
+                "Prestige launches 500 units in यelahanka at ₹7,500", api_key=API_KEY
+            )
             assert result is not None
             assert result > 0
 

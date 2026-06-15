@@ -1,7 +1,9 @@
 """T-955: Shareholder round integration tests."""
+
 import json
 import pytest
 from unittest.mock import patch, MagicMock, ANY
+
 pytestmark = pytest.mark.unit
 
 
@@ -31,10 +33,10 @@ def _make_mock_spec(name="Test Shareholder"):
 
 
 class TestShareholderRound:
-
     def test_shareholder_round_has_4_entries(self):
         from crews.evaluate_pipeline import run_shareholder_round
-        with patch('agents.shareholder_agent.build_all_shareholders') as mock_build:
+
+        with patch("agents.shareholder_agent.build_all_shareholders") as mock_build:
             mock_build.return_value = [
                 (_make_mock_spec("Market Scout"), MagicMock()),
                 (_make_mock_spec("Risk Guardian"), MagicMock()),
@@ -48,13 +50,16 @@ class TestShareholderRound:
 
     def test_shareholder_verdicts_are_valid(self):
         from crews.evaluate_pipeline import run_shareholder_round
-        with patch('agents.shareholder_agent.build_all_shareholders') as mock_build:
+
+        with patch("agents.shareholder_agent.build_all_shareholders") as mock_build:
             mock_agent = MagicMock()
-            mock_agent.execute.return_value = json.dumps({
-                "verdict": "GO",
-                "key_question": "What is the exit strategy?",
-                "response": "Strong market fundamentals.",
-            })
+            mock_agent.execute.return_value = json.dumps(
+                {
+                    "verdict": "GO",
+                    "key_question": "What is the exit strategy?",
+                    "response": "Strong market fundamentals.",
+                }
+            )
             mock_build.return_value = [
                 (_make_mock_spec("Market Scout"), mock_agent),
             ]
@@ -66,7 +71,8 @@ class TestShareholderRound:
 
     def test_shareholder_timeout_returns_abstain(self):
         from crews.evaluate_pipeline import run_shareholder_round
-        with patch('agents.shareholder_agent.build_all_shareholders') as mock_build:
+
+        with patch("agents.shareholder_agent.build_all_shareholders") as mock_build:
             mock_agent = MagicMock()
             mock_agent.execute.side_effect = TimeoutError("call timed out")
             mock_build.return_value = [
@@ -80,17 +86,25 @@ class TestShareholderRound:
 
     def test_evaluate_response_includes_shareholder_round(self):
         from crews.evaluate_pipeline import get_evaluate_job, _jobs
+
         _jobs.clear()
         from crews.evaluate_pipeline import EvaluateJob
         from datetime import datetime, timezone
+
         job = EvaluateJob(
-            job_id="test-job-1", status="complete",
-            survey_no="45/2", market="Devanahalli",
-            land_area_sqft=5200, sell_psf=6500,
-            deal_type="compare", pitch="",
+            job_id="test-job-1",
+            status="complete",
+            survey_no="45/2",
+            market="Devanahalli",
+            land_area_sqft=5200,
+            sell_psf=6500,
+            deal_type="compare",
+            pitch="",
             created_at=datetime.now(timezone.utc).isoformat(),
             completed_at=datetime.now(timezone.utc).isoformat(),
-            shareholder_round=[{"name": "Test", "verdict": "GO", "key_question": "?", "response": "ok"}],
+            shareholder_round=[
+                {"name": "Test", "verdict": "GO", "key_question": "?", "response": "ok"}
+            ],
         )
         _jobs["test-job-1"] = job
         result = get_evaluate_job("test-job-1")
@@ -100,7 +114,8 @@ class TestShareholderRound:
 
     def test_evaluate_empty_shareholders_returns_abstain(self):
         from crews.evaluate_pipeline import run_shareholder_round
-        with patch('agents.shareholder_agent.build_all_shareholders') as mock_build:
+
+        with patch("agents.shareholder_agent.build_all_shareholders") as mock_build:
             mock_build.return_value = []
             pkg = _make_mock_pkg()
             results = run_shareholder_round(pkg)

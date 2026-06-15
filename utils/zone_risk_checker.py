@@ -18,6 +18,7 @@ Graceful degradation matrix:
 SAVEPOINT isolation ensures spatial query failure never aborts the
 outer transaction. The function always returns a ZoneRiskResult, never raises.
 """
+
 from dataclasses import dataclass, field
 from loguru import logger
 
@@ -79,11 +80,21 @@ def _load_zones_gdf(market: str, zone: str) -> tuple:
 
             zone_row = {
                 "far": float(row["far_base"]) if row["far_base"] is not None else None,
-                "max_height_m": float(row["max_height_m"]) if row["max_height_m"] is not None else None,
-                "ground_coverage_pct": float(row["ground_coverage_pct"]) if row["ground_coverage_pct"] is not None else None,
-                "setback_front_m": float(row["front_setback_m"]) if row["front_setback_m"] is not None else None,
-                "setback_side_m": float(row["side_setback_m"]) if row["side_setback_m"] is not None else None,
-                "setback_rear_m": float(row["rear_setback_m"]) if row["rear_setback_m"] is not None else None,
+                "max_height_m": float(row["max_height_m"])
+                if row["max_height_m"] is not None
+                else None,
+                "ground_coverage_pct": float(row["ground_coverage_pct"])
+                if row["ground_coverage_pct"] is not None
+                else None,
+                "setback_front_m": float(row["front_setback_m"])
+                if row["front_setback_m"] is not None
+                else None,
+                "setback_side_m": float(row["side_setback_m"])
+                if row["side_setback_m"] is not None
+                else None,
+                "setback_rear_m": float(row["rear_setback_m"])
+                if row["rear_setback_m"] is not None
+                else None,
             }
 
             zone_geom = row["geom"]
@@ -154,19 +165,24 @@ def _fallback_sql_query(market: str, zone: str) -> tuple:
 
     try:
         with get_engine().connect() as conn:
-            row = conn.execute(text("""
+            row = conn.execute(
+                text("""
                 SELECT rz.far_base, rz.max_height_m, rz.ground_coverage_pct,
                        rz.front_setback_m, rz.side_setback_m, rz.rear_setback_m
                 FROM regulatory_zones rz
                 WHERE rz.zone_type ILIKE :market AND rz.zone_code = :zone
                 LIMIT 1
-            """), {"market": f"%{market}%", "zone": zone}).fetchone()
+            """),
+                {"market": f"%{market}%", "zone": zone},
+            ).fetchone()
 
             if row:
                 result_row = {
                     "far": float(row[0]) if row[0] is not None else None,
                     "max_height_m": float(row[1]) if row[1] is not None else None,
-                    "ground_coverage_pct": float(row[2]) if row[2] is not None else None,
+                    "ground_coverage_pct": float(row[2])
+                    if row[2] is not None
+                    else None,
                     "setback_front_m": float(row[3]) if row[3] is not None else None,
                     "setback_side_m": float(row[4]) if row[4] is not None else None,
                     "setback_rear_m": float(row[5]) if row[5] is not None else None,
@@ -175,24 +191,32 @@ def _fallback_sql_query(market: str, zone: str) -> tuple:
             try:
                 conn.execute(text("SAVEPOINT spatial_query"))
                 try:
-                    spatial_rows = conn.execute(text("""
+                    spatial_rows = conn.execute(
+                        text("""
                         SELECT oc.constraint_type, oc.description
                         FROM overlay_constraints oc
                         JOIN micro_markets mm ON ST_Intersects(oc.geom, mm.geom)
                         WHERE mm.name ILIKE :market
-                    """), {"market": f"%{market}%"}).fetchall()
+                    """),
+                        {"market": f"%{market}%"},
+                    ).fetchall()
                     conn.execute(text("RELEASE SAVEPOINT spatial_query"))
                     overlays = list(spatial_rows)
                 except Exception:
                     conn.execute(text("ROLLBACK TO SAVEPOINT spatial_query"))
                     conn.execute(text("RELEASE SAVEPOINT spatial_query"))
-                    all_rows = conn.execute(text("""
+                    all_rows = conn.execute(
+                        text("""
                         SELECT oc.constraint_type, oc.description
                         FROM overlay_constraints oc
-                    """)).fetchall()
+                    """)
+                    ).fetchall()
                     if all_rows:
                         overlays = list(all_rows)
-                        logger.info("[ZoneRisk] Spatial join unavailable — returning all overlay constraints (n=%d)", len(overlays))
+                        logger.info(
+                            "[ZoneRisk] Spatial join unavailable — returning all overlay constraints (n=%d)",
+                            len(overlays),
+                        )
             except Exception:
                 logger.debug("[ZoneRisk] SAVEPOINT management failed")
     except Exception as exc:
@@ -209,16 +233,28 @@ def check_zone_risk(market: str, zone: str = "R2") -> ZoneRiskResult:
     if not market:
         logger.warning("[ZoneRisk] Empty market provided")
         return ZoneRiskResult(
-            market=market, zone=zone, far=None, max_height_m=None,
-            ground_coverage_pct=None, setback_front_m=None, setback_side_m=None,
+            market=market,
+            zone=zone,
+            far=None,
+            max_height_m=None,
+            ground_coverage_pct=None,
+            setback_front_m=None,
+            setback_side_m=None,
             setback_rear_m=None,
             overlay_risks=["Market name is empty"],
             risk_level="UNKNOWN",
         )
 
-    result = ZoneRiskResult(market=market, zone=zone, far=None, max_height_m=None,
-                            ground_coverage_pct=None, setback_front_m=None,
-                            setback_side_m=None, setback_rear_m=None)
+    result = ZoneRiskResult(
+        market=market,
+        zone=zone,
+        far=None,
+        max_height_m=None,
+        ground_coverage_pct=None,
+        setback_front_m=None,
+        setback_side_m=None,
+        setback_rear_m=None,
+    )
 
     zone_row, overlays = _load_zones_gdf(market, zone)
 
@@ -236,9 +272,15 @@ def check_zone_risk(market: str, zone: str = "R2") -> ZoneRiskResult:
         result.overlay_risks = risk_flags
         if db_error:
             if not risk_flags:
-                result.overlay_risks = ["DB query failed — GeoPandas spatial and SQL fallback both unavailable"]
+                result.overlay_risks = [
+                    "DB query failed — GeoPandas spatial and SQL fallback both unavailable"
+                ]
             # Early return — DB error is terminal, risk can't be assessed
-            logger.info("[ZoneRisk] DB error — returning UNKNOWN for market=%s zone=%s", market, zone)
+            logger.info(
+                "[ZoneRisk] DB error — returning UNKNOWN for market=%s zone=%s",
+                market,
+                zone,
+            )
             return result
     else:
         result.overlay_risks = overlays
@@ -251,10 +293,18 @@ def check_zone_risk(market: str, zone: str = "R2") -> ZoneRiskResult:
         result.setback_side_m = zone_row["setback_side_m"]
         result.setback_rear_m = zone_row["setback_rear_m"]
 
-        logger.debug("[ZoneRisk] market=%s zone=%s far=%s height=%s coverage=%s%%",
-                      market, zone, result.far, result.max_height_m, result.ground_coverage_pct)
+        logger.debug(
+            "[ZoneRisk] market=%s zone=%s far=%s height=%s coverage=%s%%",
+            market,
+            zone,
+            result.far,
+            result.max_height_m,
+            result.ground_coverage_pct,
+        )
     else:
-        logger.info("[ZoneRisk] No regulatory zone found for market=%s zone=%s", market, zone)
+        logger.info(
+            "[ZoneRisk] No regulatory zone found for market=%s zone=%s", market, zone
+        )
 
     risk_flags = result.overlay_risks
     if len(risk_flags) >= 2:
@@ -266,14 +316,26 @@ def check_zone_risk(market: str, zone: str = "R2") -> ZoneRiskResult:
     else:
         result.risk_level = "UNKNOWN"
 
-    logger.info("[ZoneRisk] market=%s zone=%s risk_level=%s overlays=%d",
-                market, zone, result.risk_level, len(risk_flags))
+    logger.info(
+        "[ZoneRisk] market=%s zone=%s risk_level=%s overlays=%d",
+        market,
+        zone,
+        result.risk_level,
+        len(risk_flags),
+    )
     return result
 
 
 if __name__ == "__main__":
     import json
+
     for m in ("Yelahanka", "Devanahalli", "Hebbal", "Nonexistent"):
         result = check_zone_risk(m, "R2")
         print(f"\n[{m} R2]")
-        print(json.dumps({k: v for k, v in result.__dict__.items() if not k.startswith("_")}, indent=2, default=str))
+        print(
+            json.dumps(
+                {k: v for k, v in result.__dict__.items() if not k.startswith("_")},
+                indent=2,
+                default=str,
+            )
+        )

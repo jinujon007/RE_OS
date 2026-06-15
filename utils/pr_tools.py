@@ -52,9 +52,7 @@ def market_positioning_tool(
         gap_pct = round((1.0 - psf_ratio) * 100)
 
     dev_clause = (
-        f", with {grade_a_count} Grade A developers active"
-        if grade_a_count > 0
-        else ""
+        f", with {grade_a_count} Grade A developers active" if grade_a_count > 0 else ""
     )
 
     return (

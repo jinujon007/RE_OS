@@ -1,4 +1,5 @@
 """Tests for prediction_ledger table + ledger utility (GATE-93, T-1147/T-1148)."""
+
 import pytest
 from datetime import date, datetime
 from unittest.mock import MagicMock, patch
@@ -9,6 +10,7 @@ pytestmark = pytest.mark.unit
 def test_prediction_ledger_migration_syntax():
     """Verify migration 0057 is syntactically valid."""
     import importlib.util
+
     spec = importlib.util.spec_from_file_location(
         "migration_0057",
         "alembic/versions/0057_prediction_ledger.py",
@@ -24,6 +26,7 @@ def test_prediction_ledger_migration_syntax():
 def test_write_prediction_ledger():
     """write_prediction_ledger inserts a row with correct fields."""
     from utils.prediction_ledger import write_prediction_ledger
+
     with patch("utils.prediction_ledger.get_engine") as mock_eng:
         mock_conn = MagicMock()
         mock_eng.return_value.begin.return_value.__enter__.return_value = mock_conn
@@ -49,6 +52,7 @@ def test_write_prediction_ledger():
 def test_write_prediction_ledger_failure_does_not_raise():
     """write_prediction_ledger returns False on DB error instead of raising."""
     from utils.prediction_ledger import write_prediction_ledger
+
     with patch("utils.db.get_engine", side_effect=RuntimeError("DB down")):
         result = write_prediction_ledger(
             source_module="test",
@@ -64,12 +68,14 @@ def test_write_prediction_ledger_failure_does_not_raise():
 def test_ledger_check_weekly_function_exists():
     """config.scheduler has callable run_ledger_check_weekly."""
     import config.scheduler
+
     assert callable(config.scheduler.run_ledger_check_weekly)
 
 
 def test_get_pending_claims_returns_list():
     """get_pending_claims returns list of dicts with expected keys."""
     from utils.prediction_ledger import get_pending_claims
+
     with patch("utils.prediction_ledger.get_engine") as mock_eng:
         mock_conn = MagicMock()
         mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
@@ -97,6 +103,7 @@ def test_get_pending_claims_returns_list():
 def test_psf_forecaster_writes_to_prediction_ledger():
     """PSFForecaster.forecast() writes prediction_ledger row on successful forecast."""
     from utils.psf_forecaster import PSFForecaster
+
     with (
         patch("utils.psf_forecaster.PSFForecaster._load_monthly_series") as mock_load,
         patch("utils.prediction_ledger.write_prediction_ledger") as mock_write,
@@ -120,13 +127,26 @@ def test_assembly_detector_writes_to_prediction_ledger():
     """detect_assemblies writes prediction_ledger rows for each signal."""
     import datetime
     from utils.assembly_detector import detect_assemblies
+
     mock_rows = [
-        MagicMock(id="1", buyer_name_raw="BRIGADE GROUP", village="Venkatala",
-                  survey_no="45/1", reg_date=datetime.date(2026, 1, 15),
-                  extent_sqft=10000, consideration_inr=5000000),
-        MagicMock(id="2", buyer_name_raw="BRIGADE ENTERPRISES", village="Venkatala",
-                  survey_no="45/3", reg_date=datetime.date(2026, 3, 10),
-                  extent_sqft=15000, consideration_inr=8000000),
+        MagicMock(
+            id="1",
+            buyer_name_raw="BRIGADE GROUP",
+            village="Venkatala",
+            survey_no="45/1",
+            reg_date=datetime.date(2026, 1, 15),
+            extent_sqft=10000,
+            consideration_inr=5000000,
+        ),
+        MagicMock(
+            id="2",
+            buyer_name_raw="BRIGADE ENTERPRISES",
+            village="Venkatala",
+            survey_no="45/3",
+            reg_date=datetime.date(2026, 3, 10),
+            extent_sqft=15000,
+            consideration_inr=8000000,
+        ),
     ]
     with (
         patch("utils.assembly_detector.get_engine") as mock_eng,
@@ -148,6 +168,7 @@ def test_assembly_detector_writes_to_prediction_ledger():
 def test_resolve_verdicts_checks_psf_market():
     """resolve_verdicts queries registered_transactions for PSF forecasts."""
     from utils.prediction_ledger import resolve_verdicts
+
     mock_row = MagicMock()
     mock_row._mapping = {
         "id": "uuid-1",
@@ -168,7 +189,9 @@ def test_resolve_verdicts_checks_psf_market():
         mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
         mock_eng.return_value.begin.return_value.__enter__.return_value = mock_conn
         mock_conn.execute.return_value.fetchall.return_value = [mock_row]
-        mock_conn.execute.return_value.fetchone.return_value = None  # no PSF data → unverifiable
+        mock_conn.execute.return_value.fetchone.return_value = (
+            None  # no PSF data → unverifiable
+        )
 
         result = resolve_verdicts()
         assert result["total"] == 1
@@ -178,6 +201,7 @@ def test_resolve_verdicts_checks_psf_market():
 def test_market_name_from_id_resolves():
     """_market_name_from_id resolves market name from ID."""
     from intelligence.opportunity_engine import OpportunityEngine
+
     engine = OpportunityEngine()
     with patch("utils.db.get_engine") as mock_eng:
         mock_conn = MagicMock()

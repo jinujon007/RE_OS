@@ -40,6 +40,7 @@ def _get_semantic_model():
             if _semantic_model is None:
                 try:
                     from sentence_transformers import SentenceTransformer
+
                     _semantic_model = SentenceTransformer(
                         "intfloat/e5-small-v2",
                         device="cuda",
@@ -69,6 +70,7 @@ class ScoutMemory:
       - O(n) linear scan per comparison; at 60 items/min this is ~120ms/min.
         Future optimisation: FAISS/IVF indexing.
     """
+
     def __init__(self, market: str, base_dir: str | None = None):
         self.market = market
         if base_dir is None:
@@ -231,7 +233,7 @@ class ScoutMemory:
     # NOT thread-safe — consistent with _idx access pattern (ScoutMemory is single-threaded).
     _recent_embeddings: dict = {}  # market.lower() → list[384-dim vectors]
     _MAX_CACHE_PER_MARKET: int = 500
-    _MAX_EMBED_CHARS: int = 2000   # e5-small-v2 context window is 512 tokens
+    _MAX_EMBED_CHARS: int = 2000  # e5-small-v2 context window is 512 tokens
 
     @classmethod
     def clear_cache(cls, market: str | None = None):
@@ -252,7 +254,7 @@ class ScoutMemory:
         model = _get_semantic_model()
         if model is None:
             return False
-        text = (text or "").strip()[:self._MAX_EMBED_CHARS]
+        text = (text or "").strip()[: self._MAX_EMBED_CHARS]
         if not text:
             return False
         try:
@@ -262,7 +264,9 @@ class ScoutMemory:
             return False
 
         if len(embedding) != _EMBED_DIM:
-            logger.warning(f"[ScoutMemory] Unexpected embed dim {len(embedding)} (expected {_EMBED_DIM}) — skipping dedup")
+            logger.warning(
+                f"[ScoutMemory] Unexpected embed dim {len(embedding)} (expected {_EMBED_DIM}) — skipping dedup"
+            )
             return False
 
         market_key = market.lower()

@@ -369,7 +369,11 @@ from utils.db import get_engine as _get_sa_engine
 
 _API_KEY = os.environ.get("DASHBOARD_API_KEY", "")
 if not _API_KEY:
-    _allow_empty = os.environ.get("DASHBOARD_API_KEY_ALLOW_EMPTY", "").lower() in ("1", "true", "yes")
+    _allow_empty = os.environ.get("DASHBOARD_API_KEY_ALLOW_EMPTY", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     if _allow_empty:
         logging.warning(
             "[RE_OS] DASHBOARD_API_KEY is not set — DASHBOARD_API_KEY_ALLOW_EMPTY=true "
@@ -870,6 +874,7 @@ async def health(request: Request):
     try:
         from utils.data_quality import DataQualityMonitor
         from config.slos import all_slo_status
+
         freshness = DataQualityMonitor.freshness_score()
         slo_result = all_slo_status(freshness)
         seed_stale = DataQualityMonitor.check_seed_staleness()
@@ -877,8 +882,11 @@ async def health(request: Request):
         try:
             from config.locality_aliases import KNOWN_ALIEN_LOCALITIES
             from config.settings import TARGET_MARKETS
+
             for m in TARGET_MARKETS:
-                locality_scores[m] = DataQualityMonitor.locality_validation_score(m.strip())
+                locality_scores[m] = DataQualityMonitor.locality_validation_score(
+                    m.strip()
+                )
         except Exception as exc:
             logger.warning("[health] locality_score check failed: %s", exc)
         try:
@@ -907,7 +915,14 @@ async def health(request: Request):
         }
     except Exception as exc:
         logger.warning("[health] data_quality check failed: %s", exc)
-        services["data_quality"] = {"slo_pass": 0, "slo_fail": 0, "freshness": None, "seed_stale_warnings": [], "locality_scores": {}, "sentiment_null_rate": None}
+        services["data_quality"] = {
+            "slo_pass": 0,
+            "slo_fail": 0,
+            "freshness": None,
+            "seed_stale_warnings": [],
+            "locality_scores": {},
+            "sentiment_null_rate": None,
+        }
 
     # T-1064: Per-market scraper health from agent_runs
     try:
@@ -927,10 +942,20 @@ async def health(request: Request):
                 if row:
                     md = row[0]
                     scraper_health[mkt] = {
-                        "record_count": md.get("record_count") if isinstance(md, dict) else None,
-                        "fallback_triggered": md.get("fallback_triggered") if isinstance(md, dict) else None,
-                        "path_used": md.get("path_used") if isinstance(md, dict) else None,
-                        "run_at": row[1].isoformat() if hasattr(row[1], "isoformat") else str(row[1]) if row[1] else None,
+                        "record_count": md.get("record_count")
+                        if isinstance(md, dict)
+                        else None,
+                        "fallback_triggered": md.get("fallback_triggered")
+                        if isinstance(md, dict)
+                        else None,
+                        "path_used": md.get("path_used")
+                        if isinstance(md, dict)
+                        else None,
+                        "run_at": row[1].isoformat()
+                        if hasattr(row[1], "isoformat")
+                        else str(row[1])
+                        if row[1]
+                        else None,
                     }
                 else:
                     scraper_health[mkt] = None
@@ -942,6 +967,7 @@ async def health(request: Request):
     # T-1100: Backup staleness status
     try:
         from utils.backup import check_backup_staleness, get_backup_dir
+
         stale_info = check_backup_staleness()
         backup_status = {
             "stale": stale_info["stale"],
@@ -959,7 +985,9 @@ async def health(request: Request):
                         ORDER BY created_at DESC LIMIT 1
                     """)
                 ).fetchone()
-                backup_status["latest_backup_timestamp"] = ts_row[0].isoformat() if ts_row else None
+                backup_status["latest_backup_timestamp"] = (
+                    ts_row[0].isoformat() if ts_row else None
+                )
         except Exception:
             backup_status["latest_backup_timestamp"] = None
         backup_status["backup_ok"] = (
@@ -978,17 +1006,32 @@ async def health(request: Request):
 
     try:
         from config.llm_router import get_router_status, get_circuit_states
+
         router_status = get_router_status()
         circuit_states = get_circuit_states()
         services["llm"] = {
             "configured": any(router_status.get("providers", {}).values()),
-            "heavy_providers": sum(1 for p in ["groq", "gemini", "nvidia", "sambanova", "openrouter", "cloudflare"]
-                                   if router_status.get("providers", {}).get(p)),
+            "heavy_providers": sum(
+                1
+                for p in [
+                    "groq",
+                    "gemini",
+                    "nvidia",
+                    "sambanova",
+                    "openrouter",
+                    "cloudflare",
+                ]
+                if router_status.get("providers", {}).get(p)
+            ),
             "circuit_states": circuit_states,
         }
     except Exception as exc:
         logger.warning("[health] llm check failed: %s", exc)
-        services["llm"] = {"configured": False, "heavy_providers": 0, "circuit_states": {}}
+        services["llm"] = {
+            "configured": False,
+            "heavy_providers": 0,
+            "circuit_states": {},
+        }
 
     return services
 
@@ -2433,7 +2476,9 @@ async def kepler_data(market: str):
     tags=["Market"],
     summary="Travel-time accessibility scores for a market",
 )
-async def market_accessibility(market: str = Query(default="Yelahanka", description="Market name")):
+async def market_accessibility(
+    market: str = Query(default="Yelahanka", description="Market name"),
+):
     try:
         from utils.db import get_engine
         from sqlalchemy import text as sa_text
@@ -2455,7 +2500,9 @@ async def market_accessibility(market: str = Query(default="Yelahanka", descript
             ).fetchall()
 
         if not rows:
-            return JSONResponse({"error": "no accessibility data for market"}, status_code=404)
+            return JSONResponse(
+                {"error": "no accessibility data for market"}, status_code=404
+            )
 
         latest: dict[str, dict] = {}
         latest_dt: dict[str, datetime] = {}
@@ -2483,7 +2530,11 @@ async def market_accessibility(market: str = Query(default="Yelahanka", descript
         last_updated = None
         if latest_dt:
             last_updated = max(latest_dt.values())
-            last_updated = last_updated.isoformat() if hasattr(last_updated, "isoformat") else str(last_updated)
+            last_updated = (
+                last_updated.isoformat()
+                if hasattr(last_updated, "isoformat")
+                else str(last_updated)
+            )
 
         return {
             "market": canonical,
@@ -2837,7 +2888,9 @@ async def memory_explorer(
     request: Request,
     market: str = Query(default=None, description="Market filter"),
     agent_id: str = Query(default=None, description="Agent ID filter"),
-    min_confidence: float = Query(default=0.0, ge=0.0, le=1.0, description="Minimum confidence threshold"),
+    min_confidence: float = Query(
+        default=0.0, ge=0.0, le=1.0, description="Minimum confidence threshold"
+    ),
     days: int = Query(default=30, ge=7, le=365, description="Lookback window in days"),
     page: int = Query(default=1, ge=1, description="Page number"),
     per_page: int = Query(default=20, ge=1, le=100, description="Items per page"),
@@ -2855,7 +2908,10 @@ async def memory_explorer(
     # and approved as injection-safe per OWASP ASVS 5.1.
     try:
         with _get_sa_engine().connect() as conn:
-            where = ["confidence >= :mc", "last_updated >= NOW() - :days * INTERVAL '1 day'"]
+            where = [
+                "confidence >= :mc",
+                "last_updated >= NOW() - :days * INTERVAL '1 day'",
+            ]
             params: dict = {"mc": min_confidence, "days": days}
 
             if market_filter:
@@ -2869,10 +2925,13 @@ async def memory_explorer(
             params["lim"] = SAFE_PER_PAGE
             params["off"] = safe_offset
 
-            total = conn.execute(
-                _sa_text(f"SELECT COUNT(*) FROM agent_memories WHERE {where_sql}"),
-                {k: v for k, v in params.items() if k not in ("lim", "off")},
-            ).scalar() or 0
+            total = (
+                conn.execute(
+                    _sa_text(f"SELECT COUNT(*) FROM agent_memories WHERE {where_sql}"),
+                    {k: v for k, v in params.items() if k not in ("lim", "off")},
+                ).scalar()
+                or 0
+            )
 
             rows = conn.execute(
                 _sa_text(f"""
@@ -2890,22 +2949,38 @@ async def memory_explorer(
         memories = []
         for r in rows:
             fact_raw = str(r[3]) if r[3] else ""
-            memories.append({
-                "id": str(r[0]),
-                "agent_id": str(r[1]) if r[1] else "",
-                "market": str(r[2]) if r[2] else "",
-                "fact": fact_raw[:MAX_FACT_LENGTH],
-                "fact_truncated": len(fact_raw) > MAX_FACT_LENGTH,
-                "confidence": round(float(r[4]), 3) if r[4] is not None else 0.0,
-                "source_count": int(r[5]) if r[5] is not None else 0,
-                "last_updated": r[6].isoformat() if r[6] else None,
-                "created_at": r[7].isoformat() if r[7] else None,
-            })
-        return {"total": total, "page": page, "per_page": SAFE_PER_PAGE, "memories": memories}
+            memories.append(
+                {
+                    "id": str(r[0]),
+                    "agent_id": str(r[1]) if r[1] else "",
+                    "market": str(r[2]) if r[2] else "",
+                    "fact": fact_raw[:MAX_FACT_LENGTH],
+                    "fact_truncated": len(fact_raw) > MAX_FACT_LENGTH,
+                    "confidence": round(float(r[4]), 3) if r[4] is not None else 0.0,
+                    "source_count": int(r[5]) if r[5] is not None else 0,
+                    "last_updated": r[6].isoformat() if r[6] else None,
+                    "created_at": r[7].isoformat() if r[7] else None,
+                }
+            )
+        return {
+            "total": total,
+            "page": page,
+            "per_page": SAFE_PER_PAGE,
+            "memories": memories,
+        }
     except Exception as e:
-        logger.error("[memory_explorer] page=%s market=%s agent=%s err=%s", page, market_filter, agent_id, e)
+        logger.error(
+            "[memory_explorer] page=%s market=%s agent=%s err=%s",
+            page,
+            market_filter,
+            agent_id,
+            e,
+        )
         return JSONResponse(
-            {"error": "failed to query agent memories", "detail": "database query error"},
+            {
+                "error": "failed to query agent memories",
+                "detail": "database query error",
+            },
             status_code=500,
         )
 
@@ -2920,12 +2995,15 @@ async def memory_explorer(
 async def memory_conflict_count(request: Request):
     try:
         with _get_sa_engine().connect() as conn:
-            count = conn.execute(
-                _sa_text("""
+            count = (
+                conn.execute(
+                    _sa_text("""
                     SELECT COUNT(*) FROM agent_memories
                     WHERE fact ILIKE '%CONFLICT%' OR fact ILIKE '%conflict%'
                 """),
-            ).scalar() or 0
+                ).scalar()
+                or 0
+            )
         return {"unresolved_conflicts": int(count)}
     except Exception:
         logger.warning("[memory_conflict_count] DB unavailable — returning 0")
@@ -2953,6 +3031,7 @@ class LLMHealthResponse(BaseModel):
 async def health_llm(request: Request):
     try:
         from config.llm_router import get_router_status, get_circuit_states
+
         status = get_router_status()
         circuits = get_circuit_states()
         providers = status.get("providers", {})
@@ -2967,7 +3046,9 @@ async def health_llm(request: Request):
         )
     except Exception as exc:
         logger.warning("[health_llm] %s", exc)
-        return LLMHealthResponse(configured=False, providers_available=[], providers_failed=["router_error"])
+        return LLMHealthResponse(
+            configured=False, providers_available=[], providers_failed=["router_error"]
+        )
 
 
 # ── Backup Health (T-904) ──────────────────────────────────────────────────
@@ -3023,14 +3104,17 @@ async def data_provenance(
                 where.append("mm.name ILIKE :mkt")
                 params["mkt"] = f"%{market}%"
             where_clause = (" WHERE " + " AND ".join(where)) if where else ""
-            rows = conn.execute(_sa_text(f"""
+            rows = conn.execute(
+                _sa_text(f"""
                 SELECT mm.name, rp.data_source, COUNT(*) as cnt
                 FROM rera_projects rp
                 JOIN micro_markets mm ON mm.id = rp.micro_market_id
                 {where_clause}
                 GROUP BY mm.name, rp.data_source
                 ORDER BY mm.name
-            """), params).fetchall()
+            """),
+                params,
+            ).fetchall()
 
         markets: dict[str, dict] = {}
         for row in rows:
@@ -3038,7 +3122,13 @@ async def data_provenance(
             ds = str(row[1]) if row[1] else "seed_estimated"
             cnt = int(row[2]) if row[2] else 0
             if mkt not in markets:
-                markets[mkt] = {"total": 0, "live": 0, "seed": 0, "manual": 0, "live_pct": 0.0}
+                markets[mkt] = {
+                    "total": 0,
+                    "live": 0,
+                    "seed": 0,
+                    "manual": 0,
+                    "live_pct": 0.0,
+                }
             markets[mkt]["total"] += cnt
             if ds == "portal_scraped":
                 markets[mkt]["live"] += cnt
@@ -3059,12 +3149,23 @@ async def data_provenance(
                 data["guidance"] = "Healthy — live data above 70%"
 
         if market and not markets:
-            return {market: {"total": 0, "live": 0, "seed": 0, "manual": 0, "live_pct": 0.0, "guidance": "No data for this market"}}
+            return {
+                market: {
+                    "total": 0,
+                    "live": 0,
+                    "seed": 0,
+                    "manual": 0,
+                    "live_pct": 0.0,
+                    "guidance": "No data for this market",
+                }
+            }
 
         return markets
     except Exception as e:
         logger.error("[data_provenance] err=%s", e)
-        return JSONResponse({"error": "failed to query data provenance"}, status_code=500)
+        return JSONResponse(
+            {"error": "failed to query data provenance"}, status_code=500
+        )
 
 
 # ── Scheduler Health (R6 — T-1125) ────────────────────────────────────
@@ -3109,7 +3210,9 @@ async def scheduler_health(request: Request):
                 elif status in ("failed", "error"):
                     jobs[jid]["last_24h_failures"] += 1
         return {
-            "jobs": sorted(jobs.values(), key=lambda j: j["last_run"] or "", reverse=True),
+            "jobs": sorted(
+                jobs.values(), key=lambda j: j["last_run"] or "", reverse=True
+            ),
             "total_jobs": len(jobs),
         }
     except Exception as e:
@@ -3127,7 +3230,9 @@ async def scheduler_health(request: Request):
     summary="Scraper reliability scores for all scouts",
 )
 @limiter.limit("60/hour")
-async def scraper_reliability(request: Request, days: int = Query(default=30, ge=1, le=365)):
+async def scraper_reliability(
+    request: Request, days: int = Query(default=30, ge=1, le=365)
+):
     try:
         from config.scraper_registry import SCRAPER_NAMES
         from utils.scraper_reliability import compute_scraper_reliability
@@ -3139,12 +3244,22 @@ async def scraper_reliability(request: Request, days: int = Query(default=30, ge
                 results.append(result)
             except Exception as exc:
                 logger.warning("[scraper_reliability] %s: %s", name, exc)
-                results.append({"scraper": name, "runs": 0, "successes": 0, "reliability_score": 0.0, "last_run": None})
+                results.append(
+                    {
+                        "scraper": name,
+                        "runs": 0,
+                        "successes": 0,
+                        "reliability_score": 0.0,
+                        "last_run": None,
+                    }
+                )
 
         return {r["scraper"]: r for r in results}
     except Exception as e:
         logger.error("[scraper_reliability] err=%s", e)
-        return JSONResponse({"error": "failed to query scraper reliability"}, status_code=500)
+        return JSONResponse(
+            {"error": "failed to query scraper reliability"}, status_code=500
+        )
 
 
 # ── Competitive Intelligence Pulse (T-974) ──────────────────────────────
@@ -3168,6 +3283,7 @@ async def competitive_pulse(
     top_n: int = Query(default=5, ge=1, le=50, description="Absorption leader count"),
 ):
     import time as _time_now
+
     safe_market = market or ""
     cache_key = f"{safe_market}:{days}:{top_n}"
 
@@ -3181,6 +3297,7 @@ async def competitive_pulse(
 
     try:
         from intelligence.competitive_intel import CompetitiveIntelEngine
+
         engine = CompetitiveIntelEngine()
         result = engine.pulse(market=market, days=days, top_n=top_n)
         with _pulse_cache_lock:
@@ -3251,16 +3368,32 @@ async def create_deal(body: DealCreate, request: Request):
                    VALUES (:sn, :mm, :st, :os, :nt)
                    RETURNING id, survey_no, stage, opportunity_score, assigned_to,
                              next_step, next_step_due, notes, created_at, updated_at"""),
-                {"sn": body.survey_no, "mm": market_id, "st": body.stage or "prospecting",
-                 "os": body.opportunity_score, "nt": body.notes},
+                {
+                    "sn": body.survey_no,
+                    "mm": market_id,
+                    "st": body.stage or "prospecting",
+                    "os": body.opportunity_score,
+                    "nt": body.notes,
+                },
             )
             row = result.fetchone()
             new_stage = row[2] or ""
         if new_stage in ("loi", "signed"):
             try:
                 from utils.discord_notifier import format_deal_alert, send
-                msg = format_deal_alert(new_stage, body.market, body.survey_no, body.ask_psf, body.area_acres)
-                send("bd_opportunities", f"Deal {new_stage.upper()}: {body.survey_no}", msg)
+
+                msg = format_deal_alert(
+                    new_stage,
+                    body.market,
+                    body.survey_no,
+                    body.ask_psf,
+                    body.area_acres,
+                )
+                send(
+                    "bd_opportunities",
+                    f"Deal {new_stage.upper()}: {body.survey_no}",
+                    msg,
+                )
             except Exception as exc:
                 logger.warning("[create_deal] Discord alert failed: %s", exc)
         return {
@@ -3390,8 +3523,12 @@ async def update_deal(deal_id: str, body: DealUpdate, request: Request):
                 from utils.discord_notifier import format_deal_alert, send
 
                 market_name = existing[4] or ""
-                msg = format_deal_alert(new_stage, market_name, existing[1], body.ask_psf, body.area_acres)
-                send("bd_opportunities", f"Deal {new_stage.upper()}: {existing[1]}", msg)
+                msg = format_deal_alert(
+                    new_stage, market_name, existing[1], body.ask_psf, body.area_acres
+                )
+                send(
+                    "bd_opportunities", f"Deal {new_stage.upper()}: {existing[1]}", msg
+                )
             except Exception as exc:
                 logger.warning("[update_deal] Discord alert failed: %s", exc)
 
@@ -3415,20 +3552,39 @@ async def update_deal(deal_id: str, body: DealUpdate, request: Request):
 # ── Projects & Tasks (Sprint 58 — T-995) ───────────────────────────────────
 
 
-_VALID_PROJECT_STATUSES = frozenset({
-    "lead", "mou", "loi", "signed", "rera_applied",
-    "construction", "possession", "delivered", "paused",
-})
+_VALID_PROJECT_STATUSES = frozenset(
+    {
+        "lead",
+        "mou",
+        "loi",
+        "signed",
+        "rera_applied",
+        "construction",
+        "possession",
+        "delivered",
+        "paused",
+    }
+)
 
 # Forward progression: projects move linearly through these stages.
 # paused and delivered are terminal. No backward jumps.
 _PROJECT_STAGE_ORDER = [
-    "lead", "mou", "loi", "signed", "rera_applied",
-    "construction", "possession", "delivered",
+    "lead",
+    "mou",
+    "loi",
+    "signed",
+    "rera_applied",
+    "construction",
+    "possession",
+    "delivered",
 ]
 _STAGE_RANK = {s: i for i, s in enumerate(_PROJECT_STAGE_ORDER)}
 _VALID_TRANSITIONS = {
-    s: {t for t in _PROJECT_STAGE_ORDER if _STAGE_RANK.get(t, -1) >= _STAGE_RANK.get(s, 0) and t != s}
+    s: {
+        t
+        for t in _PROJECT_STAGE_ORDER
+        if _STAGE_RANK.get(t, -1) >= _STAGE_RANK.get(s, 0) and t != s
+    }
     | {"paused"}
     for s in _PROJECT_STAGE_ORDER
 }
@@ -3475,8 +3631,12 @@ class TaskUpdate(BaseModel):
     notes: str | None = None
 
 
-@app.post("/api/projects", tags=["Operations"], status_code=201,
-          summary="Create a new project")
+@app.post(
+    "/api/projects",
+    tags=["Operations"],
+    status_code=201,
+    summary="Create a new project",
+)
 @limiter.limit("30/hour")
 async def create_project(body: ProjectCreate, request: Request):
     try:
@@ -3486,9 +3646,13 @@ async def create_project(body: ProjectCreate, request: Request):
         if not body.name or len(body.name.strip()) < 1:
             return JSONResponse({"error": "name is required"}, status_code=400)
         if len(body.name) > 200:
-            return JSONResponse({"error": "name too long (max 200 chars)"}, status_code=400)
+            return JSONResponse(
+                {"error": "name too long (max 200 chars)"}, status_code=400
+            )
         if body.notes and len(body.notes) > 5000:
-            return JSONResponse({"error": "notes too long (max 5000 chars)"}, status_code=400)
+            return JSONResponse(
+                {"error": "notes too long (max 5000 chars)"}, status_code=400
+            )
 
         with _get_sa_engine().begin() as conn:
             row = conn.execute(
@@ -3503,17 +3667,25 @@ async def create_project(body: ProjectCreate, request: Request):
                               start_date, target_close_date, created_at, updated_at
                 """),
                 {
-                    "name": body.name, "market": body.market,
-                    "survey_no": body.survey_no, "deal_type": body.deal_type,
-                    "status": st, "notes": body.notes,
-                    "start": body.start_date, "target": body.target_close_date,
+                    "name": body.name,
+                    "market": body.market,
+                    "survey_no": body.survey_no,
+                    "deal_type": body.deal_type,
+                    "status": st,
+                    "notes": body.notes,
+                    "start": body.start_date,
+                    "target": body.target_close_date,
                     "deal_id": body.source_deal_id or None,
                     "board_id": body.source_board_session_id or None,
                 },
             ).fetchone()
         return {
-            "id": str(row[0]), "name": row[1], "market": row[2],
-            "survey_no": row[3], "deal_type": row[4], "status": row[5],
+            "id": str(row[0]),
+            "name": row[1],
+            "market": row[2],
+            "survey_no": row[3],
+            "deal_type": row[4],
+            "status": row[5],
             "notes": row[6],
             "start_date": row[7].isoformat() if row[7] else None,
             "target_close_date": row[8].isoformat() if row[8] else None,
@@ -3525,8 +3697,11 @@ async def create_project(body: ProjectCreate, request: Request):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/projects", tags=["Operations"],
-         summary="List projects with optional filters and pagination")
+@app.get(
+    "/api/projects",
+    tags=["Operations"],
+    summary="List projects with optional filters and pagination",
+)
 @limiter.limit("60/minute")
 async def list_projects(
     request: Request,
@@ -3548,10 +3723,13 @@ async def list_projects(
             where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
             # Count total for pagination
-            total = conn.execute(
-                _sa_text(f"SELECT COUNT(*) FROM projects p {where_sql}"),
-                params,
-            ).scalar() or 0
+            total = (
+                conn.execute(
+                    _sa_text(f"SELECT COUNT(*) FROM projects p {where_sql}"),
+                    params,
+                ).scalar()
+                or 0
+            )
 
             offset = (page - 1) * per_page
             rows = conn.execute(
@@ -3573,22 +3751,31 @@ async def list_projects(
 
         result = []
         for r in rows:
-            result.append({
-                "id": str(r[0]), "name": r[1], "market": r[2],
-                "survey_no": r[3], "deal_type": r[4], "status": r[5],
-                "notes": r[6],
-                "created_at": r[7].isoformat() if r[7] else None,
-                "days_in_stage": int(r[8]) if r[8] else 0,
-                "open_task_count": int(r[9]) if r[9] else 0,
-            })
+            result.append(
+                {
+                    "id": str(r[0]),
+                    "name": r[1],
+                    "market": r[2],
+                    "survey_no": r[3],
+                    "deal_type": r[4],
+                    "status": r[5],
+                    "notes": r[6],
+                    "created_at": r[7].isoformat() if r[7] else None,
+                    "days_in_stage": int(r[8]) if r[8] else 0,
+                    "open_task_count": int(r[9]) if r[9] else 0,
+                }
+            )
         return {"projects": result, "total": total, "page": page, "per_page": per_page}
     except Exception as exc:
         logger.error("[list_projects] %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/projects/{project_id}", tags=["Operations"],
-         summary="Get project detail with tasks and velocity")
+@app.get(
+    "/api/projects/{project_id}",
+    tags=["Operations"],
+    summary="Get project detail with tasks and velocity",
+)
 @limiter.limit("60/minute")
 async def get_project(project_id: str, request: Request):
     try:
@@ -3631,30 +3818,42 @@ async def get_project(project_id: str, request: Request):
 
         tasks_list = []
         for t in tasks:
-            tasks_list.append({
-                "id": str(t[0]), "title": t[1], "owner_agent_id": t[2],
-                "dept": t[3], "status": t[4],
-                "due_date": t[5].isoformat() if t[5] else None,
-                "completed_at": t[6].isoformat() if t[6] else None,
-                "notes": t[7],
-                "created_at": t[8].isoformat() if t[8] else None,
-            })
+            tasks_list.append(
+                {
+                    "id": str(t[0]),
+                    "title": t[1],
+                    "owner_agent_id": t[2],
+                    "dept": t[3],
+                    "status": t[4],
+                    "due_date": t[5].isoformat() if t[5] else None,
+                    "completed_at": t[6].isoformat() if t[6] else None,
+                    "notes": t[7],
+                    "created_at": t[8].isoformat() if t[8] else None,
+                }
+            )
 
         stages = []
         for v in velocity:
-            stages.append({
-                "from_status": v[0], "to_status": v[1],
-                "days_elapsed": int(v[2]) if v[2] else 0,
-                "transitioned_at": v[3].isoformat() if v[3] else None,
-            })
+            stages.append(
+                {
+                    "from_status": v[0],
+                    "to_status": v[1],
+                    "days_elapsed": int(v[2]) if v[2] else 0,
+                    "transitioned_at": v[3].isoformat() if v[3] else None,
+                }
+            )
 
         current_stage = str(proj[5] or "lead")
         current_stage_days = int(proj[12]) if proj[12] else 0
 
         return {
             "project": {
-                "id": str(proj[0]), "name": proj[1], "market": proj[2],
-                "survey_no": proj[3], "deal_type": proj[4], "status": current_stage,
+                "id": str(proj[0]),
+                "name": proj[1],
+                "market": proj[2],
+                "survey_no": proj[3],
+                "deal_type": proj[4],
+                "status": current_stage,
                 "notes": proj[6],
                 "start_date": proj[7].isoformat() if proj[7] else None,
                 "target_close_date": proj[8].isoformat() if proj[8] else None,
@@ -3664,16 +3863,22 @@ async def get_project(project_id: str, request: Request):
                 "days_in_stage": current_stage_days,
             },
             "tasks": tasks_list,
-            "velocity": {"stages": stages, "current_stage": current_stage,
-                          "current_stage_days": current_stage_days},
+            "velocity": {
+                "stages": stages,
+                "current_stage": current_stage,
+                "current_stage_days": current_stage_days,
+            },
         }
     except Exception as exc:
         logger.error("[get_project] %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.patch("/api/projects/{project_id}", tags=["Operations"],
-           summary="Update project metadata (name, market, notes, dates)")
+@app.patch(
+    "/api/projects/{project_id}",
+    tags=["Operations"],
+    summary="Update project metadata (name, market, notes, dates)",
+)
 @limiter.limit("30/hour")
 async def update_project(project_id: str, body: ProjectUpdate, request: Request):
     try:
@@ -3714,8 +3919,12 @@ async def update_project(project_id: str, body: ProjectUpdate, request: Request)
         if not row:
             return JSONResponse({"error": "project not found"}, status_code=404)
         return {
-            "id": str(row[0]), "name": row[1], "market": row[2],
-            "survey_no": row[3], "deal_type": row[4], "status": row[5],
+            "id": str(row[0]),
+            "name": row[1],
+            "market": row[2],
+            "survey_no": row[3],
+            "deal_type": row[4],
+            "status": row[5],
             "notes": row[6],
             "start_date": row[7].isoformat() if row[7] else None,
             "target_close_date": row[8].isoformat() if row[8] else None,
@@ -3727,8 +3936,12 @@ async def update_project(project_id: str, body: ProjectUpdate, request: Request)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.post("/api/projects/{project_id}/tasks", tags=["Operations"],
-          status_code=201, summary="Add a task to a project")
+@app.post(
+    "/api/projects/{project_id}/tasks",
+    tags=["Operations"],
+    status_code=201,
+    summary="Add a task to a project",
+)
 @limiter.limit("60/hour")
 async def create_task(project_id: str, body: TaskCreate, request: Request):
     try:
@@ -3738,7 +3951,9 @@ async def create_task(project_id: str, body: TaskCreate, request: Request):
     if not body.title or len(body.title.strip()) < 1:
         return JSONResponse({"error": "title is required"}, status_code=400)
     if len(body.title) > 500:
-        return JSONResponse({"error": "title too long (max 500 chars)"}, status_code=400)
+        return JSONResponse(
+            {"error": "title too long (max 500 chars)"}, status_code=400
+        )
     try:
         with _get_sa_engine().begin() as conn:
             exists = conn.execute(
@@ -3755,14 +3970,20 @@ async def create_task(project_id: str, body: TaskCreate, request: Request):
                     RETURNING id, title, owner_agent_id, dept, status, due_date, notes, created_at
                 """),
                 {
-                    "pid": pid, "title": body.title,
-                    "owner": body.owner_agent_id, "dept": body.dept,
-                    "due": body.due_date, "notes": body.notes,
+                    "pid": pid,
+                    "title": body.title,
+                    "owner": body.owner_agent_id,
+                    "dept": body.dept,
+                    "due": body.due_date,
+                    "notes": body.notes,
                 },
             ).fetchone()
         return {
-            "id": str(row[0]), "title": row[1], "owner_agent_id": row[2],
-            "dept": row[3], "status": row[4],
+            "id": str(row[0]),
+            "title": row[1],
+            "owner_agent_id": row[2],
+            "dept": row[3],
+            "status": row[4],
             "due_date": row[5].isoformat() if row[5] else None,
             "notes": row[6],
             "created_at": row[7].isoformat() if row[7] else None,
@@ -3772,10 +3993,15 @@ async def create_task(project_id: str, body: TaskCreate, request: Request):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.patch("/api/projects/{project_id}/tasks/{task_id}", tags=["Operations"],
-           summary="Update task status/notes (sets completed_at on done)")
+@app.patch(
+    "/api/projects/{project_id}/tasks/{task_id}",
+    tags=["Operations"],
+    summary="Update task status/notes (sets completed_at on done)",
+)
 @limiter.limit("60/hour")
-async def update_task(project_id: str, task_id: str, body: TaskUpdate, request: Request):
+async def update_task(
+    project_id: str, task_id: str, body: TaskUpdate, request: Request
+):
     try:
         pid = str(uuid.UUID(project_id))
         tid = str(uuid.UUID(task_id))
@@ -3786,7 +4012,9 @@ async def update_task(project_id: str, task_id: str, body: TaskUpdate, request: 
         params = {"pid": pid, "tid": tid}
         if body.status is not None:
             if body.status not in ("todo", "in_progress", "done", "blocked"):
-                return JSONResponse({"error": f"invalid status: {body.status}"}, status_code=400)
+                return JSONResponse(
+                    {"error": f"invalid status: {body.status}"}, status_code=400
+                )
             updates.append("status = :st")
             params["st"] = body.status
             if body.status == "done":
@@ -3810,7 +4038,9 @@ async def update_task(project_id: str, task_id: str, body: TaskUpdate, request: 
         if not row:
             return JSONResponse({"error": "task not found"}, status_code=404)
         return {
-            "id": str(row[0]), "title": row[1], "status": row[2],
+            "id": str(row[0]),
+            "title": row[1],
+            "status": row[2],
             "completed_at": row[3].isoformat() if row[3] else None,
             "notes": row[4],
         }
@@ -3819,10 +4049,15 @@ async def update_task(project_id: str, task_id: str, body: TaskUpdate, request: 
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.patch("/api/projects/{project_id}/status", tags=["Operations"],
-           summary="Update project status (writes deal_velocity row, Discord on loi/signed)")
+@app.patch(
+    "/api/projects/{project_id}/status",
+    tags=["Operations"],
+    summary="Update project status (writes deal_velocity row, Discord on loi/signed)",
+)
 @limiter.limit("30/hour")
-async def update_project_status(project_id: str, body: ProjectStatusUpdate, request: Request):
+async def update_project_status(
+    project_id: str, body: ProjectStatusUpdate, request: Request
+):
     try:
         pid = str(uuid.UUID(project_id))
     except ValueError:
@@ -3835,7 +4070,9 @@ async def update_project_status(project_id: str, body: ProjectStatusUpdate, requ
     try:
         with _get_sa_engine().begin() as conn:
             current = conn.execute(
-                _sa_text("SELECT id, status, name, market, survey_no, created_at FROM projects WHERE id = :pid"),
+                _sa_text(
+                    "SELECT id, status, name, market, survey_no, created_at FROM projects WHERE id = :pid"
+                ),
                 {"pid": pid},
             ).fetchone()
             if not current:
@@ -3850,7 +4087,9 @@ async def update_project_status(project_id: str, body: ProjectStatusUpdate, requ
                 allowed = _VALID_TRANSITIONS.get(old_status, set())
                 if new_status not in allowed:
                     return JSONResponse(
-                        {"error": f"cannot transition from '{old_status}' to '{new_status}'"},
+                        {
+                            "error": f"cannot transition from '{old_status}' to '{new_status}'"
+                        },
                         status_code=400,
                     )
 
@@ -3858,6 +4097,7 @@ async def update_project_status(project_id: str, body: ProjectStatusUpdate, requ
             days_elapsed = 0
             if created:
                 from datetime import timezone
+
                 delta = datetime.now(timezone.utc) - created
                 days_elapsed = delta.days
 
@@ -3867,13 +4107,19 @@ async def update_project_status(project_id: str, body: ProjectStatusUpdate, requ
                         INSERT INTO deal_velocity (project_id, from_status, to_status, days_elapsed)
                         VALUES (:pid, :from_st, :to_st, :days)
                     """),
-                    {"pid": pid, "from_st": old_status, "to_st": new_status,
-                     "days": days_elapsed},
+                    {
+                        "pid": pid,
+                        "from_st": old_status,
+                        "to_st": new_status,
+                        "days": days_elapsed,
+                    },
                 )
 
                 if new_status == "delivered":
                     conn.execute(
-                        _sa_text("UPDATE projects SET actual_close_date = CURRENT_DATE WHERE id = :pid"),
+                        _sa_text(
+                            "UPDATE projects SET actual_close_date = CURRENT_DATE WHERE id = :pid"
+                        ),
                         {"pid": pid},
                     )
 
@@ -3889,14 +4135,23 @@ async def update_project_status(project_id: str, body: ProjectStatusUpdate, requ
         if new_status in ("loi", "signed"):
             try:
                 from utils.discord_notifier import format_deal_alert, send
+
                 msg = format_deal_alert(new_status, market_str, survey_str)
-                send("bd_opportunities", f"Project {new_status.upper()}: {current[2]}", msg)
+                send(
+                    "bd_opportunities",
+                    f"Project {new_status.upper()}: {current[2]}",
+                    msg,
+                )
             except Exception as exc:
                 logger.warning("[update_project_status] Discord alert failed: %s", exc)
 
         return {
-            "id": str(row[0]), "name": row[1], "market": row[2],
-            "survey_no": row[3], "status": row[4], "notes": row[5],
+            "id": str(row[0]),
+            "name": row[1],
+            "market": row[2],
+            "survey_no": row[3],
+            "status": row[4],
+            "notes": row[5],
             "created_at": row[6].isoformat() if row[6] else None,
             "updated_at": row[7].isoformat() if row[7] else None,
         }
@@ -3905,8 +4160,11 @@ async def update_project_status(project_id: str, body: ProjectStatusUpdate, requ
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/projects/{project_id}/velocity", tags=["Operations"],
-         summary="Get deal velocity timeline for a project")
+@app.get(
+    "/api/projects/{project_id}/velocity",
+    tags=["Operations"],
+    summary="Get deal velocity timeline for a project",
+)
 async def get_velocity(project_id: str, request: Request):
     try:
         pid = str(uuid.UUID(project_id))
@@ -3932,16 +4190,20 @@ async def get_velocity(project_id: str, request: Request):
 
         stages = []
         for r in rows:
-            stages.append({
-                "from_status": r[0], "to_status": r[1],
-                "days_elapsed": int(r[2]) if r[2] else 0,
-                "transitioned_at": r[3].isoformat() if r[3] else None,
-            })
+            stages.append(
+                {
+                    "from_status": r[0],
+                    "to_status": r[1],
+                    "days_elapsed": int(r[2]) if r[2] else 0,
+                    "transitioned_at": r[3].isoformat() if r[3] else None,
+                }
+            )
 
         created = proj[2]
         current_stage_days = 0
         if created:
             from datetime import timezone as _tz
+
             delta = datetime.now(_tz.utc) - created
             current_stage_days = delta.days
 
@@ -3955,8 +4217,11 @@ async def get_velocity(project_id: str, request: Request):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.delete("/api/projects/{project_id}/tasks/{task_id}", tags=["Operations"],
-            summary="Delete a task")
+@app.delete(
+    "/api/projects/{project_id}/tasks/{task_id}",
+    tags=["Operations"],
+    summary="Delete a task",
+)
 @limiter.limit("30/hour")
 async def delete_task(project_id: str, task_id: str, request: Request):
     try:
@@ -3967,7 +4232,9 @@ async def delete_task(project_id: str, task_id: str, request: Request):
     try:
         with _get_sa_engine().begin() as conn:
             result = conn.execute(
-                _sa_text("DELETE FROM project_tasks WHERE id = :tid AND project_id = :pid"),
+                _sa_text(
+                    "DELETE FROM project_tasks WHERE id = :tid AND project_id = :pid"
+                ),
                 {"pid": pid, "tid": tid},
             )
             if result.rowcount == 0:
@@ -4052,6 +4319,7 @@ async def content_generate(request: Request):
     Optionally reuse a completed evaluate job_id for context.
     """
     import asyncio
+
     try:
         payload = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -4105,7 +4373,15 @@ class LandownerUpdate(BaseModel):
 
 
 _VALID_CONTACT_TYPES = {"primary", "agent", "legal_heir", "power_of_attorney"}
-_VALID_APPROACH_STATUSES = {"cold", "warm", "meeting_done", "mou", "loi", "closed_won", "closed_lost"}
+_VALID_APPROACH_STATUSES = {
+    "cold",
+    "warm",
+    "meeting_done",
+    "mou",
+    "loi",
+    "closed_won",
+    "closed_lost",
+}
 
 
 _LANDOWNER_COLS = (
@@ -4130,23 +4406,38 @@ def _row_to_landowner_dict(r) -> dict:
     }
 
 
-def _fire_landowner_discord(status: str, survey_no: str, market: str, owner_name: str,
-                              ask_psf: float | None, notes: str | None) -> None:
+def _fire_landowner_discord(
+    status: str,
+    survey_no: str,
+    market: str,
+    owner_name: str,
+    ask_psf: float | None,
+    notes: str | None,
+) -> None:
     if status not in ("mou", "loi"):
         return
     from utils.discord_notifier import send_landowner_alert
+
     send_landowner_alert(status, survey_no, market, owner_name, ask_psf, notes)
 
 
-@app.post("/api/landowners", tags=["Landowner CRM"], status_code=201,
-          summary="Create a new landowner contact")
+@app.post(
+    "/api/landowners",
+    tags=["Landowner CRM"],
+    status_code=201,
+    summary="Create a new landowner contact",
+)
 @limiter.limit("30/minute")
 async def create_landowner(body: LandownerCreate, request: Request):
     if body.contact_type and body.contact_type not in _VALID_CONTACT_TYPES:
-        return JSONResponse({"error": f"invalid contact_type: {body.contact_type}"}, status_code=400)
+        return JSONResponse(
+            {"error": f"invalid contact_type: {body.contact_type}"}, status_code=400
+        )
     status = body.approach_status or "cold"
     if status not in _VALID_APPROACH_STATUSES:
-        return JSONResponse({"error": f"invalid approach_status: {status}"}, status_code=400)
+        return JSONResponse(
+            {"error": f"invalid approach_status: {status}"}, status_code=400
+        )
     try:
         with _get_sa_engine().begin() as conn:
             result = conn.execute(
@@ -4154,21 +4445,37 @@ async def create_landowner(body: LandownerCreate, request: Request):
                     (survey_no, market, owner_name, contact_phone, contact_type, approach_status, ask_psf, notes)
                     VALUES (:sn, :mkt, :on, :cp, :ct, :st, :ap, :nt)
                     RETURNING {_LANDOWNER_COLS}"""),
-                {"sn": body.survey_no, "mkt": body.market, "on": body.owner_name,
-                 "cp": body.contact_phone, "ct": body.contact_type or "primary",
-                 "st": status, "ap": body.ask_psf, "nt": body.notes},
+                {
+                    "sn": body.survey_no,
+                    "mkt": body.market,
+                    "on": body.owner_name,
+                    "cp": body.contact_phone,
+                    "ct": body.contact_type or "primary",
+                    "st": status,
+                    "ap": body.ask_psf,
+                    "nt": body.notes,
+                },
             )
             row = result.fetchone()
-        _fire_landowner_discord(status, body.survey_no, body.market, body.owner_name,
-                                body.ask_psf, body.notes)
+        _fire_landowner_discord(
+            status,
+            body.survey_no,
+            body.market,
+            body.owner_name,
+            body.ask_psf,
+            body.notes,
+        )
         return _row_to_landowner_dict(row)
     except Exception as exc:
         logger.error("[create_landowner] %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/landowners", tags=["Landowner CRM"],
-         summary="List landowner contacts with filters")
+@app.get(
+    "/api/landowners",
+    tags=["Landowner CRM"],
+    summary="List landowner contacts with filters",
+)
 @limiter.limit("60/minute")
 async def list_landowners(
     request: Request,
@@ -4218,8 +4525,11 @@ async def list_landowners(
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/landowners/pipeline", tags=["Landowner CRM"],
-         summary="Pipeline summary: counts by status + avg ask_psf per market")
+@app.get(
+    "/api/landowners/pipeline",
+    tags=["Landowner CRM"],
+    summary="Pipeline summary: counts by status + avg ask_psf per market",
+)
 @limiter.limit("30/minute")
 async def landowner_pipeline(request: Request):
     try:
@@ -4239,7 +4549,10 @@ async def landowner_pipeline(request: Request):
         return {
             "by_status": {r[0]: r[1] for r in by_status},
             "by_market": {
-                r[0]: {"count": r[1], "avg_ask_psf": round(float(r[2]), 2) if r[2] else None}
+                r[0]: {
+                    "count": r[1],
+                    "avg_ask_psf": round(float(r[2]), 2) if r[2] else None,
+                }
                 for r in by_market
             },
         }
@@ -4248,8 +4561,11 @@ async def landowner_pipeline(request: Request):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/landowners/{landowner_id}", tags=["Landowner CRM"],
-         summary="Get a single landowner contact")
+@app.get(
+    "/api/landowners/{landowner_id}",
+    tags=["Landowner CRM"],
+    summary="Get a single landowner contact",
+)
 @limiter.limit("60/minute")
 async def get_landowner(landowner_id: str, request: Request):
     try:
@@ -4259,7 +4575,9 @@ async def get_landowner(landowner_id: str, request: Request):
     try:
         with _get_sa_engine().connect() as conn:
             row = conn.execute(
-                _sa_text(f"SELECT {_LANDOWNER_COLS} FROM landowner_contacts WHERE id = :tid"),
+                _sa_text(
+                    f"SELECT {_LANDOWNER_COLS} FROM landowner_contacts WHERE id = :tid"
+                ),
                 {"tid": tid},
             ).fetchone()
         if not row:
@@ -4270,8 +4588,11 @@ async def get_landowner(landowner_id: str, request: Request):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.patch("/api/landowners/{landowner_id}", tags=["Landowner CRM"],
-           summary="Update landowner contact fields")
+@app.patch(
+    "/api/landowners/{landowner_id}",
+    tags=["Landowner CRM"],
+    summary="Update landowner contact fields",
+)
 @limiter.limit("30/minute")
 async def update_landowner(landowner_id: str, body: LandownerUpdate, request: Request):
     try:
@@ -4281,7 +4602,9 @@ async def update_landowner(landowner_id: str, body: LandownerUpdate, request: Re
     try:
         with _get_sa_engine().begin() as conn:
             existing = conn.execute(
-                _sa_text("SELECT id, survey_no, market, owner_name, approach_status, ask_psf FROM landowner_contacts WHERE id = :tid"),
+                _sa_text(
+                    "SELECT id, survey_no, market, owner_name, approach_status, ask_psf FROM landowner_contacts WHERE id = :tid"
+                ),
                 {"tid": tid},
             ).fetchone()
             if not existing:
@@ -4296,12 +4619,18 @@ async def update_landowner(landowner_id: str, body: LandownerUpdate, request: Re
                 params["cp"] = body.contact_phone
             if body.contact_type is not None:
                 if body.contact_type not in _VALID_CONTACT_TYPES:
-                    return JSONResponse({"error": f"invalid contact_type: {body.contact_type}"}, status_code=400)
+                    return JSONResponse(
+                        {"error": f"invalid contact_type: {body.contact_type}"},
+                        status_code=400,
+                    )
                 updates.append("contact_type = :ct")
                 params["ct"] = body.contact_type
             if body.approach_status is not None:
                 if body.approach_status not in _VALID_APPROACH_STATUSES:
-                    return JSONResponse({"error": f"invalid approach_status: {body.approach_status}"}, status_code=400)
+                    return JSONResponse(
+                        {"error": f"invalid approach_status: {body.approach_status}"},
+                        status_code=400,
+                    )
                 updates.append("approach_status = :st")
                 params["st"] = body.approach_status
             if body.ask_psf is not None:
@@ -4319,12 +4648,15 @@ async def update_landowner(landowner_id: str, body: LandownerUpdate, request: Re
             set_clause = ", ".join(updates)
             params["tid"] = tid
             row = conn.execute(
-                _sa_text(f"UPDATE landowner_contacts SET {set_clause} WHERE id = :tid RETURNING {_LANDOWNER_COLS}"),
+                _sa_text(
+                    f"UPDATE landowner_contacts SET {set_clause} WHERE id = :tid RETURNING {_LANDOWNER_COLS}"
+                ),
                 params,
             ).fetchone()
         new_status = body.approach_status or existing[4]
-        _fire_landowner_discord(new_status, existing[1], existing[2], existing[3],
-                                new_ask_psf, body.notes)
+        _fire_landowner_discord(
+            new_status, existing[1], existing[2], existing[3], new_ask_psf, body.notes
+        )
         return _row_to_landowner_dict(row)
     except Exception as exc:
         logger.error("[update_landowner] %s", exc)
@@ -4334,10 +4666,14 @@ async def update_landowner(landowner_id: str, body: LandownerUpdate, request: Re
 # ── Demand Intelligence Panel ──────────────────────────────────────────────────
 
 
-@app.get("/api/demand/{market}", tags=["Demand Intelligence"],
-         summary="Demand signals for a market")
+@app.get(
+    "/api/demand/{market}",
+    tags=["Demand Intelligence"],
+    summary="Demand signals for a market",
+)
 async def demand_api(market: str, request: Request):
     from intelligence.demand_intel import DemandIntel
+
     di = DemandIntel(caller="api")
     ds = di.get_signals(market)
     return {
@@ -4374,8 +4710,11 @@ def data_quality_panel(request: Request):
     return templates.TemplateResponse(request, "data_quality.html")
 
 
-@app.get("/demand", tags=["Demand Intelligence"],
-         summary="Demand Intelligence dashboard panel")
+@app.get(
+    "/demand",
+    tags=["Demand Intelligence"],
+    summary="Demand Intelligence dashboard panel",
+)
 def demand_panel(request: Request):
     return templates.TemplateResponse(request, "demand_intelligence.html")
 
@@ -4383,8 +4722,9 @@ def demand_panel(request: Request):
 # ── Projects Page (Sprint 58) ───────────────────────────────────────────────
 
 
-@app.get("/projects", tags=["Operations"],
-         summary="Operations Projects dashboard panel")
+@app.get(
+    "/projects", tags=["Operations"], summary="Operations Projects dashboard panel"
+)
 def projects_panel(request: Request):
     return templates.TemplateResponse(request, "projects.html")
 
@@ -4405,20 +4745,25 @@ def pr_studio(request: Request):
     return templates.TemplateResponse(request, "pr_studio.html")
 
 
-@app.get("/api/pr/mentions", tags=["PR & Brand"],
-         summary="Brand mentions + competitor launches for PR Studio")
+@app.get(
+    "/api/pr/mentions",
+    tags=["PR & Brand"],
+    summary="Brand mentions + competitor launches for PR Studio",
+)
 @limiter.limit("30/minute")
 async def pr_mentions(
     days: int = Query(default=7, description="Days to look back"),
     request: Request = None,
 ):
     from utils.brand_monitor import BrandMentionMonitor
+
     monitor = BrandMentionMonitor()
     brand_mentions = monitor.scan_mentions("LLS", days)
 
     launches = []
     try:
         from intelligence.competitive_intel import CompetitiveIntelEngine
+
         engine = CompetitiveIntelEngine()
         launches = engine.new_launches(market=None, days=30)
     except Exception as exc:
@@ -4436,18 +4781,29 @@ async def pr_mentions(
 # ── Process Audit Panel (Sprint 61) ──────────────────────────────────────────
 
 
-@app.get("/process-audit", tags=["Process Automation"],
-         summary="Process Audit dashboard panel")
+@app.get(
+    "/process-audit",
+    tags=["Process Automation"],
+    summary="Process Audit dashboard panel",
+)
 def process_audit_panel(request: Request):
     import os as _os
     from pathlib import Path as _Path
-    return templates.TemplateResponse(request, "process_audit.html", {
-        "process_audit_dir": _Path(__file__).resolve().parent / "templates",
-    })
+
+    return templates.TemplateResponse(
+        request,
+        "process_audit.html",
+        {
+            "process_audit_dir": _Path(__file__).resolve().parent / "templates",
+        },
+    )
 
 
-@app.get("/api/process-audit/report", tags=["Process Automation"],
-         summary="Latest BottleneckReport + ImprovementProposal")
+@app.get(
+    "/api/process-audit/report",
+    tags=["Process Automation"],
+    summary="Latest BottleneckReport + ImprovementProposal",
+)
 @limiter.limit("30/minute")
 async def process_audit_report(request: Request):
     from agents.log_analyst_agent import LogAnalystAgent
@@ -4468,10 +4824,17 @@ async def process_audit_report(request: Request):
     doc_result = doc_agent.run(bottleneck_report=report, improvement_proposal=proposal)
     runbook_path = doc_result.get("path", "")
 
-    sol_dir = Path(__file__).resolve().parent.parent / "docs" / "solutions" / "process-automation"
+    sol_dir = (
+        Path(__file__).resolve().parent.parent
+        / "docs"
+        / "solutions"
+        / "process-automation"
+    )
     runbooks = []
     if sol_dir.exists():
-        runbooks = sorted([str(p.relative_to(sol_dir.parent.parent)) for p in sol_dir.glob("*.md")])
+        runbooks = sorted(
+            [str(p.relative_to(sol_dir.parent.parent)) for p in sol_dir.glob("*.md")]
+        )
 
     return {
         "report": report,
@@ -4511,14 +4874,19 @@ def _row_to_portfolio_dict(r) -> dict:
     }
 
 
-@app.get("/api/portfolio", tags=["Portfolio"],
-         summary="List LLS portfolio (ordered by launch date DESC)")
+@app.get(
+    "/api/portfolio",
+    tags=["Portfolio"],
+    summary="List LLS portfolio (ordered by launch date DESC)",
+)
 @limiter.limit("60/minute")
 async def list_portfolio(request: Request):
     try:
         with _get_sa_engine().connect() as conn:
             rows = conn.execute(
-                _sa_text(f"SELECT {_PORTFOLIO_COLS} FROM lls_portfolio ORDER BY launched_date DESC"),
+                _sa_text(
+                    f"SELECT {_PORTFOLIO_COLS} FROM lls_portfolio ORDER BY launched_date DESC"
+                ),
             ).fetchall()
         items = [_row_to_portfolio_dict(r) for r in rows]
         logger.info("[list_portfolio] returned %d projects", len(items))
@@ -4528,8 +4896,11 @@ async def list_portfolio(request: Request):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/portfolio/summary", tags=["Portfolio"],
-         summary="LLS portfolio summary stats (single-query batched)")
+@app.get(
+    "/api/portfolio/summary",
+    tags=["Portfolio"],
+    summary="LLS portfolio summary stats (single-query batched)",
+)
 @limiter.limit("60/minute")
 async def portfolio_summary(request: Request):
     try:
@@ -4549,11 +4920,17 @@ async def portfolio_summary(request: Request):
             avg_irr = agg[2] or None
             total_units = agg[3] or 0
             market_rows = conn.execute(
-                _sa_text("SELECT DISTINCT market FROM lls_portfolio WHERE market IS NOT NULL"),
+                _sa_text(
+                    "SELECT DISTINCT market FROM lls_portfolio WHERE market IS NOT NULL"
+                ),
             ).fetchall()
         markets = [r[0] for r in market_rows if r[0]]
-        logger.info("[portfolio_summary] %d/%d delivered, %.1f%% avg IRR",
-                     delivered, total, avg_irr or 0)
+        logger.info(
+            "[portfolio_summary] %d/%d delivered, %.1f%% avg IRR",
+            delivered,
+            total,
+            avg_irr or 0,
+        )
         return {
             "total_projects": total,
             "delivered_count": delivered,
@@ -4571,11 +4948,13 @@ async def portfolio_summary(request: Request):
 
 def _send_telegram_message(chat_id: int | str, text: str) -> None:
     from config.settings import TELEGRAM_BOT_TOKEN as _tg_token
+
     if not _tg_token:
         logger.warning("[Telegram] TELEGRAM_BOT_TOKEN not set — cannot send reply")
         return
     try:
         import requests as _req
+
         _req.post(
             f"https://api.telegram.org/bot{_tg_token}/sendMessage",
             json={"chat_id": chat_id, "text": text},
@@ -4590,6 +4969,7 @@ async def telegram_webhook(request: Request):
     """Receive Telegram updates. Validated by X-Telegram-Bot-Api-Secret-Token header."""
     import asyncio
     from config.settings import TELEGRAM_WEBHOOK_SECRET as _tg_secret
+
     secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
     if _tg_secret and secret != _tg_secret:
         return JSONResponse({"error": "unauthorized"}, status_code=403)
@@ -4607,6 +4987,7 @@ async def telegram_webhook(request: Request):
         return JSONResponse({"ok": True})
 
     from interface.telegram_bot import parse_message, dispatch_evaluation
+
     parsed = parse_message(text)
 
     if parsed.confidence > 0.5:
@@ -4642,12 +5023,17 @@ async def telegram_webhook(request: Request):
 
 # ── GCC Demand Scout routes (Sprint 67 — GATE-71) ────────────────────────────
 
+
 @app.get("/api/gcc/events")
 async def gcc_events(
     request: Request,
-    market: str | None = Query(None, description="Filter by market (Yelahanka / Devanahalli / Hebbal)"),
+    market: str | None = Query(
+        None, description="Filter by market (Yelahanka / Devanahalli / Hebbal)"
+    ),
     corridor: str | None = Query(None, description="Filter by corridor slug"),
-    maturity: str | None = Query(None, description="Comma-separated maturity levels e.g. 1,2"),
+    maturity: str | None = Query(
+        None, description="Comma-separated maturity levels e.g. 1,2"
+    ),
     include_negative: bool = Query(True),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -4663,9 +5049,14 @@ async def gcc_events(
         maturity_levels: list[int] | None = None
         if maturity:
             try:
-                maturity_levels = [int(x.strip()) for x in maturity.split(",") if x.strip()]
+                maturity_levels = [
+                    int(x.strip()) for x in maturity.split(",") if x.strip()
+                ]
             except ValueError:
-                return JSONResponse({"error": "maturity must be comma-separated integers"}, status_code=400)
+                return JSONResponse(
+                    {"error": "maturity must be comma-separated integers"},
+                    status_code=400,
+                )
 
         corridors: list[str] | None = None
         if corridor:
@@ -4690,37 +5081,39 @@ async def gcc_events(
             except Exception:
                 pass
 
-        return JSONResponse({
-            "events": [
-                {
-                    "id": e.id,
-                    "canonical_id": e.canonical_id,
-                    "company": e.company,
-                    "sector": e.sector,
-                    "country_of_origin": e.country_of_origin,
-                    "bengaluru_location": e.bengaluru_location,
-                    "nearest_corridor": e.nearest_corridor,
-                    "entrant_type": e.entrant_type,
-                    "work_model": e.work_model,
-                    "signal_maturity_level": e.signal_maturity_level,
-                    "is_negative_signal": e.is_negative_signal,
-                    "north_bengaluru_impact_score": e.north_bengaluru_impact_score,
-                    "planned_headcount": e.planned_headcount,
-                    "median_ctc_l": e.median_ctc_l,
-                    "gcc_signal_score": e.gcc_signal_score,
-                    "primary_housing_segment": e.primary_housing_segment,
-                    "time_horizon": e.time_horizon,
-                    "estimated_demand_units": e.estimated_demand_units,
-                    "source_name": e.source_name,
-                    "source_reliability": e.source_reliability,
-                    "announced_at": str(e.announced_at) if e.announced_at else None,
-                    "discord_alert_fired": e.discord_alert_fired,
-                }
-                for e in events
-            ],
-            "total": len(events),
-            "gcc_north_norm": north_scores,
-        })
+        return JSONResponse(
+            {
+                "events": [
+                    {
+                        "id": e.id,
+                        "canonical_id": e.canonical_id,
+                        "company": e.company,
+                        "sector": e.sector,
+                        "country_of_origin": e.country_of_origin,
+                        "bengaluru_location": e.bengaluru_location,
+                        "nearest_corridor": e.nearest_corridor,
+                        "entrant_type": e.entrant_type,
+                        "work_model": e.work_model,
+                        "signal_maturity_level": e.signal_maturity_level,
+                        "is_negative_signal": e.is_negative_signal,
+                        "north_bengaluru_impact_score": e.north_bengaluru_impact_score,
+                        "planned_headcount": e.planned_headcount,
+                        "median_ctc_l": e.median_ctc_l,
+                        "gcc_signal_score": e.gcc_signal_score,
+                        "primary_housing_segment": e.primary_housing_segment,
+                        "time_horizon": e.time_horizon,
+                        "estimated_demand_units": e.estimated_demand_units,
+                        "source_name": e.source_name,
+                        "source_reliability": e.source_reliability,
+                        "announced_at": str(e.announced_at) if e.announced_at else None,
+                        "discord_alert_fired": e.discord_alert_fired,
+                    }
+                    for e in events
+                ],
+                "total": len(events),
+                "gcc_north_norm": north_scores,
+            }
+        )
     except Exception as exc:
         logger.warning("[API] /api/gcc/events failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
@@ -4741,6 +5134,7 @@ async def gcc_north_score(request: Request):
     """
     try:
         from intelligence.gcc_intel import GCCIntel
+
         intel = GCCIntel()
         result = {}
         for mkt in ("Yelahanka", "Devanahalli", "Hebbal"):
@@ -4765,14 +5159,21 @@ async def gcc_north_score(request: Request):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/govt/events", tags=["Govt/Policy"],
-         summary="List government/infrastructure/policy events")
+@app.get(
+    "/api/govt/events",
+    tags=["Govt/Policy"],
+    summary="List government/infrastructure/policy events",
+)
 @limiter.limit("30/minute")
 async def govt_events(
     request: Request,
     market: str | None = Query(None, description="Filter by market"),
-    category: str | None = Query(None, description="Filter by category (infrastructure/govt_project/policy)"),
-    signal: str | None = Query(None, description="Filter by signal_strength (high/emerging/risk)"),
+    category: str | None = Query(
+        None, description="Filter by category (infrastructure/govt_project/policy)"
+    ),
+    signal: str | None = Query(
+        None, description="Filter by signal_strength (high/emerging/risk)"
+    ),
     limit: int = Query(20, ge=1, le=100),
 ):
     """List govt/policy events with optional filters."""
@@ -4799,7 +5200,8 @@ async def govt_events(
 
         engine = get_engine()
         with engine.connect() as conn:
-            rows = conn.execute(text(f"""
+            rows = conn.execute(
+                text(f"""
                 SELECT id, headline, category, subcategory, location_text,
                        micro_markets, investment_cr, stage, impact_score,
                        signal_strength, time_horizon, actionability,
@@ -4809,44 +5211,53 @@ async def govt_events(
                 {where_sql}
                 ORDER BY impact_score DESC NULLS LAST, scraped_at DESC
                 LIMIT :lim
-            """), {**params, "lim": limit}).fetchall()
+            """),
+                {**params, "lim": limit},
+            ).fetchall()
 
         nb_count = sum(1 for r in rows if r[16])
         events = []
         for r in rows:
-            events.append({
-                "id": r[0],
-                "headline": r[1],
-                "category": r[2],
-                "subcategory": r[3],
-                "location_text": r[4],
-                "micro_markets": r[5] or [],
-                "investment_cr": float(r[6]) if r[6] else None,
-                "stage": r[7],
-                "impact_score": r[8],
-                "signal_strength": r[9],
-                "time_horizon": r[10],
-                "actionability": r[11],
-                "summary": r[12],
-                "why_it_matters": r[13],
-                "source_urls": r[14] or [],
-                "published_date": str(r[15]) if r[15] else None,
-                "is_north_bengaluru": bool(r[16]),
-                "scraped_at": str(r[17]) if r[17] else None,
-            })
+            events.append(
+                {
+                    "id": r[0],
+                    "headline": r[1],
+                    "category": r[2],
+                    "subcategory": r[3],
+                    "location_text": r[4],
+                    "micro_markets": r[5] or [],
+                    "investment_cr": float(r[6]) if r[6] else None,
+                    "stage": r[7],
+                    "impact_score": r[8],
+                    "signal_strength": r[9],
+                    "time_horizon": r[10],
+                    "actionability": r[11],
+                    "summary": r[12],
+                    "why_it_matters": r[13],
+                    "source_urls": r[14] or [],
+                    "published_date": str(r[15]) if r[15] else None,
+                    "is_north_bengaluru": bool(r[16]),
+                    "scraped_at": str(r[17]) if r[17] else None,
+                }
+            )
 
-        return JSONResponse({
-            "events": events,
-            "total": len(events),
-            "north_bengaluru_count": nb_count,
-        })
+        return JSONResponse(
+            {
+                "events": events,
+                "total": len(events),
+                "north_bengaluru_count": nb_count,
+            }
+        )
     except Exception as exc:
         logger.warning("[API] /api/govt/events failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/govt/north-score", tags=["Govt/Policy"],
-         summary="North Bengaluru govt/infra/policy pipeline score")
+@app.get(
+    "/api/govt/north-score",
+    tags=["Govt/Policy"],
+    summary="North Bengaluru govt/infra/policy pipeline score",
+)
 @limiter.limit("30/minute")
 async def govt_north_score(request: Request):
     """Return north_bengaluru_score — the value feeding demand_score_v2.
@@ -4862,41 +5273,49 @@ async def govt_north_score(request: Request):
     """
     try:
         from intelligence.govt_policy_intel import GovtPolicyIntel
+
         intel = GovtPolicyIntel(caller="api")
         result = intel.compute("north_bengaluru_aggregate")
-        return JSONResponse({
-            "north_bengaluru_score": result.north_bengaluru_score,
-            "high_opportunity_count": result.high_opportunity_count,
-            "risk_count": result.risk_count,
-            "top_infra_events": result.top_infra_events,
-            "top_policy_events": result.top_policy_events,
-            "computed_at": result.computed_at,
-        })
+        return JSONResponse(
+            {
+                "north_bengaluru_score": result.north_bengaluru_score,
+                "high_opportunity_count": result.high_opportunity_count,
+                "risk_count": result.risk_count,
+                "top_infra_events": result.top_infra_events,
+                "top_policy_events": result.top_policy_events,
+                "computed_at": result.computed_at,
+            }
+        )
     except Exception as exc:
         logger.warning("[API] /api/govt/north-score failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/govt/digest", tags=["Govt/Policy"],
-         summary="Weekly govt/policy digest for North Bengaluru")
+@app.get(
+    "/api/govt/digest",
+    tags=["Govt/Policy"],
+    summary="Weekly govt/policy digest for North Bengaluru",
+)
 @limiter.limit("30/minute")
 async def govt_digest(request: Request):
     """Return LLM-generated weekly digest of govt/policy developments."""
     try:
         from intelligence.govt_policy_intel import GovtPolicyIntel
+
         intel = GovtPolicyIntel(caller="api")
         result = intel.compute("north_bengaluru_aggregate")
-        return JSONResponse({
-            "digest": result.weekly_digest,
-            "computed_at": result.computed_at,
-        })
+        return JSONResponse(
+            {
+                "digest": result.weekly_digest,
+                "computed_at": result.computed_at,
+            }
+        )
     except Exception as exc:
         logger.warning("[API] /api/govt/digest failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/govt", tags=["Govt/Policy"],
-         summary="Govt/Policy dashboard page")
+@app.get("/api/govt", tags=["Govt/Policy"], summary="Govt/Policy dashboard page")
 @limiter.limit("20/minute")
 async def govt_policy_panel(request: Request):
     """Render govt policy intelligence dashboard panel."""
@@ -4932,30 +5351,33 @@ async def distress_signals(
                 ),
                 {"market": market, "limit": limit},
             ).fetchall()
-        return JSONResponse({
-            "market": market,
-            "count": len(rows),
-            "signals": [
-                {
-                    "developer_name": row.developer_name,
-                    "market": row.market,
-                    "signal_type": row.signal_type,
-                    "stall_count": int(row.stall_count or 0),
-                    "stall_ratio": float(row.stall_ratio or 0.0),
-                    "mention_count": int(row.mention_count or 0),
-                    "distress_score": float(row.distress_score or 0.0),
-                    "detected_at": row.detected_at.isoformat() if row.detected_at else None,
-                }
-                for row in rows
-            ],
-        })
+        return JSONResponse(
+            {
+                "market": market,
+                "count": len(rows),
+                "signals": [
+                    {
+                        "developer_name": row.developer_name,
+                        "market": row.market,
+                        "signal_type": row.signal_type,
+                        "stall_count": int(row.stall_count or 0),
+                        "stall_ratio": float(row.stall_ratio or 0.0),
+                        "mention_count": int(row.mention_count or 0),
+                        "distress_score": float(row.distress_score or 0.0),
+                        "detected_at": row.detected_at.isoformat()
+                        if row.detected_at
+                        else None,
+                    }
+                    for row in rows
+                ],
+            }
+        )
     except Exception as exc:
         logger.warning("[API] /api/distress/signals failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/market/supply", tags=["Market"],
-         summary="Pipeline supply for a market")
+@app.get("/api/market/supply", tags=["Market"], summary="Pipeline supply for a market")
 async def market_supply(
     request: Request,
     market: str = Query("Yelahanka", description="Market name"),
@@ -4978,39 +5400,55 @@ async def market_supply(
                 """),
                 {"market": f"%{market}%"},
             ).fetchall()
-            total = conn.execute(
-                _sa_text("""
+            total = (
+                conn.execute(
+                    _sa_text("""
                     SELECT COALESCE(SUM(estimated_units), 0)
                     FROM supply_pipeline WHERE market ILIKE :market
                 """),
-                {"market": f"%{market}%"},
-            ).scalar() or 0
+                    {"market": f"%{market}%"},
+                ).scalar()
+                or 0
+            )
         records = []
         for row in rows:
-            records.append({
-                "project_name": row.project_name,
-                "developer_name": row.developer_name,
-                "estimated_units": int(row.estimated_units or 0),
-                "estimated_acres": float(row.estimated_acres) if row.estimated_acres else None,
-                "source": row.source,
-                "approval_date": str(row.approval_date) if row.approval_date else None,
-                "expected_completion_year": row.expected_completion_year,
-                "raw_snippet": row.raw_snippet,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-            })
-        return JSONResponse({
-            "market": market,
-            "total_pipeline_units": int(total),
-            "count": len(records),
-            "records": records,
-        })
+            records.append(
+                {
+                    "project_name": row.project_name,
+                    "developer_name": row.developer_name,
+                    "estimated_units": int(row.estimated_units or 0),
+                    "estimated_acres": float(row.estimated_acres)
+                    if row.estimated_acres
+                    else None,
+                    "source": row.source,
+                    "approval_date": str(row.approval_date)
+                    if row.approval_date
+                    else None,
+                    "expected_completion_year": row.expected_completion_year,
+                    "raw_snippet": row.raw_snippet,
+                    "created_at": row.created_at.isoformat()
+                    if row.created_at
+                    else None,
+                }
+            )
+        return JSONResponse(
+            {
+                "market": market,
+                "total_pipeline_units": int(total),
+                "count": len(records),
+                "records": records,
+            }
+        )
     except Exception as exc:
         logger.warning("[API] /api/market/supply failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/market/forecast/{market}", tags=["Market"],
-         summary="PSF forecast for a market (3/6/12-month horizons)")
+@app.get(
+    "/api/market/forecast/{market}",
+    tags=["Market"],
+    summary="PSF forecast for a market (3/6/12-month horizons)",
+)
 @limiter.limit("30/hour")
 async def market_forecast(
     market: str,
@@ -5020,13 +5458,16 @@ async def market_forecast(
     Falls back to on-demand PSFForecaster call if no rows exist."""
     from utils.psf_forecaster import PSFForecaster
     from config.settings import TARGET_MARKETS as _VALID_MARKETS
+
     market = (market or "").strip()
     if not market:
         return JSONResponse({"error": "market is required"}, status_code=400)
     valid = [m.strip().lower() for m in _VALID_MARKETS]
     if market.lower() not in valid:
         return JSONResponse(
-            {"error": f"Unknown market '{market}'. Valid: {sorted(set(m.strip() for m in _VALID_MARKETS))}"},
+            {
+                "error": f"Unknown market '{market}'. Valid: {sorted(set(m.strip() for m in _VALID_MARKETS))}"
+            },
             status_code=400,
         )
     try:
@@ -5052,7 +5493,9 @@ async def market_forecast(
                 "as_of": str(best.forecast_date) if best.forecast_date else "",
                 "trend_direction": best.trend_direction or "unknown",
                 "current_psf": float(best.current_psf) if best.current_psf else 0,
-                "slope_pct_per_month": float(best.slope_pct_per_month) if best.slope_pct_per_month else 0,
+                "slope_pct_per_month": float(best.slope_pct_per_month)
+                if best.slope_pct_per_month
+                else 0,
                 "data_points": best.data_points or 0,
                 "mae_pct": float(best.mae_pct) if best.mae_pct else 0,
                 "model_version": best.model_version or "linear_v1",
@@ -5088,9 +5531,12 @@ async def market_forecast(
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/market/spread/{market}", tags=["Market"],
-         response_model=None,
-         summary="Registered-vs-ask PSF spread for a market")
+@app.get(
+    "/api/market/spread/{market}",
+    tags=["Market"],
+    response_model=None,
+    summary="Registered-vs-ask PSF spread for a market",
+)
 @limiter.limit("60/hour")
 async def market_spread(
     market: str,
@@ -5100,13 +5546,16 @@ async def market_spread(
     """Return registered-vs-ask PSF spread from registered_transactions."""
     from utils.psf_truth import compute_psf_spread, SpreadResponse
     from config.settings import TARGET_MARKETS as _VALID_MARKETS
+
     market = (market or "").strip()
     if not market:
         return JSONResponse({"error": "market is required"}, status_code=400)
     valid = [m.strip().lower() for m in _VALID_MARKETS]
     if market.lower() not in valid:
         return JSONResponse(
-            {"error": f"Unknown market '{market}'. Valid: {sorted(set(m.strip() for m in _VALID_MARKETS))}"},
+            {
+                "error": f"Unknown market '{market}'. Valid: {sorted(set(m.strip() for m in _VALID_MARKETS))}"
+            },
             status_code=400,
         )
     try:
@@ -5140,7 +5589,9 @@ async def gcc_create_event(request: Request):
 
     try:
         from ingest.plugins.gcc_plugin import (
-            _make_canonical_id, _resolve_corridor, _compute_gcc_score,
+            _make_canonical_id,
+            _resolve_corridor,
+            _compute_gcc_score,
             _CORRIDOR_NB_IMPACT,
         )
         from utils.db import get_engine
@@ -5162,7 +5613,8 @@ async def gcc_create_event(request: Request):
         gcc_score = _compute_gcc_score(body)
 
         with get_engine().begin() as conn:
-            conn.execute(_t("""
+            conn.execute(
+                _t("""
                 INSERT INTO gcc_events (
                     canonical_id, company, sector, country_of_origin,
                     bengaluru_location, nearest_corridor, entrant_type,
@@ -5189,36 +5641,39 @@ async def gcc_create_event(request: Request):
                     CAST(:announced_at AS date), FALSE
                 )
                 ON CONFLICT (canonical_id) DO NOTHING
-            """), {
-                "canonical_id": cid,
-                "company": body["company"],
-                "sector": body.get("sector"),
-                "country_of_origin": body.get("country_of_origin"),
-                "bengaluru_location": body.get("bengaluru_location"),
-                "nearest_corridor": body.get("nearest_corridor"),
-                "entrant_type": body.get("entrant_type", "EXPANSION"),
-                "work_model": body.get("work_model", "HYBRID"),
-                "signal_maturity_level": body.get("signal_maturity_level", 3),
-                "is_negative_signal": bool(body.get("is_negative_signal", False)),
-                "nb_impact": body["north_bengaluru_impact_score"],
-                "investment_cr": body.get("investment_cr"),
-                "planned_headcount": body.get("planned_headcount"),
-                "headcount_timeline_months": body.get("headcount_timeline_months"),
-                "median_ctc_l": body.get("median_ctc_l"),
-                "office_sqft": body.get("office_sqft"),
-                "demand_creation_score": body.get("demand_creation_score"),
-                "residential_impact_score": body.get("residential_impact_score"),
-                "appreciation_impact_score": body.get("appreciation_impact_score"),
-                "rental_impact_score": body.get("rental_impact_score"),
-                "gcc_signal_score": gcc_score,
-                "primary_housing_segment": body.get("primary_housing_segment"),
-                "time_horizon": body.get("time_horizon"),
-                "source_name": body.get("source_name"),
-                "source_reliability": body.get("source_reliability", "PRESS"),
-                "announced_at": announced,
-            })
+            """),
+                {
+                    "canonical_id": cid,
+                    "company": body["company"],
+                    "sector": body.get("sector"),
+                    "country_of_origin": body.get("country_of_origin"),
+                    "bengaluru_location": body.get("bengaluru_location"),
+                    "nearest_corridor": body.get("nearest_corridor"),
+                    "entrant_type": body.get("entrant_type", "EXPANSION"),
+                    "work_model": body.get("work_model", "HYBRID"),
+                    "signal_maturity_level": body.get("signal_maturity_level", 3),
+                    "is_negative_signal": bool(body.get("is_negative_signal", False)),
+                    "nb_impact": body["north_bengaluru_impact_score"],
+                    "investment_cr": body.get("investment_cr"),
+                    "planned_headcount": body.get("planned_headcount"),
+                    "headcount_timeline_months": body.get("headcount_timeline_months"),
+                    "median_ctc_l": body.get("median_ctc_l"),
+                    "office_sqft": body.get("office_sqft"),
+                    "demand_creation_score": body.get("demand_creation_score"),
+                    "residential_impact_score": body.get("residential_impact_score"),
+                    "appreciation_impact_score": body.get("appreciation_impact_score"),
+                    "rental_impact_score": body.get("rental_impact_score"),
+                    "gcc_signal_score": gcc_score,
+                    "primary_housing_segment": body.get("primary_housing_segment"),
+                    "time_horizon": body.get("time_horizon"),
+                    "source_name": body.get("source_name"),
+                    "source_reliability": body.get("source_reliability", "PRESS"),
+                    "announced_at": announced,
+                },
+            )
 
         from intelligence.gcc_intel import GCCIntel
+
         for mkt in ("Yelahanka", "Devanahalli", "Hebbal"):
             GCCIntel().invalidate_cache(mkt)
 
@@ -5245,7 +5700,9 @@ async def optimizer_panel(request: Request):
         return JSONResponse({"error": "template not found"}, status_code=500)
 
 
-@app.get("/api/optimizer/report", tags=["Optimizer"], summary="Latest optimizer report JSON")
+@app.get(
+    "/api/optimizer/report", tags=["Optimizer"], summary="Latest optimizer report JSON"
+)
 @limiter.limit("20/hour")
 async def optimizer_report(request: Request):
     """Return latest optimizer report as JSON."""
@@ -5256,25 +5713,31 @@ async def optimizer_report(request: Request):
         return report.to_dict()
     except Exception as exc:
         logger.error("[optimizer_report] %s", exc)
-        return JSONResponse({
-            "report_date": "",
-            "token_summary": [],
-            "redundancy_findings": [],
-            "cache_hit_rate": 0.0,
-            "top_recommendation": "Unable to generate report - see logs",
-            "auto_tasks_created": 0,
-        })
+        return JSONResponse(
+            {
+                "report_date": "",
+                "token_summary": [],
+                "redundancy_findings": [],
+                "cache_hit_rate": 0.0,
+                "top_recommendation": "Unable to generate report - see logs",
+                "auto_tasks_created": 0,
+            }
+        )
 
 
 # ── Shareholder Board Routes (Phase 14 - Sprint 62) ───────────────────────────
 
 
-@app.post("/api/shareholders/trigger", tags=["Shareholders"],
-          summary="Trigger quarterly board review")
+@app.post(
+    "/api/shareholders/trigger",
+    tags=["Shareholders"],
+    summary="Trigger quarterly board review",
+)
 @limiter.limit("5/hour")
 async def trigger_shareholder_review(request: Request):
     """Trigger a quarterly board review. Creates session, runs shareholders, saves result."""
     from crews.shareholder_review import ShareholderBoardCrew
+
     try:
         payload = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -5283,24 +5746,35 @@ async def trigger_shareholder_review(request: Request):
     quarter = str(payload.get("quarter") or "").strip()
     trigger_reason = str(payload.get("trigger_reason") or "Manual trigger").strip()
     if not quarter:
-        return JSONResponse({"error": "quarter required (e.g. Q2-2026)"}, status_code=400)
+        return JSONResponse(
+            {"error": "quarter required (e.g. Q2-2026)"}, status_code=400
+        )
 
     import uuid as _uuid
+
     session_id = str(_uuid.uuid4())
 
     # Cooldown guard: prevent >1 concurrent trigger per quarter
     try:
         with _get_sa_engine().connect() as conn:
-            active = conn.execute(
-                _sa_text("SELECT COUNT(*) FROM shareholder_sessions "
-                         "WHERE quarter = :q AND status IN ('pending','in_progress')"),
-                {"q": quarter},
-            ).scalar() or 0
+            active = (
+                conn.execute(
+                    _sa_text(
+                        "SELECT COUNT(*) FROM shareholder_sessions "
+                        "WHERE quarter = :q AND status IN ('pending','in_progress')"
+                    ),
+                    {"q": quarter},
+                ).scalar()
+                or 0
+            )
             if active > 0:
-                return JSONResponse({
-                    "error": f"A review for {quarter} is already in progress. "
-                             "Wait for it to complete before triggering another.",
-                }, status_code=429)
+                return JSONResponse(
+                    {
+                        "error": f"A review for {quarter} is already in progress. "
+                        "Wait for it to complete before triggering another.",
+                    },
+                    status_code=429,
+                )
     except Exception:
         pass
 
@@ -5315,7 +5789,9 @@ async def trigger_shareholder_review(request: Request):
                 {"id": session_id, "quarter": quarter, "reason": trigger_reason},
             )
     except Exception as exc:
-        logger.warning("[API] POST /api/shareholders/trigger session create failed: %s", exc)
+        logger.warning(
+            "[API] POST /api/shareholders/trigger session create failed: %s", exc
+        )
         return JSONResponse({"error": str(exc)}, status_code=500)
 
     def _run_and_update():
@@ -5337,40 +5813,59 @@ async def trigger_shareholder_review(request: Request):
                     """),
                     {
                         "id": session_id,
-                        "responses": json.dumps(result.get("shareholder_responses", [])),
-                        "transcript": json.dumps({
-                            "debate_triggered": result.get("debate_triggered", False),
-                            "debate_round": result.get("debate_round"),
-                        }),
+                        "responses": json.dumps(
+                            result.get("shareholder_responses", [])
+                        ),
+                        "transcript": json.dumps(
+                            {
+                                "debate_triggered": result.get(
+                                    "debate_triggered", False
+                                ),
+                                "debate_round": result.get("debate_round"),
+                            }
+                        ),
                         "synthesis": result.get("ceo_letter_text", ""),
                         "verdict": result.get("quarter_verdict", ""),
                     },
                 )
-            logger.info("[Shareholders] Review complete: {} | letter={}", session_id, letter_path)
+            logger.info(
+                "[Shareholders] Review complete: {} | letter={}",
+                session_id,
+                letter_path,
+            )
         except Exception as exc:
             logger.warning("[Shareholders] Review failed: {} | {}", session_id, exc)
             try:
                 with _get_sa_engine().begin() as conn:
                     conn.execute(
-                        _sa_text("UPDATE shareholder_sessions SET status = 'failed' WHERE id = :id"),
+                        _sa_text(
+                            "UPDATE shareholder_sessions SET status = 'failed' WHERE id = :id"
+                        ),
                         {"id": session_id},
                     )
             except Exception:
                 pass
 
     import threading
+
     threading.Thread(target=_run_and_update, daemon=True).start()
 
-    return JSONResponse({
-        "session_id": session_id,
-        "status": "in_progress",
-        "quarter": quarter,
-        "message": "Quarterly board review triggered. Check /shareholders for results.",
-    }, status_code=202)
+    return JSONResponse(
+        {
+            "session_id": session_id,
+            "status": "in_progress",
+            "quarter": quarter,
+            "message": "Quarterly board review triggered. Check /shareholders for results.",
+        },
+        status_code=202,
+    )
 
 
-@app.get("/api/shareholders/sessions", tags=["Shareholders"],
-         summary="List all shareholder sessions")
+@app.get(
+    "/api/shareholders/sessions",
+    tags=["Shareholders"],
+    summary="List all shareholder sessions",
+)
 @limiter.limit("30/minute")
 async def list_shareholder_sessions(
     request: Request,
@@ -5408,23 +5903,27 @@ async def list_shareholder_sessions(
             ).fetchall()
         sessions = []
         for r in rows:
-            sessions.append({
-                "id": str(r[0]),
-                "session_type": r[1],
-                "quarter": r[2],
-                "trigger_reason": r[3],
-                "status": r[4],
-                "verdict": r[5],
-                "created_at": r[6].isoformat() if r[6] else None,
-                "completed_at": r[7].isoformat() if r[7] else None,
-            })
+            sessions.append(
+                {
+                    "id": str(r[0]),
+                    "session_type": r[1],
+                    "quarter": r[2],
+                    "trigger_reason": r[3],
+                    "status": r[4],
+                    "verdict": r[5],
+                    "created_at": r[6].isoformat() if r[6] else None,
+                    "completed_at": r[7].isoformat() if r[7] else None,
+                }
+            )
         return {"data": sessions}
     except Exception as exc:
         logger.warning("[API] GET /api/shareholders/sessions failed: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/shareholders", tags=["Shareholders"], summary="Dashboard Shareholder Room Panel")
+@app.get(
+    "/shareholders", tags=["Shareholders"], summary="Dashboard Shareholder Room Panel"
+)
 @limiter.limit("20/hour")
 async def shareholders_panel(request: Request):
     """Render shareholder room dashboard panel."""
@@ -5452,17 +5951,27 @@ def _resolve_market(market: str | None) -> str | None:
 
 def _all_markets() -> list[str]:
     from config.settings import TARGET_MARKETS
+
     return [m.strip() for m in TARGET_MARKETS]
 
 
 @app.get("/api/digest/weekly", tags=["Digest"], summary="Weekly intelligence digest")
 @limiter.limit("20/hour")
-async def digest_weekly(request: Request, market: str = Query(default=None, description="Market name (omit for all)")):
+async def digest_weekly(
+    request: Request,
+    market: str = Query(default=None, description="Market name (omit for all)"),
+):
     from utils.weekly_digest import WeeklyIntelDigest
+
     resolved = _resolve_market(market) if market else None
     if market and not resolved:
         digest_runs_total.labels(type="weekly", status="invalid_market").inc()
-        return JSONResponse({"error": f"Unknown market '{market}'. Valid: {sorted(VALID_MARKETS_DIGEST)}"}, status_code=404)
+        return JSONResponse(
+            {
+                "error": f"Unknown market '{market}'. Valid: {sorted(VALID_MARKETS_DIGEST)}"
+            },
+            status_code=404,
+        )
     digest = WeeklyIntelDigest()
     if resolved:
         result = digest.build(resolved)
@@ -5475,12 +5984,21 @@ async def digest_weekly(request: Request, market: str = Query(default=None, desc
 
 @app.get("/api/digest/monthly", tags=["Digest"], summary="Monthly intelligence digest")
 @limiter.limit("20/hour")
-async def digest_monthly(request: Request, market: str = Query(default=None, description="Market name (omit for all)")):
+async def digest_monthly(
+    request: Request,
+    market: str = Query(default=None, description="Market name (omit for all)"),
+):
     from utils.monthly_digest import MonthlyIntelDigest
+
     resolved = _resolve_market(market) if market else None
     if market and not resolved:
         digest_runs_total.labels(type="monthly", status="invalid_market").inc()
-        return JSONResponse({"error": f"Unknown market '{market}'. Valid: {sorted(VALID_MARKETS_DIGEST)}"}, status_code=404)
+        return JSONResponse(
+            {
+                "error": f"Unknown market '{market}'. Valid: {sorted(VALID_MARKETS_DIGEST)}"
+            },
+            status_code=404,
+        )
     digest = MonthlyIntelDigest()
     if resolved:
         result = digest.build(resolved)
@@ -5491,13 +6009,18 @@ async def digest_monthly(request: Request, market: str = Query(default=None, des
     return {"results": [{k: v for k, v in r.__dict__.items()} for r in results]}
 
 
-@app.post("/api/digest/weekly/send", tags=["Digest"], summary="Send weekly digest to Discord now")
+@app.post(
+    "/api/digest/weekly/send",
+    tags=["Digest"],
+    summary="Send weekly digest to Discord now",
+)
 @limiter.limit("1/hour")
 async def digest_weekly_send(request: Request):
     if not _is_run_api_authorized(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     from utils.weekly_digest import WeeklyIntelDigest
     from utils.discord_notifier import send_weekly_digest
+
     digest = WeeklyIntelDigest()
     results = [digest.build(m) for m in _all_markets()]
     send_weekly_digest(results)
@@ -5505,13 +6028,18 @@ async def digest_weekly_send(request: Request):
     return {"status": "sent", "markets": len(results)}
 
 
-@app.post("/api/digest/monthly/send", tags=["Digest"], summary="Send monthly digest to Discord now")
+@app.post(
+    "/api/digest/monthly/send",
+    tags=["Digest"],
+    summary="Send monthly digest to Discord now",
+)
 @limiter.limit("1/hour")
 async def digest_monthly_send(request: Request):
     if not _is_run_api_authorized(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     from utils.monthly_digest import MonthlyIntelDigest
     from utils.discord_notifier import send_monthly_digest
+
     digest = MonthlyIntelDigest()
     results = [digest.build(m) for m in _all_markets()]
     send_monthly_digest(results)
@@ -5519,7 +6047,12 @@ async def digest_monthly_send(request: Request):
     return {"status": "sent", "markets": len(results)}
 
 
-@app.get("/digest", response_class=HTMLResponse, tags=["Pages"], summary="Intelligence Digest panel")
+@app.get(
+    "/digest",
+    response_class=HTMLResponse,
+    tags=["Pages"],
+    summary="Intelligence Digest panel",
+)
 async def digest_panel(request: Request):
     try:
         return templates.TemplateResponse(request, "digest.html")
@@ -5531,7 +6064,12 @@ async def digest_panel(request: Request):
 # ── V2 Dashboard Panel ────────────────────────────────────────────────────────
 
 
-@app.get("/ops/v2", response_class=HTMLResponse, tags=["Pages"], summary="V2.0 Operations Readiness panel")
+@app.get(
+    "/ops/v2",
+    response_class=HTMLResponse,
+    tags=["Pages"],
+    summary="V2.0 Operations Readiness panel",
+)
 async def v2_panel(request: Request):
     try:
         return templates.TemplateResponse(request, "v2_readiness.html")
@@ -5585,39 +6123,48 @@ def _compute_v2_readiness(conn) -> V2ReadinessResponse:
     with db_query_duration_seconds.labels(query_name="v2_scheduler_days").time():
         # 30-day lookback: a 7-day window caps EXTRACT(DAY ...) at 6,
         # making the >= 7 readiness criterion unreachable.
-        days_row = conn.execute(_sa_text("""
+        days_row = conn.execute(
+            _sa_text("""
             SELECT
                 CASE WHEN COUNT(*) = 0 THEN 0
                      ELSE EXTRACT(DAY FROM NOW() - MIN(created_at))::int
                 END
             FROM agent_runs
             WHERE created_at > NOW() - INTERVAL '30 days'
-        """)).fetchone()
+        """)
+        ).fetchone()
         scheduler_days_running = days_row[0] if days_row else 0
 
     with db_query_duration_seconds.labels(query_name="v2_success_rate").time():
-        rate_row = conn.execute(_sa_text("""
+        rate_row = conn.execute(
+            _sa_text("""
             SELECT
                 COUNT(*) AS total,
                 SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successes
             FROM agent_runs
             WHERE created_at > NOW() - INTERVAL '7 days'
-        """)).fetchone()
+        """)
+        ).fetchone()
         total_runs = rate_row[0] if rate_row else 0
         successes = rate_row[1] if rate_row else 0
-        scheduler_success_rate = round(successes / total_runs, 4) if total_runs > 0 else 0.0
+        scheduler_success_rate = (
+            round(successes / total_runs, 4) if total_runs > 0 else 0.0
+        )
 
     with db_query_duration_seconds.labels(query_name="v2_digest_count").time():
-        digest_row = conn.execute(_sa_text("""
+        digest_row = conn.execute(
+            _sa_text("""
             SELECT COUNT(*)
             FROM alerts
             WHERE alert_type ILIKE '%digest%'
               AND created_at > NOW() - INTERVAL '7 days'
-        """)).fetchone()
+        """)
+        ).fetchone()
         discord_digest_count = digest_row[0] if digest_row else 0
 
     with db_query_duration_seconds.labels(query_name="v2_live_growth").time():
-        growth_row = conn.execute(_sa_text("""
+        growth_row = conn.execute(
+            _sa_text("""
             WITH live_counts_7d_ago AS (
                 SELECT mm.name, rp.data_source, COUNT(*) AS cnt
                 FROM rera_projects rp
@@ -5644,16 +6191,19 @@ def _compute_v2_readiness(conn) -> V2ReadinessResponse:
                     ) THEN TRUE
                     ELSE FALSE
                 END
-        """)).fetchone()
+        """)
+        ).fetchone()
         live_rera_growth = growth_row[0] if growth_row else True
 
     with db_query_duration_seconds.labels(query_name="v2_br_response").time():
-        br_row = conn.execute(_sa_text("""
+        br_row = conn.execute(
+            _sa_text("""
             SELECT AVG(response_time_s)
             FROM board_sessions
             WHERE completed_at IS NOT NULL
               AND created_at > NOW() - INTERVAL '7 days'
-        """)).fetchone()
+        """)
+        ).fetchone()
         board_room_avg_response_s = (
             round(float(br_row[0]), 2) if br_row and br_row[0] is not None else None
         )
@@ -5674,8 +6224,12 @@ def _compute_v2_readiness(conn) -> V2ReadinessResponse:
     )
 
 
-@app.get("/api/ops/v2-readiness", response_model=V2ReadinessResponse,
-         tags=["Operations"], summary="V2.0 readiness check — 5 live metrics")
+@app.get(
+    "/api/ops/v2-readiness",
+    response_model=V2ReadinessResponse,
+    tags=["Operations"],
+    summary="V2.0 readiness check — 5 live metrics",
+)
 @limiter.limit("60/hour")
 async def v2_readiness(request: Request):
     try:
@@ -5686,21 +6240,28 @@ async def v2_readiness(request: Request):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.post("/api/ops/v2-declare", response_model=V2DeclareResponse,
-          tags=["Operations"], summary="Declare V2.0 when readiness criteria are met")
+@app.post(
+    "/api/ops/v2-declare",
+    response_model=V2DeclareResponse,
+    tags=["Operations"],
+    summary="Declare V2.0 when readiness criteria are met",
+)
 @limiter.limit("10/hour")
 async def v2_declare(request: Request):
     if not _is_run_api_authorized(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     try:
         with _get_sa_engine().begin() as conn:
-            existing = conn.execute(_sa_text("""
+            existing = conn.execute(
+                _sa_text("""
                 SELECT created_at FROM agent_memories
                 WHERE agent_id = 'system'
                   AND market = 'system'
                   AND fact = :fact
                 ORDER BY created_at DESC LIMIT 1
-            """), {"fact": _DECLARE_FACT}).fetchone()
+            """),
+                {"fact": _DECLARE_FACT},
+            ).fetchone()
             if existing:
                 date_str = existing[0].isoformat() if existing[0] else None
                 return V2DeclareResponse(declared=True, date=date_str)
@@ -5708,21 +6269,29 @@ async def v2_declare(request: Request):
             readiness = _compute_v2_readiness(conn)
             if not readiness.v2_ready:
                 return JSONResponse(
-                    {"error": "V2 criteria not yet met", "readiness": readiness.model_dump()},
+                    {
+                        "error": "V2 criteria not yet met",
+                        "readiness": readiness.model_dump(),
+                    },
                     status_code=400,
                 )
 
             from datetime import datetime, timezone
+
             now = datetime.now(timezone.utc)
             date_str = now.isoformat()
 
-            conn.execute(_sa_text("""
+            conn.execute(
+                _sa_text("""
                 INSERT INTO agent_memories (agent_id, market, fact, confidence, created_at)
                 VALUES ('system', 'system', :fact, 1.0, NOW())
                 ON CONFLICT (agent_id, market, fact) DO NOTHING
-            """), {"fact": _DECLARE_FACT})
+            """),
+                {"fact": _DECLARE_FACT},
+            )
 
             from utils.discord_notifier import send_ops_alert
+
             send_ops_alert(
                 "V2_DECLARED",
                 f"RE_OS V2.0 declared ✅ — {date_str}. "
@@ -5736,11 +6305,13 @@ async def v2_declare(request: Request):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/parcel/{village}/{survey_no}",
-         response_model=ParcelDossierResponse,
-         tags=["Parcel"],
-         summary="Full parcel dossier with deed history, RERA projects, comps",
-         responses={404: {"model": ErrorResponse}})
+@app.get(
+    "/api/parcel/{village}/{survey_no}",
+    response_model=ParcelDossierResponse,
+    tags=["Parcel"],
+    summary="Full parcel dossier with deed history, RERA projects, comps",
+    responses={404: {"model": ErrorResponse}},
+)
 @limiter.limit("60/hour")
 async def parcel_dossier(
     village: str,
@@ -5749,10 +6320,13 @@ async def parcel_dossier(
 ):
     """Return full parcel dossier: parcel info, deeds, RERA projects, GV, zone, comps."""
     from urllib.parse import unquote
+
     village = unquote(village)
     survey_no = unquote(survey_no)
     if not village or not survey_no:
-        return JSONResponse({"error": "village and survey_no are required"}, status_code=400)
+        return JSONResponse(
+            {"error": "village and survey_no are required"}, status_code=400
+        )
 
     try:
         with _get_sa_engine().connect() as conn:
@@ -5847,7 +6421,9 @@ async def parcel_dossier(
             if comps_row:
                 md = dict(comps_row._mapping)
                 comps = {
-                    "median_psf": float(md["median_psf"]) if md.get("median_psf") else None,
+                    "median_psf": float(md["median_psf"])
+                    if md.get("median_psf")
+                    else None,
                     "n": md.get("n", 0) or 0,
                     "window": "12mo",
                     "scope": "same village",
@@ -5856,6 +6432,7 @@ async def parcel_dossier(
         zone_risk = None
         try:
             from utils.zone_risk_checker import check_zone_risk
+
             zr = check_zone_risk(village, zone="R2")
             zone_risk = {
                 "market": zr.market,
@@ -5871,6 +6448,7 @@ async def parcel_dossier(
 
         def _serialize(val):
             from decimal import Decimal
+
             if val is None:
                 return val
             if isinstance(val, Decimal):
@@ -5889,7 +6467,9 @@ async def parcel_dossier(
             "rera_projects": [
                 {k: _serialize(v) for k, v in r.items()} for r in rera_projects
             ],
-            "guidance_value": {k: _serialize(v) for k, v in guidance_value.items()} if guidance_value else None,
+            "guidance_value": {k: _serialize(v) for k, v in guidance_value.items()}
+            if guidance_value
+            else None,
             "zone_risk": zone_risk,
             "assembly_flags": [
                 {k: _serialize(v) for k, v in a.items()} for a in assembly_flags
@@ -5902,8 +6482,11 @@ async def parcel_dossier(
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-@app.get("/api/parcel/villages", tags=["Parcel"],
-         summary="Distinct villages with parcel data")
+@app.get(
+    "/api/parcel/villages",
+    tags=["Parcel"],
+    summary="Distinct villages with parcel data",
+)
 @limiter.limit("120/minute")
 async def parcel_villages(request: Request = None):
     """Return distinct villages from the parcels table for UI dropdown."""
@@ -5919,8 +6502,12 @@ async def parcel_villages(request: Request = None):
         return JSONResponse({"villages": []})
 
 
-@app.get("/parcel", response_class=HTMLResponse, tags=["Pages"],
-         summary="Parcel lookup dashboard panel")
+@app.get(
+    "/parcel",
+    response_class=HTMLResponse,
+    tags=["Pages"],
+    summary="Parcel lookup dashboard panel",
+)
 async def parcel_panel(request: Request):
     """Serve the parcel lookup panel."""
     return templates.TemplateResponse(request, "parcel.html")

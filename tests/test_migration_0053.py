@@ -5,10 +5,12 @@
 (2) UNIQUE constraint blocks duplicate (sro, doc_no, reg_date)
 (3) CHECK constraint blocks zero consideration_inr
 """
+
 import os
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 import pytest
+
 pytestmark = pytest.mark.unit
 
 
@@ -61,5 +63,5 @@ def test_updated_at_column():
 def test_down_revision_correct():
     """Verify down_revision points to 0052_board_session_timing."""
     content = MIGRATION_PATH.read_text()
-    assert 'down_revision' in content
-    assert '0052_board_session_timing' in content
+    assert "down_revision" in content
+    assert "0052_board_session_timing" in content

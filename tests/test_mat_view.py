@@ -3,6 +3,7 @@
 Two integration tests that verify the mat view exists and has data
 after migration 0045 is applied. Skip gracefully if no DB available.
 """
+
 import pytest
 
 pytestmark = pytest.mark.unit
@@ -13,7 +14,12 @@ def test_v_market_brief_mat_migration_contains_correct_sql():
     from pathlib import Path
     import importlib.util
 
-    path = Path(__file__).parent.parent / "alembic" / "versions" / "0045_materialized_market_brief.py"
+    path = (
+        Path(__file__).parent.parent
+        / "alembic"
+        / "versions"
+        / "0045_materialized_market_brief.py"
+    )
     spec = importlib.util.spec_from_file_location("migration_0045", str(path))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -32,7 +38,12 @@ def test_v_market_brief_mat_has_unique_index():
     from pathlib import Path
     import importlib.util
 
-    path = Path(__file__).parent.parent / "alembic" / "versions" / "0045_materialized_market_brief.py"
+    path = (
+        Path(__file__).parent.parent
+        / "alembic"
+        / "versions"
+        / "0045_materialized_market_brief.py"
+    )
     spec = importlib.util.spec_from_file_location("migration_0045", str(path))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -54,11 +65,13 @@ def test_v_market_brief_mat_exists():
 
     engine = get_engine()
     with engine.connect() as conn:
-        row = conn.execute(text("""
+        row = conn.execute(
+            text("""
             SELECT matviewname, ispopulated
             FROM pg_matviews
             WHERE matviewname = 'v_market_brief_mat'
-        """)).fetchone()
+        """)
+        ).fetchone()
     assert row is not None, "v_market_brief_mat not found in pg_matviews"
     assert row[1] is True, "v_market_brief_mat is not populated"
 

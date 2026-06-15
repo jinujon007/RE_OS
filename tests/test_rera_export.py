@@ -1,8 +1,10 @@
 """Tests for rera_export.py (Sprint 36 — RERA Training Data Export)"""
+
 import json
 import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
+
 pytestmark = pytest.mark.unit
 
 
@@ -22,8 +24,11 @@ class TestExportRERARecords:
         with patch("utils.db.get_engine") as mock_engine:
             mock_conn = MagicMock()
             mock_conn.execute.return_value.fetchall.return_value = mock_rows
-            mock_engine.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_engine.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             from data.training.rera_export import export_rera_records
+
             records = export_rera_records("Devanahalli")
             assert len(records) == 1
             assert records[0]["project_name"] == "Test Project"
@@ -35,8 +40,11 @@ class TestExportRERARecords:
         with patch("utils.db.get_engine") as mock_engine:
             mock_conn = MagicMock()
             mock_conn.execute.return_value.fetchall.return_value = []
-            mock_engine.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_engine.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             from data.training.rera_export import export_rera_records
+
             records = export_rera_records("Devanahalli")
             assert records == []
 
@@ -55,8 +63,11 @@ class TestExportRERARecords:
         with patch("utils.db.get_engine") as mock_engine:
             mock_conn = MagicMock()
             mock_conn.execute.return_value.fetchall.return_value = mock_rows
-            mock_engine.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_engine.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             from data.training.rera_export import export_rera_records
+
             records = export_rera_records("Devanahalli")
             assert len(records) == 1
             assert records[0]["project_name"] == ""
@@ -66,5 +77,6 @@ class TestExportRERARecords:
         """Test graceful handling of DB connection failure."""
         with patch("utils.db.get_engine", side_effect=Exception("DB down")):
             from data.training.rera_export import export_rera_records
+
             records = export_rera_records("Devanahalli")
             assert records == []

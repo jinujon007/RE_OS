@@ -2,6 +2,7 @@
 RE_OS — Shareholder Board Crew (Phase 14 - Sprint 62)
 Quarterly board review with 4 shareholder agents, debate round, and CEO synthesis.
 """
+
 import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,7 +18,10 @@ from utils.performance_digest import PerformanceDigest
 from utils.decision_auditor import DecisionAuditor
 
 try:
-    from agents.shareholder_agent import load_shareholder_specs, create_shareholder_agent
+    from agents.shareholder_agent import (
+        load_shareholder_specs,
+        create_shareholder_agent,
+    )
 except ImportError:
     load_shareholder_specs = None
     create_shareholder_agent = None
@@ -30,8 +34,9 @@ except ImportError:
 _SHAREHOLDER_TIMEOUT_S = 90
 
 
-def _build_quarterly_prompt(spec: dict, quarter: str, digest_summary: str,
-                            contested_count: int) -> str:
+def _build_quarterly_prompt(
+    spec: dict, quarter: str, digest_summary: str, contested_count: int
+) -> str:
     name = spec.get("name", "Shareholder")
     role = spec.get("role", "Board Member")
     thesis = spec.get("investment_thesis", "Growth")
@@ -51,8 +56,9 @@ def _build_quarterly_prompt(spec: dict, quarter: str, digest_summary: str,
     )
 
 
-def _build_debate_prompt(spec: dict, quarter: str,
-                         opposing_verdicts: list[dict]) -> str:
+def _build_debate_prompt(
+    spec: dict, quarter: str, opposing_verdicts: list[dict]
+) -> str:
     name = spec.get("name", "Shareholder")
     role = spec.get("role", "Board Member")
     opposing_text = "".join(
@@ -77,7 +83,8 @@ def _parse_json_response(response_text: str) -> dict:
     if not response_text:
         return {}
     import re
-    match = re.search(r'\{.*\}', response_text.strip(), re.DOTALL)
+
+    match = re.search(r"\{.*\}", response_text.strip(), re.DOTALL)
     if match:
         try:
             return json.loads(match.group(0))
@@ -121,8 +128,13 @@ def _make_llm_call(spec: dict, prompt: str) -> dict:
         }
 
 
-def _run_shareholders(specs: list[dict], prompt_factory, quarter: str,
-                      digest_summary: str, contested_count: int) -> list[dict]:
+def _run_shareholders(
+    specs: list[dict],
+    prompt_factory,
+    quarter: str,
+    digest_summary: str,
+    contested_count: int,
+) -> list[dict]:
     """Run all shareholders — parallel via ThreadPoolExecutor, sequential fallback."""
     if not specs:
         return _fallback_responses()
@@ -138,30 +150,38 @@ def _run_shareholders(specs: list[dict], prompt_factory, quarter: str,
             try:
                 results.append(future.result())
             except Exception as exc:
-                logger.warning("[ShareholderBoard] {} timed out: {}", spec.get("name", "?"), exc)
-                results.append({
-                    "name": spec.get("name", "Shareholder"),
-                    "role": spec.get("role", ""),
-                    "verdict": "ABSTAIN",
-                    "top_concern": "Shareholder did not respond in time.",
-                    "recommendation": "",
-                })
+                logger.warning(
+                    "[ShareholderBoard] {} timed out: {}", spec.get("name", "?"), exc
+                )
+                results.append(
+                    {
+                        "name": spec.get("name", "Shareholder"),
+                        "role": spec.get("role", ""),
+                        "verdict": "ABSTAIN",
+                        "top_concern": "Shareholder did not respond in time.",
+                        "recommendation": "",
+                    }
+                )
     return results
 
 
 def _needs_debate(responses: list[dict]) -> bool:
     concerning_count = sum(
-        1 for r in responses
+        1
+        for r in responses
         if r.get("verdict") in ("NEEDS_CORRECTION", "UNDERPERFORMING")
     )
     return concerning_count >= 2
 
 
-def _generate_ceo_synthesis(quarter: str, digest: dict,
-                            decisions: list[dict],
-                            shareholder_responses: list[dict],
-                            debate_triggered: bool,
-                            debate_round: list[dict] | None = None) -> dict:
+def _generate_ceo_synthesis(
+    quarter: str,
+    digest: dict,
+    decisions: list[dict],
+    shareholder_responses: list[dict],
+    debate_triggered: bool,
+    debate_round: list[dict] | None = None,
+) -> dict:
     digest_summary = json.dumps(digest, indent=2, default=str)[:1000]
     llm_prompt = (
         f"You are the CEO of LLS (Land and LifeSpace). Quarterly board review — Q{quarter}.\n\n"
@@ -178,7 +198,9 @@ def _generate_ceo_synthesis(quarter: str, digest: dict,
     if debate_round:
         llm_prompt += "\nDebate round:\n"
         for r in debate_round:
-            llm_prompt += f"- {r.get('name')}: {r.get('response_to_objection', '')[:150]}\n"
+            llm_prompt += (
+                f"- {r.get('name')}: {r.get('response_to_objection', '')[:150]}\n"
+            )
 
     llm_prompt += (
         "\nOutput JSON:\n"
@@ -191,6 +213,7 @@ def _generate_ceo_synthesis(quarter: str, digest: dict,
     try:
         if get_heavy_llm:
             from crewai import Agent
+
             ceo_agent = Agent(
                 role="CEO, LLS",
                 goal="Synthesize quarterly board discussion into strategic CEO letter",
@@ -208,9 +231,9 @@ def _generate_ceo_synthesis(quarter: str, digest: dict,
     return _fallback_ceo_synthesis(quarter, shareholder_responses, debate_triggered)
 
 
-def _fallback_ceo_synthesis(quarter: str,
-                            responses: list[dict],
-                            debate_triggered: bool) -> dict:
+def _fallback_ceo_synthesis(
+    quarter: str, responses: list[dict], debate_triggered: bool
+) -> dict:
     verdicts = [r.get("verdict", "ABSTAIN") for r in responses]
     go = verdicts.count("GO_ON_PLAN")
     needs = verdicts.count("NEEDS_CORRECTION")
@@ -234,7 +257,8 @@ def _fallback_ceo_synthesis(quarter: str,
     debate_note = (
         "A debate was triggered as multiple shareholders raised "
         "significant concerns about our trajectory. "
-        if debate_triggered else ""
+        if debate_triggered
+        else ""
     )
 
     letter = (
@@ -276,7 +300,9 @@ def _save_session(quarter: str, session_data: dict) -> str:
                 {
                     "id": session_id,
                     "quarter": quarter,
-                    "responses": json.dumps(session_data.get("shareholder_responses", [])),
+                    "responses": json.dumps(
+                        session_data.get("shareholder_responses", [])
+                    ),
                     "transcript": session_data.get("debate_transcript", ""),
                     "synthesis": session_data.get("ceo_synthesis", ""),
                     "verdict": session_data.get("quarter_verdict", ""),
@@ -307,26 +333,42 @@ class ShareholderBoardCrew:
 
         specs = load_shareholder_specs() if load_shareholder_specs else []
         if not specs:
-            logger.warning("[ShareholderBoard] No shareholder specs found — using placeholders")
+            logger.warning(
+                "[ShareholderBoard] No shareholder specs found — using placeholders"
+            )
 
-        shareholder_responses = _run_shareholders(
-            specs, _build_quarterly_prompt, quarter,
-            digest_summary, contested_count,
-        ) if specs else _fallback_responses()
+        shareholder_responses = (
+            _run_shareholders(
+                specs,
+                _build_quarterly_prompt,
+                quarter,
+                digest_summary,
+                contested_count,
+            )
+            if specs
+            else _fallback_responses()
+        )
 
         debate_triggered = _needs_debate(shareholder_responses)
         debate_round = None
         if debate_triggered and specs:
-            opposing = [r for r in shareholder_responses
-                        if r.get("verdict") in ("NEEDS_CORRECTION", "UNDERPERFORMING")]
+            opposing = [
+                r
+                for r in shareholder_responses
+                if r.get("verdict") in ("NEEDS_CORRECTION", "UNDERPERFORMING")
+            ]
             debate_round = []
             for spec in specs:
                 debate_prompt = _build_debate_prompt(spec, quarter, opposing)
                 debate_round.append(_make_llm_call(spec, debate_prompt))
 
         synthesis = _generate_ceo_synthesis(
-            quarter, digest, decisions,
-            shareholder_responses, debate_triggered, debate_round,
+            quarter,
+            digest,
+            decisions,
+            shareholder_responses,
+            debate_triggered,
+            debate_round,
         )
 
         result = {
@@ -379,16 +421,32 @@ def _is_contested(decision: dict) -> bool:
 
 def _fallback_responses() -> list[dict]:
     return [
-        {"name": "Arjun Menon", "role": "Demand & Timing Shareholder",
-         "verdict": "GO_ON_PLAN", "top_concern": "Demand absorption appears healthy.",
-         "recommendation": "Continue current acquisition pace."},
-        {"name": "Rajan Pillai", "role": "Legal & Regulatory Risk Shareholder",
-         "verdict": "GO_ON_PLAN", "top_concern": "No major compliance flags.",
-         "recommendation": "Maintain legal diligence standard."},
-        {"name": "Maya Krishnan", "role": "Legacy & Community Shareholder",
-         "verdict": "NEEDS_CORRECTION", "top_concern": "Community engagement needs improvement.",
-         "recommendation": "Allocate budget for local stakeholder outreach."},
-        {"name": "Vikram Shah", "role": "Financial Maximizer Shareholder",
-         "verdict": "GO_ON_PLAN", "top_concern": "IRR projections consistent with targets.",
-         "recommendation": "Focus on higher-margin JD deals."},
+        {
+            "name": "Arjun Menon",
+            "role": "Demand & Timing Shareholder",
+            "verdict": "GO_ON_PLAN",
+            "top_concern": "Demand absorption appears healthy.",
+            "recommendation": "Continue current acquisition pace.",
+        },
+        {
+            "name": "Rajan Pillai",
+            "role": "Legal & Regulatory Risk Shareholder",
+            "verdict": "GO_ON_PLAN",
+            "top_concern": "No major compliance flags.",
+            "recommendation": "Maintain legal diligence standard.",
+        },
+        {
+            "name": "Maya Krishnan",
+            "role": "Legacy & Community Shareholder",
+            "verdict": "NEEDS_CORRECTION",
+            "top_concern": "Community engagement needs improvement.",
+            "recommendation": "Allocate budget for local stakeholder outreach.",
+        },
+        {
+            "name": "Vikram Shah",
+            "role": "Financial Maximizer Shareholder",
+            "verdict": "GO_ON_PLAN",
+            "top_concern": "IRR projections consistent with targets.",
+            "recommendation": "Focus on higher-margin JD deals.",
+        },
     ]

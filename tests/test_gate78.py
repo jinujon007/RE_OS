@@ -16,6 +16,7 @@ NOTE: Assertions 1-3 use mocked DB values. Schema-level verification
 To run against live DB (integration test):
     docker compose exec agents pytest tests/test_gate78.py -m '' -v
 """
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -34,9 +35,12 @@ def test_gate78_gazette_pdf_record_count():
     with patch("utils.db.get_engine", return_value=mock_engine):
         from sqlalchemy import text
         from utils.db import get_engine
+
         with get_engine().connect() as conn:
             count = conn.execute(
-                text("SELECT COUNT(*) FROM guidance_values WHERE data_source = 'gazette_pdf'")
+                text(
+                    "SELECT COUNT(*) FROM guidance_values WHERE data_source = 'gazette_pdf'"
+                )
             ).scalar()
         assert count >= 25, f"Only {count} gazette_pdf records (need >= 25)"
 
@@ -53,9 +57,12 @@ def test_gate78_extraction_confidence_positive():
     with patch("utils.db.get_engine", return_value=mock_engine):
         from sqlalchemy import text
         from utils.db import get_engine
+
         with get_engine().connect() as conn:
             min_conf = conn.execute(
-                text("SELECT MIN(extraction_confidence) FROM guidance_values WHERE data_source = 'gazette_pdf'")
+                text(
+                    "SELECT MIN(extraction_confidence) FROM guidance_values WHERE data_source = 'gazette_pdf'"
+                )
             ).scalar()
         assert min_conf is None or min_conf > 0, f"Min confidence is {min_conf}"
 
@@ -72,11 +79,14 @@ def test_gate78_gazette_year_min():
     with patch("utils.db.get_engine", return_value=mock_engine):
         from sqlalchemy import text
         from utils.db import get_engine
+
         with get_engine().connect() as conn:
             max_year = conn.execute(
                 text("SELECT MAX(gazette_year) FROM guidance_values")
             ).scalar()
-        assert max_year is not None and max_year >= 2023, f"Max gazette_year is {max_year}"
+        assert max_year is not None and max_year >= 2023, (
+            f"Max gazette_year is {max_year}"
+        )
 
 
 def test_gate78_gv_source_in_finance_head_context():
@@ -84,6 +94,7 @@ def test_gate78_gv_source_in_finance_head_context():
     # Verify the template string is in the board_room.py source code
     import inspect
     from crews.board_room import _run_dept_heads
+
     source = inspect.getsource(_run_dept_heads)
     assert "GUIDANCE VALUE SOURCE" in source, (
         "Finance Head context must include 'GUIDANCE VALUE SOURCE' string"
@@ -96,8 +107,8 @@ def test_gate78_check_gv_freshness_callable():
 
     mock_conn = MagicMock()
     results = [MagicMock(), MagicMock()]
-    results[0].fetchone.return_value = (2024,)   # gazette
-    results[1].fetchone.return_value = (None,)    # portal
+    results[0].fetchone.return_value = (2024,)  # gazette
+    results[1].fetchone.return_value = (None,)  # portal
     mock_conn.execute.side_effect = results
     mock_engine = MagicMock()
     mock_engine.connect.return_value.__enter__.return_value = mock_conn

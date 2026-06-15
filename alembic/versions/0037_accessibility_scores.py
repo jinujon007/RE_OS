@@ -45,7 +45,9 @@ def upgrade():
         sa.Column("travel_time_min", sa.Float(), nullable=False),
         sa.Column("distance_km", sa.Float(), nullable=True),
         sa.Column("mode", sa.Text(), nullable=False, server_default="driving"),
-        sa.Column("traffic_condition", sa.Text(), nullable=False, server_default="typical"),
+        sa.Column(
+            "traffic_condition", sa.Text(), nullable=False, server_default="typical"
+        ),
         sa.Column(
             "measured_at",
             sa.TIMESTAMP(timezone=True),
@@ -69,6 +71,10 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_index("idx_accessibility_market_measured", table_name="accessibility_scores")
-    op.drop_index("idx_accessibility_market_dest_mode", table_name="accessibility_scores")
+    op.drop_index(
+        "idx_accessibility_market_measured", table_name="accessibility_scores"
+    )
+    op.drop_index(
+        "idx_accessibility_market_dest_mode", table_name="accessibility_scores"
+    )
     op.drop_table("accessibility_scores")

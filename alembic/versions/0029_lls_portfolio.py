@@ -7,6 +7,7 @@ LLS is a new startup with no completed projects (J-8 resolution 2026-06-08).
 Migration chain:
     0028_landowner_contacts -> 0029_lls_portfolio
 """
+
 from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
@@ -20,7 +21,12 @@ depends_on: Union[str, None] = None
 def upgrade():
     op.create_table(
         "lls_portfolio",
-        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), primary_key=True),
+        sa.Column(
+            "id",
+            sa.UUID(),
+            server_default=sa.text("gen_random_uuid()"),
+            primary_key=True,
+        ),
         sa.Column("project_name", sa.TEXT(), nullable=False),
         sa.Column("location", sa.TEXT(), nullable=True),
         sa.Column("market", sa.VARCHAR(100), nullable=True),
@@ -32,16 +38,22 @@ def upgrade():
         sa.Column("land_cost_cr", sa.NUMERIC(12, 2), nullable=True),
         sa.Column("gdv_cr", sa.NUMERIC(12, 2), nullable=True),
         sa.Column("realized_irr_pct", sa.NUMERIC(5, 2), nullable=True),
-        sa.Column("status", sa.VARCHAR(20), server_default=sa.text("'planned'"), nullable=True),
+        sa.Column(
+            "status", sa.VARCHAR(20), server_default=sa.text("'planned'"), nullable=True
+        ),
         sa.Column("rera_no", sa.VARCHAR(100), nullable=True),
         sa.Column("notes", sa.TEXT(), nullable=True),
-        sa.Column("created_at", sa.TIMESTAMP(), server_default=sa.text("NOW()"), nullable=True),
+        sa.Column(
+            "created_at", sa.TIMESTAMP(), server_default=sa.text("NOW()"), nullable=True
+        ),
     )
-    op.create_check_constraint("ck_lls_portfolio_segment",
+    op.create_check_constraint(
+        "ck_lls_portfolio_segment",
         "lls_portfolio",
         "segment IN ('affordable','mid_market','premium','luxury')",
     )
-    op.create_check_constraint("ck_lls_portfolio_status",
+    op.create_check_constraint(
+        "ck_lls_portfolio_status",
         "lls_portfolio",
         "status IN ('delivered','ongoing','planned','paused')",
     )

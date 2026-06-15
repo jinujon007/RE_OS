@@ -6,6 +6,7 @@ Verifies:
 3. GET /optimizer route works
 4. Scheduler has post_crew_optimizer_hook registered
 """
+
 import pytest
 from unittest.mock import MagicMock, patch
 import uuid
@@ -68,7 +69,11 @@ def test_optimizer_route_exists():
     """GET /optimizer route is registered."""
     import os
     from unittest.mock import patch
-    with patch.dict(os.environ, {"DASHBOARD_API_KEY": "test-key", "DASHBOARD_API_KEY_ALLOW_EMPTY": "true"}):
+
+    with patch.dict(
+        os.environ,
+        {"DASHBOARD_API_KEY": "test-key", "DASHBOARD_API_KEY_ALLOW_EMPTY": "true"},
+    ):
         from dashboard.app_fastapi import app
 
     routes = [r.path for r in app.routes]

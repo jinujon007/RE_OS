@@ -24,7 +24,10 @@ _ESTIMATED_SOURCES = {"seed_estimated", "fallback_sample"}
 
 
 def _is_estimated_source(raw: dict) -> bool:
-    return str(raw.get("data_source", raw.get("source", ""))).strip().lower() in _ESTIMATED_SOURCES
+    return (
+        str(raw.get("data_source", raw.get("source", ""))).strip().lower()
+        in _ESTIMATED_SOURCES
+    )
 
 
 def _ensure_estimated_prefix(text: str) -> str:
@@ -44,7 +47,17 @@ def validate_rera_records(records: list) -> tuple:
         report  — dict with counts and error summary
     """
     if not records:
-        return [], [], {"total": 0, "valid": 0, "invalid": 0, "pass_rate_pct": 0, "error_summary": []}
+        return (
+            [],
+            [],
+            {
+                "total": 0,
+                "valid": 0,
+                "invalid": 0,
+                "pass_rate_pct": 0,
+                "error_summary": [],
+            },
+        )
 
     valid = []
     invalid = []
@@ -66,7 +79,9 @@ def validate_rera_records(records: list) -> tuple:
         else:
             r_out = dict(raw)
             if _is_estimated_source(raw):
-                r_out["project_name"] = _ensure_estimated_prefix(raw.get("project_name", ""))
+                r_out["project_name"] = _ensure_estimated_prefix(
+                    raw.get("project_name", "")
+                )
             valid.append(r_out)
 
     error_summary = []

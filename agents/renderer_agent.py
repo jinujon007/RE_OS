@@ -2,6 +2,7 @@
 RE_OS — Renderer Agent (Phase 5 — Engineering / Creative Division)
 Given a typology brief, outputs a Midjourney/DALL-E image prompt.
 """
+
 import json
 from crewai.tools import BaseTool
 from crewai import Agent
@@ -9,14 +10,14 @@ from config.llm_router import get_analysis_llm
 
 _STYLE_PRESETS = {
     "affordable": "warm earth tones, functional landscaping, community spaces, practical amenities",
-    "mid-range":  "contemporary architecture, landscaped podiums, rooftop gardens, natural light focus",
-    "premium":    "luxury finishes, infinity pool, sky terraces, dense tropical greenery, dramatic lighting",
+    "mid-range": "contemporary architecture, landscaped podiums, rooftop gardens, natural light focus",
+    "premium": "luxury finishes, infinity pool, sky terraces, dense tropical greenery, dramatic lighting",
 }
 
 _LOCATION_CONTEXT = {
-    "Yelahanka":    "North Bengaluru suburbs, Nandi Hills backdrop, open sky, green corridor",
-    "Devanahalli":  "airport corridor, wide roads, emerging skyline, farmland contrast",
-    "Hebbal":       "lakeside, Bengaluru urban fringe, elevated site with city views",
+    "Yelahanka": "North Bengaluru suburbs, Nandi Hills backdrop, open sky, green corridor",
+    "Devanahalli": "airport corridor, wide roads, emerging skyline, farmland contrast",
+    "Hebbal": "lakeside, Bengaluru urban fringe, elevated site with city views",
 }
 
 
@@ -60,7 +61,10 @@ class ImageBriefGeneratorTool(BaseTool):
                 f"8k render, photorealistic, Bengaluru real estate marketing style. "
                 f"--ar 16:9 --v 6"
             )
-            return json.dumps({"prompt": prompt, "style_preset": psf_band, "location": location}, indent=2)
+            return json.dumps(
+                {"prompt": prompt, "style_preset": psf_band, "location": location},
+                indent=2,
+            )
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -90,12 +94,16 @@ def create_renderer_agent() -> Agent:
 
 if __name__ == "__main__":
     tool = ImageBriefGeneratorTool()
-    result = tool._run(json.dumps({
-        "project_type": "residential",
-        "location": "Yelahanka",
-        "psf_band": "mid-range",
-        "unit_mix": {"1bhk": 15, "2bhk": 55, "3bhk": 30},
-        "floors": 12,
-        "green_pct": 45.0,
-    }))
+    result = tool._run(
+        json.dumps(
+            {
+                "project_type": "residential",
+                "location": "Yelahanka",
+                "psf_band": "mid-range",
+                "unit_mix": {"1bhk": 15, "2bhk": 55, "3bhk": 30},
+                "floors": 12,
+                "green_pct": 45.0,
+            }
+        )
+    )
     print(json.loads(result)["prompt"])

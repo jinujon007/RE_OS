@@ -5,6 +5,7 @@ migration chain and the live DB could go undetected for weeks, causing
 runtime SQL errors in every pipeline stage. This function runs as a weekly
 scheduler job (Sunday 03:00 UTC) and fires a Discord OPS alert on drift.
 """
+
 import os
 import subprocess
 from loguru import logger
@@ -41,7 +42,11 @@ def run_alembic_check() -> dict:
             logger.warning(f"[AlembicCheck] FAILED — schema drift: {stderr}")
             try:
                 from utils.discord_notifier import send_ops_alert
-                send_ops_alert("ALEMBIC_DRIFT", f"alembic check failed — migration schema drifted: {stderr}")
+
+                send_ops_alert(
+                    "ALEMBIC_DRIFT",
+                    f"alembic check failed — migration schema drifted: {stderr}",
+                )
             except Exception:
                 pass
             return {"status": "failed", "detail": stderr}

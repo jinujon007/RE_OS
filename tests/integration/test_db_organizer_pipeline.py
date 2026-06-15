@@ -112,10 +112,7 @@ def test_developer_grade_written(organizer):
     organizer.run("Yelahanka", [SAMPLE_PROJECT])
     with organizer.engine.connect() as conn:
         row = conn.execute(
-            text(
-                "SELECT d.grade FROM developers d "
-                "WHERE d.name_normalized = :n"
-            ),
+            text("SELECT d.grade FROM developers d WHERE d.name_normalized = :n"),
             {"n": SAMPLE_PROJECT["developer_name"].lower()},
         ).fetchone()
     assert row is not None
@@ -133,10 +130,7 @@ def test_grade_a_developer_written_correctly(organizer):
     organizer.run("Yelahanka", [grade_a_project])
     with organizer.engine.connect() as conn:
         row = conn.execute(
-            text(
-                "SELECT d.grade FROM developers d "
-                "WHERE d.name_normalized = :n"
-            ),
+            text("SELECT d.grade FROM developers d WHERE d.name_normalized = :n"),
             {"n": "brigade enterprises ltd"},
         ).fetchone()
     assert row is not None

@@ -3,6 +3,7 @@
 Migration chain:
     0035_evaluate_jobs -> 0036_supply_pipeline
 """
+
 from typing import Union
 
 import sqlalchemy as sa
@@ -18,21 +19,45 @@ depends_on: Union[str, None] = None
 def upgrade():
     op.create_table(
         "supply_pipeline",
-        sa.Column("id", UUID(as_uuid=False), server_default=sa.text("gen_random_uuid()"), primary_key=True),
+        sa.Column(
+            "id",
+            UUID(as_uuid=False),
+            server_default=sa.text("gen_random_uuid()"),
+            primary_key=True,
+        ),
         sa.Column("market", sa.Text(), nullable=False),
         sa.Column("project_name", sa.Text(), nullable=True),
         sa.Column("developer_name", sa.Text(), nullable=True),
-        sa.Column("estimated_units", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column(
+            "estimated_units", sa.Integer(), nullable=False, server_default=sa.text("0")
+        ),
         sa.Column("estimated_acres", sa.Float(), nullable=True),
         sa.Column(
-            "source", sa.Text(), nullable=False,
+            "source",
+            sa.Text(),
+            nullable=False,
         ),
         sa.Column("approval_date", sa.Date(), nullable=True),
         sa.Column("expected_completion_year", sa.Integer(), nullable=True),
         sa.Column("raw_snippet", sa.Text(), nullable=True),
-        sa.Column("data_source", sa.Text(), nullable=False, server_default=sa.text("'scraped'")),
-        sa.Column("ingest_log_id", UUID(as_uuid=False), sa.ForeignKey("ingest_log.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("NOW()"), nullable=False),
+        sa.Column(
+            "data_source",
+            sa.Text(),
+            nullable=False,
+            server_default=sa.text("'scraped'"),
+        ),
+        sa.Column(
+            "ingest_log_id",
+            UUID(as_uuid=False),
+            sa.ForeignKey("ingest_log.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.text("NOW()"),
+            nullable=False,
+        ),
     )
     op.create_check_constraint(
         "ck_supply_pipeline_source",

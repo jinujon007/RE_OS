@@ -1,4 +1,5 @@
 """GATE-61 declaration — PR & Brand Department (Sprint 53)."""
+
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -6,10 +7,10 @@ pytestmark = pytest.mark.unit
 
 
 class TestGate61:
-
     def test_pr_brief_tagline_nonempty_and_under_12_words(self):
         """Assertion 1: PRBrief.project_tagline is non-empty and <=12 words."""
         from utils.content_pipeline import ContentPipeline
+
         pipeline = ContentPipeline()
         with patch.object(pipeline.pr_head, "run") as mock_pr:
             mock_pr.return_value.project_tagline = "Premium living, naturally."
@@ -36,6 +37,7 @@ class TestGate61:
     def test_linkedin_post_under_280_chars(self):
         """Assertion 2: ContentPack.linkedin_post <=280 chars."""
         from agents.content_writer_agent import ContentWriterAgent
+
         agent = ContentWriterAgent()
         pack = agent._fallback_content_pack()
         assert len(pack.linkedin_post) <= 280
@@ -43,6 +45,7 @@ class TestGate61:
     def test_project_brief_has_7_sections(self):
         """Assertion 3: ContentPack.project_brief_sections has exactly 7 sections."""
         from agents.content_writer_agent import ContentWriterAgent
+
         agent = ContentWriterAgent()
         sections = agent._build_default_sections()
         assert len(sections) == 7
@@ -54,6 +57,7 @@ class TestGate61:
     def test_investor_narrative_length(self):
         """Assertion 4: investor_narrative >=500 chars."""
         from agents.pr_head_agent import PRHeadAgent
+
         agent = PRHeadAgent()
         brief = agent._fallback_brief()
         assert len(brief.investor_narrative) >= 100, (
@@ -69,7 +73,9 @@ class TestGate61:
         resp = client.get("/content")
         assert resp.status_code == 200
 
-    def test_content_generate_endpoint_returns_200_with_linkedin_post(self, monkeypatch):
+    def test_content_generate_endpoint_returns_200_with_linkedin_post(
+        self, monkeypatch
+    ):
         """Assertion 6: POST /api/content/generate with valid payload returns 200 and has linkedin_post."""
         monkeypatch.setenv("DASHBOARD_API_KEY", "gate61-key")
         from starlette.testclient import TestClient
@@ -95,7 +101,11 @@ class TestGate61:
             MockPipeline.return_value = mock_instance
             resp = client.post(
                 "/api/content/generate",
-                json={"market": "Yelahanka", "survey_no": "45/2", "deal_type": "compare"},
+                json={
+                    "market": "Yelahanka",
+                    "survey_no": "45/2",
+                    "deal_type": "compare",
+                },
                 headers={"X-API-Key": "gate61-key"},
             )
         assert resp.status_code == 200

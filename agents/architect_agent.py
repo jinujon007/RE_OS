@@ -28,17 +28,20 @@ class FSICalculatorTool(BaseTool):
                 efficiency=float(params.get("efficiency", 0.65)),
                 market=params.get("market") or None,
             )
-            return json.dumps({
-                "zone": result.zone,
-                "land_area_sqft": result.land_area_sqft,
-                "buildable_area_sqft": result.buildable_area_sqft,
-                "sellable_area_sqft": result.sellable_area_sqft,
-                "max_floors": result.max_floors,
-                "far": result.far,
-                "plot_coverage_pct": round(result.plot_coverage * 100),
-                "setback_front_m": result.setback_front_m,
-                "setback_side_m": result.setback_side_m,
-            }, indent=2)
+            return json.dumps(
+                {
+                    "zone": result.zone,
+                    "land_area_sqft": result.land_area_sqft,
+                    "buildable_area_sqft": result.buildable_area_sqft,
+                    "sellable_area_sqft": result.sellable_area_sqft,
+                    "max_floors": result.max_floors,
+                    "far": result.far,
+                    "plot_coverage_pct": round(result.plot_coverage * 100),
+                    "setback_front_m": result.setback_front_m,
+                    "setback_side_m": result.setback_side_m,
+                },
+                indent=2,
+            )
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -58,15 +61,18 @@ class TypologyRecommenderTool(BaseTool):
             return json.dumps({"error": "invalid JSON input"})
         try:
             result = recommend_unit_mix(float(params.get("avg_listing_psf", 5000)))
-            return json.dumps({
-                "psf_band": result.psf_band,
-                "unit_mix": {
-                    "1bhk_pct": result.bhk_1_pct,
-                    "2bhk_pct": result.bhk_2_pct,
-                    "3bhk_pct": result.bhk_3_pct,
+            return json.dumps(
+                {
+                    "psf_band": result.psf_band,
+                    "unit_mix": {
+                        "1bhk_pct": result.bhk_1_pct,
+                        "2bhk_pct": result.bhk_2_pct,
+                        "3bhk_pct": result.bhk_3_pct,
+                    },
+                    "recommended_avg_carpet_sqft": result.recommended_avg_carpet_sqft,
                 },
-                "recommended_avg_carpet_sqft": result.recommended_avg_carpet_sqft,
-            }, indent=2)
+                indent=2,
+            )
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -90,14 +96,17 @@ class GreenCoverageTool(BaseTool):
                 land_area_sqft=float(params.get("land_area_sqft", 0)),
                 built_coverage_pct=float(params.get("built_coverage_pct", 0.55)),
             )
-            return json.dumps({
-                "land_area_sqft": result.land_area_sqft,
-                "landscape_area_sqft": result.landscape_area_sqft,
-                "green_pct": result.green_pct,
-                "tree_count": result.tree_count,
-                "meets_bda_minimum": result.meets_bda_minimum,
-                "bda_minimum_pct": 15.0,
-            }, indent=2)
+            return json.dumps(
+                {
+                    "land_area_sqft": result.land_area_sqft,
+                    "landscape_area_sqft": result.landscape_area_sqft,
+                    "green_pct": result.green_pct,
+                    "tree_count": result.tree_count,
+                    "meets_bda_minimum": result.meets_bda_minimum,
+                    "bda_minimum_pct": 15.0,
+                },
+                indent=2,
+            )
         except Exception as e:
             return json.dumps({"error": str(e)})
 
@@ -138,5 +147,9 @@ if __name__ == "__main__":
     print(f"  Buildable: {r.buildable_area_sqft:,.0f} sqft")
     print(f"  Sellable:  {r.sellable_area_sqft:,.0f} sqft")
     print(f"  Max floors: {r.max_floors}")
-    print(f"  Unit mix: {m.bhk_1_pct}% 1BHK / {m.bhk_2_pct}% 2BHK / {m.bhk_3_pct}% 3BHK")
-    print(f"  Green coverage: {g.green_pct}% | Trees: {g.tree_count} | BDA min met: {g.meets_bda_minimum}")
+    print(
+        f"  Unit mix: {m.bhk_1_pct}% 1BHK / {m.bhk_2_pct}% 2BHK / {m.bhk_3_pct}% 3BHK"
+    )
+    print(
+        f"  Green coverage: {g.green_pct}% | Trees: {g.tree_count} | BDA min met: {g.meets_bda_minimum}"
+    )

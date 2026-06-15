@@ -139,5 +139,7 @@ class Checkpointer:
                     pass
 
         if removed:
-            logger.info(f"[Checkpoint] Pruned {removed} old files for {market} (>{keep_days}d)")
+            logger.info(
+                f"[Checkpoint] Pruned {removed} old files for {market} (>{keep_days}d)"
+            )
         return removed

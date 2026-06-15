@@ -1,4 +1,5 @@
 """drop unused superseded_by column from agent_memories"""
+
 from typing import Union
 
 import sqlalchemy as sa

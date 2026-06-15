@@ -7,9 +7,11 @@
 (4) /api/parcel/{village}/{survey_no} returns 200 with deed_history + comps keys
 (5) parcel_linker_nightly + assembly job registered in scheduler
 """
+
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
+
 pytestmark = pytest.mark.unit
 
 MIGRATION_PATH = Path("alembic/versions/0055_parcels_table.py")
@@ -28,6 +30,7 @@ def test_a1_parcels_model_importable():
 def test_a2_normalize_survey_no_variants():
     """Assertion 2: normalize_survey_no handles 5+ variant fixtures."""
     from utils.parcel_linker import normalize_survey_no
+
     assert normalize_survey_no("45/2A") == "45/2A"
     assert normalize_survey_no("45/2-A") == "45/2A"
     assert normalize_survey_no("45/2  A") == "45/2A"
@@ -57,8 +60,12 @@ def test_a3_assembly_detector_fires():
 
     mock_rows = [
         _make_row("a1", "Brigade Group", "Yelahanka", "45/1", base),
-        _make_row("a2", "Brigade Group", "Yelahanka", "45/2", base + timedelta(days=15)),
-        _make_row("a3", "Brigade Group", "Yelahanka", "45/3", base + timedelta(days=30)),
+        _make_row(
+            "a2", "Brigade Group", "Yelahanka", "45/2", base + timedelta(days=15)
+        ),
+        _make_row(
+            "a3", "Brigade Group", "Yelahanka", "45/3", base + timedelta(days=30)
+        ),
     ]
 
     mock_engine = MagicMock()
@@ -90,11 +97,18 @@ def test_a4_parcel_endpoint_returns_200():
         row._mapping = mapping
         return row
 
-    parcel_row = _mock_row({
-        "id": "abc-123", "village": "Yelahanka", "survey_no": "45/2A",
-        "district": "Bangalore", "taluk": "Yelahanka", "hobli": "Yelahanka Hobli",
-        "extent_sqft": 24000, "source": "rera_projects",
-    })
+    parcel_row = _mock_row(
+        {
+            "id": "abc-123",
+            "village": "Yelahanka",
+            "survey_no": "45/2A",
+            "district": "Bangalore",
+            "taluk": "Yelahanka",
+            "hobli": "Yelahanka Hobli",
+            "extent_sqft": 24000,
+            "source": "rera_projects",
+        }
+    )
     mock_conn.execute.return_value.fetchone.return_value = parcel_row
     mock_conn.execute.return_value.fetchall.return_value = []
 

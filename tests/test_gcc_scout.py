@@ -11,9 +11,11 @@ from unittest.mock import MagicMock, patch
 
 # ── Scoring formula ──────────────────────────────────────────────────────────
 
+
 class TestGCCScoring:
     def _import(self):
         from ingest.plugins.gcc_plugin import _compute_gcc_score
+
         return _compute_gcc_score
 
     def test_new_full_office_l1_scores_high(self):
@@ -77,55 +79,71 @@ class TestGCCScoring:
     def test_remote_friendly_deep_discount(self):
         fn = self._import()
         full_office = {
-            "demand_creation_score": 7, "residential_impact_score": 7,
-            "appreciation_impact_score": 7, "rental_impact_score": 7,
-            "entrant_type": "NEW", "work_model": "FULL_OFFICE",
+            "demand_creation_score": 7,
+            "residential_impact_score": 7,
+            "appreciation_impact_score": 7,
+            "rental_impact_score": 7,
+            "entrant_type": "NEW",
+            "work_model": "FULL_OFFICE",
             "signal_maturity_level": 2,
         }
         remote = {**full_office, "work_model": "REMOTE_FRIENDLY"}
-        assert fn(full_office) > fn(remote) * 2, "REMOTE_FRIENDLY must score much lower than FULL_OFFICE"
+        assert fn(full_office) > fn(remote) * 2, (
+            "REMOTE_FRIENDLY must score much lower than FULL_OFFICE"
+        )
 
     def test_l1_scores_higher_than_l4_same_event(self):
         fn = self._import()
         base = {
-            "demand_creation_score": 7, "residential_impact_score": 7,
-            "appreciation_impact_score": 7, "rental_impact_score": 5,
-            "entrant_type": "NEW", "work_model": "FULL_OFFICE",
+            "demand_creation_score": 7,
+            "residential_impact_score": 7,
+            "appreciation_impact_score": 7,
+            "rental_impact_score": 5,
+            "entrant_type": "NEW",
+            "work_model": "FULL_OFFICE",
         }
         l1 = fn({**base, "signal_maturity_level": 1})
         l4 = fn({**base, "signal_maturity_level": 4})
-        assert l1 > l4, "Level 1 (pre-public) must score higher than Level 4 (operational)"
+        assert l1 > l4, (
+            "Level 1 (pre-public) must score higher than Level 4 (operational)"
+        )
 
 
 # ── Corridor mapping ─────────────────────────────────────────────────────────
 
+
 class TestCorridorMapping:
     def test_kiadb_aerospace_maps_correctly(self):
         from ingest.plugins.gcc_plugin import _resolve_corridor
+
         corridor, nb = _resolve_corridor("KIADB Aerospace Park, Devanahalli")
         assert corridor == "kiadb_aerospace_park"
         assert nb == 1.0
 
     def test_devanahalli_nh44_maps_correctly(self):
         from ingest.plugins.gcc_plugin import _resolve_corridor
+
         corridor, nb = _resolve_corridor("Devanahalli Technology Campus, NH-44")
         assert corridor in ("devanahalli_nh44", "kiadb_aerospace_park")
         assert nb >= 0.9
 
     def test_whitefield_has_low_nb_impact(self):
         from ingest.plugins.gcc_plugin import _resolve_corridor
+
         corridor, nb = _resolve_corridor("Whitefield Tech Park")
         assert corridor == "whitefield"
         assert nb <= 0.15
 
     def test_manyata_maps_high_nb(self):
         from ingest.plugins.gcc_plugin import _resolve_corridor
+
         corridor, nb = _resolve_corridor("Manyata Tech Park, Nagavara")
         assert corridor == "manyata_tech_park"
         assert nb >= 0.85
 
     def test_unknown_location_returns_none(self):
         from ingest.plugins.gcc_plugin import _resolve_corridor
+
         corridor, nb = _resolve_corridor("Some Remote Location XYZ")
         assert corridor is None
         assert nb == 0.0
@@ -133,27 +151,32 @@ class TestCorridorMapping:
 
 # ── Canonical ID dedup ───────────────────────────────────────────────────────
 
+
 class TestCanonicalId:
     def test_same_inputs_produce_same_id(self):
         from ingest.plugins.gcc_plugin import _make_canonical_id
+
         a = _make_canonical_id("Boeing India", "KIADB Aerospace Park", "2024-08-15")
         b = _make_canonical_id("Boeing India", "KIADB Aerospace Park", "2024-08-15")
         assert a == b
 
     def test_different_company_produces_different_id(self):
         from ingest.plugins.gcc_plugin import _make_canonical_id
+
         a = _make_canonical_id("Boeing India", "KIADB Aerospace Park", "2024-08-15")
         b = _make_canonical_id("Airbus India", "KIADB Aerospace Park", "2024-08-15")
         assert a != b
 
     def test_different_month_produces_different_id(self):
         from ingest.plugins.gcc_plugin import _make_canonical_id
+
         a = _make_canonical_id("Boeing India", "KIADB", "2024-08")
         b = _make_canonical_id("Boeing India", "KIADB", "2024-09")
         assert a != b
 
     def test_id_is_valid_string(self):
         from ingest.plugins.gcc_plugin import _make_canonical_id
+
         cid = _make_canonical_id("Goldman Sachs", "Manyata Tech Park", "2024-09-10")
         assert isinstance(cid, str)
         assert len(cid) > 0
@@ -162,78 +185,98 @@ class TestCanonicalId:
 
 # ── Demand unit estimation ───────────────────────────────────────────────────
 
+
 class TestDemandUnitEstimation:
     def _plugin(self):
         from ingest.plugins.gcc_plugin import GCCPlugin
+
         return GCCPlugin()
 
     def test_high_ctc_new_full_office_returns_units(self):
         plugin = self._plugin()
-        units = plugin._estimate_demand_units({
-            "planned_headcount": 1000,
-            "median_ctc_l": 60.0,
-            "entrant_type": "NEW",
-            "work_model": "FULL_OFFICE",
-        })
+        units = plugin._estimate_demand_units(
+            {
+                "planned_headcount": 1000,
+                "median_ctc_l": 60.0,
+                "entrant_type": "NEW",
+                "work_model": "FULL_OFFICE",
+            }
+        )
         assert units is not None and units > 0
 
     def test_expansion_hybrid_returns_lower_units(self):
         plugin = self._plugin()
-        new_units = plugin._estimate_demand_units({
-            "planned_headcount": 1000,
-            "median_ctc_l": 50.0,
-            "entrant_type": "NEW",
-            "work_model": "FULL_OFFICE",
-        })
-        exp_units = plugin._estimate_demand_units({
-            "planned_headcount": 1000,
-            "median_ctc_l": 50.0,
-            "entrant_type": "EXPANSION",
-            "work_model": "HYBRID",
-        })
+        new_units = plugin._estimate_demand_units(
+            {
+                "planned_headcount": 1000,
+                "median_ctc_l": 50.0,
+                "entrant_type": "NEW",
+                "work_model": "FULL_OFFICE",
+            }
+        )
+        exp_units = plugin._estimate_demand_units(
+            {
+                "planned_headcount": 1000,
+                "median_ctc_l": 50.0,
+                "entrant_type": "EXPANSION",
+                "work_model": "HYBRID",
+            }
+        )
         assert new_units > exp_units
 
     def test_consolidation_returns_none(self):
         plugin = self._plugin()
-        units = plugin._estimate_demand_units({
-            "planned_headcount": 500,
-            "median_ctc_l": 40.0,
-            "entrant_type": "CONSOLIDATION",
-            "work_model": "HYBRID",
-        })
+        units = plugin._estimate_demand_units(
+            {
+                "planned_headcount": 500,
+                "median_ctc_l": 40.0,
+                "entrant_type": "CONSOLIDATION",
+                "work_model": "HYBRID",
+            }
+        )
         assert units is None or units == 0
 
     def test_no_headcount_returns_none(self):
         plugin = self._plugin()
-        units = plugin._estimate_demand_units({
-            "planned_headcount": None,
-            "median_ctc_l": 50.0,
-            "entrant_type": "NEW",
-            "work_model": "FULL_OFFICE",
-        })
+        units = plugin._estimate_demand_units(
+            {
+                "planned_headcount": None,
+                "median_ctc_l": 50.0,
+                "entrant_type": "NEW",
+                "work_model": "FULL_OFFICE",
+            }
+        )
         assert units is None
 
 
 # ── Seed data integrity ───────────────────────────────────────────────────────
 
+
 class TestSeedData:
     def test_seed_events_have_required_fields(self):
         from ingest.plugins.gcc_plugin import _SEED_EVENTS
-        required = {"company", "nearest_corridor", "signal_maturity_level", "entrant_type"}
+
+        required = {
+            "company",
+            "nearest_corridor",
+            "signal_maturity_level",
+            "entrant_type",
+        }
         for evt in _SEED_EVENTS:
             missing = required - set(evt.keys())
             assert not missing, f"{evt.get('company')} missing {missing}"
 
     def test_seed_events_count_at_least_10(self):
         from ingest.plugins.gcc_plugin import _SEED_EVENTS
+
         assert len(_SEED_EVENTS) >= 10
 
     def test_seed_events_are_north_bengaluru_focused(self):
         from ingest.plugins.gcc_plugin import _SEED_EVENTS, _CORRIDOR_NB_IMPACT
+
         north_corridors = {k for k, v in _CORRIDOR_NB_IMPACT.items() if v >= 0.65}
         north_count = sum(
-            1 for e in _SEED_EVENTS
-            if e.get("nearest_corridor") in north_corridors
+            1 for e in _SEED_EVENTS if e.get("nearest_corridor") in north_corridors
         )
         assert north_count >= len(_SEED_EVENTS) * 0.7, (
             "At least 70% of seed events should be in North BLR corridors"
@@ -241,6 +284,7 @@ class TestSeedData:
 
     def test_seed_event_scores_compute_without_error(self):
         from ingest.plugins.gcc_plugin import _SEED_EVENTS, _compute_gcc_score
+
         for evt in _SEED_EVENTS:
             score = _compute_gcc_score(evt)
             assert isinstance(score, float)
@@ -249,9 +293,11 @@ class TestSeedData:
 
 # ── GCCPlugin.run() with mocked DB ──────────────────────────────────────────
 
+
 class TestGCCPluginRun:
     def test_run_returns_parsed_records(self):
         from ingest.plugins.gcc_plugin import GCCPlugin
+
         plugin = GCCPlugin()
 
         # Mock DB calls so seed data isn't blocked by missing DB
@@ -267,7 +313,12 @@ class TestGCCPluginRun:
             assert rec.data.get("gcc_signal_score") is not None
 
     def test_run_skips_existing_canonical_ids(self):
-        from ingest.plugins.gcc_plugin import GCCPlugin, _SEED_EVENTS, _make_canonical_id
+        from ingest.plugins.gcc_plugin import (
+            GCCPlugin,
+            _SEED_EVENTS,
+            _make_canonical_id,
+        )
+
         plugin = GCCPlugin()
 
         # Pre-populate all seed canonical IDs
@@ -289,6 +340,7 @@ class TestGCCPluginRun:
     def test_plugin_validate_accepts_valid_record(self):
         from ingest.plugins.gcc_plugin import GCCPlugin, _compute_gcc_score
         from ingest.base import ParsedRecord
+
         plugin = GCCPlugin()
         rec = ParsedRecord(
             entity_type="gcc_event",
@@ -306,6 +358,7 @@ class TestGCCPluginRun:
     def test_plugin_validate_rejects_missing_company(self):
         from ingest.plugins.gcc_plugin import GCCPlugin
         from ingest.base import ParsedRecord
+
         plugin = GCCPlugin()
         rec = ParsedRecord(
             entity_type="gcc_event",
@@ -319,9 +372,11 @@ class TestGCCPluginRun:
 
 # ── GCCIntelResult scoring ───────────────────────────────────────────────────
 
+
 class TestGCCIntelResult:
     def test_gcc_intel_result_defaults_to_zero(self):
         from intelligence.gcc_intel import GCCIntelResult
+
         r = GCCIntelResult(market="Yelahanka", collected_at="2025-01-01T00:00:00Z")
         assert r.gcc_north_norm == 0.0
         assert r.event_count_12m == 0
@@ -329,6 +384,7 @@ class TestGCCIntelResult:
 
     def test_str_representation_contains_market(self):
         from intelligence.gcc_intel import GCCIntelResult
+
         r = GCCIntelResult(
             market="Devanahalli",
             collected_at="2025-01-01T00:00:00Z",
@@ -341,22 +397,31 @@ class TestGCCIntelResult:
 
     def test_gcc_north_norm_no_db_returns_zero(self):
         from intelligence.gcc_intel import GCCIntel
+
         intel = GCCIntel()
         # Patch _load_positive_score to raise so we exercise graceful degrade
-        with patch.object(intel, "_load_positive_score", side_effect=Exception("DB down")):
-            with patch.object(intel, "_load_negative_score", side_effect=Exception("DB down")):
-                with patch.object(intel, "_load_event_stats", side_effect=Exception("DB down")):
+        with patch.object(
+            intel, "_load_positive_score", side_effect=Exception("DB down")
+        ):
+            with patch.object(
+                intel, "_load_negative_score", side_effect=Exception("DB down")
+            ):
+                with patch.object(
+                    intel, "_load_event_stats", side_effect=Exception("DB down")
+                ):
                     result = intel.get_gcc_score("Yelahanka", force_refresh=True)
         # Should not raise; should return 0.0 norm
         assert result.gcc_north_norm == 0.0
 
     def test_unknown_market_returns_zero_norm(self):
         from intelligence.gcc_intel import GCCIntel
+
         result = GCCIntel().get_gcc_score("NonExistentMarket99")
         assert result.gcc_north_norm == 0.0
 
 
 # ── demand_score_v2 formula ──────────────────────────────────────────────────
+
 
 class TestDemandScoreV2Integration:
     def test_gcc_north_norm_added_as_fifth_component(self):

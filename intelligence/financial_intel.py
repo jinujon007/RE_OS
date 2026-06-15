@@ -12,18 +12,26 @@ Evaluates three deal structures:
 Ranking uses bear-case-first philosophy: base IRR (50%), sharpe ratio (20%),
 bear-case viability (30%). Matches the Finance Head's mandate from crews/board_room.py.
 """
+
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from loguru import logger
 
 from intelligence._shared import (
     __all__ as _,
-    fval, sanitize_market, validate_market, MarketCache, timed_intel_query,
+    fval,
+    sanitize_market,
+    validate_market,
+    MarketCache,
+    timed_intel_query,
 )
 
 __all__ = [
-    "FinancialIntel", "FinancialEvaluation", "DealScenario",
-    "CPBrokerage", "ConstructionEscalation",
+    "FinancialIntel",
+    "FinancialEvaluation",
+    "DealScenario",
+    "CPBrokerage",
+    "ConstructionEscalation",
 ]
 
 _JD_LANDOWNER_SHARE: float = 0.30
@@ -41,9 +49,12 @@ def _get_market_psf_fallback(market: str) -> float:
     try:
         from utils.db import get_engine
         from sqlalchemy import text
+
         with get_engine().connect() as conn:
             row = conn.execute(
-                text("SELECT avg_listing_psf FROM v_market_brief_mat WHERE micro_market ILIKE :m LIMIT 1"),
+                text(
+                    "SELECT avg_listing_psf FROM v_market_brief_mat WHERE micro_market ILIKE :m LIMIT 1"
+                ),
                 {"m": "%%{}%%".format(market)},
             ).fetchone()
         if row and row[0] and float(row[0]) > 500:
@@ -51,8 +62,14 @@ def _get_market_psf_fallback(market: str) -> float:
             logger.debug("[FinancialIntel] Market PSF fallback for {}: {}", market, psf)
             return psf
     except Exception as exc:
-        logger.debug("[FinancialIntel] PSF fallback query failed for {}: {}", market, exc)
-    logger.info("[FinancialIntel] Using DEFAULT PSF fallback for {}: {}", market, _DEFAULT_SELL_PSF)
+        logger.debug(
+            "[FinancialIntel] PSF fallback query failed for {}: {}", market, exc
+        )
+    logger.info(
+        "[FinancialIntel] Using DEFAULT PSF fallback for {}: {}",
+        market,
+        _DEFAULT_SELL_PSF,
+    )
     return _DEFAULT_SELL_PSF
 
 
@@ -173,28 +190,43 @@ class FinancialIntel:
 
         if not m_raw or area <= 0 or psf <= 0:
             return FinancialEvaluation(
-                market=m_raw or "", land_area_sqft=area, sellable_area_sqft=0,
-                sell_psf=psf, collected_at=datetime.now(timezone.utc).isoformat(),
-                market_found=False, recommendation="Invalid inputs — area and PSF must be positive",
+                market=m_raw or "",
+                land_area_sqft=area,
+                sellable_area_sqft=0,
+                sell_psf=psf,
+                collected_at=datetime.now(timezone.utc).isoformat(),
+                market_found=False,
+                recommendation="Invalid inputs — area and PSF must be positive",
             )
 
         mi = validate_market(m_raw)
         if mi is None:
             return FinancialEvaluation(
-                market=m_raw, land_area_sqft=area, sellable_area_sqft=0,
-                sell_psf=psf, collected_at=datetime.now(timezone.utc).isoformat(),
+                market=m_raw,
+                land_area_sqft=area,
+                sellable_area_sqft=0,
+                sell_psf=psf,
+                collected_at=datetime.now(timezone.utc).isoformat(),
                 market_found=False,
             )
 
         fe = FinancialEvaluation(
-            market=mi["name"], land_area_sqft=area, sellable_area_sqft=0,
-            sell_psf=psf, collected_at=datetime.now(timezone.utc).isoformat(),
+            market=mi["name"],
+            land_area_sqft=area,
+            sellable_area_sqft=0,
+            sell_psf=psf,
+            collected_at=datetime.now(timezone.utc).isoformat(),
             market_found=True,
         )
 
         try:
             from utils.fsi_calculator import calculate_fsi
-            from utils.irr_model import calc_land_cost, calc_irr, EQUITY_RATIO, TOTAL_TIMELINE_MONTHS
+            from utils.irr_model import (
+                calc_land_cost,
+                calc_irr,
+                EQUITY_RATIO,
+                TOTAL_TIMELINE_MONTHS,
+            )
             from utils.irr_model import compare_scenarios
 
             fsi_result = calculate_fsi(area, zone, efficiency=0.65, market=mi["name"])
@@ -206,27 +238,44 @@ class FinancialIntel:
 
             self._load_igr_data(fe, mi)
 
-            scenarios = compare_scenarios(negotiated_land, sellable, psf,
-                                          igr_source=self._igr_source_for(fe),
-                                          igr_record_count=fe.igr_record_count)
+            scenarios = compare_scenarios(
+                negotiated_land,
+                sellable,
+                psf,
+                igr_source=self._igr_source_for(fe),
+                igr_record_count=fe.igr_record_count,
+            )
 
             fe.purchase = self._scenario_to_deal(
                 "purchase",
                 "Outright land purchase — LLS bears 100% land + construction cost",
-                negotiated_land, sellable, psf, scenarios, construction_cost_psf, 1.0,
+                negotiated_land,
+                sellable,
+                psf,
+                scenarios,
+                construction_cost_psf,
+                1.0,
             )
 
             fe.jd = self._scenario_to_deal(
                 "jd",
                 f"Joint Development — landowner gets {_JD_LANDOWNER_SHARE:.0%} share, LLS bears construction",
-                negotiated_land, sellable, psf, scenarios, construction_cost_psf,
+                negotiated_land,
+                sellable,
+                psf,
+                scenarios,
+                construction_cost_psf,
                 1.0 - _JD_LANDOWNER_SHARE,
             )
 
             fe.jv = self._scenario_to_deal(
                 "jv",
                 f"Joint Venture — LLS {_JV_LLS_EQUITY_SHARE:.0%}, partner <LLS_PARTNER> {1 - _JV_LLS_EQUITY_SHARE:.0%}",
-                negotiated_land, sellable, psf, scenarios, construction_cost_psf,
+                negotiated_land,
+                sellable,
+                psf,
+                scenarios,
+                construction_cost_psf,
                 _JV_LLS_EQUITY_SHARE,
             )
 
@@ -246,10 +295,12 @@ class FinancialIntel:
         try:
             from utils.db import get_engine
             from sqlalchemy import text
+
             with get_engine(pool_size=2, max_overflow=1).connect() as conn:
                 # Tier 1: IGR transaction median (most reliable — actual registered sale prices)
                 with timed_intel_query("financial_igr"):
-                    row = conn.execute(text("""
+                    row = conn.execute(
+                        text("""
                         SELECT
                             PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY transaction_psf) AS median_psf,
                             COUNT(*) AS cnt
@@ -258,7 +309,9 @@ class FinancialIntel:
                           AND transaction_psf IS NOT NULL
                           AND transaction_psf > 0
                           AND registration_date >= NOW() - INTERVAL '90 days'
-                    """), {"m": mi["name"]}).fetchone()
+                    """),
+                        {"m": mi["name"]},
+                    ).fetchone()
                 if row and row[1] and int(row[1]) >= 5:
                     fe.igr_median_psf = fval(row[0])
                     fe.igr_record_count = int(row[1])
@@ -269,7 +322,8 @@ class FinancialIntel:
 
                 # Tier 2: Guidance values (government-stamped minimums, less reliable but useful)
                 with timed_intel_query("financial_guidance"):
-                    gv_row = conn.execute(text("""
+                    gv_row = conn.execute(
+                        text("""
                         SELECT
                             PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY guidance_value_psf) AS median_gv,
                             COUNT(*) AS gv_cnt
@@ -277,7 +331,9 @@ class FinancialIntel:
                         WHERE micro_market_id = :mm_id
                           AND guidance_value_psf IS NOT NULL
                           AND guidance_value_psf > 0
-                    """), {"mm_id": mi["id"]}).fetchone()
+                    """),
+                        {"mm_id": mi["id"]},
+                    ).fetchone()
                 if gv_row and gv_row[1] and int(gv_row[1]) >= 3:
                     fe.igr_median_psf = fval(gv_row[0])
                     fe.igr_record_count = int(gv_row[1])
@@ -300,19 +356,38 @@ class FinancialIntel:
         return mapping.get(fe.psf_source_quality, None)
 
     def _scenario_to_deal(
-        self, structure: str, description: str,
-        land_cost: float, sellable: float, sell_psf: float,
-        scenarios, construction_cost_psf: float,
+        self,
+        structure: str,
+        description: str,
+        land_cost: float,
+        sellable: float,
+        sell_psf: float,
+        scenarios,
+        construction_cost_psf: float,
         cost_multiplier: float,
     ) -> DealScenario:
         from utils.irr_model import calc_irr as _calc_irr, TOTAL_TIMELINE_MONTHS
+
         effective_land = land_cost * cost_multiplier
-        irr = _calc_irr(effective_land, sellable, sell_psf, construction_cost_psf, TOTAL_TIMELINE_MONTHS)
+        irr = _calc_irr(
+            effective_land,
+            sellable,
+            sell_psf,
+            construction_cost_psf,
+            TOTAL_TIMELINE_MONTHS,
+        )
         peak_de = irr.debt_required / max(irr.equity_required, 1)
         bear_psf = sell_psf * 0.80
-        bear = _calc_irr(effective_land, sellable, bear_psf, construction_cost_psf, TOTAL_TIMELINE_MONTHS)
+        bear = _calc_irr(
+            effective_land,
+            sellable,
+            bear_psf,
+            construction_cost_psf,
+            TOTAL_TIMELINE_MONTHS,
+        )
         return DealScenario(
-            structure=structure, description=description,
+            structure=structure,
+            description=description,
             land_cost=irr.land_cost,
             total_project_cost=irr.total_project_cost,
             equity_required=irr.equity_required,
@@ -363,7 +438,11 @@ class FinancialIntel:
                 continue
             irr_score = max(0, min(ds.simple_irr_pct / 20.0, 1.0))
             sharpe_score = max(0, min(ds.sharpe_ratio / 2.0, 1.0))
-            bear_score = 1.0 if ds.bear_irr_pct >= 12.0 else (ds.bear_irr_pct / 12.0 if ds.bear_irr_pct > 0 else 0.0)
+            bear_score = (
+                1.0
+                if ds.bear_irr_pct >= 12.0
+                else (ds.bear_irr_pct / 12.0 if ds.bear_irr_pct > 0 else 0.0)
+            )
             composite = irr_score * 0.50 + sharpe_score * 0.20 + bear_score * 0.30
             scored.append((composite, ds, name))
 
@@ -402,15 +481,22 @@ class FinancialIntel:
 
 if __name__ == "__main__":
     import json
+
     fe = FinancialIntel(caller="self_test").evaluate("Yelahanka", 43560, 6500)
-    print(json.dumps({
-        "market": fe.market,
-        "market_found": fe.market_found,
-        "sellable": fe.sellable_area_sqft,
-        "best": fe.best_structure,
-        "purchase_irr": fe.purchase.simple_irr_pct if fe.purchase else None,
-        "jd_irr": fe.jd.simple_irr_pct if fe.jd else None,
-        "jv_irr": fe.jv.simple_irr_pct if fe.jv else None,
-        "recommendation": fe.recommendation,
-        "psf_source": fe.psf_source_quality,
-    }, indent=2, default=str))
+    print(
+        json.dumps(
+            {
+                "market": fe.market,
+                "market_found": fe.market_found,
+                "sellable": fe.sellable_area_sqft,
+                "best": fe.best_structure,
+                "purchase_irr": fe.purchase.simple_irr_pct if fe.purchase else None,
+                "jd_irr": fe.jd.simple_irr_pct if fe.jd else None,
+                "jv_irr": fe.jv.simple_irr_pct if fe.jv else None,
+                "recommendation": fe.recommendation,
+                "psf_source": fe.psf_source_quality,
+            },
+            indent=2,
+            default=str,
+        )
+    )

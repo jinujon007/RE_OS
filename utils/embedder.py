@@ -21,7 +21,7 @@ Graceful Degradation Matrix:
   Both Ollama+Chroma| Keyword grep (no embedding, no vector store)   | Reduced recall quality
   Outputs dir empty | Returns [], logged at DEBUG                    | Empty search results
   HF API (sentiment)| Returns None, logged at DEBUG                  | sentiment_score stays NULL
-  
+
   The keyword fallback is a flat grep over intel_report_*.txt files.
   It does not support semantic similarity — results are scored by
   number of query terms that appear in the document (0..1).
@@ -57,7 +57,9 @@ _EMBED_MODEL = "bge-m3"
 _EMBED_DIM = 1024  # bge-m3 output dimension
 _INTEL_COLLECTION = "re_os_intel"
 _MEMORY_COLLECTION = "re_os_memories"
-_EMBED_TIMEOUT = 30  # seconds — allows for GPU cold-load on first call (~9s); warm calls are <1s
+_EMBED_TIMEOUT = (
+    30  # seconds — allows for GPU cold-load on first call (~9s); warm calls are <1s
+)
 _OLLAMA_HEALTH_TTL = 10  # cache Ollama health-check result for N seconds
 _ollama_last_check: float = 0.0
 _ollama_last_status: bool = False
@@ -94,6 +96,7 @@ def _get_reranker():
             if _reranker_instance is None:
                 try:
                     from utils.reranker import CrossEncoderReranker
+
                     _reranker_instance = CrossEncoderReranker()
                 except Exception:
                     _reranker_instance = False
@@ -157,9 +160,9 @@ def _get_chroma_client() -> chromadb.PersistentClient:
 
 
 _MARKET_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r'\byelahanka\b', re.I), "Yelahanka"),
-    (re.compile(r'\bdevanahalli\b', re.I), "Devanahalli"),
-    (re.compile(r'\bhebbal\b', re.I), "Hebbal"),
+    (re.compile(r"\byelahanka\b", re.I), "Yelahanka"),
+    (re.compile(r"\bdevanahalli\b", re.I), "Devanahalli"),
+    (re.compile(r"\bhebbal\b", re.I), "Hebbal"),
 ]
 
 
@@ -199,6 +202,7 @@ class SentenceTransformerEmbeddingFunction(EmbeddingFunction):
     def __call__(self, input: Documents) -> Embeddings:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
+
             self._model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
         embeddings = self._model.encode(input, show_progress_bar=False)
         return [e.tolist() if hasattr(e, "tolist") else list(e) for e in embeddings]
@@ -253,7 +257,8 @@ class _BaseChromaStore:
             if len(first_vec) != _EMBED_DIM:
                 logger.warning(
                     "[Embedder] BGE-M3 migration: stale %d-dim collection '%s' detected, recreating",
-                    len(test_embed[0]), self._collection_name,
+                    len(test_embed[0]),
+                    self._collection_name,
                 )
                 self._client.delete_collection(self._collection.name)
                 self._collection = self._client.create_collection(
@@ -338,9 +343,8 @@ class IntelEmbedder(_BaseChromaStore):
             return {"indexed": 0, "skipped": 0, "failed": 0, "duration_s": 0}
 
         # Intel reports saved as .txt (intel_report_*.txt) or .md
-        report_files = (
-            list(outputs.rglob("intel_report_*.txt"))
-            + list(outputs.rglob("*.md"))
+        report_files = list(outputs.rglob("intel_report_*.txt")) + list(
+            outputs.rglob("*.md")
         )
         logger.info(f"[Embedder] Found {len(report_files)} intel report(s) to consider")
 
@@ -360,11 +364,13 @@ class IntelEmbedder(_BaseChromaStore):
                 _MAX_CHUNKS = 10
                 _limit = len(text)
                 if _limit > _MAX_CHARS:
-                    logger.debug(f"[Embedder] Truncating {path.name} from {_limit} to {_MAX_CHARS} chars")
+                    logger.debug(
+                        f"[Embedder] Truncating {path.name} from {_limit} to {_MAX_CHARS} chars"
+                    )
                     _limit = _MAX_CHARS
                 text = text[:_limit]
                 # Split on sentence boundaries (newline or period + space)
-                sentences = re.split(r'(?<=[.\n])\s+', text)
+                sentences = re.split(r"(?<=[.\n])\s+", text)
                 chunks = []
                 current = []
                 current_len = 0
@@ -386,7 +392,9 @@ class IntelEmbedder(_BaseChromaStore):
                 if current:
                     chunks.append(" ".join(current))
                 if len(chunks) > _MAX_CHUNKS:
-                    logger.debug(f"[Embedder] Report {path.name} generated {len(chunks)} chunks — capping at {_MAX_CHUNKS}")
+                    logger.debug(
+                        f"[Embedder] Report {path.name} generated {len(chunks)} chunks — capping at {_MAX_CHUNKS}"
+                    )
                     chunks = chunks[:_MAX_CHUNKS]
                 market = _infer_market(str(path))
                 for j, chunk in enumerate(chunks):
@@ -399,11 +407,13 @@ class IntelEmbedder(_BaseChromaStore):
                     self._collection.add(
                         documents=[chunk],
                         ids=[chunk_id],
-                        metadatas=[{
-                            "source": str(path.name),
-                            "market": market,
-                            "indexed_at": datetime.now().isoformat(),
-                        }],
+                        metadatas=[
+                            {
+                                "source": str(path.name),
+                                "market": market,
+                                "indexed_at": datetime.now().isoformat(),
+                            }
+                        ],
                     )
                     indexed += 1
                 logger.debug(f"[Embedder] Indexed {path.name} ({len(chunks)} chunk(s))")
@@ -418,13 +428,24 @@ class IntelEmbedder(_BaseChromaStore):
         # Log ChromaDB collection size if available
         try:
             coll_size = self._collection.count()
-            logger.info(f"[Embedder] Intel index done — indexed={indexed} skipped={skipped} failed={failed} "
-                        f"in {_dur:.1f}s | ChromaDB collection size: {coll_size}")
+            logger.info(
+                f"[Embedder] Intel index done — indexed={indexed} skipped={skipped} failed={failed} "
+                f"in {_dur:.1f}s | ChromaDB collection size: {coll_size}"
+            )
         except Exception:
-            logger.info(f"[Embedder] Intel index done — indexed={indexed} skipped={skipped} failed={failed} in {_dur:.1f}s")
-        return {"indexed": indexed, "skipped": skipped, "failed": failed, "duration_s": round(_dur, 1)}
+            logger.info(
+                f"[Embedder] Intel index done — indexed={indexed} skipped={skipped} failed={failed} in {_dur:.1f}s"
+            )
+        return {
+            "indexed": indexed,
+            "skipped": skipped,
+            "failed": failed,
+            "duration_s": round(_dur, 1),
+        }
 
-    def _keyword_search_fallback(self, query: str, n: int = 5, market: str | None = None) -> list[dict]:
+    def _keyword_search_fallback(
+        self, query: str, n: int = 5, market: str | None = None
+    ) -> list[dict]:
         """Grep-based fallback when Ollama is unavailable. Scans report files for query terms."""
         outputs_dir = "/app/outputs"
         output_path = Path(outputs_dir)
@@ -447,18 +468,22 @@ class IntelEmbedder(_BaseChromaStore):
                     match_count = sum(1 for t in terms if t in text_lower)
                     if match_count > 0:
                         score = round(min(match_count / max(len(terms), 1), 1.0), 4)
-                        results.append({
-                            "text": text[:2000],
-                            "source": report.name,
-                            "market": dir_market,
-                            "score": score,
-                        })
+                        results.append(
+                            {
+                                "text": text[:2000],
+                                "source": report.name,
+                                "market": dir_market,
+                                "score": score,
+                            }
+                        )
                 except Exception:
                     continue
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:n]
 
-    def search(self, query: str, n: int = 5, market: str | None = None, rerank: bool = True) -> list[dict]:
+    def search(
+        self, query: str, n: int = 5, market: str | None = None, rerank: bool = True
+    ) -> list[dict]:
         """
         Semantic search over indexed intel reports.
         Falls back to keyword grep when Ollama unavailable.
@@ -492,10 +517,14 @@ class IntelEmbedder(_BaseChromaStore):
         try:
             count = self._collection.count()
             if count == 0:
-                keyword_results = self._keyword_search_fallback(query, n=n, market=market)
+                keyword_results = self._keyword_search_fallback(
+                    query, n=n, market=market
+                )
                 if keyword_results:
                     _metrics["search_fallback_hits"] += 1
-                    logger.debug("[Embedder] ChromaDB empty — falling back to keyword search")
+                    logger.debug(
+                        "[Embedder] ChromaDB empty — falling back to keyword search"
+                    )
                     return keyword_results
                 _metrics["search_empty"] += 1
                 return []
@@ -517,19 +546,25 @@ class IntelEmbedder(_BaseChromaStore):
                             return reranked
                 except Exception as exc:
                     _metrics["rerank_unavailable"] += 1
-                    logger.debug(f"[Embedder] Reranker unavailable, returning ChromaDB order: {exc}")
+                    logger.debug(
+                        f"[Embedder] Reranker unavailable, returning ChromaDB order: {exc}"
+                    )
             return hits
         except Exception as exc:
             logger.warning(f"[Embedder] search failed: {exc}")
             keyword_results = self._keyword_search_fallback(query, n=n, market=market)
             if keyword_results:
                 _metrics["search_fallback_hits"] += 1
-                logger.debug("[Embedder] ChromaDB query failed — falling back to keyword search")
+                logger.debug(
+                    "[Embedder] ChromaDB query failed — falling back to keyword search"
+                )
                 return keyword_results
             _metrics["search_empty"] += 1
             return []
 
-    def query(self, question: str, market: str | None = None, n: int = 5, rerank: bool = True) -> list[dict]:
+    def query(
+        self, question: str, market: str | None = None, n: int = 5, rerank: bool = True
+    ) -> list[dict]:
         """Alias for search() with parameter ordering matching TASK_BRIEFS spec."""
         return self.search(question, n=n, market=market, rerank=rerank)
 
@@ -558,12 +593,14 @@ class MemoryEmbedder(_BaseChromaStore):
             self._collection.upsert(
                 documents=[fact],
                 ids=[memory_id],
-                metadatas=[{
-                    "agent_id": agent_id,
-                    "market": market,
-                    "confidence": confidence,
-                    "updated_at": datetime.now().isoformat(),
-                }],
+                metadatas=[
+                    {
+                        "agent_id": agent_id,
+                        "market": market,
+                        "confidence": confidence,
+                        "updated_at": datetime.now().isoformat(),
+                    }
+                ],
             )
         except Exception as exc:
             logger.warning(f"[Embedder] upsert_memory failed for {memory_id}: {exc}")
@@ -610,6 +647,7 @@ class MemoryEmbedder(_BaseChromaStore):
 
 if __name__ == "__main__":
     import sys
+
     logger.add("logs/embedder.log", rotation="10 MB")
     embedder = IntelEmbedder()
     stats = embedder.index_intel_reports(outputs_dir="outputs")

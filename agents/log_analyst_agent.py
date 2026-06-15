@@ -14,9 +14,14 @@ from loguru import logger
 
 from utils.log_analyzer import PipelineRunAnalyzer
 from utils.process_automation import (
-    LLMTimeoutError, LLMResponseError, ValidationError,
-    retry_with_backoff, run_with_timeout, safe_extract_json,
-    LLM_TIMEOUT_S as _LLM_TIMEOUT, LLM_RETRY_MAX,
+    LLMTimeoutError,
+    LLMResponseError,
+    ValidationError,
+    retry_with_backoff,
+    run_with_timeout,
+    safe_extract_json,
+    LLM_TIMEOUT_S as _LLM_TIMEOUT,
+    LLM_RETRY_MAX,
 )
 from config.metrics import (
     process_audit_reports_total,
@@ -25,17 +30,23 @@ from config.metrics import (
 )
 
 __all__ = [
-    "BottleneckReport", "StageDurationTool", "FailureRateTool",
-    "BottleneckFinderTool", "LogAnalystAgent",
+    "BottleneckReport",
+    "StageDurationTool",
+    "FailureRateTool",
+    "BottleneckFinderTool",
+    "LogAnalystAgent",
 ]
 
 _LLM_IMPORTED = False
 _LLM_LOCK = Lock()
 try:
     from config.llm_router import get_analysis_llm as _get_analysis_llm
+
     _LLM_IMPORTED = True
 except ImportError:
-    logger.warning("[LogAnalyst] config.llm_router not available — will use fallback only")
+    logger.warning(
+        "[LogAnalyst] config.llm_router not available — will use fallback only"
+    )
 
 _MIN_RUNS_FOR_BOTTLENECK = 10
 
@@ -148,8 +159,7 @@ class LogAnalystAgent:
             report_date=today,
             bottleneck_stage=bn["bottleneck"] if bn else "none",
             bottleneck_reason=(
-                bn["recommendation"] if bn
-                else "No significant bottleneck detected."
+                bn["recommendation"] if bn else "No significant bottleneck detected."
             ),
             avg_stage1_s=round(avg_s1, 1),
             avg_stage2_s=round(avg_s2, 1),
@@ -175,7 +185,9 @@ class LogAnalystAgent:
             report.recommendation = bn["recommendation"]
             process_audit_bottlenecks_total.labels(stage=bn["bottleneck"]).inc()
         else:
-            report.top_finding = "No bottleneck detected — stage durations are balanced."
+            report.top_finding = (
+                "No bottleneck detected — stage durations are balanced."
+            )
             report.recommendation = "Continue monitoring. Re-run analysis weekly."
 
         if failure_rate["failure_rate_pct"] > 20:
@@ -202,22 +214,24 @@ class LogAnalystAgent:
         fr_json = self._failure_tool.run(20)
 
         def _do_llm_call():
-            return llm.invoke([
-                {"role": "system", "content": _SYSTEM_PROMPT_LOG_ANALYST},
-                {
-                    "role": "user",
-                    "content": (
-                        "You are a pipeline reliability analyst. Review the following "
-                        "run data and produce a concise bottleneck report.\n\n"
-                        f"Stage Durations (last 20 runs): {durations_json}\n\n"
-                        f"Bottleneck Analysis: {bn_json}\n\n"
-                        f"Failure Rate: {fr_json}\n\n"
-                        "Return JSON only with keys: top_finding (≤200 chars), "
-                        "recommendation (≤300 chars). If no bottleneck found, "
-                        "set top_finding to 'Pipeline running within normal parameters.'"
-                    ),
-                },
-            ])
+            return llm.invoke(
+                [
+                    {"role": "system", "content": _SYSTEM_PROMPT_LOG_ANALYST},
+                    {
+                        "role": "user",
+                        "content": (
+                            "You are a pipeline reliability analyst. Review the following "
+                            "run data and produce a concise bottleneck report.\n\n"
+                            f"Stage Durations (last 20 runs): {durations_json}\n\n"
+                            f"Bottleneck Analysis: {bn_json}\n\n"
+                            f"Failure Rate: {fr_json}\n\n"
+                            "Return JSON only with keys: top_finding (≤200 chars), "
+                            "recommendation (≤300 chars). If no bottleneck found, "
+                            "set top_finding to 'Pipeline running within normal parameters.'"
+                        ),
+                    },
+                ]
+            )
 
         response = retry_with_backoff(
             lambda: run_with_timeout(_do_llm_call, _LLM_TIMEOUT, "log_analyst_llm"),
@@ -226,7 +240,8 @@ class LogAnalystAgent:
         )
         if response is None:
             process_audit_llm_calls_total.labels(
-                agent="log_analyst", result="failed",
+                agent="log_analyst",
+                result="failed",
             ).inc()
             return None
 
@@ -241,12 +256,14 @@ class LogAnalystAgent:
         data = safe_extract_json(raw)
         if data is None:
             process_audit_llm_calls_total.labels(
-                agent="log_analyst", result="parse_error",
+                agent="log_analyst",
+                result="parse_error",
             ).inc()
             return None
 
         process_audit_llm_calls_total.labels(
-            agent="log_analyst", result="success",
+            agent="log_analyst",
+            result="success",
         ).inc()
 
         base = self._build_analysis()
@@ -264,13 +281,23 @@ class LogAnalystAgent:
                     report = llm_report
             except Exception as exc:
                 logger.warning(
-                    "[{}] LLM enrichment failed: {}", self._correlation_id, exc,
+                    "[{}] LLM enrichment failed: {}",
+                    self._correlation_id,
+                    exc,
                 )
 
-        process_audit_reports_total.labels(agent="log_analyst", method="llm" if _LLM_IMPORTED else "fallback").inc()
+        process_audit_reports_total.labels(
+            agent="log_analyst", method="llm" if _LLM_IMPORTED else "fallback"
+        ).inc()
         logger.info(
-            "[{}] Report — bottleneck={}, failure_rate={}%, finding=\"{}\"",
-            self._correlation_id, report.bottleneck_stage,
-            report.failure_rate_pct, report.top_finding[:80],
+            '[{}] Report — bottleneck={}, failure_rate={}%, finding="{}"',
+            self._correlation_id,
+            report.bottleneck_stage,
+            report.failure_rate_pct,
+            report.top_finding[:80],
         )
-        return {"status": "done", "report": report.to_dict(), "correlation_id": self._correlation_id}
+        return {
+            "status": "done",
+            "report": report.to_dict(),
+            "correlation_id": self._correlation_id,
+        }

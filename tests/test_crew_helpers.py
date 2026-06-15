@@ -52,7 +52,11 @@ def test_detect_gemini_by_attr_google():
     exc = MagicMock()
     exc.llm_provider = "google"
     # T-314: Gemini exclusion keys split into gemini_flash / gemini_gemma
-    assert _detect_rate_limited_provider(exc) in ("gemini_flash", "gemini_gemma", "gemini")
+    assert _detect_rate_limited_provider(exc) in (
+        "gemini_flash",
+        "gemini_gemma",
+        "gemini",
+    )
 
 
 def test_detect_nvidia_by_attr():
@@ -125,6 +129,7 @@ def test_detect_returns_none_for_unrelated_error():
 def _mock_logger(logged):
     def _bind(**kwargs):
         return MagicMock(info=lambda msg, *a, **kw: logged.append(msg.format(*a)))
+
     return MagicMock(bind=_bind)
 
 

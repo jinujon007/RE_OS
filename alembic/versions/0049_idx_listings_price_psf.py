@@ -6,6 +6,7 @@ indexes don't cover single-column price_psf range queries efficiently.
 Migration chain:
     0048_idx_rera_projects_developer_id -> 0049_idx_listings_price_psf
 """
+
 from typing import Union
 
 from alembic import op

@@ -2,6 +2,7 @@
 
 Unit-safe: uses mocked LLM responses, no live database required.
 """
+
 import os
 
 import pytest
@@ -26,8 +27,12 @@ def test_board_room_routes_registered():
         if hasattr(r, "methods")
     ]
     matching = [p for p, m in routes if "board/session" in p and "POST" in m]
-    assert len(matching) >= 1, f"No POST /api/board/session route found. Routes: {routes}"
-    assert "/api/board/session" in matching, f"Expected /api/board/session, got {matching}"
+    assert len(matching) >= 1, (
+        f"No POST /api/board/session route found. Routes: {routes}"
+    )
+    assert "/api/board/session" in matching, (
+        f"Expected /api/board/session, got {matching}"
+    )
 
 
 @pytest.mark.test_id("G87-BR3")

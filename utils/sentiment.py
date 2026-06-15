@@ -42,7 +42,12 @@ import time
 import requests
 from loguru import logger
 
-from config.settings import HF_API_KEY, FINBERT_MODEL_ID, FINBERT_TONE_MODEL_ID, FINBERT_TONE_6LABEL_MODEL_ID
+from config.settings import (
+    HF_API_KEY,
+    FINBERT_MODEL_ID,
+    FINBERT_TONE_MODEL_ID,
+    FINBERT_TONE_6LABEL_MODEL_ID,
+)
 
 # HuggingFace migrated from api-inference.huggingface.co to router.huggingface.co
 # in 2025 as part of the Inference Providers rollout.
@@ -59,7 +64,8 @@ _SENTINEL = object()
 def _retry_delay(attempt: int) -> float:
     """Exponential backoff with jitter (±25%) to prevent thundering herd."""
     import random
-    base = _RETRY_BASE_DELAY * (2 ** attempt)
+
+    base = _RETRY_BASE_DELAY * (2**attempt)
     jitter = base * random.uniform(-0.25, 0.25)
     return base + jitter
 
@@ -74,15 +80,24 @@ def _call_hf_api(headline: str, model_id: str, api_key: str) -> list | None:
 
     for attempt in range(_RETRY_ATTEMPTS):
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=_REQUEST_TIMEOUT)
+            resp = requests.post(
+                url, headers=headers, json=payload, timeout=_REQUEST_TIMEOUT
+            )
             if resp.status_code in (503, 429) and attempt < _RETRY_ATTEMPTS - 1:
                 delay = _retry_delay(attempt)
-                logger.debug("[Sentiment] HF API {} (attempt {}/{}), retrying in {:.1f}s...",
-                             resp.status_code, attempt + 1, _RETRY_ATTEMPTS, delay)
+                logger.debug(
+                    "[Sentiment] HF API {} (attempt {}/{}), retrying in {:.1f}s...",
+                    resp.status_code,
+                    attempt + 1,
+                    _RETRY_ATTEMPTS,
+                    delay,
+                )
                 time.sleep(delay)
                 continue
             if resp.status_code != 200:
-                logger.warning("[Sentiment] HF API {}: {}", resp.status_code, resp.text[:100])
+                logger.warning(
+                    "[Sentiment] HF API {}: {}", resp.status_code, resp.text[:100]
+                )
                 return None
             data = resp.json()
             if not data or not isinstance(data, list):
@@ -91,16 +106,27 @@ def _call_hf_api(headline: str, model_id: str, api_key: str) -> list | None:
         except Exception as exc:
             if attempt < _RETRY_ATTEMPTS - 1:
                 delay = _retry_delay(attempt)
-                logger.debug("[Sentiment] HF API error (attempt {}/{}), retrying in {:.1f}s: {}",
-                             attempt + 1, _RETRY_ATTEMPTS, delay, exc)
+                logger.debug(
+                    "[Sentiment] HF API error (attempt {}/{}), retrying in {:.1f}s: {}",
+                    attempt + 1,
+                    _RETRY_ATTEMPTS,
+                    delay,
+                    exc,
+                )
                 time.sleep(delay)
                 continue
-            logger.debug("[Sentiment] HF API call failed after {} attempts: {}", _RETRY_ATTEMPTS, exc)
+            logger.debug(
+                "[Sentiment] HF API call failed after {} attempts: {}",
+                _RETRY_ATTEMPTS,
+                exc,
+            )
             return None
     return None
 
 
-def score_headline(headline: str, api_key: str | object = _SENTINEL, model_id: str = FINBERT_MODEL_ID) -> float | None:
+def score_headline(
+    headline: str, api_key: str | object = _SENTINEL, model_id: str = FINBERT_MODEL_ID
+) -> float | None:
     """
     Score a single headline via FinBERT.
     Returns float in [-1.0, 1.0] or None if API unavailable/unconfigured.
@@ -146,7 +172,9 @@ def score_batch(
     return results
 
 
-def score_headline_tone(headline: str, api_key: str | object = _SENTINEL) -> dict[str, float] | None:
+def score_headline_tone(
+    headline: str, api_key: str | object = _SENTINEL
+) -> dict[str, float] | None:
     """
     Score a single headline for tone (bullish/bearish/neutral) using FinBERT-tone.
     Returns dict with keys 'bullish', 'bearish', 'neutral' (each 0.0-1.0) or None if API unavailable.
@@ -172,7 +200,9 @@ def score_headline_tone(headline: str, api_key: str | object = _SENTINEL) -> dic
         return None
 
 
-def aggregate_market_sentiment_tone(headlines: list[str], api_key: str | object = _SENTINEL) -> dict[str, float | str]:
+def aggregate_market_sentiment_tone(
+    headlines: list[str], api_key: str | object = _SENTINEL
+) -> dict[str, float | str]:
     """
     Aggregate headline tone scores into a market-level sentiment summary.
     Ignores None values (failed API calls). Adds 0.1s delay between requests
@@ -194,20 +224,26 @@ def aggregate_market_sentiment_tone(headlines: list[str], api_key: str | object 
         if tone_score is not None:
             tone_results.append(tone_score)
             time.sleep(0.1)  # rate-limit guard
-    
+
     if not tone_results:
-        return {"bullish_pct": 0.0, "bearish_pct": 0.0, "neutral_pct": 0.0, "dominant": "neutral", "confidence": 0.0}
-    
+        return {
+            "bullish_pct": 0.0,
+            "bearish_pct": 0.0,
+            "neutral_pct": 0.0,
+            "dominant": "neutral",
+            "confidence": 0.0,
+        }
+
     # Calculate averages
     avg_bullish = sum(t["bullish"] for t in tone_results) / len(tone_results)
     avg_bearish = sum(t["bearish"] for t in tone_results) / len(tone_results)
     avg_neutral = sum(t["neutral"] for t in tone_results) / len(tone_results)
-    
+
     # Convert to percentages
     bullish_pct = round(avg_bullish * 100, 1)
     bearish_pct = round(avg_bearish * 100, 1)
     neutral_pct = round(avg_neutral * 100, 1)
-    
+
     # Determine dominant tone
     if bullish_pct > bearish_pct and bullish_pct > neutral_pct:
         dominant = "bullish"
@@ -218,13 +254,13 @@ def aggregate_market_sentiment_tone(headlines: list[str], api_key: str | object 
     else:
         dominant = "neutral"
         confidence = neutral_pct
-    
+
     return {
         "bullish_pct": bullish_pct,
         "bearish_pct": bearish_pct,
         "neutral_pct": neutral_pct,
         "dominant": dominant,
-        "confidence": round(confidence, 1)
+        "confidence": round(confidence, 1),
     }
 
 
@@ -255,7 +291,13 @@ def aggregate_market_sentiment(scores: list[float | None]) -> dict:
     """
     valid = [s for s in scores if s is not None]
     if not valid:
-        return {"avg_score": 0.0, "label": "neutral", "scored": 0, "positive_pct": 0.0, "negative_pct": 0.0}
+        return {
+            "avg_score": 0.0,
+            "label": "neutral",
+            "scored": 0,
+            "positive_pct": 0.0,
+            "negative_pct": 0.0,
+        }
 
     avg = sum(valid) / len(valid)
     positive_pct = round(sum(1 for s in valid if s > 0.2) / len(valid) * 100, 1)
@@ -292,8 +334,14 @@ def score_tone(text: str, api_key: str | object = _SENTINEL) -> dict[str, float]
         return None
 
     try:
-        tones = {"Risk": 0.0, "Uncertainty": 0.0, "Litigious": 0.0,
-                 "Constraining": 0.0, "Positive": 0.0, "Negative": 0.0}
+        tones = {
+            "Risk": 0.0,
+            "Uncertainty": 0.0,
+            "Litigious": 0.0,
+            "Constraining": 0.0,
+            "Positive": 0.0,
+            "Negative": 0.0,
+        }
         for candidate in candidates:
             label = candidate.get("label", "")
             score = candidate.get("score", 0.0)
@@ -318,6 +366,7 @@ def dominant_tone(text: str, api_key: str | object = _SENTINEL) -> str | None:
 
 if __name__ == "__main__":
     import sys
+
     test_headlines = [
         "Prestige launches 500-unit project in Yelahanka at ₹7,500 PSF",
         "Developer delays possession of Devanahalli project by 18 months",
@@ -338,5 +387,7 @@ if __name__ == "__main__":
         print(f"  {marker} [{score_str}] {headline[:70]}")
 
     summary = aggregate_market_sentiment(scores)
-    print(f"\nMarket sentiment: {summary['label']} (avg={summary['avg_score']:+.3f}, "
-          f"scored={summary['scored']}/{len(test_headlines)})")
+    print(
+        f"\nMarket sentiment: {summary['label']} (avg={summary['avg_score']:+.3f}, "
+        f"scored={summary['scored']}/{len(test_headlines)})"
+    )

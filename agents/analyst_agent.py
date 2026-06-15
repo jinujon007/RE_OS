@@ -15,8 +15,19 @@ from config.llm_router import get_analysis_llm
 from utils.db import get_engine
 from utils.feasibility import LandFeasibility, feasibility_summary
 from utils.fsi_calculator import calculate_fsi
-from utils.irr_model import calc_land_cost, calc_gdv, calc_irr, compare_scenarios, GDVEstimator, log_igr_lookup
-from agents.architect_agent import FSICalculatorTool, TypologyRecommenderTool, GreenCoverageTool
+from utils.irr_model import (
+    calc_land_cost,
+    calc_gdv,
+    calc_irr,
+    compare_scenarios,
+    GDVEstimator,
+    log_igr_lookup,
+)
+from agents.architect_agent import (
+    FSICalculatorTool,
+    TypologyRecommenderTool,
+    GreenCoverageTool,
+)
 
 
 class MarketSummaryTool(BaseTool):
@@ -390,18 +401,31 @@ class IntelSearchTool(BaseTool):
         try:
             params = json.loads(input_str)
         except (json.JSONDecodeError, TypeError):
-            return json.dumps({
-                "error": "intel_search expects a JSON object with 'query' (str) and optional 'market' (str)",
-                "results": [],
-            })
+            return json.dumps(
+                {
+                    "error": "intel_search expects a JSON object with 'query' (str) and optional 'market' (str)",
+                    "results": [],
+                }
+            )
         try:
             from utils.embedder import IntelEmbedder
+
             q = str(params.get("query", "")).strip()
             market = params.get("market")
             if not q:
-                return json.dumps({"results": [], "note": "intel_search: empty query — provide a 'query' string"})
+                return json.dumps(
+                    {
+                        "results": [],
+                        "note": "intel_search: empty query — provide a 'query' string",
+                    }
+                )
             if market and market.lower() not in ("yelahanka", "devanahalli", "hebbal"):
-                return json.dumps({"results": [], "note": f"intel_search: unknown market '{market}' — use Yelahanka, Devanahalli, or Hebbal"})
+                return json.dumps(
+                    {
+                        "results": [],
+                        "note": f"intel_search: unknown market '{market}' — use Yelahanka, Devanahalli, or Hebbal",
+                    }
+                )
             results = IntelEmbedder().search(q, market=market, n=5)
             return json.dumps({"results": results, "count": len(results)}, indent=2)
         except Exception as e:
@@ -421,6 +445,7 @@ class AccessibilityTool(BaseTool):
         try:
             from utils.db import get_engine
             from sqlalchemy import text
+
             with get_engine().connect() as conn:
                 row = conn.execute(
                     text("""
@@ -435,15 +460,17 @@ class AccessibilityTool(BaseTool):
                 ).fetchone()
             if not row:
                 return json.dumps({"error": "no accessibility data for this market"})
-            return json.dumps({
-                "market": market_name,
-                "overall_score": float(row[0]) if row[0] else None,
-                "metro_proximity": float(row[1]) if row[1] else None,
-                "school_proximity": float(row[2]) if row[2] else None,
-                "hospital_proximity": float(row[3]) if row[3] else None,
-                "cbd_proximity": float(row[4]) if row[4] else None,
-                "walkability": float(row[5]) if row[5] else None,
-            })
+            return json.dumps(
+                {
+                    "market": market_name,
+                    "overall_score": float(row[0]) if row[0] else None,
+                    "metro_proximity": float(row[1]) if row[1] else None,
+                    "school_proximity": float(row[2]) if row[2] else None,
+                    "hospital_proximity": float(row[3]) if row[3] else None,
+                    "cbd_proximity": float(row[4]) if row[4] else None,
+                    "walkability": float(row[5]) if row[5] else None,
+                }
+            )
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 
@@ -465,18 +492,22 @@ class FeasibilityAnalystTool(BaseTool):
         except (json.JSONDecodeError, TypeError):
             return json.dumps({"error": "invalid JSON input"})
         try:
-            land_area   = float(params.get("land_area_sqft", 0))
-            sell_psf    = float(params.get("sell_psf", 0))
+            land_area = float(params.get("land_area_sqft", 0))
+            sell_psf = float(params.get("sell_psf", 0))
             if sell_psf <= 0:
-                return json.dumps({"error": "sell_psf must be > 0 — use avg_listing_psf from market_summary_query"})
-            gv_psf      = float(params.get("guidance_value_psf", 4000))
-            disc        = float(params.get("negotiation_discount_pct", 10.0))
-            efficiency  = float(params.get("efficiency_ratio", 0.65))
-            zone        = str(params.get("zone", "R2"))
-            market      = params.get("market")
+                return json.dumps(
+                    {
+                        "error": "sell_psf must be > 0 — use avg_listing_psf from market_summary_query"
+                    }
+                )
+            gv_psf = float(params.get("guidance_value_psf", 4000))
+            disc = float(params.get("negotiation_discount_pct", 10.0))
+            efficiency = float(params.get("efficiency_ratio", 0.65))
+            zone = str(params.get("zone", "R2"))
+            market = params.get("market")
 
-            fsi_r       = calculate_fsi(land_area, zone, efficiency, market)
-            lc_r        = calc_land_cost(land_area, gv_psf, disc)
+            fsi_r = calculate_fsi(land_area, zone, efficiency, market)
+            lc_r = calc_land_cost(land_area, gv_psf, disc)
 
             igr_info = {"igr_source": None, "igr_record_count": 0}
             market_safe = (market or "").strip()
@@ -484,46 +515,71 @@ class FeasibilityAnalystTool(BaseTool):
                 try:
                     est = GDVEstimator()
                     gdv_r = est.estimate(fsi_r.sellable_area_sqft, market_safe)
-                    if gdv_r.igr_source and gdv_r.igr_record_count >= GDVEstimator.MIN_IGR_RECORDS:
+                    if (
+                        gdv_r.igr_source
+                        and gdv_r.igr_record_count >= GDVEstimator.MIN_IGR_RECORDS
+                    ):
                         sell_psf = gdv_r.sell_psf
-                        igr_info = {"igr_source": gdv_r.igr_source, "igr_record_count": gdv_r.igr_record_count}
-                        log_igr_lookup(market_safe, gdv_r.igr_source, gdv_r.igr_record_count, gdv_r.sell_psf,
-                                       "FeasibilityAnalystTool")
+                        igr_info = {
+                            "igr_source": gdv_r.igr_source,
+                            "igr_record_count": gdv_r.igr_record_count,
+                        }
+                        log_igr_lookup(
+                            market_safe,
+                            gdv_r.igr_source,
+                            gdv_r.igr_record_count,
+                            gdv_r.sell_psf,
+                            "FeasibilityAnalystTool",
+                        )
                 except Exception:
                     pass
 
-            scenarios   = compare_scenarios(lc_r.negotiated_land_cost, fsi_r.sellable_area_sqft, sell_psf)
+            scenarios = compare_scenarios(
+                lc_r.negotiated_land_cost, fsi_r.sellable_area_sqft, sell_psf
+            )
 
-            return json.dumps({
-                "inputs": {
-                    "land_area_sqft": land_area,
-                    "zone": zone,
-                    "market": market,
-                    "sell_psf": sell_psf,
-                    "guidance_value_psf": gv_psf,
-                    "negotiation_discount_pct": disc,
+            return json.dumps(
+                {
+                    "inputs": {
+                        "land_area_sqft": land_area,
+                        "zone": zone,
+                        "market": market,
+                        "sell_psf": sell_psf,
+                        "guidance_value_psf": gv_psf,
+                        "negotiation_discount_pct": disc,
+                    },
+                    "fsi": {
+                        "buildable_sqft": fsi_r.buildable_area_sqft,
+                        "sellable_sqft": fsi_r.sellable_area_sqft,
+                        "max_floors": fsi_r.max_floors,
+                    },
+                    "financials": {
+                        "land_cost": scenarios.base.land_cost,
+                        "construction_cost": scenarios.base.construction_cost,
+                        "total_project_cost": scenarios.base.total_project_cost,
+                        "equity_required": scenarios.base.equity_required,
+                        "gdv": scenarios.base.gdv,
+                        "igr_source": igr_info["igr_source"],
+                        "igr_record_count": igr_info["igr_record_count"],
+                    },
+                    "scenarios": {
+                        "base": {
+                            "irr_pct": scenarios.base.simple_irr_pct,
+                            "verdict": scenarios.base.verdict,
+                        },
+                        "bull": {
+                            "irr_pct": scenarios.bull.simple_irr_pct,
+                            "verdict": scenarios.bull.verdict,
+                        },
+                        "bear": {
+                            "irr_pct": scenarios.bear.simple_irr_pct,
+                            "verdict": scenarios.bear.verdict,
+                        },
+                    },
+                    "recommendation": scenarios.recommendation,
                 },
-                "fsi": {
-                    "buildable_sqft": fsi_r.buildable_area_sqft,
-                    "sellable_sqft": fsi_r.sellable_area_sqft,
-                    "max_floors": fsi_r.max_floors,
-                },
-                "financials": {
-                    "land_cost": scenarios.base.land_cost,
-                    "construction_cost": scenarios.base.construction_cost,
-                    "total_project_cost": scenarios.base.total_project_cost,
-                    "equity_required": scenarios.base.equity_required,
-                    "gdv": scenarios.base.gdv,
-                    "igr_source": igr_info["igr_source"],
-                    "igr_record_count": igr_info["igr_record_count"],
-                },
-                "scenarios": {
-                    "base":  {"irr_pct": scenarios.base.simple_irr_pct,  "verdict": scenarios.base.verdict},
-                    "bull":  {"irr_pct": scenarios.bull.simple_irr_pct,  "verdict": scenarios.bull.verdict},
-                    "bear":  {"irr_pct": scenarios.bear.simple_irr_pct,  "verdict": scenarios.bear.verdict},
-                },
-                "recommendation": scenarios.recommendation,
-            }, indent=2)
+                indent=2,
+            )
         except Exception as e:
             return json.dumps({"error": str(e)})
 

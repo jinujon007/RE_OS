@@ -1,5 +1,6 @@
 """GATE-87 — LAUNCH GATE declaration.
 Six unit-safe assertions. All pass → gate declared."""
+
 import os
 import re
 import sys
@@ -18,15 +19,21 @@ def test_a1_market_intel_crew_and_scouts_importable():
     import scrapers.developer_scout  # noqa: F401
     import scrapers.news_scout  # noqa: F401
     import scrapers.kaveri_karnataka  # noqa: F401
+
     # verify 6 distinct scout modules were imported
-    scout_count = len({m.__name__ for m in [
-        scrapers.rera_karnataka,
-        scrapers.rera_detail_scout,
-        scrapers.portal_scout,
-        scrapers.developer_scout,
-        scrapers.news_scout,
-        scrapers.kaveri_karnataka,
-    ]})
+    scout_count = len(
+        {
+            m.__name__
+            for m in [
+                scrapers.rera_karnataka,
+                scrapers.rera_detail_scout,
+                scrapers.portal_scout,
+                scrapers.developer_scout,
+                scrapers.news_scout,
+                scrapers.kaveri_karnataka,
+            ]
+        }
+    )
     assert scout_count == 6, f"Expected 6 distinct scout modules, got {scout_count}"
 
 
@@ -55,10 +62,19 @@ def test_a3_psf_forecaster_importable():
 
     fields = list(ForecastResult.__dataclass_fields__.keys())
     required = [
-        "market", "as_of", "data_points", "trend_direction",
-        "slope_pct_per_month", "current_psf", "forecast_3m",
-        "forecast_6m", "forecast_12m", "conf_low_6m", "conf_high_6m",
-        "mae_pct", "status",
+        "market",
+        "as_of",
+        "data_points",
+        "trend_direction",
+        "slope_pct_per_month",
+        "current_psf",
+        "forecast_3m",
+        "forecast_6m",
+        "forecast_12m",
+        "conf_low_6m",
+        "conf_high_6m",
+        "mae_pct",
+        "status",
     ]
     for f in required:
         assert f in fields, f"ForecastResult missing required field: {f}"
@@ -68,6 +84,7 @@ def test_a3_psf_forecaster_importable():
 def test_a4_db_backup_importable():
     """(4) DBBackup importable and check_backup_staleness() callable."""
     from utils.backup import DBBackup, check_backup_staleness  # noqa: F401
+
     # Verify both are callable functions/classes
     assert callable(DBBackup), "DBBackup must be a callable class"
     assert callable(check_backup_staleness), "check_backup_staleness must be callable"
@@ -93,6 +110,7 @@ def test_a6_health_endpoint_returns_200():
     if "dashboard.app_fastapi" in sys.modules:
         import importlib
         import dashboard.app_fastapi  # noqa: F811
+
         importlib.reload(dashboard.app_fastapi)
 
     from starlette.testclient import TestClient

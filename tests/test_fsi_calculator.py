@@ -1,7 +1,13 @@
 import pytest
+
 pytestmark = pytest.mark.unit
 
-from utils.fsi_calculator import calculate_fsi, recommend_unit_mix, _MARKET_ZONE_RULES, _ZONE_RULES
+from utils.fsi_calculator import (
+    calculate_fsi,
+    recommend_unit_mix,
+    _MARKET_ZONE_RULES,
+    _ZONE_RULES,
+)
 
 
 class TestCalculateFSI:
@@ -9,7 +15,7 @@ class TestCalculateFSI:
         r = calculate_fsi(10000, "R2")
         assert r.far == 2.50
         assert r.buildable_area_sqft == pytest.approx(25000.0)
-        assert r.sellable_area_sqft  == pytest.approx(16250.0)
+        assert r.sellable_area_sqft == pytest.approx(16250.0)
 
     def test_r1_basic(self):
         r = calculate_fsi(10000, "R1")
@@ -23,7 +29,7 @@ class TestCalculateFSI:
     def test_zero_land_area(self):
         r = calculate_fsi(0, "R2")
         assert r.buildable_area_sqft == 0.0
-        assert r.sellable_area_sqft  == 0.0
+        assert r.sellable_area_sqft == 0.0
 
     def test_negative_land_area_clamped(self):
         r = calculate_fsi(-5000, "R2")
@@ -53,7 +59,7 @@ class TestCalculateFSI:
     def test_setbacks_returned(self):
         r = calculate_fsi(10000, "R1")
         assert r.setback_front_m == 3.0
-        assert r.setback_side_m  == 1.5
+        assert r.setback_side_m == 1.5
 
     def test_market_parameter_yelahanka(self):
         r = calculate_fsi(10000, "R2", market="Yelahanka")

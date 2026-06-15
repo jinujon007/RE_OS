@@ -10,6 +10,7 @@ Uses a named constraint to avoid relying on auto-generated names.
 Migration chain:
     0040_gv_gazette_freshness -> 0041_gv_gazette_data_source
 """
+
 from typing import Union
 
 from alembic import op

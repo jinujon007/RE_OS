@@ -54,11 +54,11 @@ MARKET_CENTROIDS: dict[str, tuple[float, float]] = {
 }
 
 DESTINATIONS: list[dict[str, Any]] = [
-    {"name": "Manyata Tech Park",  "lat": 13.0535, "lng": 77.6184, "weight": 0.30},
-    {"name": "BIAL",               "lat": 13.1979, "lng": 77.7063, "weight": 0.25},
-    {"name": "Hebbal ORR",         "lat": 13.0440, "lng": 77.5920, "weight": 0.20},
-    {"name": "Whitefield ITPB",    "lat": 12.9793, "lng": 77.7413, "weight": 0.15},
-    {"name": "Nagawara",           "lat": 13.0437, "lng": 77.6187, "weight": 0.10},
+    {"name": "Manyata Tech Park", "lat": 13.0535, "lng": 77.6184, "weight": 0.30},
+    {"name": "BIAL", "lat": 13.1979, "lng": 77.7063, "weight": 0.25},
+    {"name": "Hebbal ORR", "lat": 13.0440, "lng": 77.5920, "weight": 0.20},
+    {"name": "Whitefield ITPB", "lat": 12.9793, "lng": 77.7413, "weight": 0.15},
+    {"name": "Nagawara", "lat": 13.0437, "lng": 77.6187, "weight": 0.10},
 ]
 
 DESTINATION_WEIGHTS: dict[str, float] = {d["name"]: d["weight"] for d in DESTINATIONS}
@@ -75,7 +75,9 @@ class MobilityScout:
 
     def measure_travel_times(self, market: str) -> list[dict]:
         if not self.api_key:
-            logger.warning("[MobilityScout] GOOGLE_MAPS_API_KEY not set — returning empty")
+            logger.warning(
+                "[MobilityScout] GOOGLE_MAPS_API_KEY not set — returning empty"
+            )
             return []
 
         centroid = MARKET_CENTROIDS.get(market)
@@ -89,10 +91,17 @@ class MobilityScout:
             if row:
                 results.append(row)
 
-        logger.info("[MobilityScout] {}: {}/{} destinations measured", market, len(results), len(DESTINATIONS))
+        logger.info(
+            "[MobilityScout] {}: {}/{} destinations measured",
+            market,
+            len(results),
+            len(DESTINATIONS),
+        )
         return results
 
-    def _query_distance_matrix_with_retry(self, origin: tuple[float, float], dest: dict) -> dict | None:
+    def _query_distance_matrix_with_retry(
+        self, origin: tuple[float, float], dest: dict
+    ) -> dict | None:
         last_error = None
         delay = _INITIAL_RETRY_DELAY_S
 
@@ -102,8 +111,13 @@ class MobilityScout:
                 if result is not None:
                     return result
                 if should_retry and attempt < _MAX_RETRIES:
-                    logger.info("[MobilityScout] Retry {}/{} for {} in {}s",
-                                attempt, _MAX_RETRIES, dest["name"], delay)
+                    logger.info(
+                        "[MobilityScout] Retry {}/{} for {} in {}s",
+                        attempt,
+                        _MAX_RETRIES,
+                        dest["name"],
+                        delay,
+                    )
                     time.sleep(delay)
                     delay *= 2.0
                     last_error = result
@@ -111,18 +125,33 @@ class MobilityScout:
                     break
             except requests.exceptions.Timeout:
                 if attempt < _MAX_RETRIES:
-                    logger.info("[MobilityScout] Timeout {}/{} for {}, retrying", attempt, _MAX_RETRIES, dest["name"])
+                    logger.info(
+                        "[MobilityScout] Timeout {}/{} for {}, retrying",
+                        attempt,
+                        _MAX_RETRIES,
+                        dest["name"],
+                    )
                     time.sleep(delay)
                     delay *= 2.0
                 else:
-                    logger.warning("[MobilityScout] All {} retries exhausted for {} (timeout)", _MAX_RETRIES, dest["name"])
+                    logger.warning(
+                        "[MobilityScout] All {} retries exhausted for {} (timeout)",
+                        _MAX_RETRIES,
+                        dest["name"],
+                    )
             except requests.exceptions.RequestException as exc:
-                logger.warning("[MobilityScout] Request failed for {}: {} — not retrying", dest["name"], exc)
+                logger.warning(
+                    "[MobilityScout] Request failed for {}: {} — not retrying",
+                    dest["name"],
+                    exc,
+                )
                 break
 
         return None
 
-    def _query_distance_matrix(self, origin: tuple[float, float], dest: dict) -> tuple[dict | None, bool]:
+    def _query_distance_matrix(
+        self, origin: tuple[float, float], dest: dict
+    ) -> tuple[dict | None, bool]:
         url = "https://maps.googleapis.com/maps/api/distancematrix/json"
         params = {
             "origins": f"{origin[0]},{origin[1]}",
@@ -133,7 +162,11 @@ class MobilityScout:
 
         resp = self._session.get(url, params=params, timeout=15)
         if resp.status_code != 200:
-            logger.warning("[MobilityScout] Distance Matrix API HTTP {} for {}", resp.status_code, dest["name"])
+            logger.warning(
+                "[MobilityScout] Distance Matrix API HTTP {} for {}",
+                resp.status_code,
+                dest["name"],
+            )
             return (None, False)
 
         data = resp.json()
@@ -143,8 +176,11 @@ class MobilityScout:
             try:
                 element = data["rows"][0]["elements"][0]
                 if element["status"] != "OK":
-                    logger.debug("[MobilityScout] Element status {} for {}",
-                                 element.get("status"), dest["name"])
+                    logger.debug(
+                        "[MobilityScout] Element status {} for {}",
+                        element.get("status"),
+                        dest["name"],
+                    )
                     return (None, False)
 
                 travel_seconds = element["duration"]["value"]
@@ -152,28 +188,41 @@ class MobilityScout:
                 travel_min = round(travel_seconds / 60.0, 1)
                 distance_km = round(distance_metres / 1000.0, 1)
 
-                return ({
-                    "destination_name": dest["name"],
-                    "travel_time_min": travel_min,
-                    "distance_km": distance_km,
-                    "mode": "driving",
-                    "traffic_condition": "typical",
-                    "measured_at": datetime.now(timezone.utc).isoformat(),
-                }, False)
+                return (
+                    {
+                        "destination_name": dest["name"],
+                        "travel_time_min": travel_min,
+                        "distance_km": distance_km,
+                        "mode": "driving",
+                        "traffic_condition": "typical",
+                        "measured_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                    False,
+                )
 
             except (KeyError, IndexError, TypeError) as exc:
-                logger.warning("[MobilityScout] Parse error for {}: {}", dest["name"], exc)
+                logger.warning(
+                    "[MobilityScout] Parse error for {}: {}", dest["name"], exc
+                )
                 return (None, False)
 
         if api_status in _RETRYABLE_STATUSES:
-            logger.warning("[MobilityScout] {} for {} — retryable", api_status, dest["name"])
+            logger.warning(
+                "[MobilityScout] {} for {} — retryable", api_status, dest["name"]
+            )
             return (None, True)
 
         if api_status in ("INVALID_REQUEST", "NOT_FOUND", "ZERO_RESULTS"):
-            logger.info("[MobilityScout] Non-retryable status {} for {}", api_status, dest["name"])
+            logger.info(
+                "[MobilityScout] Non-retryable status {} for {}",
+                api_status,
+                dest["name"],
+            )
             return (None, False)
 
-        logger.warning("[MobilityScout] Unknown API status {} for {}", api_status, dest["name"])
+        logger.warning(
+            "[MobilityScout] Unknown API status {} for {}", api_status, dest["name"]
+        )
         return (None, False)
 
 
@@ -207,6 +256,7 @@ def compute_market_accessibility(market: str, conn=None) -> float:
         if conn is None:
             from utils.db import get_engine
             from sqlalchemy import text as sa_text
+
             engine = get_engine(pool_size=2, max_overflow=1)
             with engine.connect() as db_conn:
                 score = _compute_from_db(db_conn, market)
@@ -216,7 +266,11 @@ def compute_market_accessibility(market: str, conn=None) -> float:
         _accessibility_cache[ck] = (score, now)
         return score
     except Exception as exc:
-        logger.warning("[MobilityScout] compute_market_accessibility failed for {}: {}", market, exc)
+        logger.warning(
+            "[MobilityScout] compute_market_accessibility failed for {}: {}",
+            market,
+            exc,
+        )
         return 0.0
 
 
@@ -260,7 +314,10 @@ def check_api_key_configured() -> dict:
     """
     key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
     if not key:
-        return {"configured": False, "message": "GOOGLE_MAPS_API_KEY not set in environment"}
+        return {
+            "configured": False,
+            "message": "GOOGLE_MAPS_API_KEY not set in environment",
+        }
     if key == "test_key" or key.startswith("AIza"):
         return {"configured": True, "message": "API key present"}
     return {"configured": True, "message": "API key set (unknown format)"}
@@ -286,7 +343,9 @@ def run_mobility_scout():
     into accessibility_scores. Designed for monthly execution on 1st of month.
     """
     if not _run_lock.acquire(blocking=False):
-        logger.warning("[MobilityScout] run_mobility_scout already in progress — skipping")
+        logger.warning(
+            "[MobilityScout] run_mobility_scout already in progress — skipping"
+        )
         return
 
     try:
@@ -301,9 +360,17 @@ def run_mobility_scout():
                 if results:
                     _persist_results(market, results)
                     success_count += 1
-                    logger.info("[MobilityScout] {} results persisted for {}", len(results), market)
+                    logger.info(
+                        "[MobilityScout] {} results persisted for {}",
+                        len(results),
+                        market,
+                    )
                 else:
-                    msg = "API key not configured" if not scout.api_key else "all destinations returned empty"
+                    msg = (
+                        "API key not configured"
+                        if not scout.api_key
+                        else "all destinations returned empty"
+                    )
                     logger.info("[MobilityScout] No results for {}: {}", market, msg)
                     failed_markets.append(market)
             except Exception as exc:
@@ -311,16 +378,27 @@ def run_mobility_scout():
                 failed_markets.append(market)
 
         try:
-            scraper_runs_total.labels(source="mobility", market="all",
-                                      status="success" if success_count == total_markets else "partial").inc()
+            scraper_runs_total.labels(
+                source="mobility",
+                market="all",
+                status="success" if success_count == total_markets else "partial",
+            ).inc()
         except Exception as exc:
             logger.debug("[MobilityScout] Metrics increment skipped: {}", exc)
 
         if failed_markets:
-            logger.warning("[MobilityScout] Completed: {}/{} markets updated. Failed: {}",
-                           success_count, total_markets, failed_markets)
+            logger.warning(
+                "[MobilityScout] Completed: {}/{} markets updated. Failed: {}",
+                success_count,
+                total_markets,
+                failed_markets,
+            )
         else:
-            logger.info("[MobilityScout] Completed: {}/{} markets updated", success_count, total_markets)
+            logger.info(
+                "[MobilityScout] Completed: {}/{} markets updated",
+                success_count,
+                total_markets,
+            )
     finally:
         _run_lock.release()
 
@@ -331,7 +409,9 @@ def _persist_results(market: str, results: list[dict]):
 
     with get_engine().begin() as conn:
         for r in results:
-            component = _compute_row_component(r["destination_name"], r["travel_time_min"])
+            component = _compute_row_component(
+                r["destination_name"], r["travel_time_min"]
+            )
             conn.execute(
                 sa_text("""
                     INSERT INTO accessibility_scores
@@ -361,15 +441,27 @@ def _persist_results(market: str, results: list[dict]):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Mobility Scout — travel time measurement")
-    parser.add_argument("--market", default=None, choices=list(MARKET_CENTROIDS.keys()),
-                        help="Market name (default: run all markets)")
-    parser.add_argument("--debug", action="store_true", help="Enable debug-level logging")
+    parser = argparse.ArgumentParser(
+        description="Mobility Scout — travel time measurement"
+    )
+    parser.add_argument(
+        "--market",
+        default=None,
+        choices=list(MARKET_CENTROIDS.keys()),
+        help="Market name (default: run all markets)",
+    )
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable debug-level logging"
+    )
     args = parser.parse_args()
 
     if args.debug:
         logger.remove()
-        logger.add(lambda msg: print(msg, end=""), level="DEBUG", format="<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}")
+        logger.add(
+            lambda msg: print(msg, end=""),
+            level="DEBUG",
+            format="<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}",
+        )
         logger.debug("[MobilityScout] Debug mode enabled")
 
     if args.market:
@@ -379,7 +471,8 @@ if __name__ == "__main__":
         slug = args.market.lower().replace(" ", "_")
         out_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "outputs", slug,
+            "outputs",
+            slug,
         )
         os.makedirs(out_dir, exist_ok=True)
         out_path = os.path.join(out_dir, f"mobility_{ts}.json")
@@ -392,7 +485,9 @@ if __name__ == "__main__":
         for r in results:
             acc = _compute_row_component(r["destination_name"], r["travel_time_min"])
             geo_type = "API" if scout.api_key else "simulated"
-            print(f"  {r['destination_name']:20s} → {r['travel_time_min']:5.1f} min, "
-                  f"{r['distance_km']:5.1f} km (acc={acc:.4f}, source={geo_type})")
+            print(
+                f"  {r['destination_name']:20s} → {r['travel_time_min']:5.1f} min, "
+                f"{r['distance_km']:5.1f} km (acc={acc:.4f}, source={geo_type})"
+            )
     else:
         run_mobility_scout()

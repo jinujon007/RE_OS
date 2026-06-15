@@ -1,21 +1,24 @@
 import pytest
 from unittest.mock import patch
+
 pytestmark = pytest.mark.unit
 
 
 class FakeCrossEncoder:
     def predict(self, pairs, show_progress_bar=False):
         """Return deterministic scores in REVERSE index order.
-        
+
         First pair gets lowest score, last pair gets highest.
         This proves the reranker actually reorders hits."""
         import numpy as np
+
         return np.array([float(i) for i in range(len(pairs))])
 
 
 class TestCrossEncoderReranker:
     def _make_reranker(self):
         from utils.reranker import CrossEncoderReranker
+
         return CrossEncoderReranker()
 
     def _patch_model(self, return_value=...):

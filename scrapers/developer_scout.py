@@ -47,6 +47,7 @@ from loguru import logger
 
 try:
     from scrapling.fetchers import Fetcher, DynamicFetcher
+
     _SCRAPLING_OK = True
 except Exception:
     _SCRAPLING_OK = False
@@ -147,8 +148,14 @@ DEVELOPER_SITES: dict[str, dict] = {
         "alt_url": "https://sattvagroup.com/residential/",
         "use_playwright": True,  # JS-heavy SPA; times out on plain fetch
         "north_blr_keywords": [
-            "yelahanka", "hebbal", "north bangalore", "thanisandra", "jakkur",
-            "devanahalli", "bagalur", "aeropolis",
+            "yelahanka",
+            "hebbal",
+            "north bangalore",
+            "thanisandra",
+            "jakkur",
+            "devanahalli",
+            "bagalur",
+            "aeropolis",
         ],
     },
     "Puravankara": {
@@ -158,8 +165,14 @@ DEVELOPER_SITES: dict[str, dict] = {
         "alt_url": "https://www.puravankara.com/residential/bengaluru",
         "use_playwright": True,  # React SPA with lazy-loaded project cards
         "north_blr_keywords": [
-            "yelahanka", "hebbal", "devanahalli", "north bangalore",
-            "thanisandra", "jakkur", "bagalur", "airport road",
+            "yelahanka",
+            "hebbal",
+            "devanahalli",
+            "north bangalore",
+            "thanisandra",
+            "jakkur",
+            "bagalur",
+            "airport road",
         ],
     },
     "TotalEnvironment": {
@@ -169,8 +182,12 @@ DEVELOPER_SITES: dict[str, dict] = {
         "alt_url": "https://www.total-environment.com/homes",
         "use_playwright": True,  # React app; content not in static HTML
         "north_blr_keywords": [
-            "jakkur", "hennur", "north bangalore", "north bengaluru",
-            "down by the water", "in that quiet earth",
+            "jakkur",
+            "hennur",
+            "north bangalore",
+            "north bengaluru",
+            "down by the water",
+            "in that quiet earth",
         ],
     },
     "Embassy": {
@@ -180,8 +197,12 @@ DEVELOPER_SITES: dict[str, dict] = {
         "alt_url": "https://embassyindia.com/projects/",
         "use_playwright": False,
         "north_blr_keywords": [
-            "hebbal", "north bangalore", "north bengaluru",
-            "embassy springs", "embassy lake terraces", "mekhri",
+            "hebbal",
+            "north bangalore",
+            "north bengaluru",
+            "embassy springs",
+            "embassy lake terraces",
+            "mekhri",
         ],
     },
     "TataRealty": {
@@ -190,9 +211,13 @@ DEVELOPER_SITES: dict[str, dict] = {
         "projects_url": "https://tatarealty.in/projects",
         "alt_url": "https://tatarealty.in/",
         "use_playwright": True,  # JS SPA; Residential section rendered client-side
-        "entry_watch": True,     # alert when Bengaluru appears in city dropdown
+        "entry_watch": True,  # alert when Bengaluru appears in city dropdown
         "north_blr_keywords": [
-            "bengaluru", "bangalore", "yelahanka", "devanahalli", "north bangalore",
+            "bengaluru",
+            "bangalore",
+            "yelahanka",
+            "devanahalli",
+            "north bangalore",
         ],
     },
     "Mahindra": {
@@ -202,7 +227,11 @@ DEVELOPER_SITES: dict[str, dict] = {
         "alt_url": "https://www.mahindralifespaces.com/real-estate-properties/",
         "use_playwright": False,
         "north_blr_keywords": [
-            "yelahanka", "devanahalli", "north bangalore", "hebbal", "jakkur",
+            "yelahanka",
+            "devanahalli",
+            "north bangalore",
+            "hebbal",
+            "jakkur",
             "airport road",
         ],
     },
@@ -213,9 +242,17 @@ DEVELOPER_SITES: dict[str, dict] = {
         "alt_url": "https://www.assetzproperty.com/projects",
         "use_playwright": False,
         "north_blr_keywords": [
-            "yelahanka", "devanahalli", "north bangalore", "hebbal", "kogilu",
-            "jakkur", "thanisandra", "bagalur", "kiadb aerospace",
-            "zen and sato", "sora and saki",
+            "yelahanka",
+            "devanahalli",
+            "north bangalore",
+            "hebbal",
+            "kogilu",
+            "jakkur",
+            "thanisandra",
+            "bagalur",
+            "kiadb aerospace",
+            "zen and sato",
+            "sora and saki",
         ],
     },
     "Century": {
@@ -225,8 +262,13 @@ DEVELOPER_SITES: dict[str, dict] = {
         "alt_url": "https://www.centuryrealestate.in/projects",
         "use_playwright": False,
         "north_blr_keywords": [
-            "yelahanka", "doddaballapura", "jakkur", "airport road",
-            "north bangalore", "north bengaluru", "yelahanka new town",
+            "yelahanka",
+            "doddaballapura",
+            "jakkur",
+            "airport road",
+            "north bangalore",
+            "north bengaluru",
+            "yelahanka new town",
         ],
     },
     "Shriram": {
@@ -627,7 +669,9 @@ class DeveloperScout:
         self.session = requests.Session()
         self.session.headers.update(SCRAPE_HEADERS)
 
-    def scout(self, developers: list[str] | None = None, include_grade_b: bool = True) -> list[dict]:
+    def scout(
+        self, developers: list[str] | None = None, include_grade_b: bool = True
+    ) -> list[dict]:
         """
         Crawl developer sites. Returns all findings with is_new flag.
         developers: list of keys from DEVELOPER_SITES, e.g. ["Brigade", "Sobha"]
@@ -714,8 +758,11 @@ class DeveloperScout:
             if not any(kw in locality or kw in project for kw in north_kw):
                 continue
             normalized = _normalize_developer_finding(
-                r, f"grade_b_{dev_name.lower().replace(' ', '_')}",
-                dev_name, self.market, url,
+                r,
+                f"grade_b_{dev_name.lower().replace(' ', '_')}",
+                dev_name,
+                self.market,
+                url,
             )
             if normalized:
                 normalized["developer_grade"] = "B"
@@ -730,10 +777,21 @@ class DeveloperScout:
     def _grade_b_keywords() -> set[str]:
         """Return North Bengaluru keywords for Grade B filtering."""
         return {
-            "yelahanka", "hebbal", "devanahalli", "jakkur", "thanisandra",
-            "kogilu", "bagalur", "singanayakanahalli", "nagawara",
-            "north bangalore", "north bengaluru", "bial", "airport",
-            "yelahanka new town", "yelahanka satellite town",
+            "yelahanka",
+            "hebbal",
+            "devanahalli",
+            "jakkur",
+            "thanisandra",
+            "kogilu",
+            "bagalur",
+            "singanayakanahalli",
+            "nagawara",
+            "north bangalore",
+            "north bengaluru",
+            "bial",
+            "airport",
+            "yelahanka new town",
+            "yelahanka satellite town",
         }
 
     def _scout_developer(self, dev_key: str, dev_info: dict) -> list[dict]:
@@ -758,7 +816,9 @@ class DeveloperScout:
                 fetch_url = url
 
         if len(raw_html) < 500 and alt_url:
-            logger.debug(f"[DeveloperScout][{dev_key}] Still insufficient, trying alt: {alt_url}")
+            logger.debug(
+                f"[DeveloperScout][{dev_key}] Still insufficient, trying alt: {alt_url}"
+            )
             raw_html = self._fetch_raw(alt_url, use_playwright, dev_key)
             fetch_url = alt_url
 
@@ -778,7 +838,9 @@ class DeveloperScout:
             text, developer_name, dom_snippets=dom_snippets
         )
         results = [
-            _normalize_developer_finding(r, dev_key, developer_name, self.market, fetch_url)
+            _normalize_developer_finding(
+                r, dev_key, developer_name, self.market, fetch_url
+            )
             for r in raw_items
         ]
         return [r for r in results if r is not None]
@@ -789,6 +851,7 @@ class DeveloperScout:
         """Fire a Discord BD alert when an entry-watch developer shows Bengaluru content."""
         try:
             from utils.discord_notifier import send
+
             msg = (
                 f"**{developer_name}** website now mentions Bengaluru/Bangalore.\n"
                 f"Source: {url}\n"
@@ -814,7 +877,9 @@ class DeveloperScout:
                 html = self._scrapling_http_fetch_raw(url, dev_key)
             if html:
                 return html
-            logger.info(f"[DeveloperScout][{dev_key}] Scrapling empty → {'Playwright' if use_playwright else 'requests'} fallback")
+            logger.info(
+                f"[DeveloperScout][{dev_key}] Scrapling empty → {'Playwright' if use_playwright else 'requests'} fallback"
+            )
 
         if use_playwright:
             return self._playwright_fetch_raw(url)
@@ -830,9 +895,13 @@ class DeveloperScout:
                 return ""
             html = getattr(page, "body", None) or ""
             if len(html) < 500:
-                logger.debug(f"[DeveloperScout][Scrapling HTTP][{dev_key}] {len(html)} chars — too short, skipping")
+                logger.debug(
+                    f"[DeveloperScout][Scrapling HTTP][{dev_key}] {len(html)} chars — too short, skipping"
+                )
                 return ""
-            logger.debug(f"[DeveloperScout][Scrapling HTTP][{dev_key}] {len(html)} chars")
+            logger.debug(
+                f"[DeveloperScout][Scrapling HTTP][{dev_key}] {len(html)} chars"
+            )
             return html
         except Exception as exc:
             logger.debug(f"[DeveloperScout][Scrapling HTTP][{dev_key}] {exc}")
@@ -842,15 +911,23 @@ class DeveloperScout:
         """Stealth Playwright — patches webdriver flag, reuses existing Chromium."""
         try:
             page = DynamicFetcher.fetch(
-                url, headless=True, network_idle=True, disable_resources=True, timeout=30000
+                url,
+                headless=True,
+                network_idle=True,
+                disable_resources=True,
+                timeout=30000,
             )
             if page is None:
                 return ""
             html = getattr(page, "body", None) or ""
             if len(html) < 500:
-                logger.debug(f"[DeveloperScout][Scrapling Dynamic][{dev_key}] {len(html)} chars — too short, skipping")
+                logger.debug(
+                    f"[DeveloperScout][Scrapling Dynamic][{dev_key}] {len(html)} chars — too short, skipping"
+                )
                 return ""
-            logger.debug(f"[DeveloperScout][Scrapling Dynamic][{dev_key}] {len(html)} chars")
+            logger.debug(
+                f"[DeveloperScout][Scrapling Dynamic][{dev_key}] {len(html)} chars"
+            )
             return html
         except Exception as exc:
             logger.debug(f"[DeveloperScout][Scrapling Dynamic][{dev_key}] {exc}")
@@ -901,7 +978,9 @@ class DeveloperScout:
 # ── Standalone runner ─────────────────────────────────────────────────────────
 
 
-def scout_developers(market: str, developers: list[str] | None = None, grade_b: bool = True) -> list[dict]:
+def scout_developers(
+    market: str, developers: list[str] | None = None, grade_b: bool = True
+) -> list[dict]:
     memory = ScoutMemory(market)
     scout = DeveloperScout(market, memory)
     findings = scout.scout(developers=developers)
@@ -924,6 +1003,7 @@ def scout_developers(market: str, developers: list[str] | None = None, grade_b: 
     new_total = len(new_findings)
     try:
         from utils.discord_notifier import send_competitor_alert
+
         for project in new_findings:
             dev = project.get("developer") or project.get("developer_name") or "Unknown"
             send_competitor_alert(
@@ -932,7 +1012,9 @@ def scout_developers(market: str, developers: list[str] | None = None, grade_b: 
                 market=market,
             )
     except Exception as _alert_err:
-        logger.warning(f"[DeveloperScout] Competitor alert failed for {market}: {_alert_err}")
+        logger.warning(
+            f"[DeveloperScout] Competitor alert failed for {market}: {_alert_err}"
+        )
 
     scraper_runs_total.labels(source="developer", market=market, status="success").inc()
     print(f"\n{'=' * 55}")

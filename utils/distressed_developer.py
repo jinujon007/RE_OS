@@ -119,18 +119,23 @@ def compute_developer_distress_score(developer_name: str, market: str) -> float:
                 {
                     "developer_name": developer_name,
                     "market": market,
-                        "distress_score": score,
-                    },
+                    "distress_score": score,
+                },
             )
             return score
     except Exception as exc:
-        logger.warning("[DistressedDev] compute score failed for {} / {}: {}", developer_name, market, exc)
+        logger.warning(
+            "[DistressedDev] compute score failed for {} / {}: {}",
+            developer_name,
+            market,
+            exc,
+        )
         return 0.0
 
 
-def scan_distressed_developers(market: str | None = None,
-                               min_score: float = 0.0,
-                               max_results: int = 20) -> list[DistressedDeveloper]:
+def scan_distressed_developers(
+    market: str | None = None, min_score: float = 0.0, max_results: int = 20
+) -> list[DistressedDeveloper]:
     """Query rera_projects for distressed developers (JD/JV target list).
 
     Filters: developers with <5 total RERA projects AND at least one overdue
@@ -241,18 +246,20 @@ def scan_distressed_developers(market: str | None = None,
         else:
             alert_level = "HEALTHY"
 
-        records.append(DistressedDeveloper(
-            developer_name=str(row.developer_name),
-            market=str(row.market),
-            total_projects=int(row.total_projects),
-            active_projects=int(row.active_projects),
-            delayed_projects=int(row.delayed_projects),
-            avg_delay_months=float(row.avg_delay_months),
-            incomplete_ratio=float(row.incomplete_ratio),
-            complaint_count=int(row.complaint_count),
-            distress_score=score,
-            alert_level=alert_level,
-        ))
+        records.append(
+            DistressedDeveloper(
+                developer_name=str(row.developer_name),
+                market=str(row.market),
+                total_projects=int(row.total_projects),
+                active_projects=int(row.active_projects),
+                delayed_projects=int(row.delayed_projects),
+                avg_delay_months=float(row.avg_delay_months),
+                incomplete_ratio=float(row.incomplete_ratio),
+                complaint_count=int(row.complaint_count),
+                distress_score=score,
+                alert_level=alert_level,
+            )
+        )
 
     records.sort(key=lambda d: d.distress_score, reverse=True)
     return records[:max_results]
@@ -265,14 +272,15 @@ class DistressedDeveloperScanner:
     or direct programmatic access.
     """
 
-    def scan(self, market: str | None = None,
-             min_score: float = 0.0,
-             max_results: int = 20) -> list[DistressedDeveloper]:
+    def scan(
+        self, market: str | None = None, min_score: float = 0.0, max_results: int = 20
+    ) -> list[DistressedDeveloper]:
         """Scan and return ranked list of distressed developers."""
         return scan_distressed_developers(market, min_score, max_results)
 
-    def top_n(self, market: str, n: int = 3,
-              min_score: float = 0.3) -> list[DistressedDeveloper]:
+    def top_n(
+        self, market: str, n: int = 3, min_score: float = 0.3
+    ) -> list[DistressedDeveloper]:
         """Convenience: top-N distressed developers in a market."""
         return scan_distressed_developers(market, min_score, n)
 
@@ -295,6 +303,8 @@ if __name__ == "__main__":
         results = scan_distressed_developers(market, min_score=0.3)
         print(f"\n[{market}] {len(results)} developers above 0.3:")
         for dev in results:
-            print(f"  {dev.developer_name}: {dev.distress_score:.2f} ({dev.alert_level})")
+            print(
+                f"  {dev.developer_name}: {dev.distress_score:.2f} ({dev.alert_level})"
+            )
             if dev.distress_score > _DISTRESS_SCORE_THRESHOLD:
                 print(f"    → {format_distress_alert(dev)}")

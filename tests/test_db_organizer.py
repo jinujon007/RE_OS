@@ -72,6 +72,7 @@ def test_safe_date_integer_input():
 def org():
     """DBOrganizer with a mocked engine so no DB connection is attempted."""
     import utils.db_organizer as _dbo
+
     _dbo._SHARED_ENGINE = None
     with patch.object(_dbo, "create_engine") as mock_engine:
         mock_engine.return_value = MagicMock()
@@ -235,8 +236,10 @@ def test_run_developer_scout_empty_list(org):
 def test_run_with_failing_record_counts_failed(org):
     """When _upsert_developer raises, the except branch runs and failed==1."""
     mock_conn = MagicMock()
-    with patch.object(org, "_upsert_developer", side_effect=ValueError("bad")), \
-         patch.object(org, "engine") as mock_engine:
+    with (
+        patch.object(org, "_upsert_developer", side_effect=ValueError("bad")),
+        patch.object(org, "engine") as mock_engine,
+    ):
         # First begin() for the main batch; second for _log_run (which catches exception)
         mock_engine.begin.side_effect = [
             _make_ctx_manager(mock_conn),
@@ -252,8 +255,12 @@ def test_run_with_failing_record_counts_failed(org):
 def test_run_grade_batch_failure_is_non_fatal(org):
     """If _batch_update_developer_grades raises, run() still completes and returns stats."""
     mock_conn = MagicMock()
-    with patch.object(org, "_batch_update_developer_grades", side_effect=Exception("grade fail")), \
-         patch.object(org, "engine") as mock_engine:
+    with (
+        patch.object(
+            org, "_batch_update_developer_grades", side_effect=Exception("grade fail")
+        ),
+        patch.object(org, "engine") as mock_engine,
+    ):
         mock_engine.begin.side_effect = [
             _make_ctx_manager(mock_conn),
             Exception("log unavailable"),
@@ -269,9 +276,11 @@ def test_run_grade_batch_failure_is_non_fatal(org):
 def test_run_portal_scout_failing_record_counts_failed(org):
     """When _upsert_listing_by_cid raises, failed count increments."""
     mock_conn = MagicMock()
-    with patch.object(org, "_get_market_id_by_name", return_value="market-id-1"), \
-         patch.object(org, "_upsert_listing_by_cid", side_effect=ValueError("bad cid")), \
-         patch.object(org, "engine") as mock_engine:
+    with (
+        patch.object(org, "_get_market_id_by_name", return_value="market-id-1"),
+        patch.object(org, "_upsert_listing_by_cid", side_effect=ValueError("bad cid")),
+        patch.object(org, "engine") as mock_engine,
+    ):
         mock_engine.begin.return_value = _make_ctx_manager(mock_conn)
         stats = org.run_portal_scout("Yelahanka", [{"cid": "p1", "source": "portal"}])
 
@@ -285,11 +294,15 @@ def test_run_portal_scout_failing_record_counts_failed(org):
 
 def test_run_developer_scout_failing_record_counts_failed(org):
     mock_conn = MagicMock()
-    with patch.object(org, "_get_market_id_by_name", return_value="market-id-1"), \
-         patch.object(org, "_upsert_listing_by_cid", side_effect=ValueError("bad")), \
-         patch.object(org, "engine") as mock_engine:
+    with (
+        patch.object(org, "_get_market_id_by_name", return_value="market-id-1"),
+        patch.object(org, "_upsert_listing_by_cid", side_effect=ValueError("bad")),
+        patch.object(org, "engine") as mock_engine,
+    ):
         mock_engine.begin.return_value = _make_ctx_manager(mock_conn)
-        stats = org.run_developer_scout("Yelahanka", [{"cid": "d1", "source": "brigade"}])
+        stats = org.run_developer_scout(
+            "Yelahanka", [{"cid": "d1", "source": "brigade"}]
+        )
 
     assert stats["total"] == 1
     assert stats["failed"] == 1
@@ -344,7 +357,9 @@ def test_exact_dedup_still_fast_paths_before_fuzzy():
         "registration_date": "2026-06-01",
         "transaction_amount": 1500000,
     }
-    with patch.object(org, "_fuzzy_match_registration", wraps=org._fuzzy_match_registration) as spy:
+    with patch.object(
+        org, "_fuzzy_match_registration", wraps=org._fuzzy_match_registration
+    ) as spy:
         result = org._insert_registration(mock_conn, rec, "market-id")
     assert result is False
 
@@ -352,6 +367,7 @@ def test_exact_dedup_still_fast_paths_before_fuzzy():
 def _make_org():
     """Helper: create DBOrganizer with mocked engine."""
     from unittest.mock import patch, MagicMock
+
     with patch("utils.db_organizer.create_engine") as mock_engine:
         mock_engine.return_value = MagicMock()
         return DBOrganizer()
@@ -362,6 +378,7 @@ def test_get_engine_returns_engine():
     with patch("utils.db.create_engine") as mock_ce:
         mock_ce.return_value = MagicMock(name="mock_engine")
         import utils.db as db_mod
+
         db_mod._engine = None  # reset singleton for test isolation
         engine = db_mod.get_engine()
         assert engine is not None
@@ -374,16 +391,31 @@ def test_get_engine_returns_engine():
 def test_db_organizer_skips_listings_scraper_checkpoint():
     """_is_deprecated_checkpoint returns True for listings_scraper* filenames."""
     from utils.db_organizer import DBOrganizer
-    assert DBOrganizer._is_deprecated_checkpoint("listings_scraper_2026-06-08.json") is True
-    assert DBOrganizer._is_deprecated_checkpoint("listings_scraped_2026-06-08.json") is True
+
+    assert (
+        DBOrganizer._is_deprecated_checkpoint("listings_scraper_2026-06-08.json")
+        is True
+    )
+    assert (
+        DBOrganizer._is_deprecated_checkpoint("listings_scraped_2026-06-08.json")
+        is True
+    )
 
 
 def test_db_organizer_recognizes_active_checkpoints():
     """_is_deprecated_checkpoint returns False for active scraper checkpoints."""
     from utils.db_organizer import DBOrganizer
-    assert DBOrganizer._is_deprecated_checkpoint("rera_scraped_2026-06-08.json") is False
-    assert DBOrganizer._is_deprecated_checkpoint("portal_scout_2026-06-08.json") is False
-    assert DBOrganizer._is_deprecated_checkpoint("developer_scout_2026-06-08.json") is False
+
+    assert (
+        DBOrganizer._is_deprecated_checkpoint("rera_scraped_2026-06-08.json") is False
+    )
+    assert (
+        DBOrganizer._is_deprecated_checkpoint("portal_scout_2026-06-08.json") is False
+    )
+    assert (
+        DBOrganizer._is_deprecated_checkpoint("developer_scout_2026-06-08.json")
+        is False
+    )
 
 
 # ── Market ID Cache (T-1092 — Sprint 82) ────────────────────────────────────
@@ -407,23 +439,32 @@ def _make_mock_org(market_rows: list[tuple]) -> tuple:
 
 def test_market_id_cache_loaded_at_init():
     """Cache has all 3 micro-markets after init when DB returns data."""
-    org, _ = _make_mock_org([
-        ("yelahanka", "550e8400-e29b-41d4-a716-446655440000"),
-        ("devanahalli", "550e8400-e29b-41d4-a716-446655440001"),
-        ("hebbal", "550e8400-e29b-41d4-a716-446655440002"),
-    ])
+    org, _ = _make_mock_org(
+        [
+            ("yelahanka", "550e8400-e29b-41d4-a716-446655440000"),
+            ("devanahalli", "550e8400-e29b-41d4-a716-446655440001"),
+            ("hebbal", "550e8400-e29b-41d4-a716-446655440002"),
+        ]
+    )
     assert len(org._market_id_cache) >= 3
-    assert org._market_id_cache.get("yelahanka") == "550e8400-e29b-41d4-a716-446655440000"
-    assert org._market_id_cache.get("devanahalli") == "550e8400-e29b-41d4-a716-446655440001"
+    assert (
+        org._market_id_cache.get("yelahanka") == "550e8400-e29b-41d4-a716-446655440000"
+    )
+    assert (
+        org._market_id_cache.get("devanahalli")
+        == "550e8400-e29b-41d4-a716-446655440001"
+    )
 
 
 def test_run_issues_one_market_lookup_not_n():
     """10 records same market → 0 DB round-trips for _get_market_id (all from cache)."""
-    org, mock_conn = _make_mock_org([
-        ("yelahanka", "uuid-yel"),
-        ("devanahalli", "uuid-dev"),
-        ("hebbal", "uuid-heb"),
-    ])
+    org, mock_conn = _make_mock_org(
+        [
+            ("yelahanka", "uuid-yel"),
+            ("devanahalli", "uuid-dev"),
+            ("hebbal", "uuid-heb"),
+        ]
+    )
     mock_conn.execute.reset_mock()
 
     records = [{"locality": "Yelahanka New Town", "taluk": ""} for _ in range(10)]
@@ -438,11 +479,13 @@ def test_run_issues_one_market_lookup_not_n():
 
 def test_unknown_market_returns_none_gracefully():
     """Record that doesn't match any keyword → returns None without DB hit."""
-    org, mock_conn = _make_mock_org([
-        ("yelahanka", "uuid-1"),
-        ("devanahalli", "uuid-2"),
-        ("hebbal", "uuid-3"),
-    ])
+    org, mock_conn = _make_mock_org(
+        [
+            ("yelahanka", "uuid-1"),
+            ("devanahalli", "uuid-2"),
+            ("hebbal", "uuid-3"),
+        ]
+    )
     mock_conn.execute.reset_mock()
 
     mid = org._get_market_id(mock_conn, {"locality": "Mumbai", "taluk": ""})
@@ -464,7 +507,8 @@ def test_run_triggers_mat_view_refresh():
             org.run("Yelahanka", [])
 
     refresh_calls = [
-        c for c in mock_conn.execute.call_args_list
+        c
+        for c in mock_conn.execute.call_args_list
         if c.args and "REFRESH MATERIALIZED VIEW CONCURRENTLY" in str(c.args[0])
     ]
     assert len(refresh_calls) >= 1, (

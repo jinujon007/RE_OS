@@ -3,6 +3,7 @@ Revision ID: 0012_agent_registry_hired_on_idx
 Revises: 0011_add_agent_registry
 Create Date: 2026-06-01
 """
+
 from typing import Sequence, Union
 from alembic import op
 

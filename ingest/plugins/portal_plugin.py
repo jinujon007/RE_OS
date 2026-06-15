@@ -4,6 +4,7 @@ Wraps PortalScout to scrape property listings. Adds Nominatim geocoding
 with in-memory locality cache and per-second rate limiting to stay within
 the OSM usage policy (max 1 req/sec).
 """
+
 from __future__ import annotations
 
 import json
@@ -71,7 +72,9 @@ class _Geocoder:
                     "display_name": results[0].get("display_name", ""),
                 }
         except Exception as exc:
-            logger.debug("[PortalPlugin] Nominatim geocode failed for '{}': {}", locality, exc)
+            logger.debug(
+                "[PortalPlugin] Nominatim geocode failed for '{}': {}", locality, exc
+            )
         return {}
 
 
@@ -117,11 +120,13 @@ class PortalPlugin(DataPlugin):
                 data["lat"] = geo["lat"]
                 data["lon"] = geo["lon"]
                 data["geocoded_address"] = geo["display_name"]
-            records.append(ParsedRecord(
-                entity_type="listing",
-                source_id=cid,
-                market=market,
-                data=data,
-            ))
+            records.append(
+                ParsedRecord(
+                    entity_type="listing",
+                    source_id=cid,
+                    market=market,
+                    data=data,
+                )
+            )
         logger.info("[PortalPlugin] {} listings for {}", len(records), market)
         return records

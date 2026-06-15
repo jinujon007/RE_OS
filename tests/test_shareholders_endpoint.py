@@ -1,4 +1,5 @@
 """Tests for POST /api/shareholders/trigger and auto-trigger hook."""
+
 import json
 import os
 from unittest.mock import MagicMock, patch
@@ -16,12 +17,14 @@ class TestTriggerLogic:
         mock_eng.begin.return_value.__enter__.return_value = mock_conn
 
         import uuid
+
         session_id = str(uuid.uuid4())
         quarter = "Q2-2026"
         reason = "Manual trigger"
 
         with patch("dashboard.app_fastapi._get_sa_engine", return_value=mock_eng):
             from dashboard.app_fastapi import _get_sa_engine
+
             engine = _get_sa_engine()
             with engine.begin() as conn:
                 conn.execute(
@@ -37,6 +40,7 @@ class TestTriggerLogic:
     def test_trigger_requires_quarter_validation(self):
         """Verify endpoint validates quarter param."""
         from dashboard.app_fastapi import trigger_shareholder_review
+
         quarter = ""
         assert not quarter, "quarter should be empty"
 
@@ -44,8 +48,10 @@ class TestTriggerLogic:
         """Verify ShareholderBoardCrew.run_quarterly_review is called."""
         from crews.shareholder_review import ShareholderBoardCrew
 
-        with patch.object(ShareholderBoardCrew, "run_quarterly_review") as mock_run, \
-             patch.object(ShareholderBoardCrew, "save_letter") as mock_save:
+        with (
+            patch.object(ShareholderBoardCrew, "run_quarterly_review") as mock_run,
+            patch.object(ShareholderBoardCrew, "save_letter") as mock_save,
+        ):
             mock_run.return_value = {
                 "ceo_letter_text": "Test letter",
                 "shareholder_responses": [],
@@ -59,7 +65,9 @@ class TestTriggerLogic:
             assert result["quarter_verdict"] == "GO_ON_PLAN"
             assert mock_run.called
 
-            path = ShareholderBoardCrew.save_letter("session-1", result["ceo_letter_text"])
+            path = ShareholderBoardCrew.save_letter(
+                "session-1", result["ceo_letter_text"]
+            )
             assert path is not None
             assert mock_save.called
 

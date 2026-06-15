@@ -3,6 +3,7 @@ Revision ID: 0102_merge_heads
 Revises: 0015_add_memory_fact_type, 0101_v2_seed
 Create Date: 2026-06-03
 """
+
 from typing import Sequence, Union
 from alembic import op
 

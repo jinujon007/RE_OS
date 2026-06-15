@@ -26,6 +26,7 @@ from loguru import logger
 
 try:
     import pdfplumber
+
     _PDF_AVAILABLE = True
 except ImportError:
     _PDF_AVAILABLE = False
@@ -45,11 +46,21 @@ def extract_pdf(path: str | Path) -> dict:
       }
     """
     if not _PDF_AVAILABLE:
-        return {"text": "", "pages": 0, "tables": [], "error": "pdfplumber not installed"}
+        return {
+            "text": "",
+            "pages": 0,
+            "tables": [],
+            "error": "pdfplumber not installed",
+        }
 
     path = Path(path)
     if not path.exists():
-        return {"text": "", "pages": 0, "tables": [], "error": f"File not found: {path}"}
+        return {
+            "text": "",
+            "pages": 0,
+            "tables": [],
+            "error": f"File not found: {path}",
+        }
 
     try:
         all_text = []
@@ -95,6 +106,7 @@ def extract_rera_fields(text: str) -> dict:
     Returns dict with extracted fields (empty string where not found).
     Pass the output to Qwen2.5:7b only if regex extraction is incomplete.
     """
+
     def _find(patterns: list[str], txt: str) -> str:
         for pattern in patterns:
             m = re.search(pattern, txt, re.IGNORECASE)
@@ -222,6 +234,7 @@ def extract_pdf_for_llm(path: str | Path, max_chars: int = 6000) -> str:
 
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) < 2:
         print("Usage: python utils/pdf_extractor.py <path_to_pdf>")
         sys.exit(1)

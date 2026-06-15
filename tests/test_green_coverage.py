@@ -1,4 +1,5 @@
 import pytest
+
 pytestmark = pytest.mark.unit
 
 from utils.green_coverage import (
@@ -133,13 +134,17 @@ class TestInvariants:
         for land in self.LAND_VALUES:
             for cov in self.COVERAGE_VALUES:
                 r = calculate_green_coverage(land, cov)
-                assert r.tree_count >= 1, f"land={land} cov={cov} → tree_count={r.tree_count}"
+                assert r.tree_count >= 1, (
+                    f"land={land} cov={cov} → tree_count={r.tree_count}"
+                )
 
     def test_green_pct_range_0_to_100(self):
         for land in self.LAND_VALUES:
             for cov in self.COVERAGE_VALUES:
                 r = calculate_green_coverage(land, cov)
-                assert 0.0 <= r.green_pct <= 100.0, f"land={land} cov={cov} → green_pct={r.green_pct}"
+                assert 0.0 <= r.green_pct <= 100.0, (
+                    f"land={land} cov={cov} → green_pct={r.green_pct}"
+                )
 
     def test_landscape_nonnegative(self):
         for land in self.LAND_VALUES:
@@ -150,7 +155,9 @@ class TestInvariants:
     def test_built_coverage_in_0_to_1(self):
         for cov in [-0.5, 0.0, 0.5, 1.0, 2.0, 999.0]:
             r = calculate_green_coverage(10000, cov)
-            assert 0.0 <= r.built_coverage_pct <= 1.0, f"cov={cov} → built={r.built_coverage_pct}"
+            assert 0.0 <= r.built_coverage_pct <= 1.0, (
+                f"cov={cov} → built={r.built_coverage_pct}"
+            )
 
     def test_green_plus_built_approx_100(self):
         """For valid built coverage in [0,1], green_pct + 100*coverage ≈ 100."""
@@ -158,8 +165,9 @@ class TestInvariants:
             for cov in [0.0, 0.1, 0.55, 0.85]:
                 r = calculate_green_coverage(land, cov)
                 total = pytest.approx(100.0, abs=0.2)
-                assert r.green_pct + r.built_coverage_pct * 100 == total, \
-                    f"land={land} cov={cov}: {r.green_pct}+{r.built_coverage_pct*100} != 100"
+                assert r.green_pct + r.built_coverage_pct * 100 == total, (
+                    f"land={land} cov={cov}: {r.green_pct}+{r.built_coverage_pct * 100} != 100"
+                )
 
 
 class TestDataclassStructure:

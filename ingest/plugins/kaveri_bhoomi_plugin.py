@@ -9,6 +9,7 @@ Three data sources for a single market:
 All three use stable deterministic source_ids derived from content hashes
 so re-scrapes produce the same IDs and dedup works correctly across runs.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -34,11 +35,13 @@ def _search_rtc(survey_no: str, village: str) -> list[dict]:
     Returns empty list on failure — never blocks the pipeline.
     """
     try:
-        payload = json.dumps({
-            "surveyNumber": survey_no,
-            "village": village,
-            "limit": 5,
-        }).encode("utf-8")
+        payload = json.dumps(
+            {
+                "surveyNumber": survey_no,
+                "village": village,
+                "limit": 5,
+            }
+        ).encode("utf-8")
         req = urllib.request.Request(
             _BHOOMI_SEARCH_URL,
             data=payload,
@@ -51,16 +54,18 @@ def _search_rtc(survey_no: str, village: str) -> list[dict]:
         records = []
         items = raw if isinstance(raw, list) else raw.get("data", [])
         for item in items[:5]:
-            records.append({
-                "survey_no": str(item.get("surveyNumber", survey_no)),
-                "village": str(item.get("village", village)),
-                "rtc_period": str(item.get("period", "")),
-                "rtc_year": str(item.get("year", "")),
-                "cultivator": str(item.get("cultivator", "")),
-                "area_acres": float(item.get("area", 0) or 0),
-                "crop": str(item.get("crop", "")),
-                "source": "bhoomi_portal",
-            })
+            records.append(
+                {
+                    "survey_no": str(item.get("surveyNumber", survey_no)),
+                    "village": str(item.get("village", village)),
+                    "rtc_period": str(item.get("period", "")),
+                    "rtc_year": str(item.get("year", "")),
+                    "cultivator": str(item.get("cultivator", "")),
+                    "area_acres": float(item.get("area", 0) or 0),
+                    "crop": str(item.get("crop", "")),
+                    "source": "bhoomi_portal",
+                }
+            )
         return records
     except Exception as exc:
         logger.debug("[KaveriBhoomiPlugin] Bhoomi RTC search failed: {}", exc)
@@ -83,7 +88,9 @@ class KaveriBhoomiPlugin(DataPlugin):
         records.extend(self._scrape_registrations(market))
         records.extend(self._scrape_rtc_records(market))
 
-        logger.info("[KaveriBhoomiPlugin] {} total records for {}", len(records), market)
+        logger.info(
+            "[KaveriBhoomiPlugin] {} total records for {}", len(records), market
+        )
         return records
 
     def _scrape_guidance_values(self, market: str) -> list[ParsedRecord]:
@@ -96,26 +103,37 @@ class KaveriBhoomiPlugin(DataPlugin):
             locality = str(gv.get("locality", ""))
             prop_type = str(gv.get("property_type", "Residential"))
             road_type = str(gv.get("road_type", "Main Road"))
-            data_source = str(gv.get("source") or gv.get("data_source") or "kaveri_portal")
+            data_source = str(
+                gv.get("source") or gv.get("data_source") or "kaveri_portal"
+            )
             data = {
                 "locality": locality,
                 "property_type": prop_type,
                 "road_type": road_type,
                 "guidance_value_psf": float(gv.get("guidance_value_psf", 0)),
-                "guidance_value_per_sqm": float(gv.get("guidance_value_per_sqm", 0) or 0),
+                "guidance_value_per_sqm": float(
+                    gv.get("guidance_value_per_sqm", 0) or 0
+                ),
                 "effective_from": str(gv.get("effective_from", "")),
                 "source_document": str(gv.get("source_document", "")),
                 "data_source": data_source,
             }
             sid = _content_hash(
-                "gv", market, locality, prop_type, road_type, data_source,
+                "gv",
+                market,
+                locality,
+                prop_type,
+                road_type,
+                data_source,
             )
-            parsed.append(ParsedRecord(
-                entity_type="guidance_value",
-                source_id=sid,
-                market=market,
-                data=data,
-            ))
+            parsed.append(
+                ParsedRecord(
+                    entity_type="guidance_value",
+                    source_id=sid,
+                    market=market,
+                    data=data,
+                )
+            )
         return parsed
 
     def _scrape_registrations(self, market: str) -> list[ParsedRecord]:
@@ -140,15 +158,19 @@ class KaveriBhoomiPlugin(DataPlugin):
                 "source": "kaveri_portal",
             }
             sid = _content_hash(
-                "reg", market,
-                data["survey_number"], data["registration_date"],
+                "reg",
+                market,
+                data["survey_number"],
+                data["registration_date"],
             )
-            prs.append(ParsedRecord(
-                entity_type="kaveri_registration",
-                source_id=sid,
-                market=market,
-                data=data,
-            ))
+            prs.append(
+                ParsedRecord(
+                    entity_type="kaveri_registration",
+                    source_id=sid,
+                    market=market,
+                    data=data,
+                )
+            )
         return prs
 
     def _scrape_rtc_records(self, market: str) -> list[ParsedRecord]:
@@ -184,13 +206,18 @@ class KaveriBhoomiPlugin(DataPlugin):
                     "scraped_at": datetime.utcnow().isoformat(),
                 }
                 sid = _content_hash(
-                    "rtc", market,
-                    data["survey_no"], data["rtc_period"], data["rtc_year"],
+                    "rtc",
+                    market,
+                    data["survey_no"],
+                    data["rtc_period"],
+                    data["rtc_year"],
                 )
-                records.append(ParsedRecord(
-                    entity_type="rtc_record",
-                    source_id=sid,
-                    market=market,
-                    data=data,
-                ))
+                records.append(
+                    ParsedRecord(
+                        entity_type="rtc_record",
+                        source_id=sid,
+                        market=market,
+                        data=data,
+                    )
+                )
         return records

@@ -18,10 +18,16 @@ __all__ = ["ContentPack", "ContentWriterAgent", "SECTION_NAMES"]
 
 _LLM_IMPORTED = False
 try:
-    from config.llm_router import get_light_llm as _get_light_llm, get_analysis_llm as _get_analysis_llm
+    from config.llm_router import (
+        get_light_llm as _get_light_llm,
+        get_analysis_llm as _get_analysis_llm,
+    )
+
     _LLM_IMPORTED = True
 except ImportError:
-    logger.warning("[ContentWriter] config.llm_router not available — will use fallback only")
+    logger.warning(
+        "[ContentWriter] config.llm_router not available — will use fallback only"
+    )
 
 
 SECTION_NAMES = [
@@ -39,7 +45,7 @@ def _word_boundary_truncate(text: str, max_chars: int, suffix: str = " ...") -> 
     """Truncate at word boundary, never splitting words."""
     if len(text) <= max_chars:
         return text
-    truncated = text[:max_chars - len(suffix)]
+    truncated = text[: max_chars - len(suffix)]
     last_space = truncated.rfind(" ")
     if last_space > max_chars * 0.6:
         truncated = truncated[:last_space]
@@ -93,7 +99,7 @@ class ContentWriterAgent:
         risks = "\n".join(f"  - {r}" for r in brief.risk_acknowledgements[:3])
 
         sections_instruction = "\n".join(
-            f"  {i+1}. {name}" for i, name in enumerate(SECTION_NAMES)
+            f"  {i + 1}. {name}" for i, name in enumerate(SECTION_NAMES)
         )
 
         return (
@@ -130,6 +136,7 @@ class ContentWriterAgent:
         except Exception:
             logger.debug("[ContentWriter] Analysis LLM unavailable, trying heavy tier")
         from config.llm_router import get_heavy_llm
+
         return get_heavy_llm(temperature=self.temperature)
 
     def _parse_llm_response(self, raw: str) -> ContentPack:
@@ -141,7 +148,9 @@ class ContentWriterAgent:
                 end = raw.rindex("}") + 1
                 data = json.loads(raw[start:end])
             except (ValueError, json.JSONDecodeError):
-                logger.warning("[ContentWriter] Failed to parse LLM output, using fallback")
+                logger.warning(
+                    "[ContentWriter] Failed to parse LLM output, using fallback"
+                )
                 return self._fallback_content_pack()
 
         linkedin = str(data.get("linkedin_post", ""))
@@ -174,13 +183,41 @@ class ContentWriterAgent:
 
     def _build_default_sections(self) -> list[dict]:
         return [
-            {"title": "Overview", "body": "Project overview data not generated.", "word_count": 5},
-            {"title": "Market Context", "body": "Market context not generated.", "word_count": 4},
-            {"title": "Product Concept", "body": "Product concept not generated.", "word_count": 4},
-            {"title": "Financial Case", "body": "Financial case not generated.", "word_count": 4},
-            {"title": "Risk Landscape", "body": "Risk landscape not generated.", "word_count": 4},
-            {"title": "Team & Track Record", "body": "Team details not generated.", "word_count": 4},
-            {"title": "Call to Action", "body": "Contact LLS for the full deal memorandum.", "word_count": 7},
+            {
+                "title": "Overview",
+                "body": "Project overview data not generated.",
+                "word_count": 5,
+            },
+            {
+                "title": "Market Context",
+                "body": "Market context not generated.",
+                "word_count": 4,
+            },
+            {
+                "title": "Product Concept",
+                "body": "Product concept not generated.",
+                "word_count": 4,
+            },
+            {
+                "title": "Financial Case",
+                "body": "Financial case not generated.",
+                "word_count": 4,
+            },
+            {
+                "title": "Risk Landscape",
+                "body": "Risk landscape not generated.",
+                "word_count": 4,
+            },
+            {
+                "title": "Team & Track Record",
+                "body": "Team details not generated.",
+                "word_count": 4,
+            },
+            {
+                "title": "Call to Action",
+                "body": "Contact LLS for the full deal memorandum.",
+                "word_count": 7,
+            },
         ]
 
     def _fallback_content_pack(self) -> ContentPack:
@@ -191,7 +228,9 @@ class ContentWriterAgent:
             email_subject="North Bengaluru — Investment Brief",
         )
 
-    def run(self, brief: PRBrief, psf: float = 0.0, irr: float = 0.0, market: str = "") -> ContentPack:
+    def run(
+        self, brief: PRBrief, psf: float = 0.0, irr: float = 0.0, market: str = ""
+    ) -> ContentPack:
         """Execute Content Writer Agent.
 
         Args:
@@ -215,8 +254,10 @@ class ContentWriterAgent:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(
                     llm.invoke,
-                    [{"role": "system", "content": system_prompt},
-                     {"role": "user", "content": user_prompt}]
+                    [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
                 )
                 response = future.result(timeout=self._LLM_TIMEOUT_S)
 
@@ -237,7 +278,10 @@ class ContentWriterAgent:
             return content_pack
 
         except concurrent.futures.TimeoutError:
-            logger.warning("[ContentWriter] LLM timed out after %ds — using fallback", self._LLM_TIMEOUT_S)
+            logger.warning(
+                "[ContentWriter] LLM timed out after %ds — using fallback",
+                self._LLM_TIMEOUT_S,
+            )
             return self._fallback_content_pack()
         except (ImportError, ConnectionError, OSError, ValueError) as exc:
             logger.warning("[ContentWriter] LLM call failed: %s — using fallback", exc)

@@ -15,8 +15,11 @@ from uuid import uuid4
 from loguru import logger
 
 from utils.process_automation import (
-    retry_with_backoff, run_with_timeout, safe_extract_json,
-    LLM_TIMEOUT_S as _LLM_TIMEOUT, LLM_RETRY_MAX,
+    retry_with_backoff,
+    run_with_timeout,
+    safe_extract_json,
+    LLM_TIMEOUT_S as _LLM_TIMEOUT,
+    LLM_RETRY_MAX,
 )
 from config.metrics import process_audit_runbooks_total, process_audit_llm_calls_total
 
@@ -26,19 +29,29 @@ _LLM_IMPORTED = False
 _LLM_LOCK = Lock()
 try:
     from config.llm_router import get_light_llm as _get_light_llm
+
     _LLM_IMPORTED = True
 except ImportError:
-    logger.warning("[RunbookDoc] config.llm_router not available — will use fallback only")
+    logger.warning(
+        "[RunbookDoc] config.llm_router not available — will use fallback only"
+    )
 
-_SOLUTIONS_DIR = Path(__file__).resolve().parent.parent / "docs" / "solutions" / "process-automation"
+_SOLUTIONS_DIR = (
+    Path(__file__).resolve().parent.parent / "docs" / "solutions" / "process-automation"
+)
 _RUNBOOK_WRITE_LOCK = threading.Lock()
 _LLM_RESPONSE_MAX_BYTES = 100_000
 _REQUIRED_RUNBOOK_SECTIONS = [
-    "Problem Type", "Tags", "Description",
-    "Recommended Action", "Solution",
+    "Problem Type",
+    "Tags",
+    "Description",
+    "Recommended Action",
+    "Solution",
 ]
 
-_MAX_RUNBOOK_SIZE = int(os.environ.get("PROCESS_AUTOMATION_RUNBOOK_MAX_BYTES", "500_000"))
+_MAX_RUNBOOK_SIZE = int(
+    os.environ.get("PROCESS_AUTOMATION_RUNBOOK_MAX_BYTES", "500_000")
+)
 
 
 def _resolve_path(date_str: str, stage: str) -> Path:
@@ -57,7 +70,11 @@ def _validate_runbook_content(content: str) -> bool:
     if not content or len(content) < 50:
         return False
     if len(content) > _MAX_RUNBOOK_SIZE:
-        logger.warning("[RunbookDoc] Runbook content exceeds max size ({} > {})", len(content), _MAX_RUNBOOK_SIZE)
+        logger.warning(
+            "[RunbookDoc] Runbook content exceeds max size ({} > {})",
+            len(content),
+            _MAX_RUNBOOK_SIZE,
+        )
         return False
     if not content.startswith("#"):
         return False
@@ -68,10 +85,15 @@ def _validate_runbook_content(content: str) -> bool:
     return True
 
 
-def _fallback_runbook(path: Path, bottleneck: dict[str, Any],
-                      proposal: dict[str, Any] | None = None) -> Path:
+def _fallback_runbook(
+    path: Path, bottleneck: dict[str, Any], proposal: dict[str, Any] | None = None
+) -> Path:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    p_desc = proposal.get("description", "Run pipeline audit.") if proposal else "Run pipeline audit."
+    p_desc = (
+        proposal.get("description", "Run pipeline audit.")
+        if proposal
+        else "Run pipeline audit."
+    )
     p_file = proposal.get("target_file", "N/A") if proposal else "N/A"
     p_prio = proposal.get("priority", "LOW") if proposal else "LOW"
     p_tokens = proposal.get("estimated_token_saving_pct", 0) if proposal else 0
@@ -112,8 +134,11 @@ class RunbookDocumenterAgent:
     def __init__(self):
         self._correlation_id = f"{self._CORRELATION_PREFIX}_{uuid4().hex[:8]}"
 
-    def run(self, bottleneck_report: dict[str, Any],
-            improvement_proposal: dict[str, Any] | None = None) -> dict[str, Any]:
+    def run(
+        self,
+        bottleneck_report: dict[str, Any],
+        improvement_proposal: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         bottleneck = bottleneck_report
         proposal = improvement_proposal or {}
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -126,41 +151,50 @@ class RunbookDocumenterAgent:
                 if result:
                     process_audit_runbooks_total.labels(method="llm").inc()
                     logger.info(
-                        "[{}] Runbook written (LLM): {}", self._correlation_id, path,
+                        "[{}] Runbook written (LLM): {}",
+                        self._correlation_id,
+                        path,
                     )
                     return {"status": "done", "path": str(path), "method": "llm"}
             except Exception as exc:
                 logger.warning(
-                    "[{}] LLM runbook failed: {}", self._correlation_id, exc,
+                    "[{}] LLM runbook failed: {}",
+                    self._correlation_id,
+                    exc,
                 )
 
         _fallback_runbook(path, bottleneck, proposal)
         process_audit_runbooks_total.labels(method="fallback").inc()
         logger.info(
-            "[{}] Runbook written (fallback): {}", self._correlation_id, path,
+            "[{}] Runbook written (fallback): {}",
+            self._correlation_id,
+            path,
         )
         return {"status": "done", "path": str(path), "method": "fallback"}
 
-    def _try_llm_runbook(self, path: Path, bottleneck: dict[str, Any],
-                         proposal: dict[str, Any]) -> Path | None:
+    def _try_llm_runbook(
+        self, path: Path, bottleneck: dict[str, Any], proposal: dict[str, Any]
+    ) -> Path | None:
         llm = _get_light_llm()
 
         def _do_llm_call():
-            return llm.invoke([
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": (
-                        "Write a runbook/SOP document in Markdown for the following issue:\n\n"
-                        f"Bottleneck: {json.dumps(bottleneck, default=str)}\n\n"
-                        f"Proposal: {json.dumps(proposal, default=str)}\n\n"
-                        "Include sections: Problem Type, Tags, Description, "
-                        "Recommended Action, Target File, Priority, Estimated Impact, "
-                        "and numbered Solution Steps.\n"
-                        "Start with '# ' — Markdown only, no code fences."
-                    ),
-                },
-            ])
+            return llm.invoke(
+                [
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Write a runbook/SOP document in Markdown for the following issue:\n\n"
+                            f"Bottleneck: {json.dumps(bottleneck, default=str)}\n\n"
+                            f"Proposal: {json.dumps(proposal, default=str)}\n\n"
+                            "Include sections: Problem Type, Tags, Description, "
+                            "Recommended Action, Target File, Priority, Estimated Impact, "
+                            "and numbered Solution Steps.\n"
+                            "Start with '# ' — Markdown only, no code fences."
+                        ),
+                    },
+                ]
+            )
 
         response = retry_with_backoff(
             lambda: run_with_timeout(_do_llm_call, _LLM_TIMEOUT, "runbook_doc_llm"),
@@ -168,7 +202,9 @@ class RunbookDocumenterAgent:
             context="runbook_doc_llm",
         )
         if response is None:
-            process_audit_llm_calls_total.labels(agent="runbook_doc", result="failed").inc()
+            process_audit_llm_calls_total.labels(
+                agent="runbook_doc", result="failed"
+            ).inc()
             return None
 
         raw = ""
@@ -182,7 +218,8 @@ class RunbookDocumenterAgent:
         if len(raw) > _LLM_RESPONSE_MAX_BYTES:
             logger.warning(
                 "[{}] LLM response too large ({} bytes), using fallback",
-                self._correlation_id, len(raw),
+                self._correlation_id,
+                len(raw),
             )
             return None
 

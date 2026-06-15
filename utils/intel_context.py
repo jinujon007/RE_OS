@@ -84,7 +84,9 @@ def build_intel_context(pkg: IntelPackage) -> dict:
             "supply_label": pulse.supply_label if pulse else "N/A",
             "total_projects": _v(pulse.total_projects) if pulse else "N/A",
             "total_units": _v(pulse.total_units) if pulse else "N/A",
-            "avg_absorption_pct": _v(pulse.avg_absorption_pct, ".1f") if pulse else "N/A",
+            "avg_absorption_pct": _v(pulse.avg_absorption_pct, ".1f")
+            if pulse
+            else "N/A",
             "unique_developers": _v(pulse.unique_developers) if pulse else "N/A",
             "grade_a_developers": _v(pulse.grade_a_developers) if pulse else "N/A",
             "price_momentum_signal": pulse.price_momentum_signal if pulse else "N/A",
@@ -104,9 +106,13 @@ def build_intel_context(pkg: IntelPackage) -> dict:
             "risk_level": legal.risk_level if legal else "N/A",
             "zone": legal.zone if legal else "N/A",
             "zone_risk_level": legal.zone_risk_level if legal else "N/A",
-            "guidance_value_psf": _v(legal.guidance_value_psf, ",.0f") if legal else "N/A",
+            "guidance_value_psf": _v(legal.guidance_value_psf, ",.0f")
+            if legal
+            else "N/A",
             "litigation_risk": legal.litigation_risk if legal else "N/A",
-            "land_use_conversion_needed": legal.land_use_conversion_needed if legal else "N/A",
+            "land_use_conversion_needed": legal.land_use_conversion_needed
+            if legal
+            else "N/A",
             "inheritance_risk": legal.inheritance_risk if legal else "N/A",
             "details": _legal_flags_str(legal),
             "details_teaser": _legal_details_teaser(legal),
@@ -115,8 +121,12 @@ def build_intel_context(pkg: IntelPackage) -> dict:
             "land_area_acres": _v(land.land_area_acres, ".2f") if land else "N/A",
             "zone": land.zone if land else "N/A",
             "far": _v(land.far, ".2f") if land else "N/A",
-            "buildable_area_sqft": _v(land.buildable_area_sqft, ",.0f") if land else "N/A",
-            "sellable_area_sqft": _v(land.sellable_area_sqft, ",.0f") if land else "N/A",
+            "buildable_area_sqft": _v(land.buildable_area_sqft, ",.0f")
+            if land
+            else "N/A",
+            "sellable_area_sqft": _v(land.sellable_area_sqft, ",.0f")
+            if land
+            else "N/A",
             "max_floors": _v(land.max_floors) if land else "N/A",
             "green_pct": _v(land.green_pct, ".1f") if land else "N/A",
             "meets_bda_minimum": land.meets_bda_minimum if land else "N/A",
@@ -129,10 +139,18 @@ def build_intel_context(pkg: IntelPackage) -> dict:
             "demand_score": _v(demand.demand_score, ".2f") if demand else "N/A",
             "price_momentum_signal": demand.price_momentum_signal if demand else "N/A",
             "absorption_pct": _v(demand.absorption_pct, ".1f") if demand else "N/A",
-            "listing_trend_30d_pct": _v(demand.listing_trend_30d_pct, ".1f") if demand else "N/A",
-            "listing_trend_90d_pct": _v(demand.listing_trend_90d_pct, ".1f") if demand else "N/A",
-            "new_rera_launches_90d": _v(demand.new_rera_launches_90d) if demand else "N/A",
-            "developer_confidence_pct": _v(demand.developer_confidence_pct, ".1f") if demand else "N/A",
+            "listing_trend_30d_pct": _v(demand.listing_trend_30d_pct, ".1f")
+            if demand
+            else "N/A",
+            "listing_trend_90d_pct": _v(demand.listing_trend_90d_pct, ".1f")
+            if demand
+            else "N/A",
+            "new_rera_launches_90d": _v(demand.new_rera_launches_90d)
+            if demand
+            else "N/A",
+            "developer_confidence_pct": _v(demand.developer_confidence_pct, ".1f")
+            if demand
+            else "N/A",
             "signals": demand.signals if demand else [],
         },
         "jdv_jv_targets": [],

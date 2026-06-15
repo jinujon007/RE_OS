@@ -7,8 +7,10 @@ Five gate-level assertions:
 4. /api/memory/explorer response model matches MemoryExplorerResponse schema
 5. /api/memory/conflict-count response model matches ConflictCountResponse schema
 """
+
 import os
 import pytest
+
 pytestmark = pytest.mark.unit
 
 from starlette.testclient import TestClient
@@ -37,12 +39,15 @@ def test_task_queue_gate86_passed():
     with open(path, encoding="utf-8") as f:
         content = f.read()
     assert _GATE86_PASSED in content, "GATE-86 not declared PASSED in TASK_QUEUE.md"
-    assert _GATE86_TABLE_ROW in content[content.find("| GATE-86"):], "GATE-86 table row not updated"
+    assert _GATE86_TABLE_ROW in content[content.find("| GATE-86") :], (
+        "GATE-86 table row not updated"
+    )
 
 
 def test_memory_explorer_response_schema():
     """Rapid schema check: instantiate MemoryExplorerResponse directly (no DB)."""
     from dashboard.app_fastapi import MemoryExplorerResponse, MemoryItem
+
     resp = MemoryExplorerResponse(total=0, page=1, per_page=20, memories=[])
     assert resp.total == 0
     assert resp.page == 1
@@ -55,13 +60,22 @@ def test_memory_explorer_response_schema():
 
 def test_conflict_count_response_schema():
     from dashboard.app_fastapi import ConflictCountResponse
+
     resp = ConflictCountResponse(unresolved_conflicts=5)
     assert resp.unresolved_conflicts == 5
 
 
 def test_templates_exist():
-    memory_html = os.path.join(os.path.dirname(__file__), "..", "dashboard", "templates", "memory_explorer.html")
-    index_html = os.path.join(os.path.dirname(__file__), "..", "dashboard", "templates", "index.html")
+    memory_html = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "dashboard",
+        "templates",
+        "memory_explorer.html",
+    )
+    index_html = os.path.join(
+        os.path.dirname(__file__), "..", "dashboard", "templates", "index.html"
+    )
     assert os.path.exists(memory_html), "memory_explorer.html template missing"
     assert os.path.exists(index_html), "index.html template missing"
     with open(index_html, encoding="utf-8") as f:
@@ -75,5 +89,7 @@ def test_openapi_schema_registered():
     schema = r.json()
     paths = schema.get("paths", {})
     assert "/api/memory/explorer" in paths, "explorer endpoint missing from OpenAPI"
-    assert "/api/memory/conflict-count" in paths, "conflict-count endpoint missing from OpenAPI"
+    assert "/api/memory/conflict-count" in paths, (
+        "conflict-count endpoint missing from OpenAPI"
+    )
     assert "/memory" in paths, "/memory panel route missing from OpenAPI"

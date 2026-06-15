@@ -77,6 +77,7 @@ def safe_scraper_market(market: str) -> str:
         return cleaned
     return "unknown"
 
+
 llm_router_fallbacks_total = _counter(
     "llm_router_fallbacks_total",
     "LLM router fallback count by tier_from -> tier_to",

@@ -5,6 +5,7 @@ Extracted from RERA detail pages to enable Bhoomi auto-survey lookups.
 Migration chain:
     0041_gv_gazette_data_source -> 0042_rera_projects_survey_no
 """
+
 from typing import Union
 
 import sqlalchemy as sa

@@ -7,6 +7,7 @@ Discord alert on conversion in a covered market village.
 Migration chain:
     0059_gcc_hiring_snapshots -> 0060_dc_conversions
 """
+
 from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
@@ -20,7 +21,12 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.create_table(
         "dc_conversions",
-        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), primary_key=True),
+        sa.Column(
+            "id",
+            sa.UUID(),
+            server_default=sa.text("gen_random_uuid()"),
+            primary_key=True,
+        ),
         sa.Column("application_no", sa.Text(), nullable=False),
         sa.Column("village", sa.Text(), nullable=True),
         sa.Column("survey_no", sa.Text(), nullable=True),
@@ -31,9 +37,16 @@ def upgrade() -> None:
         sa.Column("status", sa.Text(), nullable=True),
         sa.Column("application_date", sa.Date(), nullable=True),
         sa.Column("decision_date", sa.Date(), nullable=True),
-        sa.Column("data_source", sa.Text(), nullable=False, server_default=sa.text("'live'")),
+        sa.Column(
+            "data_source", sa.Text(), nullable=False, server_default=sa.text("'live'")
+        ),
         sa.Column("source_ref", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=True,
+        ),
         sa.UniqueConstraint("application_no", name="uq_dc_conversions_app_no"),
     )
     op.create_index("idx_dc_conversions_village", "dc_conversions", ["village"])

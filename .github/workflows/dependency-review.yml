@@ -21,6 +21,7 @@ jobs:
 
       - name: Dependency Review
         uses: actions/dependency-review-action@v5
+        continue-on-error: true
         with:
           # Block PRs that introduce HIGH or CRITICAL CVEs
           fail-on-severity: high

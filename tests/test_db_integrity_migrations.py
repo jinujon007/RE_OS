@@ -2,6 +2,7 @@
 
 All integration tests require live DB with migrations applied.
 """
+
 import uuid
 
 import pytest

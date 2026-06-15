@@ -4,6 +4,7 @@ RE_OS — Parcel Linker (GATE-92, T-1142)
 Normalises survey numbers and links parcels across rera_projects,
 registered_transactions, and kaveri_registrations by survey number.
 """
+
 import re
 from loguru import logger
 from sqlalchemy import text
@@ -23,23 +24,31 @@ def normalize_survey_no(raw: str) -> str | None:
     if not s or len(s) < 2:
         return None
     # Strip all whitespace, hyphens, and dots — keep only alphanumeric and /
-    s = re.sub(r'[\s\-.]', '', s)
+    s = re.sub(r"[\s\-.]", "", s)
     # Collapse multiple slashes into one
-    s = re.sub(r'/+', '/', s)
+    s = re.sub(r"/+", "/", s)
     # Remove leading/trailing non-alphanumeric
-    s = re.sub(r'^[^A-Z0-9]+', '', s)
-    s = re.sub(r'[^A-Z0-9/]+$', '', s)
+    s = re.sub(r"^[^A-Z0-9]+", "", s)
+    s = re.sub(r"[^A-Z0-9/]+$", "", s)
     if not s or len(s) < 1:
         return None
     # If after normalisation we get just punctuation, return None
-    if re.match(r'^[^A-Z0-9]+$', s):
+    if re.match(r"^[^A-Z0-9]+$", s):
         return None
     return s
 
 
-def _upsert_parcel(conn, village: str, survey_no: str, survey_no_raw: str | None,
-                    district: str | None, taluk: str | None, hobli: str | None,
-                    extent_sqft: float | None, source: str) -> tuple[str | None, bool]:
+def _upsert_parcel(
+    conn,
+    village: str,
+    survey_no: str,
+    survey_no_raw: str | None,
+    district: str | None,
+    taluk: str | None,
+    hobli: str | None,
+    extent_sqft: float | None,
+    source: str,
+) -> tuple[str | None, bool]:
     """Upsert a parcel row and return (id, was_created). Idempotent.
 
     Returns (id, True) if a new parcel was created.
@@ -56,9 +65,14 @@ def _upsert_parcel(conn, village: str, survey_no: str, survey_no_raw: str | None
             RETURNING id
         """),
         {
-            "v": village, "s": survey_no, "raw": survey_no_raw,
-            "d": district, "t": taluk, "h": hobli,
-            "e": extent_sqft, "src": source,
+            "v": village,
+            "s": survey_no,
+            "raw": survey_no_raw,
+            "d": district,
+            "t": taluk,
+            "h": hobli,
+            "e": extent_sqft,
+            "src": source,
         },
     ).fetchone()
     if result:
@@ -78,18 +92,41 @@ def link_parcels(markets: list[str] | None = None) -> dict:
     unused — linker scans all survey_no-bearing rows across all markets.
     """
     engine = get_engine()
-    stats = {"created": 0, "linked_rera": 0, "linked_registered": 0, "linked_kaveri": 0, "skipped": 0}
+    stats = {
+        "created": 0,
+        "linked_rera": 0,
+        "linked_registered": 0,
+        "linked_kaveri": 0,
+        "skipped": 0,
+    }
 
     parcels_cache: dict[tuple[str, str], str] = {}
 
-    def _get_parcel_id(conn, village: str, survey_no: str, survey_no_raw: str | None,
-                        district: str | None, taluk: str | None, hobli: str | None,
-                        extent_sqft: float | None, source: str) -> str | None:
+    def _get_parcel_id(
+        conn,
+        village: str,
+        survey_no: str,
+        survey_no_raw: str | None,
+        district: str | None,
+        taluk: str | None,
+        hobli: str | None,
+        extent_sqft: float | None,
+        source: str,
+    ) -> str | None:
         key = (village or "", survey_no or "")
         if key in parcels_cache:
             return parcels_cache[key]
-        pid, was_created = _upsert_parcel(conn, village, survey_no, survey_no_raw,
-                                           district, taluk, hobli, extent_sqft, source)
+        pid, was_created = _upsert_parcel(
+            conn,
+            village,
+            survey_no,
+            survey_no_raw,
+            district,
+            taluk,
+            hobli,
+            extent_sqft,
+            source,
+        )
         if pid:
             parcels_cache[key] = pid
             if was_created:
@@ -110,11 +147,22 @@ def link_parcels(markets: list[str] | None = None) -> dict:
             if not norm:
                 stats["skipped"] += 1
                 continue
-            pid = _get_parcel_id(conn, row.village or "", norm, row.survey_no,
-                                  None, None, None, row.extent_sqft, "rera_projects")
+            pid = _get_parcel_id(
+                conn,
+                row.village or "",
+                norm,
+                row.survey_no,
+                None,
+                None,
+                None,
+                row.extent_sqft,
+                "rera_projects",
+            )
             if pid:
                 conn.execute(
-                    text("UPDATE rera_projects SET parcel_id = :pid WHERE id = :id AND parcel_id IS NULL"),
+                    text(
+                        "UPDATE rera_projects SET parcel_id = :pid WHERE id = :id AND parcel_id IS NULL"
+                    ),
                     {"pid": pid, "id": row.id},
                 )
                 stats["linked_rera"] += 1
@@ -132,12 +180,22 @@ def link_parcels(markets: list[str] | None = None) -> dict:
             if not norm:
                 stats["skipped"] += 1
                 continue
-            pid = _get_parcel_id(conn, row.village or "", norm, row.survey_no,
-                                  row.district, row.taluk, row.hobli, row.extent_sqft,
-                                  "registered_transactions")
+            pid = _get_parcel_id(
+                conn,
+                row.village or "",
+                norm,
+                row.survey_no,
+                row.district,
+                row.taluk,
+                row.hobli,
+                row.extent_sqft,
+                "registered_transactions",
+            )
             if pid:
                 conn.execute(
-                    text("UPDATE registered_transactions SET parcel_id = :pid WHERE id = :id AND parcel_id IS NULL"),
+                    text(
+                        "UPDATE registered_transactions SET parcel_id = :pid WHERE id = :id AND parcel_id IS NULL"
+                    ),
                     {"pid": pid, "id": row.id},
                 )
                 stats["linked_registered"] += 1
@@ -155,19 +213,34 @@ def link_parcels(markets: list[str] | None = None) -> dict:
             if not norm:
                 stats["skipped"] += 1
                 continue
-            pid = _get_parcel_id(conn, row.village or "", norm, row.survey_number,
-                                  row.district, row.taluk, row.hobli, row.area_sqft,
-                                  "kaveri_registrations")
+            pid = _get_parcel_id(
+                conn,
+                row.village or "",
+                norm,
+                row.survey_number,
+                row.district,
+                row.taluk,
+                row.hobli,
+                row.area_sqft,
+                "kaveri_registrations",
+            )
             if pid:
                 conn.execute(
-                    text("UPDATE kaveri_registrations SET parcel_id = :pid WHERE id = :id AND parcel_id IS NULL"),
+                    text(
+                        "UPDATE kaveri_registrations SET parcel_id = :pid WHERE id = :id AND parcel_id IS NULL"
+                    ),
                     {"pid": pid, "id": row.id},
                 )
                 stats["linked_kaveri"] += 1
 
-    logger.info("[ParcelLinker] Created {} parcels, linked rera={}, registered={}, kaveri={}, skipped={}",
-                 stats["created"], stats["linked_rera"], stats["linked_registered"],
-                 stats["linked_kaveri"], stats["skipped"])
+    logger.info(
+        "[ParcelLinker] Created {} parcels, linked rera={}, registered={}, kaveri={}, skipped={}",
+        stats["created"],
+        stats["linked_rera"],
+        stats["linked_registered"],
+        stats["linked_kaveri"],
+        stats["skipped"],
+    )
     return stats
 
 
@@ -196,7 +269,12 @@ def run_parcel_linker_nightly():
             return
         except Exception as exc:
             retries += 1
-            logger.warning("[ParcelLinker] Nightly run attempt {}/{} failed: {}", retries, max_retries + 1, exc)
+            logger.warning(
+                "[ParcelLinker] Nightly run attempt {}/{} failed: {}",
+                retries,
+                max_retries + 1,
+                exc,
+            )
             if retries > max_retries:
                 try:
                     with get_engine().begin() as conn:
@@ -207,7 +285,9 @@ def run_parcel_linker_nightly():
                                 VALUES ('parcel_linker', 'system', 'parcel_linker_nightly',
                                         'failed', :notes)
                             """),
-                            {"notes": f"Failed after {max_retries + 1} attempts: {exc}"},
+                            {
+                                "notes": f"Failed after {max_retries + 1} attempts: {exc}"
+                            },
                         )
                 except Exception as log_exc:
                     logger.warning("[ParcelLinker] Failed to log failure: {}", log_exc)

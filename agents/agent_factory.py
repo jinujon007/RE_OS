@@ -18,6 +18,7 @@ Usage:
     >>> from agents.agent_factory import sync_registry_to_db
     >>> sync_registry_to_db()  # startup sync
 """
+
 from __future__ import annotations
 
 import json as _json
@@ -31,10 +32,19 @@ _MAX_SPEC_BYTES: int = 1_048_576
 
 _VALID_MARKETS: frozenset[str] = frozenset({"Yelahanka", "Devanahalli", "Hebbal"})
 _VALID_LLM_TIERS: frozenset[str] = frozenset({"heavy", "analysis", "light"})
-_VALID_DEPARTMENTS: frozenset[str] = frozenset({
-    "bd", "engineering", "finance", "legal", "ops", "process", "scout", "board",
-    "operations",
-})
+_VALID_DEPARTMENTS: frozenset[str] = frozenset(
+    {
+        "bd",
+        "engineering",
+        "finance",
+        "legal",
+        "ops",
+        "process",
+        "scout",
+        "board",
+        "operations",
+    }
+)
 _REQUIRED_SPEC_FIELDS: tuple[str, ...] = ("id", "name", "role", "persona", "llm_tier")
 
 _TOOL_REGISTRY: dict[str, type] = {}
@@ -51,14 +61,25 @@ def _get_tool_registry() -> dict[str, type]:
         return _TOOL_REGISTRY
     try:
         from agents.analyst_agent import (
-            MarketSummaryTool, CompetitorAnalysisTool,
-            DistressedDeveloperListTool, ReportGeneratorTool,
-            FeasibilityTool, FeasibilityAnalystTool, IntelSearchTool,
+            MarketSummaryTool,
+            CompetitorAnalysisTool,
+            DistressedDeveloperListTool,
+            ReportGeneratorTool,
+            FeasibilityTool,
+            FeasibilityAnalystTool,
+            IntelSearchTool,
         )
-        from agents.architect_agent import FSICalculatorTool, TypologyRecommenderTool, GreenCoverageTool
+        from agents.architect_agent import (
+            FSICalculatorTool,
+            TypologyRecommenderTool,
+            GreenCoverageTool,
+        )
         from agents.board_room.legal_head import (
-            RERAComplianceTool, ZoneRiskTool, EncumbranceCheckTool,
+            RERAComplianceTool,
+            ZoneRiskTool,
+            EncumbranceCheckTool,
         )
+
         _TOOL_REGISTRY = {
             "MarketSummaryTool": MarketSummaryTool,
             "CompetitorAnalysisTool": CompetitorAnalysisTool,
@@ -76,7 +97,8 @@ def _get_tool_registry() -> dict[str, type]:
         }
     except Exception as exc:
         logger.opt(exception=True).warning(
-            "[AgentFactory] Tool registry partially loaded: {exc}", exc=exc,
+            "[AgentFactory] Tool registry partially loaded: {exc}",
+            exc=exc,
         )
     return _TOOL_REGISTRY
 
@@ -137,7 +159,9 @@ def load_spec(yaml_path: Path) -> dict[str, Any]:
         logger.warning(
             "[AgentFactory] Unknown department '{dept}' in {name} — "
             "valid departments: {valid}",
-            dept=dept, name=yaml_path.name, valid=", ".join(sorted(_VALID_DEPARTMENTS)),
+            dept=dept,
+            name=yaml_path.name,
+            valid=", ".join(sorted(_VALID_DEPARTMENTS)),
         )
 
     markets = spec.get("markets")
@@ -157,7 +181,9 @@ def load_spec(yaml_path: Path) -> dict[str, Any]:
                 logger.warning(
                     "[AgentFactory] Unknown market '{market}' in {name}. "
                     "Known markets: {known}",
-                    market=m, name=yaml_path.name, known=", ".join(sorted(_VALID_MARKETS)),
+                    market=m,
+                    name=yaml_path.name,
+                    known=", ".join(sorted(_VALID_MARKETS)),
                 )
 
     tools = spec.get("tools")
@@ -202,14 +228,15 @@ def build_agent_from_spec(spec: dict[str, Any]):
 
     tool_registry = _get_tool_registry()
     tools = []
-    for tool_name in (spec.get("tools") or []):
+    for tool_name in spec.get("tools") or []:
         tool_cls = tool_registry.get(tool_name)
         if tool_cls:
             tools.append(tool_cls())
         else:
             logger.warning(
                 "[AgentFactory] Unknown tool '{tool}' in spec '{id}' — skipped",
-                tool=tool_name, id=spec.get("id", "?"),
+                tool=tool_name,
+                id=spec.get("id", "?"),
             )
 
     backstory = spec["persona"]
@@ -252,7 +279,9 @@ def scan_registry(registry_dir: Path | None = None) -> list[dict[str, Any]]:
         logger.debug("[AgentFactory] Registry directory not found: {path}", path=target)
         return []
     if not target.is_dir():
-        logger.warning("[AgentFactory] Registry path is not a directory: {path}", path=target)
+        logger.warning(
+            "[AgentFactory] Registry path is not a directory: {path}", path=target
+        )
         return []
 
     specs: list[dict[str, Any]] = []
@@ -265,7 +294,8 @@ def scan_registry(registry_dir: Path | None = None) -> list[dict[str, Any]]:
         except Exception as exc:
             logger.opt(exception=True).warning(
                 "[AgentFactory] Skipping {name}: {exc}",
-                name=yaml_file.name, exc=exc,
+                name=yaml_file.name,
+                exc=exc,
             )
 
     return specs
@@ -333,7 +363,8 @@ def sync_registry_to_db(registry_dir: Path | None = None) -> int:
     except Exception as exc:
         logger.opt(exception=True).error(
             "[AgentFactory] DB sync failed after {count} records: {exc}",
-            count=synced, exc=exc,
+            count=synced,
+            exc=exc,
         )
         return synced
 
@@ -363,6 +394,7 @@ def create_agent_from_yaml(yaml_content: str) -> dict[str, Any]:
         ValueError: If the YAML is invalid, empty, or fails validation.
     """
     import yaml
+
     raw = yaml.safe_load(yaml_content)
     if raw is None:
         raise ValueError("Empty YAML content — no agent spec provided")
@@ -374,7 +406,9 @@ def create_agent_from_yaml(yaml_content: str) -> dict[str, Any]:
         if not spec.get(field):
             raise ValueError(f"Missing required field: '{field}'")
         if not isinstance(spec[field], str):
-            raise ValueError(f"Field '{field}' must be a string, got {type(spec[field]).__name__}")
+            raise ValueError(
+                f"Field '{field}' must be a string, got {type(spec[field]).__name__}"
+            )
     tier = spec["llm_tier"]
     if tier not in _VALID_LLM_TIERS:
         raise ValueError(
@@ -396,7 +430,9 @@ if __name__ == "__main__":
 
     print(f"[AgentFactory] Found {len(specs)} agent spec(s) in registry:\n")
     for s in specs:
-        print(f"  📋 {s['id']:35s} | {s['name']:20s} | tier={s['llm_tier']:9s} | ", end="")
+        print(
+            f"  📋 {s['id']:35s} | {s['name']:20s} | tier={s['llm_tier']:9s} | ", end=""
+        )
         markets = s.get("markets", [])
         print(f"markets={markets}" if markets else "no markets")
 
@@ -404,7 +440,9 @@ if __name__ == "__main__":
     for s in specs:
         try:
             agent = build_agent_from_spec(s)
-            print(f"  ✅ {s['id']:35s} → Agent(role={agent.role!r}, tools={len(agent.tools)}, max_iter={agent.max_iter})")
+            print(
+                f"  ✅ {s['id']:35s} → Agent(role={agent.role!r}, tools={len(agent.tools)}, max_iter={agent.max_iter})"
+            )
         except Exception as exc:
             print(f"  ❌ {s['id']:35s} → FAILED: {exc}")
 

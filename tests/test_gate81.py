@@ -10,6 +10,7 @@ Six assertions:
 
 All pass → GATE-81 ✅.
 """
+
 import subprocess
 import sys
 from pathlib import Path
@@ -48,8 +49,17 @@ def _index_exists(conn, tablename: str, indexname: str) -> bool:
 def test_alembic_single_head():
     """Assertion 1: alembic has exactly 1 head."""
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests/test_alembic_health.py", "-q", "--tb=short"],
-        capture_output=True, text=True, cwd=Path(__file__).parents[1],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_alembic_health.py",
+            "-q",
+            "--tb=short",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).parents[1],
     )
     assert result.returncode == 0, (
         f"Alembic head test failed:\n{result.stdout}\n{result.stderr}"
@@ -90,10 +100,18 @@ def test_data_integrity_suite_passes():
     """Assertion 6: all 6 test_data_integrity.py assertions pass."""
     result = subprocess.run(
         [
-            sys.executable, "-m", "pytest",
-            "tests/test_data_integrity.py", "-m", "integration", "-q", "--tb=short",
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_data_integrity.py",
+            "-m",
+            "integration",
+            "-q",
+            "--tb=short",
         ],
-        capture_output=True, text=True, cwd=Path(__file__).parents[1],
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).parents[1],
     )
     assert result.returncode == 0, (
         f"Data integrity suite failed:\n{result.stdout}\n{result.stderr}"

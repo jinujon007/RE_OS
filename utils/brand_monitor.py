@@ -38,7 +38,12 @@ def _classify_mention_text(text: str, brand: str) -> str:
             return "project_launch"
         if "award" in tl or "recognition" in tl or "ranking" in tl:
             return "award_recognition"
-        if "partner" in tl or "collaboration" in tl or "tie-up" in tl or "alliance" in tl:
+        if (
+            "partner" in tl
+            or "collaboration" in tl
+            or "tie-up" in tl
+            or "alliance" in tl
+        ):
             return "partnership"
         if "price" in tl or "rate" in tl or "valuation" in tl:
             return "pricing_news"
@@ -60,6 +65,7 @@ def _format_dt(dt_val: Any) -> str:
 def _try_emit_metrics(success: bool) -> None:
     try:
         from config.metrics import scraper_runs_total
+
         scraper_runs_total.labels(
             source="brand_monitor",
             market="system",
@@ -91,7 +97,9 @@ def _collect_brand_mentions(brand: str = "LLS", days: int = 7) -> list[dict]:
 
         patterns = _brand_sql_patterns(brand)
         if not patterns:
-            logger.debug("[BrandMonitor:{}] No patterns for brand '{}'", correlation_id, brand)
+            logger.debug(
+                "[BrandMonitor:{}] No patterns for brand '{}'", correlation_id, brand
+            )
             return results
 
         filtered_since = datetime.now(timezone.utc) - timedelta(days=max(1, days))
@@ -115,23 +123,33 @@ def _collect_brand_mentions(brand: str = "LLS", days: int = 7) -> list[dict]:
         for row in rows:
             content = row[2] or ""
             mention_type = _classify_mention_text(content, brand)
-            results.append({
-                "article_id": str(row[0]),
-                "title": row[1] or "",
-                "sentiment_label": row[3] or "unscored",
-                "mention_type": mention_type,
-                "published_at": _format_dt(row[6]),
-                "source": row[5] or row[4] or "unknown",
-            })
+            results.append(
+                {
+                    "article_id": str(row[0]),
+                    "title": row[1] or "",
+                    "sentiment_label": row[3] or "unscored",
+                    "mention_type": mention_type,
+                    "published_at": _format_dt(row[6]),
+                    "source": row[5] or row[4] or "unknown",
+                }
+            )
 
         _MONITOR_RUNS_TOTAL["ok"] += 1
         _try_emit_metrics(True)
-        logger.debug("[BrandMonitor:{}] Found {} mentions for '{}' ({}d)", correlation_id, len(results), brand, days)
+        logger.debug(
+            "[BrandMonitor:{}] Found {} mentions for '{}' ({}d)",
+            correlation_id,
+            len(results),
+            brand,
+            days,
+        )
 
     except BaseException as exc:
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
-        logger.warning("[BrandMonitor:{}] Scan failed for '{}': {}", correlation_id, brand, exc)
+        logger.warning(
+            "[BrandMonitor:{}] Scan failed for '{}': {}", correlation_id, brand, exc
+        )
         _MONITOR_RUNS_TOTAL["fail"] += 1
         _try_emit_metrics(False)
 
@@ -163,14 +181,15 @@ def _truncate_utf8_safe(text: str, max_bytes: int) -> str:
     while len(result.encode("utf-8")) > max_bytes:
         result = result[:-1]
     max_bytes_suffix = "..."
-    result = result[:max(0, max_bytes - len(max_bytes_suffix))]
+    result = result[: max(0, max_bytes - len(max_bytes_suffix))]
     while len((result + max_bytes_suffix).encode("utf-8")) > max_bytes:
         result = result[:-1]
     return result + max_bytes_suffix
 
 
-def format_pr_brief_digest(mentions: list[dict], launches: list[dict],
-                            linkedin_preview: str = "") -> str:
+def format_pr_brief_digest(
+    mentions: list[dict], launches: list[dict], linkedin_preview: str = ""
+) -> str:
     """Format a PR brief digest for Discord (≤1500 bytes).
 
     Args:

@@ -1,10 +1,20 @@
 """Tests for Sprint 65 — Interface Layer (Telegram Bot + Formatters)"""
+
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
-from interface.telegram_bot import parse_message, dispatch_evaluation, ParsedFieldMessage
-from interface.formatters import format_telegram_verdict, format_opportunity_alert, format_error
+from interface.telegram_bot import (
+    parse_message,
+    dispatch_evaluation,
+    ParsedFieldMessage,
+)
+from interface.formatters import (
+    format_telegram_verdict,
+    format_opportunity_alert,
+    format_error,
+)
 
 
 class TestParseMessage:
@@ -69,12 +79,19 @@ class TestDispatchEvaluation:
 
     def test_calls_evaluate_endpoint(self):
         msg = ParsedFieldMessage(
-            market="Yelahanka", area_acres=5.0, area_sqft=5*43560,
-            ask_psf=5200, deal_type="jd", confidence=0.85
+            market="Yelahanka",
+            area_acres=5.0,
+            area_sqft=5 * 43560,
+            ask_psf=5200,
+            deal_type="jd",
+            confidence=0.85,
         )
         with patch("httpx.post") as mock_post:
             mock_post.return_value.status_code = 200
-            mock_post.return_value.json.return_value = {"job_id": "abc123", "status": "running"}
+            mock_post.return_value.json.return_value = {
+                "job_id": "abc123",
+                "status": "running",
+            }
             result = dispatch_evaluation(msg)
             assert result["job_id"] == "abc123"
             mock_post.assert_called_once()
@@ -83,9 +100,18 @@ class TestDispatchEvaluation:
 class TestFormatters:
     def test_format_verdict_urgent(self):
         v = format_telegram_verdict(
-            market="Yelahanka", survey_no="45/2", score=0.85,
-            components={"irr": 0.9, "legal": 0.8, "timing": 0.7, "distress": 0.3, "exclusivity": 0.5},
-            legal_risk="CLEAR", next_action="URGENT action"
+            market="Yelahanka",
+            survey_no="45/2",
+            score=0.85,
+            components={
+                "irr": 0.9,
+                "legal": 0.8,
+                "timing": 0.7,
+                "distress": 0.3,
+                "exclusivity": 0.5,
+            },
+            legal_risk="CLEAR",
+            next_action="URGENT action",
         )
         assert "URGENT" in v
         assert "Yelahanka" in v
@@ -93,15 +119,26 @@ class TestFormatters:
 
     def test_format_verdict_observe(self):
         v = format_telegram_verdict(
-            market="Hebbal", survey_no="12/3", score=0.25,
-            components={"irr": 0.2, "legal": 0.3, "timing": 0.4, "distress": 0.1, "exclusivity": 0.2},
-            legal_risk="UNKNOWN", next_action="HOLD"
+            market="Hebbal",
+            survey_no="12/3",
+            score=0.25,
+            components={
+                "irr": 0.2,
+                "legal": 0.3,
+                "timing": 0.4,
+                "distress": 0.1,
+                "exclusivity": 0.2,
+            },
+            legal_risk="UNKNOWN",
+            next_action="HOLD",
         )
         assert "OBSERVE" in v or "HOLD" in v
         assert len(v) <= 1200
 
     def test_format_opportunity_alert(self):
-        alert = format_opportunity_alert("45/2", 0.85, "Yelahanka", "URGENT — initiate DD")
+        alert = format_opportunity_alert(
+            "45/2", 0.85, "Yelahanka", "URGENT — initiate DD"
+        )
         assert "45/2" in alert
         assert "85%" in alert or "0.85" in alert
 

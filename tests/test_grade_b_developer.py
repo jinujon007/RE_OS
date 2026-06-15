@@ -5,6 +5,7 @@ Three assertions:
 2. DeveloperScout.scout_grade_b processes a Grade B developer without error
 3. Grade B projects are tagged with developer_grade='B'
 """
+
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -36,18 +37,39 @@ class TestGradeBDeveloperRegistry:
         from scrapers.developer_scout import DeveloperScout, ScoutMemory
 
         with patch.object(ScoutMemory, "is_known", return_value=False):
-            with patch.object(ScoutMemory, "mark_all", return_value=([{"project_name": "Test", "cid": "abc"}], [])):
+            with patch.object(
+                ScoutMemory,
+                "mark_all",
+                return_value=([{"project_name": "Test", "cid": "abc"}], []),
+            ):
                 scout = DeveloperScout.__new__(DeveloperScout)
                 scout.market = "Yelahanka"
                 scout.memory = ScoutMemory("Yelahanka")
                 scout.session = MagicMock()
 
-                with patch.object(scout, "_requests_fetch_raw", return_value="<html><body>" + "Project " * 200 + "</body></html>"):
-                    with patch("scrapers.developer_scout._clean_html", return_value="Test Project Yelahanka 2 BHK starting 45 lakhs. " * 20):
-                        with patch("scrapers.developer_scout._ai_extract_developer", return_value=[
-                            {"project_name": "Test Garden", "locality": "Yelahanka", "status": "New Launch"}
-                        ]):
-                            results = scout._scout_grade_b_developer("Test Dev", "https://test.dev/projects")
+                with patch.object(
+                    scout,
+                    "_requests_fetch_raw",
+                    return_value="<html><body>" + "Project " * 200 + "</body></html>",
+                ):
+                    with patch(
+                        "scrapers.developer_scout._clean_html",
+                        return_value="Test Project Yelahanka 2 BHK starting 45 lakhs. "
+                        * 20,
+                    ):
+                        with patch(
+                            "scrapers.developer_scout._ai_extract_developer",
+                            return_value=[
+                                {
+                                    "project_name": "Test Garden",
+                                    "locality": "Yelahanka",
+                                    "status": "New Launch",
+                                }
+                            ],
+                        ):
+                            results = scout._scout_grade_b_developer(
+                                "Test Dev", "https://test.dev/projects"
+                            )
 
         assert len(results) >= 1, "Expected at least one finding from Grade B developer"
         assert results[0].get("developer_grade") == "B", (
@@ -59,24 +81,44 @@ class TestGradeBDeveloperRegistry:
         from scrapers.developer_scout import DeveloperScout, ScoutMemory
 
         with patch.object(ScoutMemory, "is_known", return_value=False):
-            with patch.object(ScoutMemory, "mark_all", return_value=(
-                [
-                    {"project_name": "A", "cid": "a"},
-                    {"project_name": "B", "cid": "b"},
-                ], []
-            )):
+            with patch.object(
+                ScoutMemory,
+                "mark_all",
+                return_value=(
+                    [
+                        {"project_name": "A", "cid": "a"},
+                        {"project_name": "B", "cid": "b"},
+                    ],
+                    [],
+                ),
+            ):
                 scout = DeveloperScout.__new__(DeveloperScout)
                 scout.market = "Hebbal"
                 scout.memory = ScoutMemory("Hebbal")
                 scout.session = MagicMock()
 
-                with patch.object(scout, "_requests_fetch_raw", return_value="<html>" + "content " * 200 + "</html>"):
-                    with patch("scrapers.developer_scout._clean_html", return_value="North Bangalore project. " * 20):
-                        with patch("scrapers.developer_scout._ai_extract_developer", return_value=[
-                            {"project_name": "Green Homes", "locality": "Yelahanka"},
-                            {"project_name": "Lake View", "locality": "Hebbal"},
-                        ]):
-                            results = scout._scout_grade_b_developer("Builder Co", "https://builder.co/projects")
+                with patch.object(
+                    scout,
+                    "_requests_fetch_raw",
+                    return_value="<html>" + "content " * 200 + "</html>",
+                ):
+                    with patch(
+                        "scrapers.developer_scout._clean_html",
+                        return_value="North Bangalore project. " * 20,
+                    ):
+                        with patch(
+                            "scrapers.developer_scout._ai_extract_developer",
+                            return_value=[
+                                {
+                                    "project_name": "Green Homes",
+                                    "locality": "Yelahanka",
+                                },
+                                {"project_name": "Lake View", "locality": "Hebbal"},
+                            ],
+                        ):
+                            results = scout._scout_grade_b_developer(
+                                "Builder Co", "https://builder.co/projects"
+                            )
 
         assert len(results) >= 1
         for r in results:

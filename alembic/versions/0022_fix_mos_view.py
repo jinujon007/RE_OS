@@ -12,6 +12,7 @@ Adds:
 Migration chain:
   0021_compliance_feedback -> 0022_fix_mos_view
 """
+
 from typing import Sequence, Union
 from alembic import op
 

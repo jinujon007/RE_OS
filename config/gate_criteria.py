@@ -74,4 +74,6 @@ SLO_RERA_FRESHNESS_HOURS: int = 48
 SLO_IGR_FRESHNESS_HOURS: int = 48
 SLO_KAVERI_FRESHNESS_HOURS: int = 168  # 7 days
 SLO_SEED_STALE_DAYS: int = 7  # Seed listings older than this are flagged
-SLO_SEED_MIN_LIVE_LISTINGS: int = 10  # If live scrape returns >= this, seed should be replaced
+SLO_SEED_MIN_LIVE_LISTINGS: int = (
+    10  # If live scrape returns >= this, seed should be replaced
+)

@@ -7,12 +7,14 @@
 (4) buyer_type inference: company/trust/individual
 (5) ingest_log row: plugin run creates records
 """
+
 import json
 import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
+
 pytestmark = pytest.mark.unit
 
 from ingest.plugins.kaveri_deeds_plugin import (
@@ -36,7 +38,11 @@ def test_entity_type_registered():
 def test_composite_conflict_registered():
     """Assert registered_transactions has composite conflict key in writer."""
     assert "registered_transactions" in _COMPOSITE_CONFLICT
-    assert _COMPOSITE_CONFLICT["registered_transactions"] == ("sro", "doc_no", "reg_date")
+    assert _COMPOSITE_CONFLICT["registered_transactions"] == (
+        "sro",
+        "doc_no",
+        "reg_date",
+    )
 
 
 # ── PSF bounds ──────────────────────────────────────────────────────────────
@@ -108,8 +114,18 @@ def test_read_checkpoint(tmp_path):
     checkpoint_dir.mkdir(parents=True)
     fpath = checkpoint_dir / "kaveri_deeds_inbox_20260612.json"
     records = [
-        {"doc_no": "1/2026", "reg_date": "2026-01-01", "sro": "Yelahanka", "village": "Jakkur"},
-        {"doc_no": "2/2026", "reg_date": "2026-01-02", "sro": "Yelahanka", "village": "Allalasandra"},
+        {
+            "doc_no": "1/2026",
+            "reg_date": "2026-01-01",
+            "sro": "Yelahanka",
+            "village": "Jakkur",
+        },
+        {
+            "doc_no": "2/2026",
+            "reg_date": "2026-01-02",
+            "sro": "Yelahanka",
+            "village": "Allalasandra",
+        },
     ]
     fpath.write_text(json.dumps({"records": records}))
 
@@ -184,7 +200,9 @@ def test_source_id_truncation():
     record = plugin._build_record(raw, "Yelahanka", 0)
     assert record is not None
     # source_id should be truncated to 100 chars
-    assert len(record.source_id) <= 100, f"source_id {len(record.source_id)} > 100: {record.source_id}"
+    assert len(record.source_id) <= 100, (
+        f"source_id {len(record.source_id)} > 100: {record.source_id}"
+    )
 
 
 def test_source_id_truncation_31k():
@@ -220,7 +238,12 @@ def test_plugin_validation():
         entity_type="registered_transaction",
         source_id="test",
         market="Yelahanka",
-        data={"doc_no": "1", "reg_date": "2026-01-01", "sro": "Yelahanka", "data_source": "kaveri_inbox"},
+        data={
+            "doc_no": "1",
+            "reg_date": "2026-01-01",
+            "sro": "Yelahanka",
+            "data_source": "kaveri_inbox",
+        },
     )
     result = plugin.validate(rec)
     assert result.valid
@@ -230,7 +253,11 @@ def test_plugin_validation():
         entity_type="registered_transaction",
         source_id="test",
         market="Yelahanka",
-        data={"reg_date": "2026-01-01", "sro": "Yelahanka", "data_source": "kaveri_inbox"},
+        data={
+            "reg_date": "2026-01-01",
+            "sro": "Yelahanka",
+            "data_source": "kaveri_inbox",
+        },
     )
     result2 = plugin.validate(rec2)
     assert not result2.valid

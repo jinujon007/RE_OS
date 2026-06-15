@@ -1,7 +1,9 @@
 """Unit tests for PeerBenchmarkEngine (T-990 — Sprint 57 GATE-65)."""
+
 import pytest
 from unittest.mock import patch, MagicMock
 import importlib
+
 pytestmark = pytest.mark.unit
 
 
@@ -78,8 +80,11 @@ def test_peer_benchmark_handles_db_error():
 
 
 def test_intel_registry_attaches_peer_benchmark():
-    with patch("intelligence.peer_benchmark.PeerBenchmarkEngine.compute") as mock_compute:
+    with patch(
+        "intelligence.peer_benchmark.PeerBenchmarkEngine.compute"
+    ) as mock_compute:
         from intelligence.registry import IntelRegistry, IntelPackage
+
         pkg = IntelPackage(survey_no="45/2", market="Yelahanka", collected_at="now")
         assert hasattr(pkg, "peer_benchmark")
         assert pkg.peer_benchmark is None

@@ -1,4 +1,5 @@
 """Shared SQLAlchemy engine factory for RE_OS."""
+
 import threading
 from contextlib import contextmanager
 
@@ -31,6 +32,7 @@ def get_engine(pool_size: int = 10, max_overflow: int = 5):
 def _get_db_query_histogram():
     """Lazy-import to avoid circular import at module level on app start."""
     from config.metrics import db_query_duration_seconds
+
     return db_query_duration_seconds
 
 

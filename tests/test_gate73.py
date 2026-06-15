@@ -21,7 +21,7 @@ def _mock_engine_with_rows(rows):
     conn = MagicMock()
     conn.execute.return_value.fetchall.return_value = rows
     conn.execute.return_value.fetchone.return_value = rows[0] if rows else None
-    conn.execute.return_value.scalar.return_value = (rows[0][0] if rows else 0)
+    conn.execute.return_value.scalar.return_value = rows[0][0] if rows else 0
     engine.connect.return_value.__enter__.return_value = conn
     engine.begin.return_value.__enter__.return_value = conn
     return engine, conn
@@ -48,9 +48,11 @@ def test_gate73_plugin_run_returns_list():
 def test_gate73_supply_pipeline_table_exists():
     from sqlalchemy import inspect
     from ingest.base import DataPlugin
+
     # Verify the table is defined in the migration by checking column names
     # that the migration script creates
     import pathlib
+
     migration = pathlib.Path("alembic/versions/0036_supply_pipeline.py").read_text()
     # Check that key columns are mentioned in the upgrade function
     assert "supply_pipeline" in migration
@@ -168,7 +170,10 @@ def test_gate73_market_supply_endpoint_returns_json():
 
             fetchall = MagicMock(return_value=[row])
             scalar = MagicMock(return_value=100)
-            conn.execute.side_effect = [MagicMock(fetchall=fetchall), MagicMock(scalar=scalar)]
+            conn.execute.side_effect = [
+                MagicMock(fetchall=fetchall),
+                MagicMock(scalar=scalar),
+            ]
 
             resp = client.get(
                 "/api/market/supply?market=Yelahanka",

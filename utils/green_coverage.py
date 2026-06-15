@@ -3,6 +3,7 @@ RE_OS — Green Coverage Estimator (Phase 5 — Engineering / BDA Compliance)
 Pure Python calculation of landscape area, tree count, and BDA minimum green
 coverage compliance. No LLM dependency.
 """
+
 from dataclasses import dataclass
 
 _SQFT_PER_TREE = 200

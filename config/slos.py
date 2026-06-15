@@ -26,11 +26,25 @@ class SourceSLO:
 _SLOS: list[SourceSLO] = [
     SourceSLO("news_scout", 24, "warning", "News articles should be scraped daily"),
     SourceSLO("portal_plugin", 168, "warning", "Listings should be refreshed weekly"),
-    SourceSLO("rera_karnataka", 48, "critical", "RERA project data refreshed via ingest engine"),
-    SourceSLO("igr_karnataka", 48, "warning", "IGR transaction data from portal or gazette"),
-    SourceSLO("kaveri_bhoomi", 168, "warning", "Kaveri/Bhoomi guidance values refreshed weekly"),
+    SourceSLO(
+        "rera_karnataka",
+        48,
+        "critical",
+        "RERA project data refreshed via ingest engine",
+    ),
+    SourceSLO(
+        "igr_karnataka", 48, "warning", "IGR transaction data from portal or gazette"
+    ),
+    SourceSLO(
+        "kaveri_bhoomi",
+        168,
+        "warning",
+        "Kaveri/Bhoomi guidance values refreshed weekly",
+    ),
     SourceSLO("developer_plugin", 336, "low", "Developer profiles change slowly"),
-    SourceSLO("distressed_plugin", 168, "low", "Distressed/auction data refreshed weekly"),
+    SourceSLO(
+        "distressed_plugin", 168, "low", "Distressed/auction data refreshed weekly"
+    ),
     SourceSLO("bbmp_plugin", 336, "low", "BBMP Khata data changes slowly"),
 ]
 
@@ -47,8 +61,14 @@ def check_slo(plugin_id: str, hours_since_update: float) -> tuple[bool, str]:
     if slo is None:
         return True, f"No SLO defined for {plugin_id}"
     if hours_since_update <= slo.max_age_hours:
-        return True, f"{plugin_id}: {hours_since_update:.0f}h <= {slo.max_age_hours}h SLO"
-    return False, f"{plugin_id}: {hours_since_update:.0f}h > {slo.max_age_hours}h SLO ({slo.severity})"
+        return (
+            True,
+            f"{plugin_id}: {hours_since_update:.0f}h <= {slo.max_age_hours}h SLO",
+        )
+    return (
+        False,
+        f"{plugin_id}: {hours_since_update:.0f}h > {slo.max_age_hours}h SLO ({slo.severity})",
+    )
 
 
 def all_slo_status(freshness: dict[str, dict]) -> dict:

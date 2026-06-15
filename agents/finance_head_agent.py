@@ -3,6 +3,7 @@ RE_OS -- Finance Head Agent (Phase 6 -- Finance Department)
 Standalone feasibility analyst for LLS land acquisition decisions.
 Uses LLS standard model: ₹2,200/sqft construction, 20% IRR threshold, 60:40 equity:debt.
 """
+
 from crewai import Agent
 from config.llm_router import get_analysis_llm
 from agents.analyst_agent import FeasibilityAnalystTool, FeasibilityTool

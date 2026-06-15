@@ -11,6 +11,7 @@ Modules:
     financial_intel   FinancialIntel.evaluate(...)         → FinancialEvaluation
     registry          IntelRegistry.get_full_picture(...)  → IntelPackage
 """
+
 from intelligence.market_intel import MarketIntel, MarketPulse
 from intelligence.demand_intel import DemandIntel, DemandSignals
 from intelligence.land_intel import LandIntel, LandPicture
@@ -19,10 +20,16 @@ from intelligence.financial_intel import FinancialIntel, FinancialEvaluation
 from intelligence.registry import IntelRegistry, IntelPackage
 
 __all__ = [
-    "MarketIntel", "MarketPulse",
-    "DemandIntel", "DemandSignals",
-    "LandIntel", "LandPicture",
-    "LegalIntel", "LegalPicture",
-    "FinancialIntel", "FinancialEvaluation",
-    "IntelRegistry", "IntelPackage",
+    "MarketIntel",
+    "MarketPulse",
+    "DemandIntel",
+    "DemandSignals",
+    "LandIntel",
+    "LandPicture",
+    "LegalIntel",
+    "LegalPicture",
+    "FinancialIntel",
+    "FinancialEvaluation",
+    "IntelRegistry",
+    "IntelPackage",
 ]

@@ -4,6 +4,7 @@ Resolves the two parallel branches that both diverged from 0029_lls_portfolio:
   - 0030_gcc_events  (merged 0029_lls_portfolio + 0029_operations)
   - 0031_token_usage (branched from 0029_lls_portfolio, Sprint 60)
 """
+
 from typing import Sequence, Tuple, Union
 from alembic import op
 

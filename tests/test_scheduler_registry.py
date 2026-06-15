@@ -1,4 +1,5 @@
 """Test that the scheduler has at least 15 registered jobs with unique IDs."""
+
 import re
 from pathlib import Path
 

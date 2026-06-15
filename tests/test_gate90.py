@@ -6,10 +6,12 @@
 (3) v2_ready=True when all thresholds met (mock)
 (4) dashboard/templates/v2_readiness.html exists
 """
+
 import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 pytestmark = pytest.mark.unit
 
 from starlette.testclient import TestClient
@@ -34,9 +36,15 @@ def _test_client(rows):
 
 def test_gate90_assertion_1_endpoint_exists():
     """A1: /api/ops/v2-readiness returns 200 with v2_ready key."""
-    engine = _test_client([
-        (0,), (0, 0), (0,), (True,), (None,),
-    ])
+    engine = _test_client(
+        [
+            (0,),
+            (0, 0),
+            (0,),
+            (True,),
+            (None,),
+        ]
+    )
     with patch("dashboard.app_fastapi._get_sa_engine", return_value=engine):
         resp = client.get("/api/ops/v2-readiness")
     assert resp.status_code == 200
@@ -46,9 +54,15 @@ def test_gate90_assertion_1_endpoint_exists():
 
 def test_gate90_assertion_2_not_ready():
     """A2: v2_ready=False when scheduler_days_running=0 (mock)."""
-    engine = _test_client([
-        (0,), (10, 0), (0,), (True,), (None,),
-    ])
+    engine = _test_client(
+        [
+            (0,),
+            (10, 0),
+            (0,),
+            (True,),
+            (None,),
+        ]
+    )
     with patch("dashboard.app_fastapi._get_sa_engine", return_value=engine):
         resp = client.get("/api/ops/v2-readiness")
     data = resp.json()
@@ -58,9 +72,15 @@ def test_gate90_assertion_2_not_ready():
 
 def test_gate90_assertion_3_ready():
     """A3: v2_ready=True when all thresholds met (mock)."""
-    engine = _test_client([
-        (7,), (10, 9), (2,), (True,), (45.3,),
-    ])
+    engine = _test_client(
+        [
+            (7,),
+            (10, 9),
+            (2,),
+            (True,),
+            (45.3,),
+        ]
+    )
     with patch("dashboard.app_fastapi._get_sa_engine", return_value=engine):
         resp = client.get("/api/ops/v2-readiness")
     data = resp.json()

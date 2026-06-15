@@ -50,7 +50,8 @@ class MonthlyIntelDigest:
 
     def _load_psf_mom(self, conn, market: str, result: MonthlyDigestResult) -> None:
         try:
-            row = conn.execute(text("""
+            row = conn.execute(
+                text("""
                 SELECT
                     PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_min_psf)
                     FILTER (WHERE snapshot_date >= NOW() - INTERVAL '30 days'),
@@ -59,19 +60,26 @@ class MonthlyIntelDigest:
                             AND snapshot_date < NOW() - INTERVAL '30 days')
                 FROM project_snapshots
                 WHERE micro_market_id = (SELECT id FROM micro_markets WHERE name = :market)
-            """), {"market": market}).fetchone()
+            """),
+                {"market": market},
+            ).fetchone()
             if row:
                 current_psf, prior_psf = row
                 if current_psf is not None and prior_psf is not None and prior_psf != 0:
-                    result.psf_mom_pct = round(((current_psf - prior_psf) / prior_psf) * 100, 2)
+                    result.psf_mom_pct = round(
+                        ((current_psf - prior_psf) / prior_psf) * 100, 2
+                    )
         except Exception as exc:
             logger.warning(f"[MonthlyIntelDigest] PSF MoM failed for {market}: {exc}")
 
     # ── Absorption trend ─────────────────────────────────────────────────────
 
-    def _load_absorption_trend(self, conn, market: str, result: MonthlyDigestResult) -> None:
+    def _load_absorption_trend(
+        self, conn, market: str, result: MonthlyDigestResult
+    ) -> None:
         try:
-            row = conn.execute(text("""
+            row = conn.execute(
+                text("""
                 SELECT
                     AVG(absorption_pct) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days'),
                     AVG(absorption_pct) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days'
@@ -79,83 +87,129 @@ class MonthlyIntelDigest:
                 FROM rera_projects
                 WHERE micro_market_id = (SELECT id FROM micro_markets WHERE name = :market)
                   AND absorption_pct IS NOT NULL
-            """), {"market": market}).fetchone()
+            """),
+                {"market": market},
+            ).fetchone()
             if row:
                 current_avg, prior_avg = row
                 if current_avg is not None and prior_avg is not None and prior_avg != 0:
-                    change_pct = (current_avg - prior_avg) / max(abs(prior_avg), 0.01) * 100
+                    change_pct = (
+                        (current_avg - prior_avg) / max(abs(prior_avg), 0.01) * 100
+                    )
                     if change_pct > ABSORPTION_ACCELERATE_THRESHOLD:
                         result.absorption_trend = "accelerating"
                     elif change_pct < -ABSORPTION_ACCELERATE_THRESHOLD:
                         result.absorption_trend = "decelerating"
         except Exception as exc:
-            logger.warning(f"[MonthlyIntelDigest] Absorption trend failed for {market}: {exc}")
+            logger.warning(
+                f"[MonthlyIntelDigest] Absorption trend failed for {market}: {exc}"
+            )
 
     # ── Pipeline supply ──────────────────────────────────────────────────────
 
-    def _load_pipeline_supply(self, conn, market: str, result: MonthlyDigestResult) -> None:
+    def _load_pipeline_supply(
+        self, conn, market: str, result: MonthlyDigestResult
+    ) -> None:
         try:
-            result.pipeline_supply_added = conn.execute(text("""
+            result.pipeline_supply_added = (
+                conn.execute(
+                    text("""
                 SELECT COALESCE(SUM(estimated_units), 0)
                 FROM supply_pipeline
                 WHERE market = :market AND created_at >= NOW() - INTERVAL '30 days'
-            """), {"market": market}).scalar() or 0
+            """),
+                    {"market": market},
+                ).scalar()
+                or 0
+            )
         except Exception as exc:
-            logger.warning(f"[MonthlyIntelDigest] Pipeline supply failed for {market}: {exc}")
+            logger.warning(
+                f"[MonthlyIntelDigest] Pipeline supply failed for {market}: {exc}"
+            )
 
     # ── GCC events ───────────────────────────────────────────────────────────
 
     def _load_gcc_events(self, conn, market: str, result: MonthlyDigestResult) -> None:
         try:
-            result.gcc_events_count = conn.execute(text("""
+            result.gcc_events_count = (
+                conn.execute(
+                    text("""
                 SELECT COUNT(*)
                 FROM gcc_events
                 WHERE corridor_market = :market AND event_date >= NOW() - INTERVAL '30 days'
-            """), {"market": market}).scalar() or 0
+            """),
+                    {"market": market},
+                ).scalar()
+                or 0
+            )
         except Exception as exc:
-            logger.warning(f"[MonthlyIntelDigest] GCC events failed for {market}: {exc}")
+            logger.warning(
+                f"[MonthlyIntelDigest] GCC events failed for {market}: {exc}"
+            )
 
     # ── Govt policy events ───────────────────────────────────────────────────
 
     def _load_govt_events(self, conn, market: str, result: MonthlyDigestResult) -> None:
         try:
-            result.govt_policy_events_count = conn.execute(text("""
+            result.govt_policy_events_count = (
+                conn.execute(
+                    text("""
                 SELECT COUNT(*)
                 FROM govt_policy_events
                 WHERE market = :market AND published_at >= NOW() - INTERVAL '30 days'
-            """), {"market": market}).scalar() or 0
+            """),
+                    {"market": market},
+                ).scalar()
+                or 0
+            )
         except Exception as exc:
-            logger.warning(f"[MonthlyIntelDigest] Govt events failed for {market}: {exc}")
+            logger.warning(
+                f"[MonthlyIntelDigest] Govt events failed for {market}: {exc}"
+            )
 
     # ── Top opportunities ────────────────────────────────────────────────────
 
-    def _load_top_opportunities(self, conn, market: str, result: MonthlyDigestResult) -> None:
+    def _load_top_opportunities(
+        self, conn, market: str, result: MonthlyDigestResult
+    ) -> None:
         try:
-            rows = conn.execute(text("""
+            rows = conn.execute(
+                text("""
                 SELECT survey_no, micro_market, composite_score, timing_score
                 FROM opportunity_scores
                 WHERE micro_market = :market
                 ORDER BY composite_score DESC
                 LIMIT 3
-            """), {"market": market}).fetchall()
+            """),
+                {"market": market},
+            ).fetchall()
             result.top_opportunities = [
-                {"survey_no": r[0], "market": r[1], "composite_score": float(r[2]), "timing_score": float(r[3])}
+                {
+                    "survey_no": r[0],
+                    "market": r[1],
+                    "composite_score": float(r[2]),
+                    "timing_score": float(r[3]),
+                }
                 for r in rows
             ]
         except Exception as exc:
-            logger.warning(f"[MonthlyIntelDigest] Top opportunities failed for {market}: {exc}")
+            logger.warning(
+                f"[MonthlyIntelDigest] Top opportunities failed for {market}: {exc}"
+            )
 
     # ── LLM synthesis ────────────────────────────────────────────────────────
 
     def _generate_synthesis(self, market: str, result: MonthlyDigestResult) -> str:
         try:
             from config.llm_router import get_analysis_llm
+
             prompt = self._build_synthesis_prompt(market, result)
             llm = get_analysis_llm()
-            response = llm.generate_response(messages=[{"role": "user", "content": prompt}])
-            text = (
-                getattr(response, "content", None)
-                or (response if isinstance(response, str) else "")
+            response = llm.generate_response(
+                messages=[{"role": "user", "content": prompt}]
+            )
+            text = getattr(response, "content", None) or (
+                response if isinstance(response, str) else ""
             )
             text = text.strip()
             words = text.split()

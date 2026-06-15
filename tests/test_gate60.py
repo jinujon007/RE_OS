@@ -1,11 +1,14 @@
 """GATE-60 declaration — QLoRA RERA extractor + Telegram webhook live."""
+
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 
 def test_gate60_rera_extractor_regex_fallback():
     from utils.rera_extractor import RERAExtractor
+
     ext = RERAExtractor()
     ext._model_available = False
     ext._model_last_check = 0
@@ -30,6 +33,7 @@ def test_gate60_rera_extractor_regex_fallback():
 
 def test_gate60_rera_extractor_empty_input():
     from utils.rera_extractor import RERAExtractor
+
     ext = RERAExtractor()
     ext._model_available = False
     result = ext.extract("")
@@ -56,6 +60,7 @@ def test_gate60_training_data_generates_jsonl():
         mock_conn.execute.return_value.fetchall.return_value = mock_rows
         mock_engine.return_value.connect.return_value.__enter__.return_value = mock_conn
         from scripts.generate_rera_training_data import generate_training_data
+
         records = generate_training_data("Yelahanka")
         assert len(records) >= 100
 
@@ -64,6 +69,7 @@ def test_gate60_telegram_webhook_returns_200():
     import config.settings as _cfg
     from fastapi.testclient import TestClient
     from dashboard.app_fastapi import app
+
     client = TestClient(app, raise_server_exceptions=False)
     update = {
         "update_id": 1,

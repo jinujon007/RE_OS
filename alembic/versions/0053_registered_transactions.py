@@ -4,6 +4,7 @@ Revision ID: 0053_registered_transactions
 Revises: 0052_board_session_timing
 Create Date: 2026-06-12
 """
+
 from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
@@ -17,7 +18,12 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.create_table(
         "registered_transactions",
-        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), primary_key=True),
+        sa.Column(
+            "id",
+            sa.UUID(),
+            server_default=sa.text("gen_random_uuid()"),
+            primary_key=True,
+        ),
         sa.Column("doc_no", sa.Text(), nullable=False),
         sa.Column("reg_date", sa.Date(), nullable=False),
         sa.Column("sro", sa.Text(), nullable=False),
@@ -35,9 +41,24 @@ def upgrade() -> None:
         sa.Column("buyer_type", sa.Text(), nullable=True),
         sa.Column("data_source", sa.Text(), nullable=False),
         sa.Column("source_ref", sa.Text(), nullable=True),
-        sa.Column("extraction_confidence", sa.Text(), server_default=sa.text("'medium'"), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("NOW()"), nullable=True),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("NOW()"), nullable=True),
+        sa.Column(
+            "extraction_confidence",
+            sa.Text(),
+            server_default=sa.text("'medium'"),
+            nullable=True,
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("NOW()"),
+            nullable=True,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("NOW()"),
+            nullable=True,
+        ),
     )
 
     op.create_unique_constraint(
@@ -72,9 +93,21 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("idx_registered_transactions_sro_date", table_name="registered_transactions")
-    op.drop_index("idx_registered_transactions_survey_no", table_name="registered_transactions")
-    op.drop_index("idx_registered_transactions_village_date", table_name="registered_transactions")
-    op.drop_constraint("ck_registered_transactions_consideration", "registered_transactions", type_="check")
-    op.drop_constraint("uq_registered_transactions_key", "registered_transactions", type_="unique")
+    op.drop_index(
+        "idx_registered_transactions_sro_date", table_name="registered_transactions"
+    )
+    op.drop_index(
+        "idx_registered_transactions_survey_no", table_name="registered_transactions"
+    )
+    op.drop_index(
+        "idx_registered_transactions_village_date", table_name="registered_transactions"
+    )
+    op.drop_constraint(
+        "ck_registered_transactions_consideration",
+        "registered_transactions",
+        type_="check",
+    )
+    op.drop_constraint(
+        "uq_registered_transactions_key", "registered_transactions", type_="unique"
+    )
     op.drop_table("registered_transactions")

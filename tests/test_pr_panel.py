@@ -1,6 +1,8 @@
 """Unit tests for PR Studio dashboard panel (Sprint 59, T-1000)."""
+
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 from starlette.testclient import TestClient
@@ -28,8 +30,12 @@ class TestPRPanel:
         assert "Competitor Moves" in html
 
     def test_pr_mentions_returns_200(self, client):
-        with patch("intelligence.competitive_intel.CompetitiveIntelEngine") as mock_engine, \
-             patch("utils.db.get_engine") as mock_db:
+        with (
+            patch(
+                "intelligence.competitive_intel.CompetitiveIntelEngine"
+            ) as mock_engine,
+            patch("utils.db.get_engine") as mock_db,
+        ):
             mock_db.return_value.connect.return_value.__enter__.return_value.execute.return_value.fetchall.return_value = []
             mock_engine_instance = MagicMock()
             mock_engine_instance.new_launches.return_value = []
@@ -42,8 +48,12 @@ class TestPRPanel:
             assert "mention_count" in data
 
     def test_pr_mentions_defaults_to_7_days(self, client):
-        with patch("intelligence.competitive_intel.CompetitiveIntelEngine") as mock_engine, \
-             patch("utils.db.get_engine") as mock_db:
+        with (
+            patch(
+                "intelligence.competitive_intel.CompetitiveIntelEngine"
+            ) as mock_engine,
+            patch("utils.db.get_engine") as mock_db,
+        ):
             mock_db.return_value.connect.return_value.__enter__.return_value.execute.return_value.fetchall.return_value = []
             mock_engine_instance = MagicMock()
             mock_engine_instance.new_launches.return_value = []
@@ -53,8 +63,12 @@ class TestPRPanel:
             assert resp.json()["days_window"] == 7
 
     def test_pr_mentions_handles_db_error(self, client):
-        with patch("intelligence.competitive_intel.CompetitiveIntelEngine") as mock_engine, \
-             patch("utils.db.get_engine") as mock_db:
+        with (
+            patch(
+                "intelligence.competitive_intel.CompetitiveIntelEngine"
+            ) as mock_engine,
+            patch("utils.db.get_engine") as mock_db,
+        ):
             mock_db.return_value.connect.side_effect = Exception("DB error")
             mock_engine_instance = MagicMock()
             mock_engine_instance.new_launches.return_value = []

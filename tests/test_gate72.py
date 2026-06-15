@@ -14,9 +14,11 @@ def test_gate72_distressed_plugin_run_returns_list():
     from ingest.plugins.distressed_plugin import DistressedPlugin
 
     plugin = DistressedPlugin()
-    with patch("ingest.plugins.distressed_plugin.get_engine") as mock_engine, \
-         patch("utils.distressed_developer.scan_distressed_developers", return_value=[]), \
-         patch.object(plugin, "_persist_distress_signals", return_value=0):
+    with (
+        patch("ingest.plugins.distressed_plugin.get_engine") as mock_engine,
+        patch("utils.distressed_developer.scan_distressed_developers", return_value=[]),
+        patch.object(plugin, "_persist_distress_signals", return_value=0),
+    ):
         conn = MagicMock()
         conn.execute.return_value.fetchall.return_value = []
         mock_engine.return_value.connect.return_value.__enter__.return_value = conn
@@ -33,7 +35,12 @@ def test_gate72_table_has_distress_score_column():
 def test_gate72_distress_blend_0730():
     from intelligence.opportunity_engine import _distress_score
 
-    lp = SimpleNamespace(development_readiness="CONSTRAINED", flood_risk="CLEAR", overlay_count=0, flags=[])
+    lp = SimpleNamespace(
+        development_readiness="CONSTRAINED",
+        flood_risk="CLEAR",
+        overlay_count=0,
+        flags=[],
+    )
     pkg = SimpleNamespace(land_picture=lp, market="Yelahanka", developer_id=None)
     with patch("intelligence.opportunity_engine.get_engine") as mock_engine:
         conn = MagicMock()
@@ -77,7 +84,9 @@ def test_bd_head_context_includes_jdv_targets():
 
     with patch("crews.board_room_v2.get_engine") as mock_engine:
         conn = MagicMock()
-        conn.execute.return_value.fetchall.return_value = [SimpleNamespace(developer_name="Brigade")]
+        conn.execute.return_value.fetchall.return_value = [
+            SimpleNamespace(developer_name="Brigade")
+        ]
         mock_engine.return_value.connect.return_value.__enter__.return_value = conn
         targets = _get_jdv_jv_targets("Yelahanka")
     assert targets == ["Brigade"]

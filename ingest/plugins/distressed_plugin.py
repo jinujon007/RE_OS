@@ -20,6 +20,7 @@ RISK REGISTER:
   notice. Monitor logs for "[DistressedPlugin]" WARNING messages.
 - SARFAESI data quality depends on bank publication frequency.
 """
+
 from __future__ import annotations
 
 import json
@@ -60,17 +61,22 @@ def _fetch_bda_auctions(market_hint: str, max_items: int = 10) -> list[dict]:
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = json.loads(resp.read())
         results = []
-        items = raw if isinstance(raw, list) else raw.get("data", raw.get("auctions", []))
+        items = (
+            raw if isinstance(raw, list) else raw.get("data", raw.get("auctions", []))
+        )
         for item in (items or [])[:max_items]:
-            results.append({
-                "property_id": str(item.get("id", "")),
-                "location": str(item.get("location", "")),
-                "area_sqft": float(item.get("areaSqft", 0) or 0),
-                "reserve_price_lakh": float(item.get("reservePrice", 0) or 0) / 100000,
-                "auction_date": str(item.get("auctionDate", "")),
-                "property_type": str(item.get("propertyType", "land")),
-                "source": "bda_eauction",
-            })
+            results.append(
+                {
+                    "property_id": str(item.get("id", "")),
+                    "location": str(item.get("location", "")),
+                    "area_sqft": float(item.get("areaSqft", 0) or 0),
+                    "reserve_price_lakh": float(item.get("reservePrice", 0) or 0)
+                    / 100000,
+                    "auction_date": str(item.get("auctionDate", "")),
+                    "property_type": str(item.get("propertyType", "land")),
+                    "source": "bda_eauction",
+                }
+            )
         if results:
             logger.info("[DistressedPlugin] {} BDA auctions fetched", len(results))
         return results
@@ -94,7 +100,9 @@ def _search_sarfaesi_auctions(market_hint: str) -> list[dict]:
     # Candidate sources:
     #   - https://www.psbauctions.in (PSB consortium portal)
     #   - https://bankeauctions.com (private aggregator)
-    logger.debug("[DistressedPlugin] SARFAESI search not implemented — returning empty set")
+    logger.debug(
+        "[DistressedPlugin] SARFAESI search not implemented — returning empty set"
+    )
     return []
 
 
@@ -136,11 +144,7 @@ class DistressedPlugin(DataPlugin):
             if "expected_completion_date" in columns
             else "rp.possession_date"
         )
-        status_expr = (
-            "rp.status"
-            if "status" in columns
-            else "rp.project_status"
-        )
+        status_expr = "rp.status" if "status" in columns else "rp.project_status"
         try:
             with get_engine().connect() as conn:
                 rows = conn.execute(
@@ -185,10 +189,15 @@ class DistressedPlugin(DataPlugin):
                         ORDER BY stall_ratio DESC, stall_count DESC, developer_name ASC
                         """
                     ),
-                    {"market": market, "market_like": f"%{market}%" if market else None},
+                    {
+                        "market": market,
+                        "market_like": f"%{market}%" if market else None,
+                    },
                 ).fetchall()
         except Exception as exc:
-            logger.warning("[DistressedPlugin] RERA stall detection failed for {}: {}", market, exc)
+            logger.warning(
+                "[DistressedPlugin] RERA stall detection failed for {}: {}", market, exc
+            )
             return []
 
         return [
@@ -243,10 +252,15 @@ class DistressedPlugin(DataPlugin):
                         ORDER BY mention_count DESC, developer_name ASC
                         """
                     ),
-                    {"market": market, "market_like": f"%{market}%" if market else None},
+                    {
+                        "market": market,
+                        "market_like": f"%{market}%" if market else None,
+                    },
                 ).fetchall()
         except Exception as exc:
-            logger.warning("[DistressedPlugin] NCLT news detection failed for {}: {}", market, exc)
+            logger.warning(
+                "[DistressedPlugin] NCLT news detection failed for {}: {}", market, exc
+            )
             return []
 
         return [
@@ -259,26 +273,35 @@ class DistressedPlugin(DataPlugin):
             for row in rows
         ]
 
-    def _compute_and_persist_scores(self, market: str, signals: list[dict]) -> list[dict]:
+    def _compute_and_persist_scores(
+        self, market: str, signals: list[dict]
+    ) -> list[dict]:
         from utils.distressed_developer import compute_developer_distress_score
 
-        developers = sorted({
-            self._normalize_developer_name(signal.get("developer_name"))
-            for signal in signals
-            if signal.get("developer_name") and signal.get("signal_type") in {"rera_stall", "nclt_news"}
-        })
+        developers = sorted(
+            {
+                self._normalize_developer_name(signal.get("developer_name"))
+                for signal in signals
+                if signal.get("developer_name")
+                and signal.get("signal_type") in {"rera_stall", "nclt_news"}
+            }
+        )
         computed: list[dict] = []
         for developer_name in developers:
             score = compute_developer_distress_score(developer_name, market)
-            computed.append({
-                "developer_name": developer_name,
-                "market": market,
-                "signal_type": "computed",
-                "distress_score": max(0.0, min(float(score or 0.0), 1.0)),
-            })
+            computed.append(
+                {
+                    "developer_name": developer_name,
+                    "market": market,
+                    "signal_type": "computed",
+                    "distress_score": max(0.0, min(float(score or 0.0), 1.0)),
+                }
+            )
         return computed
 
-    def _persist_distress_signals(self, market: str, signals: list[dict], ingest_log_id: str | None = None) -> int:
+    def _persist_distress_signals(
+        self, market: str, signals: list[dict], ingest_log_id: str | None = None
+    ) -> int:
         """Upsert developer distress signals. Best-effort, never raises."""
         if not signals:
             return 0
@@ -307,13 +330,25 @@ class DistressedPlugin(DataPlugin):
                             """
                         ),
                         {
-                            "developer_name": self._normalize_developer_name(signal.get("developer_name", "Unknown")),
-                            "market": self._normalize_market(signal.get("market") or market),
+                            "developer_name": self._normalize_developer_name(
+                                signal.get("developer_name", "Unknown")
+                            ),
+                            "market": self._normalize_market(
+                                signal.get("market") or market
+                            ),
                             "signal_type": signal.get("signal_type", "computed"),
                             "stall_count": int(signal.get("stall_count", 0) or 0),
-                            "stall_ratio": max(0.0, min(float(signal.get("stall_ratio", 0.0) or 0.0), 1.0)),
+                            "stall_ratio": max(
+                                0.0,
+                                min(float(signal.get("stall_ratio", 0.0) or 0.0), 1.0),
+                            ),
                             "mention_count": int(signal.get("mention_count", 0) or 0),
-                            "distress_score": max(0.0, min(float(signal.get("distress_score", 0.0) or 0.0), 1.0)),
+                            "distress_score": max(
+                                0.0,
+                                min(
+                                    float(signal.get("distress_score", 0.0) or 0.0), 1.0
+                                ),
+                            ),
                             "ingest_log_id": ingest_log_id,
                         },
                     )
@@ -347,93 +382,114 @@ class DistressedPlugin(DataPlugin):
                 "alert_level": dev.alert_level,
                 "detected_at": _utc_now_iso(),
             }
-            records.append(ParsedRecord(
-                entity_type="distressed_opp",
-                source_id=f"distressed_{dev.developer_name}_{market}",
-                market=market or "all",
-                data=data,
-            ))
+            records.append(
+                ParsedRecord(
+                    entity_type="distressed_opp",
+                    source_id=f"distressed_{dev.developer_name}_{market}",
+                    market=market or "all",
+                    data=data,
+                )
+            )
 
         # Phase 2: BDA e-auctions (non-blocking; empty list if unreachable)
         bda_listings = _fetch_bda_auctions(market)
         for auction in bda_listings:
             pid = auction.get("property_id", "")
-            records.append(ParsedRecord(
-                entity_type="distressed_opp",
-                source_id=f"bda_{pid}" if pid else f"bda_{market}_{datetime.now(timezone.utc).timestamp():.0f}",
-                market=market,
-                data={
-                    "developer_name": "BDA_eAuction",
-                    "market": market,
-                    "total_projects": 0,
-                    "active_projects": 0,
-                    "delayed_projects": 0,
-                    "avg_delay_months": 0.0,
-                    "incomplete_ratio": 0.0,
-                    "complaint_count": 0,
-                    "distress_score": 0.0,
-                    "alert_level": "auction",
-                    "property_id": pid,
-                    "location": auction.get("location", ""),
-                    "area_sqft": auction["area_sqft"],
-                    "reserve_price_lakh": auction["reserve_price_lakh"],
-                    "auction_date": auction["auction_date"],
-                    "property_type": auction["property_type"],
-                    "source": auction["source"],
-                    "detected_at": _utc_now_iso(),
-                },
-            ))
+            records.append(
+                ParsedRecord(
+                    entity_type="distressed_opp",
+                    source_id=f"bda_{pid}"
+                    if pid
+                    else f"bda_{market}_{datetime.now(timezone.utc).timestamp():.0f}",
+                    market=market,
+                    data={
+                        "developer_name": "BDA_eAuction",
+                        "market": market,
+                        "total_projects": 0,
+                        "active_projects": 0,
+                        "delayed_projects": 0,
+                        "avg_delay_months": 0.0,
+                        "incomplete_ratio": 0.0,
+                        "complaint_count": 0,
+                        "distress_score": 0.0,
+                        "alert_level": "auction",
+                        "property_id": pid,
+                        "location": auction.get("location", ""),
+                        "area_sqft": auction["area_sqft"],
+                        "reserve_price_lakh": auction["reserve_price_lakh"],
+                        "auction_date": auction["auction_date"],
+                        "property_type": auction["property_type"],
+                        "source": auction["source"],
+                        "detected_at": _utc_now_iso(),
+                    },
+                )
+            )
 
         # Phase 3: SARFAESI bank auctions (stub — returns [] until implemented)
         sarfaesi_listings = _search_sarfaesi_auctions(market)
         for prop in sarfaesi_listings:
-            records.append(ParsedRecord(
-                entity_type="distressed_opp",
-                source_id=f"sarfaesi_{prop.get('property_id', 'unk')}_{market}",
-                market=market,
-                data={
-                    "developer_name": "SARFAESI_eAuction",
-                    "market": market,
-                    "alert_level": "auction",
-                    "source": "sarfaesi",
-                    "detected_at": _utc_now_iso(),
-                    **prop,
-                },
-            ))
+            records.append(
+                ParsedRecord(
+                    entity_type="distressed_opp",
+                    source_id=f"sarfaesi_{prop.get('property_id', 'unk')}_{market}",
+                    market=market,
+                    data={
+                        "developer_name": "SARFAESI_eAuction",
+                        "market": market,
+                        "alert_level": "auction",
+                        "source": "sarfaesi",
+                        "detected_at": _utc_now_iso(),
+                        **prop,
+                    },
+                )
+            )
 
         # Phase 4: stalled RERA projects by developer
         stall_signals = self._detect_rera_stalls(market)
         for signal in stall_signals:
-            records.append(ParsedRecord(
-                entity_type="distressed_opp",
-                source_id=f"rera_stall_{signal['developer_name']}_{market}",
-                market=market,
-                data={**signal, "detected_at": _utc_now_iso()},
-            ))
+            records.append(
+                ParsedRecord(
+                    entity_type="distressed_opp",
+                    source_id=f"rera_stall_{signal['developer_name']}_{market}",
+                    market=market,
+                    data={**signal, "detected_at": _utc_now_iso()},
+                )
+            )
 
         # Phase 5: NCLT / insolvency news mentions
         nclt_signals = self._detect_nclt_from_news(market)
         for signal in nclt_signals:
-            records.append(ParsedRecord(
-                entity_type="distressed_opp",
-                source_id=f"nclt_{signal['developer_name']}_{market}",
-                market=market,
-                data={**signal, "detected_at": _utc_now_iso()},
-            ))
+            records.append(
+                ParsedRecord(
+                    entity_type="distressed_opp",
+                    source_id=f"nclt_{signal['developer_name']}_{market}",
+                    market=market,
+                    data={**signal, "detected_at": _utc_now_iso()},
+                )
+            )
 
         raw_signals = stall_signals + nclt_signals
         self._persist_distress_signals(market, raw_signals)
         computed_signals = self._compute_and_persist_scores(market, raw_signals)
         for signal in computed_signals:
-            records.append(ParsedRecord(
-                entity_type="distressed_opp",
-                source_id=f"computed_{signal['developer_name']}_{market}",
-                market=market,
-                data={**signal, "detected_at": _utc_now_iso()},
-            ))
+            records.append(
+                ParsedRecord(
+                    entity_type="distressed_opp",
+                    source_id=f"computed_{signal['developer_name']}_{market}",
+                    market=market,
+                    data={**signal, "detected_at": _utc_now_iso()},
+                )
+            )
 
         logger.info(
             "[DistressedPlugin] {} records for {} ({} distressed, {} BDA, {} SARFAESI, {} RERA stalls, {} NCLT, {} computed)",
-            len(records), market, len(distressed), len(bda_listings), len(sarfaesi_listings), len(stall_signals), len(nclt_signals), len(computed_signals),
+            len(records),
+            market,
+            len(distressed),
+            len(bda_listings),
+            len(sarfaesi_listings),
+            len(stall_signals),
+            len(nclt_signals),
+            len(computed_signals),
         )
         return records

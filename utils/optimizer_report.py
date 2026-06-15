@@ -2,6 +2,7 @@
 RE_OS — Optimizer Report (Phase 9 - Sprint 60)
 Generates optimization reports from token and redundancy analysis.
 """
+
 import os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, UTC
@@ -40,7 +41,9 @@ class OptimizerReport:
 
     def write(self, path: str) -> str:
         """Write report to markdown file. Creates parent dirs if needed."""
-        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
+        os.makedirs(
+            os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True
+        )
 
         content = f"""# RE_OS Optimizer Report — {self.report_date}
 
@@ -124,7 +127,9 @@ def generate_report(days: int = 1) -> OptimizerReport:
     # Emit metrics
     if optimizer_reports_generated_total:
         high_count = sum(1 for f in redundancy_findings if f.get("severity") == "HIGH")
-        optimizer_reports_generated_total.labels(findings_severity="high").inc(high_count)
+        optimizer_reports_generated_total.labels(findings_severity="high").inc(
+            high_count
+        )
 
     if optimizer_tokens_tracked_total and token_summary:
         total = sum(e.get("total_tokens_7d", 0) for e in token_summary)
@@ -163,7 +168,9 @@ def _calculate_cache_hit_rate(registry: Any) -> float:
 def _generate_top_recommendation(report: OptimizerReport) -> str:
     """Generate the top recommendation string from report findings."""
     # Priority: HIGH severity redundancies first
-    high_findings = [f for f in report.redundancy_findings if f.get("severity") == "HIGH"]
+    high_findings = [
+        f for f in report.redundancy_findings if f.get("severity") == "HIGH"
+    ]
     for f in high_findings:
         if f.get("type") == "prompt_duplicate":
             agent = f.get("agent", "unknown")
@@ -175,10 +182,14 @@ def _generate_top_recommendation(report: OptimizerReport) -> str:
             return f"Review IntelRegistry cache for {market} — multiple agents hitting same market/survey in same hour suggests cache misconfiguration."
 
     # Then over-budget agents
-    over_budget_agents = [e for e in report.token_summary if e.get("over_budget_runs", 0) > 0]
+    over_budget_agents = [
+        e for e in report.token_summary if e.get("over_budget_runs", 0) > 0
+    ]
     if over_budget_agents:
         agent = over_budget_agents[0].get("agent_name", "unknown")
         over = over_budget_agents[0].get("over_budget_runs", 0)
         return f"Review token budget for {agent} — over budget {over}x in last 7 days. Consider reducing prompt length or switching to lighter model."
 
-    return "System operating within efficiency parameters. No immediate action required."
+    return (
+        "System operating within efficiency parameters. No immediate action required."
+    )

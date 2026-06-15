@@ -9,6 +9,7 @@ regulatory_zones WHERE zone_type='AIZ'. The original schema only had
 max_height_m. This migration adds the two columns and back-fills AIZ
 rows from max_height_m so existing seed data is not lost.
 """
+
 from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa

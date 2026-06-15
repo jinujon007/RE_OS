@@ -6,6 +6,7 @@ and Discord alerts.
 Migration chain:
     0039_gv_extraction_confidence -> 0040_gv_gazette_freshness
 """
+
 from typing import Union
 
 import sqlalchemy as sa

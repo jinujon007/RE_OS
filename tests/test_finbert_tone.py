@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 from utils.sentiment import score_tone, dominant_tone
@@ -21,7 +22,14 @@ class TestScoreTone:
             result = score_tone("RERA project progressing well", api_key="test_key")
             assert result is not None
             assert len(result) == 6
-            for tone in ("Positive", "Negative", "Risk", "Uncertainty", "Litigious", "Constraining"):
+            for tone in (
+                "Positive",
+                "Negative",
+                "Risk",
+                "Uncertainty",
+                "Litigious",
+                "Constraining",
+            ):
                 assert tone in result
 
     def test_returns_none_when_no_api_key(self):
@@ -85,7 +93,13 @@ class TestScoreTone:
             assert result is not None
             assert len(result) == 6
             assert result["Risk"] == 0.9
-            for tone in ("Positive", "Negative", "Uncertainty", "Litigious", "Constraining"):
+            for tone in (
+                "Positive",
+                "Negative",
+                "Uncertainty",
+                "Litigious",
+                "Constraining",
+            ):
                 assert result[tone] == 0.0
 
 
@@ -121,7 +135,9 @@ class TestDominantTone:
             {"label": "Constraining", "score": 0.01},
         ]
         with patch("utils.sentiment.requests.post", return_value=mock_resp):
-            result = dominant_tone("RERA project stalled, builder facing insolvency", api_key="test_key")
+            result = dominant_tone(
+                "RERA project stalled, builder facing insolvency", api_key="test_key"
+            )
             assert result == "Risk"
 
     def test_dominant_tone_uncertainty_text(self):
@@ -158,11 +174,16 @@ class TestDominantTone:
 class TestToneIntegration:
     def test_tone_integration_in_news_plugin(self):
         from ingest.plugins.news_plugin import _score_article
+
         with patch("utils.sentiment.score_headline", return_value=0.5):
             with patch("utils.sentiment.score_tone") as mock_tone:
                 mock_tone.return_value = {
-                    "Positive": 0.7, "Negative": 0.1, "Risk": 0.05,
-                    "Uncertainty": 0.05, "Litigious": 0.05, "Constraining": 0.05,
+                    "Positive": 0.7,
+                    "Negative": 0.1,
+                    "Risk": 0.05,
+                    "Uncertainty": 0.05,
+                    "Litigious": 0.05,
+                    "Constraining": 0.05,
                 }
                 result = _score_article("Test headline")
                 assert result.tone_label == "Positive"
@@ -170,6 +191,7 @@ class TestToneIntegration:
 
     def test_tone_integration_handles_api_failure(self):
         from ingest.plugins.news_plugin import _score_article
+
         with patch("utils.sentiment.score_headline", return_value=0.0):
             with patch("utils.sentiment.score_tone", return_value=None):
                 result = _score_article("Test")
@@ -178,6 +200,7 @@ class TestToneIntegration:
 
     def test_tone_integration_preserves_sentiment_when_tone_fails(self):
         from ingest.plugins.news_plugin import _score_article
+
         with patch("utils.sentiment.score_headline", return_value=0.75):
             with patch("utils.sentiment.score_tone", return_value=None):
                 result = _score_article("Positive news")

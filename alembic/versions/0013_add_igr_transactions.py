@@ -3,6 +3,7 @@ Revision ID: 0013_add_igr_transactions
 Revises: 0012_agent_registry_hired_on_idx
 Create Date: 2026-06-02
 """
+
 from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
@@ -25,14 +26,18 @@ def upgrade() -> None:
         sa.Column("consideration_amount", sa.BigInteger(), nullable=True),
         sa.Column("area_sqft", sa.Numeric(12, 2), nullable=True),
         sa.Column(
-            "transaction_psf", sa.Numeric(12, 2),
+            "transaction_psf",
+            sa.Numeric(12, 2),
             sa.Computed("ROUND(consideration_amount / NULLIF(area_sqft, 0), 0)"),
             nullable=True,
         ),
         sa.Column("registration_date", sa.Date(), nullable=True),
         sa.Column("sro_office", sa.String(200), nullable=True),
         sa.Column(
-            "source", sa.String(50), nullable=False, server_default="fallback",
+            "source",
+            sa.String(50),
+            nullable=False,
+            server_default="fallback",
         ),
         sa.Column("created_at", sa.TIMESTAMP(), server_default=sa.func.now()),
         sa.CheckConstraint(
@@ -40,11 +45,16 @@ def upgrade() -> None:
             name="chk_igr_source",
         ),
         sa.ForeignKeyConstraint(
-            ["micro_market_id"], ["micro_markets.id"],
+            ["micro_market_id"],
+            ["micro_markets.id"],
             name="fk_igr_micro_market",
         ),
     )
-    op.create_index("idx_igr_market_date", "igr_transactions", ["market", sa.text("registration_date DESC")])
+    op.create_index(
+        "idx_igr_market_date",
+        "igr_transactions",
+        ["market", sa.text("registration_date DESC")],
+    )
     op.create_index("idx_igr_survey_no", "igr_transactions", ["survey_no"])
 
 

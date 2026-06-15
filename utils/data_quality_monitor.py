@@ -43,6 +43,7 @@ def check_live_data_floor(market: str, floor: int = 50) -> bool:
     count = get_live_rera_count(market)
     if count < floor:
         from utils.discord_notifier import send_ops_alert
+
         send_ops_alert(
             "DATA_FLOOR_BREACH",
             f"{market} live RERA records below floor: {count} < {floor}",

@@ -34,6 +34,7 @@ class GccHiringPlugin(DataPlugin):
         records: list[ParsedRecord] = []
         try:
             from scrapers.gcc_hiring_scraper import run_snapshot
+
             results = run_snapshot()
         except Exception as exc:
             logger.warning("[GccHiringPlugin] scraper failed: {}", exc)
@@ -101,7 +102,12 @@ class GccHiringPlugin(DataPlugin):
                               AND snapshot_date BETWEEN :from_d AND :to_d
                             ORDER BY snapshot_date DESC LIMIT 1
                         """),
-                        {"emp": employer, "loc": location, "from_d": last_week, "to_d": today - timedelta(days=1)},
+                        {
+                            "emp": employer,
+                            "loc": location,
+                            "from_d": last_week,
+                            "to_d": today - timedelta(days=1),
+                        },
                     ).fetchone()
 
                     if prev_row is None:
@@ -125,7 +131,10 @@ class GccHiringPlugin(DataPlugin):
                             )
 
             if alert_lines:
-                send("gcc_intel", f"⚠️ GCC Hiring WoW ({len(alert_lines)} changes)",
-                    "\n".join(alert_lines))
+                send(
+                    "gcc_intel",
+                    f"⚠️ GCC Hiring WoW ({len(alert_lines)} changes)",
+                    "\n".join(alert_lines),
+                )
         except Exception as exc:
             logger.warning("[GccHiringPlugin] WoW delta check failed: {}", exc)

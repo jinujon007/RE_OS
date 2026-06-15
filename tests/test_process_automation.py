@@ -2,9 +2,12 @@
 
 import pytest
 from utils.process_automation import (
-    validate_bottleneck_report, validate_proposal_data,
-    safe_extract_json, retry_with_backoff,
-    ProcessAutomationError, ValidationError,
+    validate_bottleneck_report,
+    validate_proposal_data,
+    safe_extract_json,
+    retry_with_backoff,
+    ProcessAutomationError,
+    ValidationError,
 )
 
 pytestmark = pytest.mark.unit

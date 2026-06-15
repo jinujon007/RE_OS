@@ -4,6 +4,7 @@ Revision ID: 0052_board_session_timing
 Revises: 0051_market_forecasts
 Create Date: 2026-06-11
 """
+
 from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa

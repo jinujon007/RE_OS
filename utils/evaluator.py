@@ -27,6 +27,7 @@ from loguru import logger
 
 try:
     from rouge_score import rouge_scorer
+
     _ROUGE_AVAILABLE = True
 except ImportError:
     _ROUGE_AVAILABLE = False
@@ -88,7 +89,9 @@ class BriefEvaluator:
             logger.warning(f"[Evaluator] Could not load previous brief: {exc}")
             return None
 
-    def save_brief(self, market: str, run_id: str, brief: str, scores: dict | None = None) -> Path:
+    def save_brief(
+        self, market: str, run_id: str, brief: str, scores: dict | None = None
+    ) -> Path:
         """
         Persist a brief and its scores for future comparison.
         Returns path to saved file.
@@ -111,6 +114,7 @@ class BriefEvaluator:
         Returns dict with per-market trend data.
         """
         from datetime import timedelta
+
         cutoff = datetime.now() - timedelta(days=7)
         markets: dict[str, list] = {}
 
@@ -134,7 +138,9 @@ class BriefEvaluator:
                 "avg_rougeL": round(sum(score_list) / len(score_list), 4),
                 "min_rougeL": round(min(score_list), 4),
                 "max_rougeL": round(max(score_list), 4),
-                "trend": "improving" if len(score_list) > 1 and score_list[-1] > score_list[0] else "stable",
+                "trend": "improving"
+                if len(score_list) > 1 and score_list[-1] > score_list[0]
+                else "stable",
             }
         return report
 
@@ -171,7 +177,9 @@ if __name__ == "__main__":
     if report:
         print("Weekly quality report:")
         for market, stats in report.items():
-            print(f"  {market}: avg ROUGE-L={stats['avg_rougeL']:.3f} "
-                  f"over {stats['count']} briefs ({stats['trend']})")
+            print(
+                f"  {market}: avg ROUGE-L={stats['avg_rougeL']:.3f} "
+                f"over {stats['count']} briefs ({stats['trend']})"
+            )
     else:
         print("No eval data yet. Run the pipeline to generate briefs.")

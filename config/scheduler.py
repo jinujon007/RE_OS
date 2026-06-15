@@ -48,8 +48,10 @@ def _send_rera_alert(market: str, job_start) -> None:
     """Query new RERA projects since job_start and send Discord alert."""
     try:
         from utils.discord_notifier import send_rera_alert
+
         with get_engine().connect() as conn:
-            rows = conn.execute(text("""
+            rows = conn.execute(
+                text("""
                 SELECT rp.project_name, d.name AS developer_name
                 FROM rera_projects rp
                 LEFT JOIN developers d ON d.id = rp.developer_id
@@ -58,7 +60,9 @@ def _send_rera_alert(market: str, job_start) -> None:
                   AND rp.created_at >= :job_start
                 ORDER BY rp.created_at DESC
                 LIMIT 20
-            """), {"market": f"%{market}%", "job_start": job_start}).fetchall()
+            """),
+                {"market": f"%{market}%", "job_start": job_start},
+            ).fetchall()
         if rows:
             developers = list({r[1] for r in rows if r[1]})
             send_rera_alert(market, len(rows), developers)
@@ -86,7 +90,9 @@ def run_single_market_rera(market: str):
         log_fh = open(log_path, "a")
         proc = subprocess.Popen(cmd, env=os.environ, stdout=log_fh, stderr=log_fh)
         log_fh.close()
-        logger.info(f"  Spawned RERA process for {market} (PID {proc.pid}) → {log_path}")
+        logger.info(
+            f"  Spawned RERA process for {market} (PID {proc.pid}) → {log_path}"
+        )
     except Exception as e:
         logger.error(f"  Failed to spawn RERA process for {market}: {e}")
         return
@@ -101,7 +107,9 @@ def run_single_market_rera(market: str):
 
     # Phase 3: Check exit code
     if proc.returncode != 0:
-        logger.warning(f"  RERA process for {market} exited with code {proc.returncode} — skipping alert")
+        logger.warning(
+            f"  RERA process for {market} exited with code {proc.returncode} — skipping alert"
+        )
         return
 
     # Phase 4: Alert on new projects
@@ -111,6 +119,7 @@ def run_single_market_rera(market: str):
 def run_memory_decay():
     """Weekly memory decay — reduce confidence of stale facts, delete below 0.3 (T-298)."""
     from utils.agent_memory import decay_memories
+
     n = decay_memories(days=30, decay_amount=0.1)
     logger.info(f"[Scheduler] Memory decay: {n} rows deleted")
 
@@ -123,6 +132,7 @@ def run_intel_embedding_index():
     """
     try:
         from utils.embedder import IntelEmbedder
+
         embedder = IntelEmbedder()
         stats = embedder.index_intel_reports(outputs_dir="/app/outputs")
         logger.info(
@@ -136,6 +146,7 @@ def run_intel_embedding_index():
 def _score_one_article(row) -> tuple[str, float | None, str | None]:
     """Score a single article via FinBERT. Returns (article_id, score, label)."""
     from utils.sentiment import score_headline, label_from_score
+
     article_id, title, key_insight = row
     text_to_score = title or ""
     if key_insight:
@@ -156,6 +167,7 @@ def run_news_sentiment_scoring():
     Uses ThreadPoolExecutor for parallel HF API calls to stay within misfire_grace_time.
     """
     from config.settings import HF_API_KEY
+
     if not HF_API_KEY:
         logger.debug("[Scheduler] HF_API_KEY not set — skipping sentiment scoring")
         return
@@ -174,7 +186,8 @@ def run_news_sentiment_scoring():
         # Paginate to handle more than 200 articles
         while offset < BATCH_LIMIT:
             with engine.connect() as conn:
-                rows = conn.execute(text("""
+                rows = conn.execute(
+                    text("""
                     SELECT id, title, key_insight
                     FROM news_articles
                     WHERE sentiment_score IS NULL
@@ -182,7 +195,9 @@ def run_news_sentiment_scoring():
                       AND title != ''
                     ORDER BY created_at DESC
                     LIMIT :lim OFFSET :off
-                """), {"lim": PAGE_SIZE, "off": offset}).fetchall()
+                """),
+                    {"lim": PAGE_SIZE, "off": offset},
+                ).fetchall()
 
             if not rows:
                 break
@@ -199,20 +214,20 @@ def run_news_sentiment_scoring():
 
             # Batch DB writes — short transactions every 25 rows
             for i in range(0, len(scored_results), 25):
-                batch = scored_results[i:i + 25]
+                batch = scored_results[i : i + 25]
                 with engine.begin() as conn:
                     for article_id, score, label in batch:
                         conn.execute(
-                            text("UPDATE news_articles SET sentiment_score = :s, sentiment_label = :l WHERE id = :id"),
+                            text(
+                                "UPDATE news_articles SET sentiment_score = :s, sentiment_label = :l WHERE id = :id"
+                            ),
                             {"s": score, "l": label, "id": article_id},
                         )
                         written += 1
 
             offset += PAGE_SIZE
 
-        logger.info(
-            f"[Scheduler] Sentiment scoring: {written} scored, {failed} failed"
-        )
+        logger.info(f"[Scheduler] Sentiment scoring: {written} scored, {failed} failed")
     except Exception as exc:
         logger.warning(f"[Scheduler] Sentiment scoring failed (non-fatal): {exc}")
 
@@ -275,16 +290,23 @@ def run_market_snapshot():
         market = market.strip()
         try:
             from utils.data_quality import DataQualityMonitor
+
             result = DataQualityMonitor.locality_validation_score(market)
             if result["score"] < 0.80:
                 logger.warning(
                     "[Scheduler] Locality validation for %s: score=%.4f, suspect=%d, action=%s",
-                    market, result["score"], result["suspect"], result["action"],
+                    market,
+                    result["score"],
+                    result["suspect"],
+                    result["action"],
                 )
             else:
                 logger.info(
                     "[Scheduler] Locality validation for %s: score=%.4f (%d/%d valid)",
-                    market, result["score"], result["valid"], result["valid"] + result["suspect"],
+                    market,
+                    result["score"],
+                    result["valid"],
+                    result["valid"] + result["suspect"],
                 )
         except Exception as e:
             logger.warning(f"  Locality validation failed for {market}: {e}")
@@ -322,7 +344,9 @@ def run_seed_staleness_check():
         from utils.discord_notifier import send
         from config.gate_criteria import SLO_SEED_MIN_LIVE_LISTINGS
 
-        flags = DataQualityMonitor.check_seed_staleness(min_live_listings=SLO_SEED_MIN_LIVE_LISTINGS)
+        flags = DataQualityMonitor.check_seed_staleness(
+            min_live_listings=SLO_SEED_MIN_LIVE_LISTINGS
+        )
         engine = get_engine()
 
         for flag in flags:
@@ -331,7 +355,9 @@ def run_seed_staleness_check():
                 continue
 
             live_count = flag["live_listing_count"]
-            logger.info(f"  {market}: removing seed data ({live_count} live listings available)")
+            logger.info(
+                f"  {market}: removing seed data ({live_count} live listings available)"
+            )
 
             with engine.begin() as conn:
                 conn.execute(
@@ -351,7 +377,11 @@ def run_seed_staleness_check():
                 continue
 
             try:
-                send("ops", title, f"Seed data removed for {market} — {live_count} live listings available")
+                send(
+                    "ops",
+                    title,
+                    f"Seed data removed for {market} — {live_count} live listings available",
+                )
             except Exception as exc:
                 logger.warning(f"  {market}: Discord alert failed: {exc}")
 
@@ -366,24 +396,32 @@ def run_bertscore_evaluation():
     try:
         import evaluate  # pre-check: fail fast if missing, before 120s thread pool timeout
         from utils.report_evaluator import ReportEvaluator
+
         result = ReportEvaluator().evaluate_latest()
         score = result.get("score")
         delta = result.get("delta")
         if result.get("alert") and score is not None:
             try:
                 from utils.discord_notifier import send
-                msg = (f"BERTScore F1={score:.4f} "
-                       f"(delta={delta:+.4f}) — quality regression detected. "
-                       f"Candidates: {result['candidates']}, Refs: {result['references']}")
+
+                msg = (
+                    f"BERTScore F1={score:.4f} "
+                    f"(delta={delta:+.4f}) — quality regression detected. "
+                    f"Candidates: {result['candidates']}, Refs: {result['references']}"
+                )
                 send("system", "⚠ BERTScore Regression", msg)
             except Exception as exc:
                 logger.warning(f"[Scheduler] BERTScore alert failed: {exc}")
         if score is not None:
-            logger.info(f"[Scheduler] BERTScore eval done — score={score:.4f} "
-                         f"delta={delta:+.4f} alert={result.get('alert', False)}")
+            logger.info(
+                f"[Scheduler] BERTScore eval done — score={score:.4f} "
+                f"delta={delta:+.4f} alert={result.get('alert', False)}"
+            )
         else:
-            logger.info(f"[Scheduler] BERTScore eval {result.get('status', '?')} — "
-                         f"{result.get('candidates', 0)} candidates, {result.get('references', 0)} refs")
+            logger.info(
+                f"[Scheduler] BERTScore eval {result.get('status', '?')} — "
+                f"{result.get('candidates', 0)} candidates, {result.get('references', 0)} refs"
+            )
     except Exception as exc:
         logger.warning(f"[Scheduler] BERTScore evaluation failed (non-fatal): {exc}")
 
@@ -454,12 +492,15 @@ def run_distressed_developer_scan():
 
         for market in ["Yelahanka", "Devanahalli", "Hebbal"]:
             results = scan_distressed_developers(
-                market, min_score=_DISTRESS_SCORE_THRESHOLD,
+                market,
+                min_score=_DISTRESS_SCORE_THRESHOLD,
             )
             for dev in results:
                 title = f"Distressed Developer — {dev.developer_name} ({dev.market})"
                 if _bd_already_alerted(title, cooldown_hours=168):  # 7-day cooldown
-                    logger.info(f"[DistressedDev] Dedup skip: {dev.developer_name} ({dev.market})")
+                    logger.info(
+                        f"[DistressedDev] Dedup skip: {dev.developer_name} ({dev.market})"
+                    )
                     continue
                 alert = format_distress_alert(dev)
                 logger.info(f"[DistressedDev] Alert: {alert}")
@@ -486,9 +527,15 @@ def run_ingest_engine():
     from datetime import datetime, timezone, timedelta
     from ingest.engine import IngestEngine
     from ingest.plugins import (
-        RERAPlugin, IGRPlugin, KaveriBhoomiPlugin,
-        PortalPlugin, DeveloperPlugin, NewsPlugin,
-        DistressedPlugin, BBMPPlugin, KaveriDeedsPlugin,
+        RERAPlugin,
+        IGRPlugin,
+        KaveriBhoomiPlugin,
+        PortalPlugin,
+        DeveloperPlugin,
+        NewsPlugin,
+        DistressedPlugin,
+        BBMPPlugin,
+        KaveriDeedsPlugin,
     )
     from config.settings import PLUGIN_SCHEDULES, TARGET_MARKETS
 
@@ -513,19 +560,32 @@ def run_ingest_engine():
 
     engine = IngestEngine(max_workers=3, global_rate=3.0)
     all_plugins = [
-        RERAPlugin(), IGRPlugin(), KaveriBhoomiPlugin(),
-        PortalPlugin(), DeveloperPlugin(), NewsPlugin(),
-        DistressedPlugin(), BBMPPlugin(), KaveriDeedsPlugin(),
+        RERAPlugin(),
+        IGRPlugin(),
+        KaveriBhoomiPlugin(),
+        PortalPlugin(),
+        DeveloperPlugin(),
+        NewsPlugin(),
+        DistressedPlugin(),
+        BBMPPlugin(),
+        KaveriDeedsPlugin(),
     ]
     for p in all_plugins:
         if _plugin_should_run(p.plugin_id):
             engine.register(p)
-            logger.info("[Scheduler] IngestEngine registered: {} (schedule active)", p.plugin_id)
+            logger.info(
+                "[Scheduler] IngestEngine registered: {} (schedule active)", p.plugin_id
+            )
         else:
-            logger.info("[Scheduler] IngestEngine skipped: {} (not in schedule today)", p.plugin_id)
+            logger.info(
+                "[Scheduler] IngestEngine skipped: {} (not in schedule today)",
+                p.plugin_id,
+            )
 
     if not engine.registered_plugins:
-        logger.info("[Scheduler] IngestEngine: no plugins scheduled for today at this hour")
+        logger.info(
+            "[Scheduler] IngestEngine: no plugins scheduled for today at this hour"
+        )
         return
 
     _ingest_running.set()
@@ -533,7 +593,12 @@ def run_ingest_engine():
         report = engine.run_all(markets=TARGET_MARKETS)
         logger.info("[Scheduler] IngestEngine complete: {}", report.summary())
         for s in report.failed_plugins:
-            logger.warning("[Scheduler] Plugin failed: {}/{} — {}", s.plugin_id, s.market, s.error_message)
+            logger.warning(
+                "[Scheduler] Plugin failed: {}/{} — {}",
+                s.plugin_id,
+                s.market,
+                s.error_message,
+            )
     finally:
         _ingest_running.clear()
 
@@ -544,7 +609,7 @@ def run_conflict_detection():
     try:
         from utils.agent_memory import detect_conflicts
         from utils.discord_notifier import send
-        
+
         for market in ["Yelahanka", "Devanahalli", "Hebbal"]:
             conflicts = detect_conflicts(market)
             if conflicts:
@@ -559,7 +624,9 @@ def run_conflict_detection():
                     try:
                         send("system", "Memory Conflict Detected", alert_msg)
                     except Exception as exc:
-                        logger.warning(f"[ConflictDetection] Discord send failed: {exc}")
+                        logger.warning(
+                            f"[ConflictDetection] Discord send failed: {exc}"
+                        )
     except Exception as exc:
         logger.warning(f"[Scheduler] Conflict detection failed: {exc}")
 
@@ -579,15 +646,18 @@ def run_weekly_digest():
                 lines = [f"**{market} — Weekly Digest**"]
                 for f in facts:
                     lines.append(
-                        f"- [{f['agent_id']}] {f['fact']} "
-                        f"(conf: {f['confidence']:.1%})"
+                        f"- [{f['agent_id']}] {f['fact']} (conf: {f['confidence']:.1%})"
                     )
                 summary = "\n".join(lines)
-                logger.info(f"[Scheduler] Weekly digest generated for {market}: {len(facts)} facts")
+                logger.info(
+                    f"[Scheduler] Weekly digest generated for {market}: {len(facts)} facts"
+                )
                 try:
                     send("intel", f"📋 Weekly Digest — {market}", summary)
                 except Exception as exc:
-                    logger.warning(f"[Scheduler] Weekly digest Discord failed for {market}: {exc}")
+                    logger.warning(
+                        f"[Scheduler] Weekly digest Discord failed for {market}: {exc}"
+                    )
             else:
                 logger.info(f"[Scheduler] Weekly digest: no facts for {market}")
     except Exception as exc:
@@ -616,20 +686,27 @@ def run_opportunity_scoring():
         if not results:
             logger.info(
                 "[Scheduler] Opportunity scoring completed in {:.1f}s: 0 scored across {} — "
-                "check DB for surveys (surveys table may be empty)", elapsed, markets
+                "check DB for surveys (surveys table may be empty)",
+                elapsed,
+                markets,
             )
             return
 
         logger.info(
             "[Scheduler] Opportunity scoring: {} scored across {} in {:.1f}s",
-            len(results), markets, elapsed,
+            len(results),
+            markets,
+            elapsed,
         )
 
         urgent = [r for r in results if r.score >= 0.80]
         for r in sorted(urgent, key=lambda x: x.score, reverse=True)[:10]:
             title = f"URGENT — {r.survey_no} ({r.micro_market_id[:8]})"
             if _bd_already_alerted(title, cooldown_hours=23):
-                logger.info("[Scheduler] BD dedup: skipping URGENT {} (sent within 23h)", r.survey_no)
+                logger.info(
+                    "[Scheduler] BD dedup: skipping URGENT {} (sent within 23h)",
+                    r.survey_no,
+                )
                 continue
             alert_msg = (
                 f"**{r.survey_no}**\n"
@@ -638,7 +715,9 @@ def run_opportunity_scoring():
                 f"Timing: {r.components.timing_score:.3f}\n"
                 f"Action: {r.next_action}"
             )
-            logger.info("[Scheduler] URGENT opportunity: {} score={:.4f}", r.survey_no, r.score)
+            logger.info(
+                "[Scheduler] URGENT opportunity: {} score={:.4f}", r.survey_no, r.score
+            )
             try:
                 send("bd_opportunities", title, alert_msg)
             except Exception as exc:
@@ -648,7 +727,9 @@ def run_opportunity_scoring():
         if priority:
             title_p = "Priority Opportunities — Review"
             if _bd_already_alerted(title_p, cooldown_hours=23):
-                logger.info("[Scheduler] BD dedup: skipping PRIORITY summary (sent within 23h)")
+                logger.info(
+                    "[Scheduler] BD dedup: skipping PRIORITY summary (sent within 23h)"
+                )
             else:
                 summary = "\n".join(
                     f"{r.survey_no} — score={r.score:.4f} — {r.next_action[:40]}"
@@ -665,11 +746,17 @@ def run_opportunity_scoring():
                 f"{r.survey_no} — score={r.score:.4f} — legal={r.legal_risk_level}"
                 for r in sorted(watch, key=lambda x: x.score, reverse=True)[:3]
             )
-            logger.info("[Scheduler] WATCH opportunities: {} — {}", len(watch), watch_summary[:200])
+            logger.info(
+                "[Scheduler] WATCH opportunities: {} — {}",
+                len(watch),
+                watch_summary[:200],
+            )
 
     except Exception as exc:
         elapsed = _time.time() - job_start
-        logger.warning("[Scheduler] Opportunity scoring failed after {:.1f}s: {}", elapsed, exc)
+        logger.warning(
+            "[Scheduler] Opportunity scoring failed after {:.1f}s: {}", elapsed, exc
+        )
 
 
 def run_psf_forecast_update():
@@ -692,17 +779,31 @@ def run_psf_forecast_update():
                 upserts = []
                 for horizon in [3, 6, 12]:
                     psf_val = getattr(result, f"forecast_{horizon}m", 0)
-                    conf_low = getattr(result, f"conf_low_{horizon}m", None) if horizon in (3, 6, 12) else None
-                    conf_high = getattr(result, f"conf_high_{horizon}m", None) if horizon in (3, 6, 12) else None
-                    upserts.append({
-                        "market": market, "fdate": today, "horizon": horizon,
-                        "current_psf": result.current_psf,
-                        "forecast_psf": psf_val,
-                        "conf_low": conf_low, "conf_high": conf_high,
-                        "trend": result.trend_direction,
-                        "slope": result.slope_pct_per_month,
-                        "points": result.data_points, "mae": result.mae_pct,
-                    })
+                    conf_low = (
+                        getattr(result, f"conf_low_{horizon}m", None)
+                        if horizon in (3, 6, 12)
+                        else None
+                    )
+                    conf_high = (
+                        getattr(result, f"conf_high_{horizon}m", None)
+                        if horizon in (3, 6, 12)
+                        else None
+                    )
+                    upserts.append(
+                        {
+                            "market": market,
+                            "fdate": today,
+                            "horizon": horizon,
+                            "current_psf": result.current_psf,
+                            "forecast_psf": psf_val,
+                            "conf_low": conf_low,
+                            "conf_high": conf_high,
+                            "trend": result.trend_direction,
+                            "slope": result.slope_pct_per_month,
+                            "points": result.data_points,
+                            "mae": result.mae_pct,
+                        }
+                    )
                 with get_engine().begin() as conn:
                     for u in upserts:
                         conn.execute(
@@ -727,16 +828,26 @@ def run_psf_forecast_update():
                             """),
                             u,
                         )
-                logger.info("[Scheduler] PSF forecast for {}: trend={}, 6m={}, MAE={:.1f}%",
-                           market, result.trend_direction, result.forecast_6m, result.mae_pct)
+                logger.info(
+                    "[Scheduler] PSF forecast for {}: trend={}, 6m={}, MAE={:.1f}%",
+                    market,
+                    result.trend_direction,
+                    result.forecast_6m,
+                    result.mae_pct,
+                )
             else:
-                logger.warning("[Scheduler] PSF forecast skipped for {}: status={}", market, result.status)
+                logger.warning(
+                    "[Scheduler] PSF forecast skipped for {}: status={}",
+                    market,
+                    result.status,
+                )
         except Exception as exc:
             logger.warning("[Scheduler] PSF forecast failed for {}: {}", market, exc)
 
     if results:
         try:
             from utils.discord_notifier import send_forecast_digest
+
             send_forecast_digest(results)
         except Exception as exc:
             logger.warning("[Scheduler] PSF forecast digest failed: {}", exc)
@@ -747,6 +858,7 @@ def run_compliance_check():
     check_upcoming_deadlines() handles Discord internally; this wrapper logs outcome."""
     try:
         from utils.lls_compliance_calendar import check_upcoming_deadlines
+
         alerts = check_upcoming_deadlines()
         logger.info(
             "[ComplianceCalendar] Daily check done — {} deadline(s) within 30 days",
@@ -763,7 +875,8 @@ def run_compliance_check():
 #
 # Both use proper threading primitives — APScheduler runs jobs in threads, so
 # plain bool flags are subject to read-modify-write races across job threads.
-_ingest_running = threading.Event()   # set() while ingest runs, clear() when done
+_ingest_running = threading.Event()  # set() while ingest runs, clear() when done
+
 
 def run_db_backup():
     """Daily pg_dump backup via DBBackup utility (Sprint 83, GATE-83)."""
@@ -777,7 +890,11 @@ def run_db_backup():
         elapsed = result.get("elapsed_s", 0)
         logger.info(
             "[DB-Backup] Complete: {} ({} bytes, {} objects) | pruned {} | {:.1f}s",
-            result["file"], result["size_bytes"], obj_count, pruned, elapsed,
+            result["file"],
+            result["size_bytes"],
+            obj_count,
+            pruned,
+            elapsed,
         )
         try:
             with get_engine().begin() as conn:
@@ -787,8 +904,11 @@ def run_db_backup():
                             (agent_name, micro_market, event_type, status, records_inserted, notes)
                         VALUES ('backup', 'system', 'db_backup', 'success', 0, :notes)
                     """),
-                    {"notes": "pg_dump {} ({} bytes, {} objects, {:.1f}s)".format(
-                        result["file"], result["size_bytes"], obj_count, elapsed)},
+                    {
+                        "notes": "pg_dump {} ({} bytes, {} objects, {:.1f}s)".format(
+                            result["file"], result["size_bytes"], obj_count, elapsed
+                        )
+                    },
                 )
         except Exception as exc:
             logger.warning("[DB-Backup] Failed to log backup: {}", exc)
@@ -821,7 +941,11 @@ def run_backup_staleness_check():
         latest = result.get("latest_file")
         if result["stale"]:
             if latest:
-                detail = f"Latest backup {age}h old — file: {latest}" if age else "No backup file found"
+                detail = (
+                    f"Latest backup {age}h old — file: {latest}"
+                    if age
+                    else "No backup file found"
+                )
             else:
                 detail = "No backup file found"
             logger.warning("[BackupStaleness] Stale: {}", detail)
@@ -836,6 +960,7 @@ def run_la_notification_scan():
     """Weekly LA notification gazette scan — Sunday 06:00 IST."""
     try:
         from scrapers.la_gazette_parser import run_la_notification_scan as _run_scan
+
         count = _run_scan()
         logger.info("[LANotification] Scan complete: {} notifications", count)
     except Exception as exc:
@@ -862,7 +987,9 @@ def run_tender_daily_scan():
                 if val and float(val) >= 500000000.0:
                     high_value.append(record)
 
-        logger.info("[TenderScan] {} tenders scraped, {} written", len(all_tenders), written)
+        logger.info(
+            "[TenderScan] {} tenders scraped, {} written", len(all_tenders), written
+        )
 
         if high_value:
             for t in high_value:
@@ -909,7 +1036,11 @@ def run_ledger_check_weekly():
 def run_offsite_backup_weekly():
     """Weekly offsite backup push — Sunday 05:00 IST.
     Pushes latest local dump to remote, verifies, alerts if stale."""
-    from utils.backup import push_to_remote, verify_remote_backup, check_remote_backup_staleness
+    from utils.backup import (
+        push_to_remote,
+        verify_remote_backup,
+        check_remote_backup_staleness,
+    )
     from utils.discord_notifier import send_ops_alert
 
     result = push_to_remote()
@@ -917,10 +1048,17 @@ def run_offsite_backup_weekly():
         logger.info("[OffsiteBackup] Remote push OK: {}", result["detail"])
         verify = verify_remote_backup()
         if verify.get("valid"):
-            logger.info("[OffsiteBackup] Remote backup verified: {} objects", verify.get("object_count"))
+            logger.info(
+                "[OffsiteBackup] Remote backup verified: {} objects",
+                verify.get("object_count"),
+            )
         else:
-            logger.warning("[OffsiteBackup] Remote backup verify failed: {}", verify.get("error"))
-            send_ops_alert("REMOTE_BACKUP_VERIFY_FAILED", verify.get("error", "unknown"))
+            logger.warning(
+                "[OffsiteBackup] Remote backup verify failed: {}", verify.get("error")
+            )
+            send_ops_alert(
+                "REMOTE_BACKUP_VERIFY_FAILED", verify.get("error", "unknown")
+            )
     elif result["status"] == "skipped":
         logger.info("[OffsiteBackup] Skipped: {}", result["detail"])
     else:
@@ -943,17 +1081,22 @@ def run_locality_validation():
     Checks listings for known alien locality aliases and logs WARNING if >20% suspect."""
     try:
         from utils.data_quality import DataQualityMonitor
+
         for market in TARGET_MARKETS:
             market = market.strip()
             result = DataQualityMonitor.locality_validation_score(market)
             if result["score"] < 0.80:
                 logger.warning(
                     "[Scheduler] Locality validation WARNING for %s: score=%.4f (%d suspect)",
-                    market, result["score"], result["suspect"],
+                    market,
+                    result["score"],
+                    result["suspect"],
                 )
             logger.info(
                 "[Scheduler] Locality validation for %s: score=%.4f, action=%s",
-                market, result["score"], result["action"],
+                market,
+                result["score"],
+                result["action"],
             )
     except Exception as exc:
         logger.warning(f"[Scheduler] Locality validation failed: {exc}")
@@ -967,16 +1110,20 @@ def run_finbert_sentiment_repair():
     FINBERT_REPAIR_BATCH_LIMIT = 50
     import time as _time
     from utils.sentiment import score_headline, label_from_score
+
     engine = get_engine()
 
     try:
         with engine.connect() as conn:
-            rows = conn.execute(text("""
+            rows = conn.execute(
+                text("""
                 SELECT id, COALESCE(summary, title, '') AS content FROM news_articles
                 WHERE sentiment_score IS NULL
                   AND created_at >= NOW() - INTERVAL '7 days'
                 LIMIT :limit
-            """), {"limit": FINBERT_REPAIR_BATCH_LIMIT}).fetchall()
+            """),
+                {"limit": FINBERT_REPAIR_BATCH_LIMIT},
+            ).fetchall()
 
         updated = sentinel = 0
         for row in rows:
@@ -994,20 +1141,24 @@ def run_finbert_sentiment_repair():
                 except Exception:
                     pass
                 if attempt < 2:
-                    _time.sleep(2 * (2 ** attempt))
+                    _time.sleep(2 * (2**attempt))
 
             with engine.begin() as conn:
                 if score is not None:
                     label = label_from_score(score)
                     conn.execute(
-                        text("UPDATE news_articles SET sentiment_score = :s, sentiment_label = :l WHERE id = :id"),
+                        text(
+                            "UPDATE news_articles SET sentiment_score = :s, sentiment_label = :l WHERE id = :id"
+                        ),
                         {"s": score, "l": label, "id": article_id},
                     )
                     updated += 1
                 else:
                     # Sentinel: set score only, leave label as NULL to distinguish from scored articles
                     conn.execute(
-                        text("UPDATE news_articles SET sentiment_score = -99.0 WHERE id = :id AND sentiment_score IS NULL"),
+                        text(
+                            "UPDATE news_articles SET sentiment_score = -99.0 WHERE id = :id AND sentiment_score IS NULL"
+                        ),
                         {"id": article_id},
                     )
                     sentinel += 1
@@ -1033,20 +1184,30 @@ def run_portal_scout_canary_check():
                 logger.info(f"[Canary] {market}: skipped — alert sent within 23h")
                 continue
             with engine.connect() as conn:
-                row = conn.execute(text("""
+                row = conn.execute(
+                    text("""
                     SELECT COUNT(*) FROM listings
                     WHERE data_source = 'portal_scout'
                       AND created_at >= NOW() - INTERVAL '24 hours'
                       AND micro_market_id = (SELECT id FROM micro_markets WHERE name ILIKE :m)
-                """), {"m": f"%{market}%"}).fetchone()
+                """),
+                    {"m": f"%{market}%"},
+                ).fetchone()
             count = row[0] if row else 0
             if count == 0:
                 from utils.discord_notifier import send_scraper_alert
-                send_scraper_alert(market, "portal_scout", "ZERO_LISTINGS_CANARY", record_count=count)
+
+                send_scraper_alert(
+                    market, "portal_scout", "ZERO_LISTINGS_CANARY", record_count=count
+                )
                 _mark_digest_sent(f"portal_canary_{market}")
-                logger.warning(f"[Canary] {market}: 0 new portal listings in 24h — check portal connectivity; verify proxy/network; alert sent to Discord")
+                logger.warning(
+                    f"[Canary] {market}: 0 new portal listings in 24h — check portal connectivity; verify proxy/network; alert sent to Discord"
+                )
             else:
-                logger.info(f"[Canary] {market}: {count} new portal listings in 24h — OK")
+                logger.info(
+                    f"[Canary] {market}: {count} new portal listings in 24h — OK"
+                )
     except Exception as exc:
         logger.warning(f"[Scheduler] Portal scout canary check failed: {exc}")
 
@@ -1062,35 +1223,51 @@ def run_gv_freshness_check():
         results = {}
 
         with ThreadPoolExecutor(max_workers=len(markets)) as pool:
-            futures = {pool.submit(DataQualityMonitor.check_gv_freshness, m): m for m in markets}
+            futures = {
+                pool.submit(DataQualityMonitor.check_gv_freshness, m): m
+                for m in markets
+            }
             for future in as_completed(futures):
                 m = futures[future]
                 try:
                     results[m] = future.result()
                 except Exception as exc:
-                    logger.warning("[Scheduler] GV freshness check failed for {}: {}", m, exc)
-                    results[m] = {"alert_needed": False, "gazette_year": None, "months_stale": None}
+                    logger.warning(
+                        "[Scheduler] GV freshness check failed for {}: {}", m, exc
+                    )
+                    results[m] = {
+                        "alert_needed": False,
+                        "gazette_year": None,
+                        "months_stale": None,
+                    }
 
         for market, result in results.items():
             if result.get("alert_needed"):
                 logger.warning(
                     "[Scheduler] GV fresh STALE for {}: gazette {}, portal {}, {} months",
-                    market, result.get("gazette_year"), result.get("portal_year"),
+                    market,
+                    result.get("gazette_year"),
+                    result.get("portal_year"),
                     result.get("months_stale"),
                 )
             else:
                 logger.info(
                     "[Scheduler] GV fresh OK for {}: gazette {}, portal {}, {} months",
-                    market, result.get("gazette_year"), result.get("portal_year"),
+                    market,
+                    result.get("gazette_year"),
+                    result.get("portal_year"),
                     result.get("months_stale"),
                 )
 
         # Track metrics
         try:
             from config.metrics import data_quality_checks_total
+
             for market, result in results.items():
                 status = "stale" if result.get("alert_needed") else "fresh"
-                data_quality_checks_total.labels(market=market, source="gv_freshness", status=status).inc()
+                data_quality_checks_total.labels(
+                    market=market, source="gv_freshness", status=status
+                ).inc()
         except Exception:
             pass
     except Exception as exc:
@@ -1112,7 +1289,9 @@ def weekly_competitive_digest():
         n_a = len(pulse.get("absorption_leaders", []))
         logger.info(
             "[Scheduler] Competitive digest sent — {} launches, {} movers, {} absorbers",
-            n_l, n_m, n_a,
+            n_l,
+            n_m,
+            n_a,
         )
     except Exception as exc:
         logger.warning("[Scheduler] Competitive digest failed: {}", exc)
@@ -1129,7 +1308,9 @@ def weekly_process_audit():
 
         title = "Weekly Process Audit"
         if _ops_already_alerted(title, cooldown_hours=47):
-            logger.info("[Scheduler] Process audit dedup: already sent within 47h — skipping")
+            logger.info(
+                "[Scheduler] Process audit dedup: already sent within 47h — skipping"
+            )
             return
 
         log_agent = LogAnalystAgent()
@@ -1141,7 +1322,9 @@ def weekly_process_audit():
         proposal = eff_result.get("proposal", {})
 
         doc_agent = RunbookDocumenterAgent()
-        doc_result = doc_agent.run(bottleneck_report=report, improvement_proposal=proposal)
+        doc_result = doc_agent.run(
+            bottleneck_report=report, improvement_proposal=proposal
+        )
 
         summary = (
             f"Process Audit complete — Bottleneck: {report.get('bottleneck_stage', 'none')} | "
@@ -1168,7 +1351,9 @@ def weekly_pr_brief():
 
         title = "Weekly PR Brief"
         if _ops_already_alerted(title, cooldown_hours=23):
-            logger.info("[Scheduler] PR brief dedup: already sent within 23h — skipping")
+            logger.info(
+                "[Scheduler] PR brief dedup: already sent within 23h — skipping"
+            )
             return
 
         monitor = BrandMentionMonitor()
@@ -1180,8 +1365,11 @@ def weekly_pr_brief():
         linkedin_preview = ""
         try:
             from utils.content_pipeline import ContentPipeline
+
             pipeline = ContentPipeline()
-            result = pipeline.run(market="Yelahanka", survey_no="system", deal_type="pr")
+            result = pipeline.run(
+                market="Yelahanka", survey_no="system", deal_type="pr"
+            )
             linkedin_preview = result.get("linkedin_post", "")
         except Exception as exc:
             logger.debug("[Scheduler] PR brief LinkedIn preview skipped: {}", exc)
@@ -1191,7 +1379,9 @@ def weekly_pr_brief():
 
         logger.info(
             "[Scheduler] PR brief sent — {} mentions, {} launches, {} chars",
-            len(mentions), len(launches), len(digest),
+            len(mentions),
+            len(launches),
+            len(digest),
         )
     except Exception as exc:
         logger.warning("[Scheduler] Weekly PR brief failed (non-fatal): {}", exc)
@@ -1220,7 +1410,9 @@ def monthly_ceo_letter():
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
-                    text("SELECT COUNT(*) FROM agent_runs WHERE created_at >= DATE_TRUNC('month', NOW())")
+                    text(
+                        "SELECT COUNT(*) FROM agent_runs WHERE created_at >= DATE_TRUNC('month', NOW())"
+                    )
                 ).fetchone()
                 total_agent_runs = row[0] if row else 0
         except Exception:
@@ -1229,6 +1421,7 @@ def monthly_ceo_letter():
         optimizer_note = ""
         try:
             from utils.optimizer_report import OptimizerReport
+
             report = OptimizerReport.from_last_report()
             if report and report.top_recommendation:
                 optimizer_note = report.top_recommendation[:200]
@@ -1277,6 +1470,7 @@ def monthly_ceo_letter():
         )
         try:
             from utils.discord_notifier import send
+
             send("system", "Monthly CEO Letter", summary)
         except Exception:
             pass
@@ -1316,7 +1510,8 @@ def run_gcc_daily_scan():
                 with engine.begin() as conn:
                     for rec in records:
                         d = rec.data
-                        conn.execute(_text("""
+                        conn.execute(
+                            _text("""
                             INSERT INTO gcc_events (
                                 canonical_id, company, sector, country_of_origin,
                                 bengaluru_location, nearest_corridor, entrant_type,
@@ -1345,8 +1540,12 @@ def run_gcc_daily_scan():
                                 CAST(:announced_at AS date), :discord_alert_fired
                             )
                             ON CONFLICT (canonical_id) DO NOTHING
-                        """), d)
-                logger.info("[Scheduler] GCC scan {}: {} records upserted", market, len(records))
+                        """),
+                            d,
+                        )
+                logger.info(
+                    "[Scheduler] GCC scan {}: {} records upserted", market, len(records)
+                )
             except Exception as exc:
                 logger.warning("[Scheduler] GCC scan failed for {}: {}", market, exc)
 
@@ -1355,14 +1554,21 @@ def run_gcc_daily_scan():
         pending = intel.get_pending_alerts()
         for evt in pending:
             try:
-                evt_dict = dataclasses.asdict(evt) if hasattr(dataclasses, "asdict") else evt.__dict__
+                evt_dict = (
+                    dataclasses.asdict(evt)
+                    if hasattr(dataclasses, "asdict")
+                    else evt.__dict__
+                )
                 send_gcc_alert(evt_dict)
                 intel.mark_alert_fired(evt.canonical_id)
             except Exception as exc:
-                logger.warning("[Scheduler] GCC alert failed for {}: {}", evt.canonical_id, exc)
+                logger.warning(
+                    "[Scheduler] GCC alert failed for {}: {}", evt.canonical_id, exc
+                )
 
         # Invalidate DemandIntel cache for all markets
         from intelligence.demand_intel import DemandIntel
+
         for market in [m.strip() for m in TARGET_MARKETS]:
             try:
                 DemandIntel(caller="scheduler").invalidate_cache(market)
@@ -1405,7 +1611,11 @@ def run_gcc_weekly_digest():
         events_as_dicts = []
         for evt in events:
             try:
-                d = dataclasses.asdict(evt) if hasattr(dataclasses, "asdict") else evt.__dict__
+                d = (
+                    dataclasses.asdict(evt)
+                    if hasattr(dataclasses, "asdict")
+                    else evt.__dict__
+                )
                 events_as_dicts.append(d)
             except Exception:
                 pass
@@ -1424,6 +1634,7 @@ def run_gcc_hiring_snapshot():
     """Weekly snapshot of Naukri job postings per tracked GCC employer (T-1152)."""
     from ingest.plugins.gcc_hiring_plugin import GccHiringPlugin
     from ingest.writer import IngestWriter
+
     logger.info("[Scheduler] GCC hiring snapshot starting")
     try:
         plugin = GccHiringPlugin()
@@ -1431,7 +1642,11 @@ def run_gcc_hiring_snapshot():
         writer = IngestWriter()
         results = writer.write_batch(records)
         successes = sum(1 for r in results if r.success)
-        logger.info("[Scheduler] GCC hiring snapshot done — {}/{} records written", successes, len(results))
+        logger.info(
+            "[Scheduler] GCC hiring snapshot done — {}/{} records written",
+            successes,
+            len(results),
+        )
     except Exception as exc:
         logger.error("[Scheduler] GCC hiring snapshot failed: {}", exc)
 
@@ -1440,6 +1655,7 @@ def run_dc_conversion_scan():
     """Daily DC conversion scan — queries Bhoomi portal (T-1153)."""
     from ingest.plugins.dc_conversion_plugin import DCConversionPlugin
     from ingest.writer import IngestWriter
+
     logger.info("[Scheduler] DC conversion scan starting")
     try:
         plugin = DCConversionPlugin()
@@ -1447,7 +1663,11 @@ def run_dc_conversion_scan():
         writer = IngestWriter()
         results = writer.write_batch(records)
         successes = sum(1 for r in results if r.success)
-        logger.info("[Scheduler] DC conversion scan done — {}/{} records written", successes, len(results))
+        logger.info(
+            "[Scheduler] DC conversion scan done — {}/{} records written",
+            successes,
+            len(results),
+        )
     except Exception as exc:
         logger.error("[Scheduler] DC conversion scan failed: {}", exc)
 
@@ -1473,7 +1693,8 @@ def run_govt_policy_daily_scan():
                 with engine.begin() as conn:
                     for rec in records:
                         d = rec.data
-                        conn.execute(_text("""
+                        conn.execute(
+                            _text("""
                             INSERT INTO govt_policy_events (
                                 headline, category, subcategory, location_text,
                                 micro_markets, investment_cr, stage, impact_score,
@@ -1488,19 +1709,28 @@ def run_govt_policy_daily_scan():
                                 :source_urls, CAST(:published_date AS date), :is_north_bengaluru
                             )
                             ON CONFLICT DO NOTHING
-                        """), d)
+                        """),
+                            d,
+                        )
                 logger.info(
-                    "[Scheduler] Govt policy scan {}: {} records", market, len(records),
+                    "[Scheduler] Govt policy scan {}: {} records",
+                    market,
+                    len(records),
                 )
 
                 # Fire Discord alerts for high-impact North Bengaluru events
                 for rec in records:
                     d = rec.data
-                    if d.get("is_north_bengaluru") and (d.get("impact_score") or 0) >= 7:
+                    if (
+                        d.get("is_north_bengaluru")
+                        and (d.get("impact_score") or 0) >= 7
+                    ):
                         send_govt_policy_alert(d)
             except Exception as exc:
                 logger.warning(
-                    "[Scheduler] Govt policy scan failed for {}: {}", market, exc,
+                    "[Scheduler] Govt policy scan failed for {}: {}",
+                    market,
+                    exc,
                 )
 
         logger.info("[Scheduler] Govt policy daily scan done")
@@ -1554,6 +1784,7 @@ def _mark_digest_sent(digest_type: str) -> None:
     title = f"intel_digest:{digest_type}"
     try:
         from utils.discord_notifier import send as _discord_send
+
         _discord_send("ops", title, f"Digest marker — {digest_type} sent")
     except Exception as exc:
         logger.debug("[Digest-Dedup] Failed to write marker: {}", exc)
@@ -1564,7 +1795,9 @@ def run_weekly_intel_digest():
     Builds digest for all 3 markets, sends to Discord, optionally exports to Obsidian.
     Dedup guard prevents duplicate sends on scheduler restart within the same 23h window."""
     if _digest_already_sent("weekly", cooldown_hours=23):
-        logger.info("[Scheduler] Weekly digest dedup: already sent within 23h — skipping")
+        logger.info(
+            "[Scheduler] Weekly digest dedup: already sent within 23h — skipping"
+        )
         return
 
     logger.info("[Scheduler] Weekly intel digest starting")
@@ -1573,6 +1806,7 @@ def run_weekly_intel_digest():
         from utils.weekly_digest import WeeklyIntelDigest
         from utils.discord_notifier import send_weekly_digest
         from utils.obsidian_export import ObsidianExport
+
         markets = [m.strip() for m in TARGET_MARKETS]
         results = []
         for market in markets:
@@ -1582,17 +1816,23 @@ def run_weekly_intel_digest():
                 results.append(result)
             except Exception as exc:
                 failure_count += 1
-                logger.warning("[Scheduler] Weekly digest build failed for {}: {}", market, exc)
+                logger.warning(
+                    "[Scheduler] Weekly digest build failed for {}: {}", market, exc
+                )
         if results:
             _mark_digest_sent("weekly")
             send_weekly_digest(results)
             successful = len(results) - failure_count
             logger.info(
                 "[Scheduler] Weekly intel digest sent for {}/{} markets ({} failures)",
-                successful, len(results), failure_count,
+                successful,
+                len(results),
+                failure_count,
             )
         else:
-            logger.warning("[Scheduler] Weekly intel digest: 0 results built — skipping Discord send")
+            logger.warning(
+                "[Scheduler] Weekly intel digest: 0 results built — skipping Discord send"
+            )
             return
         ObsidianExport.write_weekly(results)
     except Exception as exc:
@@ -1604,7 +1844,9 @@ def run_monthly_intel_digest():
     Builds digest for all 3 markets, sends to Discord, optionally exports to Obsidian.
     Dedup guard prevents duplicate sends on scheduler restart within the same 47h window."""
     if _digest_already_sent("monthly", cooldown_hours=47):
-        logger.info("[Scheduler] Monthly digest dedup: already sent within 47h — skipping")
+        logger.info(
+            "[Scheduler] Monthly digest dedup: already sent within 47h — skipping"
+        )
         return
 
     logger.info("[Scheduler] Monthly intel digest starting")
@@ -1613,6 +1855,7 @@ def run_monthly_intel_digest():
         from utils.monthly_digest import MonthlyIntelDigest
         from utils.discord_notifier import send_monthly_digest
         from utils.obsidian_export import ObsidianExport
+
         markets = [m.strip() for m in TARGET_MARKETS]
         results = []
         for market in markets:
@@ -1622,17 +1865,23 @@ def run_monthly_intel_digest():
                 results.append(result)
             except Exception as exc:
                 failure_count += 1
-                logger.warning("[Scheduler] Monthly digest build failed for {}: {}", market, exc)
+                logger.warning(
+                    "[Scheduler] Monthly digest build failed for {}: {}", market, exc
+                )
         if results:
             _mark_digest_sent("monthly")
             send_monthly_digest(results)
             successful = len(results) - failure_count
             logger.info(
                 "[Scheduler] Monthly intel digest sent for {}/{} markets ({} failures)",
-                successful, len(results), failure_count,
+                successful,
+                len(results),
+                failure_count,
             )
         else:
-            logger.warning("[Scheduler] Monthly intel digest: 0 results built — skipping Discord send")
+            logger.warning(
+                "[Scheduler] Monthly intel digest: 0 results built — skipping Discord send"
+            )
             return
         ObsidianExport.write_monthly(results)
     except Exception as exc:
@@ -1651,12 +1900,16 @@ def run_post_crew_optimizer_hook():
         report = generate_report(days=1)
 
         # Check for HIGH severity findings
-        high_findings = [f for f in report.redundancy_findings if f.get("severity") == "HIGH"]
+        high_findings = [
+            f for f in report.redundancy_findings if f.get("severity") == "HIGH"
+        ]
 
         if high_findings:
             # Create project task via API
             for finding in high_findings[:3]:  # cap at 3 tasks per run
-                recommendation = finding.get("recommendation", "Review HIGH severity finding")
+                recommendation = finding.get(
+                    "recommendation", "Review HIGH severity finding"
+                )
                 try:
                     with get_engine().begin() as conn:
                         conn.execute(
@@ -1664,21 +1917,34 @@ def run_post_crew_optimizer_hook():
                                 INSERT INTO tasks (title, owner, priority, source_type, source_id)
                                 VALUES (:t, 'optimizer', 'high', 'optimizer_finding', :sid)
                             """),
-                            {"t": recommendation[:100], "sid": finding.get("agent", "unknown")},
+                            {
+                                "t": recommendation[:100],
+                                "sid": finding.get("agent", "unknown"),
+                            },
                         )
                     report.auto_tasks_created += 1
                 except Exception as exc:
-                    logger.warning("[Scheduler] Failed to create task for findings: {}", exc)
+                    logger.warning(
+                        "[Scheduler] Failed to create task for findings: {}", exc
+                    )
 
             # Write report to outputs/optimizer/ (use relative path for dev, /app for prod)
             import os
-            output_base = "/app/outputs/optimizer" if os.path.exists("/app") else "outputs/optimizer"
+
+            output_base = (
+                "/app/outputs/optimizer"
+                if os.path.exists("/app")
+                else "outputs/optimizer"
+            )
             report_path = os.path.join(output_base, f"{report.report_date}.md")
             os.makedirs(output_base, exist_ok=True)
             report.write(report_path)
 
-        logger.info("[Scheduler] Optimizer hook: {} high findings, {} tasks created",
-                   len(high_findings), report.auto_tasks_created)
+        logger.info(
+            "[Scheduler] Optimizer hook: {} high findings, {} tasks created",
+            len(high_findings),
+            report.auto_tasks_created,
+        )
     except Exception as exc:
         logger.error("[Scheduler] Post-crew optimizer hook failed: {}", exc)
 
@@ -1690,12 +1956,15 @@ def _bhoomi_already_ran(market: str, cooldown_hours: int = 12) -> bool:
     title = f"{_BHOOMI_DEDUP_PREFIX}{market}"
     try:
         with get_engine().connect() as conn:
-            row = conn.execute(text("""
+            row = conn.execute(
+                text("""
                 SELECT id FROM alerts
                 WHERE channel = 'ops' AND title = :title
                   AND created_at > NOW() - (:hrs || ' hours')::interval
                 LIMIT 1
-            """), {"title": title, "hrs": cooldown_hours}).fetchone()
+            """),
+                {"title": title, "hrs": cooldown_hours},
+            ).fetchone()
         return row is not None
     except Exception as exc:
         logger.debug("[Bhoomi-Dedup] Check failed: {}", exc)
@@ -1706,6 +1975,7 @@ def _mark_bhoomi_ran(market: str) -> None:
     title = f"{_BHOOMI_DEDUP_PREFIX}{market}"
     try:
         from utils.discord_notifier import send as ds
+
         ds("ops", title, f"Bhoomi auto-survey ran for {market}")
     except Exception as exc:
         logger.debug("[Bhoomi-Dedup] Marker failed: {}", exc)
@@ -1725,13 +1995,16 @@ def run_bhoomi_auto_survey(market: str = ""):
 
         try:
             with engine.connect() as conn:
-                rows = conn.execute(text("""
+                rows = conn.execute(
+                    text("""
                     SELECT id, survey_no, developer_name FROM rera_projects
                     WHERE survey_no IS NOT NULL AND survey_no != ''
                       AND bhoomi_checked_at IS NULL
                       AND micro_market_id = (SELECT id FROM micro_markets WHERE name ILIKE :m)
                     LIMIT 20
-                """), {"m": f"%{mkt}%"}).fetchall()
+                """),
+                    {"m": f"%{mkt}%"},
+                ).fetchall()
         except Exception as exc:
             logger.warning("[BhoomiAutoSurvey] Query failed for {}: {}", mkt, exc)
             continue
@@ -1749,7 +2022,9 @@ def run_bhoomi_auto_survey(market: str = ""):
             try:
                 result = _bf(row.survey_no, market=mkt)
             except Exception as exc:
-                logger.warning("[BhoomiAutoSurvey] Fetch error {}: {}", row.survey_no, exc)
+                logger.warning(
+                    "[BhoomiAutoSurvey] Fetch error {}: {}", row.survey_no, exc
+                )
                 continue
 
             if result.get("bhoomi_status") == "unavailable":
@@ -1762,32 +2037,49 @@ def run_bhoomi_auto_survey(market: str = ""):
             if owner:
                 try:
                     with engine.begin() as conn:
-                        existing = conn.execute(text(
-                            "SELECT id FROM landowner_contacts WHERE survey_no=:sn AND market=:m"
-                        ), {"sn": row.survey_no, "m": mkt}).fetchone()
+                        existing = conn.execute(
+                            text(
+                                "SELECT id FROM landowner_contacts WHERE survey_no=:sn AND market=:m"
+                            ),
+                            {"sn": row.survey_no, "m": mkt},
+                        ).fetchone()
                         if existing:
-                            conn.execute(text(
-                                "UPDATE landowner_contacts SET owner_name=:o, updated_at=NOW() WHERE id=:lid"
-                            ), {"o": owner, "lid": existing.id})
+                            conn.execute(
+                                text(
+                                    "UPDATE landowner_contacts SET owner_name=:o, updated_at=NOW() WHERE id=:lid"
+                                ),
+                                {"o": owner, "lid": existing.id},
+                            )
                         else:
-                            conn.execute(text(
-                                "INSERT INTO landowner_contacts (survey_no, market, owner_name) VALUES (:sn, :m, :o)"
-                            ), {"sn": row.survey_no, "m": mkt, "o": owner})
+                            conn.execute(
+                                text(
+                                    "INSERT INTO landowner_contacts (survey_no, market, owner_name) VALUES (:sn, :m, :o)"
+                                ),
+                                {"sn": row.survey_no, "m": mkt, "o": owner},
+                            )
                 except Exception as exc:
                     logger.warning("[BhoomiAutoSurvey] Upsert failed: {}", exc)
 
             try:
                 with engine.begin() as conn:
-                    conn.execute(text(
-                        "UPDATE rera_projects SET bhoomi_checked_at=NOW() WHERE id=:pid"
-                    ), {"pid": row.id})
+                    conn.execute(
+                        text(
+                            "UPDATE rera_projects SET bhoomi_checked_at=NOW() WHERE id=:pid"
+                        ),
+                        {"pid": row.id},
+                    )
                 checked += 1
             except Exception as exc:
                 logger.warning("[BhoomiAutoSurvey] Mark failed: {}", exc)
 
         _mark_bhoomi_ran(mkt)
-        logger.info("[BhoomiAutoSurvey] {}: {}/{} checked{}",
-            mkt, checked, len(rows), " (429)" if skipped_429 else "")
+        logger.info(
+            "[BhoomiAutoSurvey] {}: {}/{} checked{}",
+            mkt,
+            checked,
+            len(rows),
+            " (429)" if skipped_429 else "",
+        )
 
 
 def run_data_floor_check():
@@ -1814,10 +2106,14 @@ def run_data_floor_check():
             if ok:
                 logger.info("[Scheduler] Data floor {}: OK (floor={})", market, floor)
             else:
-                logger.warning("[Scheduler] Data floor {}: BREACH (floor={})", market, floor)
+                logger.warning(
+                    "[Scheduler] Data floor {}: BREACH (floor={})", market, floor
+                )
                 all_ok = False
         except Exception as exc:
-            logger.warning("[Scheduler] Data floor check failed for {}: {}", market, exc)
+            logger.warning(
+                "[Scheduler] Data floor check failed for {}: {}", market, exc
+            )
             all_ok = False
 
     # Scheduler heartbeat staleness check (T-1158)
@@ -1851,7 +2147,11 @@ def run_kaveri_deeds_weekly():
 
     Runs inbox mode always, attempts live mode, sends Discord summary.
     """
-    from scrapers.kaveri_deeds import run_inbox_mode, run_live_mode, read_latest_checkpoint
+    from scrapers.kaveri_deeds import (
+        run_inbox_mode,
+        run_live_mode,
+        read_latest_checkpoint,
+    )
 
     logger.info("[Scheduler] Kaveri deeds weekly extraction starting")
 
@@ -1891,6 +2191,7 @@ def run_kaveri_deeds_weekly():
 
     try:
         from utils.discord_notifier import send_ops_alert
+
         send_ops_alert("KAVERI_DEEDS_WEEKLY", summary)
     except Exception as exc:
         logger.warning("[Scheduler] Kaveri deeds Discord alert failed: {}", exc)
@@ -1910,6 +2211,7 @@ def run_scheduler_heartbeat():
     and the data-floor check independently validates per-market data freshness.
     """
     from datetime import datetime, timezone
+
     now_iso = datetime.now(timezone.utc).isoformat()
     try:
         with get_engine().begin() as conn:
@@ -1953,6 +2255,7 @@ def check_heartbeat_staleness(max_age_hours: int = 2) -> bool:
         last_ts = row[0]
         if last_ts.tzinfo is None:
             from datetime import timezone as _tz
+
             last_ts = last_ts.replace(tzinfo=_tz.utc)
         age = (datetime.now(timezone.utc) - last_ts).total_seconds() / 3600
         if age > max_age_hours:
@@ -2029,7 +2332,8 @@ if __name__ == "__main__":
     # Stuck board session recovery — every hour (T-315)
     scheduler.add_job(
         lambda: _safe_job(recover_stuck_board_sessions, "recover_board_sessions"),
-        "interval", hours=1,
+        "interval",
+        hours=1,
         id="recover_board_sessions",
         name="Recover Stuck Board Sessions",
         replace_existing=True,
@@ -2288,7 +2592,9 @@ if __name__ == "__main__":
     # Called explicitly from Stage3 completion via subprocess callback
     scheduler.add_job(
         lambda: _safe_job(run_post_crew_optimizer_hook, "post_crew_optimizer_hook"),
-        CronTrigger(hour=4, minute=0),  # fallback: run daily at 4am UTC if not triggered inline
+        CronTrigger(
+            hour=4, minute=0
+        ),  # fallback: run daily at 4am UTC if not triggered inline
         id="post_crew_optimizer_hook",
         name="Post-Crew Optimizer Hook (daily fallback)",
         misfire_grace_time=3600,
@@ -2391,7 +2697,8 @@ if __name__ == "__main__":
     # Scheduler heartbeat — every 30 min to prove scheduler is alive (T-1158)
     scheduler.add_job(
         lambda: _safe_job(run_scheduler_heartbeat, "scheduler_heartbeat"),
-        "interval", minutes=30,
+        "interval",
+        minutes=30,
         id="scheduler_heartbeat",
         name="Scheduler Heartbeat (writes agent_runs every 30min)",
         replace_existing=True,
@@ -2408,8 +2715,12 @@ if __name__ == "__main__":
     logger.info("  01:00 AM IST — Daily pg_dump backup [T-904]")
     logger.info("  02:00 AM IST — Unified Ingest Engine (all scrapers)")
     logger.info("  03:00 AM IST — Opportunity scoring (GATE-47)")
-    logger.info("  03:00 AM IST — Portal scout canary check (zero-listing alert) [GATE-79]")
-    logger.info("  03:30 AM IST — FinBERT sentiment repair (null score retry) [GATE-79]")
+    logger.info(
+        "  03:00 AM IST — Portal scout canary check (zero-listing alert) [GATE-79]"
+    )
+    logger.info(
+        "  03:30 AM IST — FinBERT sentiment repair (null score retry) [GATE-79]"
+    )
     logger.info("  04:30 AM IST — Intel embedding index (ChromaDB)")
     logger.info("  05:00 AM IST — News sentiment scoring (FinBERT)")
     logger.info("  06:00 AM IST — Market snapshots")
@@ -2426,28 +2737,63 @@ if __name__ == "__main__":
     logger.info("  Monday 06:30 IST — Competitive intel pulse digest [T-976]")
     _frozen_tag = "🧊 FROZEN" if not SCHEDULER_ENABLE_ORG_SIM else ""
     if _frozen_tag:
-        logger.info("  Monday 07:30 IST — PR brief digest (brand mentions + LinkedIn) [T-999] 🧊 FROZEN (GATE-91)")
-        logger.info("  Sunday 08:30 IST — Process automation audit (LogAnalyst + Optimizer + Runbook) [T-1011] 🧊 FROZEN (GATE-91)")
-        logger.info("  1st of month 09:30 IST — Monthly CEO letter (PerformanceDigest + agent_runs) [T-1019] 🧊 FROZEN (GATE-91)")
-    logger.info("  Daily 08:00 IST — GCC daily scan (seed + news → L1/L2 alerts) [T-1021]")
-    logger.info("  Monday 07:30 IST — GCC weekly digest (pipeline → Discord intel) [T-1022]")
-    logger.info("  Thursday 08:30 IST — GCC hiring snapshot (Naukri job postings per employer → gcc_hiring_snapshots) [T-1152]")
-    logger.info("  Daily 09:30 IST — DC conversion scan (Bhoomi land-use changes → dc_conversions) [T-1153]")
-    logger.info("  1st of month 06:30 IST — Monthly mobility scout (accessibility_scores) [T-1039]")
-    logger.info("  06:30 IST daily — Govt/Policy daily scan (events→Discord alerts) [T-1050]")
-    logger.info("  Monday 08:00 IST — Govt/Policy weekly digest (north_bengaluru_score→Discord) [T-1050]")
-    logger.info("  Monday 07:00 IST — Weekly intel digest (PSF delta + RERA + competitive) → Discord intel_reports [T-1057]")
-    logger.info("  1st of month 07:30 IST — Monthly intel digest (MoM PSF + absorption + LLM synthesis) → Discord [T-1057]")
-    logger.info("  Daily 09:00 IST — Bhoomi auto-survey from RERA survey numbers (T-1080)")
-    logger.info("  06:30 IST daily — Data floor check (Discord alert on live RERA breach) [T-1128]")
-    logger.info("  Sunday 03:00 IST — Kaveri deed weekly extraction (inbox + live → Discord) [T-1139]")
+        logger.info(
+            "  Monday 07:30 IST — PR brief digest (brand mentions + LinkedIn) [T-999] 🧊 FROZEN (GATE-91)"
+        )
+        logger.info(
+            "  Sunday 08:30 IST — Process automation audit (LogAnalyst + Optimizer + Runbook) [T-1011] 🧊 FROZEN (GATE-91)"
+        )
+        logger.info(
+            "  1st of month 09:30 IST — Monthly CEO letter (PerformanceDigest + agent_runs) [T-1019] 🧊 FROZEN (GATE-91)"
+        )
+    logger.info(
+        "  Daily 08:00 IST — GCC daily scan (seed + news → L1/L2 alerts) [T-1021]"
+    )
+    logger.info(
+        "  Monday 07:30 IST — GCC weekly digest (pipeline → Discord intel) [T-1022]"
+    )
+    logger.info(
+        "  Thursday 08:30 IST — GCC hiring snapshot (Naukri job postings per employer → gcc_hiring_snapshots) [T-1152]"
+    )
+    logger.info(
+        "  Daily 09:30 IST — DC conversion scan (Bhoomi land-use changes → dc_conversions) [T-1153]"
+    )
+    logger.info(
+        "  1st of month 06:30 IST — Monthly mobility scout (accessibility_scores) [T-1039]"
+    )
+    logger.info(
+        "  06:30 IST daily — Govt/Policy daily scan (events→Discord alerts) [T-1050]"
+    )
+    logger.info(
+        "  Monday 08:00 IST — Govt/Policy weekly digest (north_bengaluru_score→Discord) [T-1050]"
+    )
+    logger.info(
+        "  Monday 07:00 IST — Weekly intel digest (PSF delta + RERA + competitive) → Discord intel_reports [T-1057]"
+    )
+    logger.info(
+        "  1st of month 07:30 IST — Monthly intel digest (MoM PSF + absorption + LLM synthesis) → Discord [T-1057]"
+    )
+    logger.info(
+        "  Daily 09:00 IST — Bhoomi auto-survey from RERA survey numbers (T-1080)"
+    )
+    logger.info(
+        "  06:30 IST daily — Data floor check (Discord alert on live RERA breach) [T-1128]"
+    )
+    logger.info(
+        "  Sunday 03:00 IST — Kaveri deed weekly extraction (inbox + live → Discord) [T-1139]"
+    )
     logger.info("  02:30 IST nightly — Parcel linker (survey_no → parcels) [T-1142]")
-    logger.info("  Sunday 03:30 IST — Land assembly detection (30 min buffer after deed extraction) [T-1143]")
-    logger.info("  Sunday 05:00 IST — Weekly offsite backup push (rclone + verify) [T-1146]")
-    logger.info("  Monday 06:00 IST — Weekly prediction ledger check (resolve + Discord) [T-1148]")
+    logger.info(
+        "  Sunday 03:30 IST — Land assembly detection (30 min buffer after deed extraction) [T-1143]"
+    )
+    logger.info(
+        "  Sunday 05:00 IST — Weekly offsite backup push (rclone + verify) [T-1146]"
+    )
+    logger.info(
+        "  Monday 06:00 IST — Weekly prediction ledger check (resolve + Discord) [T-1148]"
+    )
     logger.info("  Daily 07:00 IST — Karnataka eProcurement tender scan [T-1149]")
     logger.info("  Sunday 06:00 IST — Weekly LA notification gazette scan [T-1150]")
     logger.info(f"Active jobs: {[j.id for j in scheduler.get_jobs()]}")
 
     scheduler.start()
-

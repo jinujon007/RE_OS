@@ -7,6 +7,7 @@ child FK values instead of blocking cleanup (default RESTRICT).
 Migration chain:
     0045_materialized_market_brief -> 0046_fk_on_delete_set_null
 """
+
 from typing import Union
 
 from alembic import op

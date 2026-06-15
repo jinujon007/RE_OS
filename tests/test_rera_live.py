@@ -5,6 +5,7 @@ Scraper uses HTTP POST (no Playwright) as of T-798/T-799 refactoring.
 
 All tests are unit-level (pytest.mark.unit). No live portal calls.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -54,32 +55,40 @@ class TestRERAExpectedCounts:
 
     def test_yelahanka_expected_meets_floor(self):
         from config.settings import MARKET_RERA_CONFIG
+
         assert MARKET_RERA_CONFIG["Yelahanka"]["expected_rows"] >= 150
 
     def test_hebbal_expected_meets_floor(self):
         from config.settings import MARKET_RERA_CONFIG
+
         assert MARKET_RERA_CONFIG["Hebbal"]["expected_rows"] >= 150
 
     def test_devanahalli_expected_meets_floor(self):
         from config.settings import MARKET_RERA_CONFIG
+
         assert MARKET_RERA_CONFIG["Devanahalli"]["expected_rows"] >= 290
 
     def test_all_markets_have_positive_expected(self):
         from config.settings import MARKET_RERA_CONFIG
+
         for market, config in MARKET_RERA_CONFIG.items():
             assert config["expected_rows"] > 0, f"{market} expected_rows is 0"
 
     def test_all_markets_configured(self):
         from config.settings import MARKET_RERA_CONFIG
+
         assert set(MARKET_RERA_CONFIG.keys()) == {"Yelahanka", "Hebbal", "Devanahalli"}
 
     def test_each_config_has_required_fields(self):
         from config.settings import MARKET_RERA_CONFIG
+
         for market, config in MARKET_RERA_CONFIG.items():
             assert "district" in config, f"{market} missing district"
             assert "subdistrict" in config, f"{market} missing subdistrict"
             assert "expected_rows" in config, f"{market} missing expected_rows"
-            assert isinstance(config["expected_rows"], int), f"{market} expected_rows not int"
+            assert isinstance(config["expected_rows"], int), (
+                f"{market} expected_rows not int"
+            )
             assert config["expected_rows"] > 0, f"{market} expected_rows must be > 0"
 
 
@@ -108,17 +117,23 @@ class TestRERAFallbackData:
     def test_fallback_source_is_fallback_sample(self, rera_scraper):
         projects = rera_scraper._fallback_rera_data("Yelahanka")
         for p in projects:
-            assert p.get("data_source") == "fallback_sample", f"Unexpected source in {p.get('project_name')}"
+            assert p.get("data_source") == "fallback_sample", (
+                f"Unexpected source in {p.get('project_name')}"
+            )
 
     def test_fallback_has_rera_numbers(self, rera_scraper):
         projects = rera_scraper._fallback_rera_data("Yelahanka")
         for p in projects:
-            assert p.get("rera_number"), f"Missing rera_number in {p.get('project_name', 'UNKNOWN')}"
+            assert p.get("rera_number"), (
+                f"Missing rera_number in {p.get('project_name', 'UNKNOWN')}"
+            )
 
     def test_fallback_has_project_names(self, rera_scraper):
         projects = rera_scraper._fallback_rera_data("Yelahanka")
         for p in projects:
-            assert p.get("project_name"), f"Missing project_name for {p.get('rera_number', 'UNKNOWN')}"
+            assert p.get("project_name"), (
+                f"Missing project_name for {p.get('rera_number', 'UNKNOWN')}"
+            )
 
     def test_fallback_source_not_live(self, rera_scraper):
         """Fallback records must never be tagged as live."""
@@ -270,16 +285,19 @@ class TestRERAAltSubdistrictFallback:
 
     def test_hebbal_has_alt_subdistricts(self):
         from scrapers.rera_karnataka import ALT_SUBDISTRICTS
+
         assert "Hebbal" in ALT_SUBDISTRICTS
         assert len(ALT_SUBDISTRICTS["Hebbal"]) > 0
 
     def test_yelahanka_has_alt_subdistricts(self):
         from scrapers.rera_karnataka import ALT_SUBDISTRICTS
+
         assert "Yelahanka" in ALT_SUBDISTRICTS
         assert len(ALT_SUBDISTRICTS["Yelahanka"]) > 0
 
     def test_alt_districts_defined(self):
         from scrapers.rera_karnataka import ALT_DISTRICTS
+
         assert "Yelahanka" in ALT_DISTRICTS
         assert "Hebbal" in ALT_DISTRICTS
 
@@ -317,14 +335,17 @@ class TestRERARetry:
         """_post_search has @retry(stop=3, wait_exponential) — verify it retries."""
         import inspect
         from tenacity import Retrying
+
         source = inspect.getsource(rera_scraper._post_search)
         assert "@retry" in source, "_post_search missing retry decorator"
 
     def test_retry_count_via_decorator(self):
         from scrapers.rera_karnataka import RERAKarnatakaScraper
+
         retry_decorator = getattr(RERAKarnatakaScraper._post_search, "retry", None)
         if retry_decorator:
             from tenacity import stop_after_attempt
+
             stop = retry_decorator.statistics.get("stop")
             assert stop is None or stop.max_attempt_number == 3
 
@@ -337,6 +358,7 @@ class TestRERAPluginIntegration:
 
     def test_plugin_metadata(self):
         from ingest.plugins.rera_plugin import RERAPlugin
+
         plugin = RERAPlugin()
         assert plugin.plugin_id == "rera_karnataka"
         assert plugin.source_id == "rera_karnataka_portal"
@@ -344,8 +366,16 @@ class TestRERAPluginIntegration:
     @patch("scrapers.rera_karnataka.RERAKarnatakaScraper.scrape_market")
     def test_skips_empty_rera_number(self, mock_scrape):
         from ingest.plugins.rera_plugin import RERAPlugin
+
         mock_scrape.return_value = (
-            [{"rera_number": "", "project_name": "No RERA", "data_source": "test", "scraped_at": ""}],
+            [
+                {
+                    "rera_number": "",
+                    "project_name": "No RERA",
+                    "data_source": "test",
+                    "scraped_at": "",
+                }
+            ],
             [],
         )
         plugin = RERAPlugin()
@@ -355,18 +385,21 @@ class TestRERAPluginIntegration:
     @patch("scrapers.rera_karnataka.RERAKarnatakaScraper.scrape_market")
     def test_wraps_live_data_correctly(self, mock_scrape):
         from ingest.plugins.rera_plugin import RERAPlugin
+
         now = datetime.utcnow().isoformat()
         mock_scrape.return_value = (
-            [{
-                "rera_number": "RERA/001",
-                "project_name": "Test Project",
-                "developer_name": "Test Developer",
-                "total_units": 100,
-                "possession_date": "2026-12-31",
-                "data_source": "rera_karnataka_live",
-                "scraped_at": now,
-                "project_status": "Active",
-            }],
+            [
+                {
+                    "rera_number": "RERA/001",
+                    "project_name": "Test Project",
+                    "developer_name": "Test Developer",
+                    "total_units": 100,
+                    "possession_date": "2026-12-31",
+                    "data_source": "rera_karnataka_live",
+                    "scraped_at": now,
+                    "project_status": "Active",
+                }
+            ],
             [],
         )
         plugin = RERAPlugin()
@@ -383,23 +416,29 @@ class TestRERAPluginIntegration:
     def test_handles_nullable_fields(self, mock_scrape):
         """project_status and is_active are optional fields — plugin must handle absence."""
         from ingest.plugins.rera_plugin import RERAPlugin
+
         now = datetime.utcnow().isoformat()
         mock_scrape.return_value = (
-            [{
-                "rera_number": "RERA/002",
-                "project_name": "Minimal Project",
-                "developer_name": "Dev",
-                "total_units": 50,
-                "possession_date": "",
-                "data_source": "rera_karnataka_live",
-                "scraped_at": now,
-            }],
+            [
+                {
+                    "rera_number": "RERA/002",
+                    "project_name": "Minimal Project",
+                    "developer_name": "Dev",
+                    "total_units": 50,
+                    "possession_date": "",
+                    "data_source": "rera_karnataka_live",
+                    "scraped_at": now,
+                }
+            ],
             [],
         )
         plugin = RERAPlugin()
         records = plugin.run("Devanahalli")
         assert len(records) == 1
-        assert "project_status" not in records[0].data or records[0].data["project_status"] == ""
+        assert (
+            "project_status" not in records[0].data
+            or records[0].data["project_status"] == ""
+        )
 
 
 # ── Post-fix regression: no Playwright for listing ────────────────────────────
@@ -412,19 +451,24 @@ class TestRERARegressionNoPlaywright:
         """_post_search must NOT import/instantiate Playwright — uses direct HTTP POST."""
         import inspect
         import re as _re
+
         source = inspect.getsource(rera_scraper._post_search)
         non_comment_source = "\n".join(
             line for line in source.split("\n") if not line.strip().startswith("#")
         )
-        assert not _re.search(r"from playwright|import playwright|Playwright\(\)", non_comment_source),             "Playwright import or instantiation detected in _post_search"
+        assert not _re.search(
+            r"from playwright|import playwright|Playwright\(\)", non_comment_source
+        ), "Playwright import or instantiation detected in _post_search"
 
     def test_search_url_is_https_post(self):
         from scrapers.rera_karnataka import RERAKarnatakaScraper
+
         assert RERAKarnatakaScraper.SEARCH_URL.endswith("/projectViewDetails")
 
     def test_scraper_uses_beautifulsoup(self, rera_scraper):
         """The HTML parser must use BeautifulSoup (not regex for table parsing)."""
         import inspect
+
         source = inspect.getsource(rera_scraper._parse_html_table)
         assert "BeautifulSoup" in source
         assert "lxml" in source
@@ -448,7 +492,16 @@ class TestRERAPostPayload:
             "taluk": "Yelahanka",
             "btn1": "Search",
         }
-        assert set(payload.keys()) == {"project", "firm", "appNo", "regNo", "district", "subdistrict", "taluk", "btn1"}
+        assert set(payload.keys()) == {
+            "project",
+            "firm",
+            "appNo",
+            "regNo",
+            "district",
+            "subdistrict",
+            "taluk",
+            "btn1",
+        }
 
     def test_ua_rotation_randomizes_requests(self, rera_scraper):
         """User-Agent must rotate between requests to avoid rate limiting."""
@@ -470,7 +523,10 @@ class TestRERAPlaywrightFallback:
         _playwright_scrape should be called."""
         with patch.object(rera_scraper, "_post_search", return_value=[]) as mock_post:
             with patch.object(rera_scraper, "_playwright_scrape") as mock_pw:
-                mock_pw.return_value = ([{"rera_number": "PW/001", "project_name": "PW Project"}], [])
+                mock_pw.return_value = (
+                    [{"rera_number": "PW/001", "project_name": "PW Project"}],
+                    [],
+                )
                 with patch.object(rera_scraper, "session") as mock_session:
                     mock_session.cookies = []
                     projects, _ = rera_scraper.scrape_market("Yelahanka")
@@ -481,24 +537,34 @@ class TestRERAPlaywrightFallback:
     def test_devanahalli_stays_on_post_path(self, rera_scraper):
         """Devanahalli is NOT in RERA_USE_PLAYWRIGHT_MARKETS — must NOT call Playwright."""
         with patch.object(rera_scraper, "_post_search") as mock_post:
-            mock_post.return_value = [{"rera_number": "POST/001", "project_name": "POST Project"}]
+            mock_post.return_value = [
+                {"rera_number": "POST/001", "project_name": "POST Project"}
+            ]
             with patch.object(rera_scraper, "_playwright_scrape") as mock_pw:
                 with patch.object(rera_scraper, "session") as mock_session:
                     mock_session.cookies = []
                     projects, _ = rera_scraper.scrape_market("Devanahalli")
-                    assert not mock_pw.called, "_playwright_scrape was called for Devanahalli"
+                    assert not mock_pw.called, (
+                        "_playwright_scrape was called for Devanahalli"
+                    )
                     assert len(projects) == 1
 
     def test_playwright_falls_to_hardcoded_on_playwright_failure(self, rera_scraper):
         """When both POST and Playwright fail, fall back to hardcoded seed data."""
         with patch.object(rera_scraper, "_post_search", return_value=[]):
-            with patch.object(rera_scraper, "_playwright_scrape", return_value=([], [])):
+            with patch.object(
+                rera_scraper, "_playwright_scrape", return_value=([], [])
+            ):
                 with patch.object(rera_scraper, "_fallback_rera_data") as mock_fallback:
-                    mock_fallback.return_value = [{"rera_number": "FALLBACK/001", "source": "fallback_sample"}]
+                    mock_fallback.return_value = [
+                        {"rera_number": "FALLBACK/001", "source": "fallback_sample"}
+                    ]
                     with patch.object(rera_scraper, "session") as mock_session:
                         mock_session.cookies = []
                         projects, _ = rera_scraper.scrape_market("Yelahanka")
-                        assert mock_fallback.called, "_fallback_rera_data was not called"
+                        assert mock_fallback.called, (
+                            "_fallback_rera_data was not called"
+                        )
                         assert projects[0]["source"] == "fallback_sample"
 
     @patch("playwright.sync_api.sync_playwright")
@@ -521,7 +587,12 @@ class TestRERAPlaywrightFallback:
         </tbody></table>
         """
         mock_context.cookies.return_value = [
-            {"name": "JSESSIONID", "value": "test-session-123", "domain": ".karnataka.gov.in", "path": "/"}
+            {
+                "name": "JSESSIONID",
+                "value": "test-session-123",
+                "domain": ".karnataka.gov.in",
+                "path": "/",
+            }
         ]
 
         with patch("scrapers.rera_karnataka.Checkpointer") as mock_cp_cls:
@@ -538,6 +609,7 @@ class TestRERAPlaywrightFallback:
     def test_playwright_not_invoked_for_non_pw_market(self, rera_scraper):
         """Markets not in RERA_USE_PLAYWRIGHT_MARKETS return empty immediately."""
         from config.settings import RERA_USE_PLAYWRIGHT_MARKETS
+
         assert "Devanahalli" not in RERA_USE_PLAYWRIGHT_MARKETS
         projects, cookies = rera_scraper._playwright_scrape("Devanahalli")
         assert projects == []
@@ -553,10 +625,15 @@ class TestRERASessionCookie:
     def test_session_cookie_saved_to_checkpoint(self, rera_scraper):
         """After Playwright scrape, session cookie is persisted via Checkpointer."""
         from config.checkpointer import Checkpointer
+
         mock_cp = MagicMock(spec=Checkpointer)
 
         with patch("scrapers.rera_karnataka.Checkpointer", return_value=mock_cp):
-            with patch.object(rera_scraper, "_parse_html_table", return_value=[{"rera_number": "T/001"}]):
+            with patch.object(
+                rera_scraper,
+                "_parse_html_table",
+                return_value=[{"rera_number": "T/001"}],
+            ):
                 with patch("playwright.sync_api.sync_playwright") as mock_sync_pw:
                     mock_browser = MagicMock()
                     mock_context = MagicMock()
@@ -566,7 +643,12 @@ class TestRERASessionCookie:
                     mock_context.new_page.return_value = mock_page
                     mock_page.content.return_value = "<table></table>"
                     mock_context.cookies.return_value = [
-                        {"name": "JSESSIONID", "value": "saved-session-456", "domain": ".karnataka.gov.in", "path": "/"}
+                        {
+                            "name": "JSESSIONID",
+                            "value": "saved-session-456",
+                            "domain": ".karnataka.gov.in",
+                            "path": "/",
+                        }
                     ]
                     rera_scraper._playwright_scrape("Yelahanka")
                     mock_cp.save.assert_called_once()
@@ -578,13 +660,18 @@ class TestRERASessionCookie:
     def test_detail_scout_loads_session_cookie(self):
         """RERADetailScout should load session_cookie from checkpoint at init."""
         from scrapers.rera_detail_scout import RERADetailScout
-        with patch("scrapers.rera_detail_scout._load_session_cookie", return_value="cookie-from-cp"):
+
+        with patch(
+            "scrapers.rera_detail_scout._load_session_cookie",
+            return_value="cookie-from-cp",
+        ):
             scout = RERADetailScout("Yelahanka")
             assert scout._session_cookie == "cookie-from-cp"
 
     def test_detail_scout_skips_gracefully_on_expired_cookie(self):
         """When session returns 401, detail scout logs warning and returns empty — no crash."""
         from scrapers.rera_detail_scout import _fetch_detail_page_requests
+
         mock_session = MagicMock()
         mock_resp = MagicMock()
         mock_resp.status_code = 401
@@ -602,6 +689,7 @@ class TestRERASessionCookie:
     def test_session_cookie_applied_to_headers(self):
         """Session cookie must be injected into request headers when present."""
         from scrapers.rera_detail_scout import _apply_session_cookie
+
         headers = {"User-Agent": "test"}
         result = _apply_session_cookie(headers, "my-session-cookie")
         assert result["Cookie"] == "my-session-cookie"
@@ -617,12 +705,19 @@ class TestRERAScraperAlert:
     def test_discord_scraper_alert_fires_on_rera_fallback(self, rera_scraper):
         """When both POST and Playwright fail, send_scraper_alert must be called."""
         from scrapers.rera_karnataka import _last_fallback_alert
+
         _last_fallback_alert.clear()
         with patch.object(rera_scraper, "_post_search", return_value=[]):
-            with patch.object(rera_scraper, "_playwright_scrape", return_value=([], [])):
+            with patch.object(
+                rera_scraper, "_playwright_scrape", return_value=([], [])
+            ):
                 with patch.object(rera_scraper, "_fallback_rera_data") as mock_fallback:
-                    mock_fallback.return_value = [{"rera_number": "F/001", "data_source": "fallback_sample"}]
-                    with patch("utils.discord_notifier.send_scraper_alert") as mock_alert:
+                    mock_fallback.return_value = [
+                        {"rera_number": "F/001", "data_source": "fallback_sample"}
+                    ]
+                    with patch(
+                        "utils.discord_notifier.send_scraper_alert"
+                    ) as mock_alert:
                         with patch.object(rera_scraper, "session") as mock_session:
                             mock_session.cookies = []
                             rera_scraper.scrape_market("Yelahanka")
@@ -632,9 +727,15 @@ class TestRERAScraperAlert:
                             assert args[1] == "rera_karnataka"
                             assert args[2] == "FALLBACK_SEED"
 
-    def test_discord_scraper_alert_not_fired_when_live_data_available(self, rera_scraper):
+    def test_discord_scraper_alert_not_fired_when_live_data_available(
+        self, rera_scraper
+    ):
         """When POST returns live data, send_scraper_alert must NOT be called."""
-        with patch.object(rera_scraper, "_post_search", return_value=[{"rera_number": "L/001", "project_name": "Live"}]):
+        with patch.object(
+            rera_scraper,
+            "_post_search",
+            return_value=[{"rera_number": "L/001", "project_name": "Live"}],
+        ):
             with patch("utils.discord_notifier.send_scraper_alert") as mock_alert:
                 with patch.object(rera_scraper, "session") as mock_session:
                     mock_session.cookies = []
@@ -666,7 +767,9 @@ class TestRERAScraperHealth:
                 params = call_args[1]
             elif "parameters" in call_kwargs:
                 params = call_kwargs["parameters"]
-            assert params is not None, f"Could not extract params from call: {mock_conn.execute.call_args}"
+            assert params is not None, (
+                f"Could not extract params from call: {mock_conn.execute.call_args}"
+            )
             assert params.get("agent_name") == "rera_scraper"
             assert params.get("market") == "TestMarket"
             assert params.get("record_count") == 42
@@ -683,7 +786,10 @@ class TestRERAScraperHealth:
 
         def check_insert(sql, **kwargs):
             params = kwargs.get("parameters", {})
-            if params.get("agent_name") == "rera_scraper" and params.get("market") == "TestMarket":
+            if (
+                params.get("agent_name") == "rera_scraper"
+                and params.get("market") == "TestMarket"
+            ):
                 md = json.loads(params.get("metadata", "{}"))
                 assert md["fallback_triggered"] is True
                 assert md["path_used"] == "seed"
@@ -718,7 +824,8 @@ class TestRERADataQualityGate:
         assert has_fallback is True
 
         fallback_count = sum(
-            1 for r in raw_projects
+            1
+            for r in raw_projects
             if isinstance(r, dict)
             and str(r.get("data_source", r.get("source", ""))).strip().lower()
             in {"fallback_sample", "seed_estimated"}
@@ -735,7 +842,9 @@ class TestRERADataQualityGate:
     def test_analyst_context_prefixed_with_warning_on_fallback(self):
         """When has_fallback_data=True, the warning must be prepended to analyst context."""
         fallback_warning = "[DATA QUALITY WARNING: Test RERA on seed fallback — 8 hardcoded records only. PSF signals unreliable. Do not present pricing estimates as live data.]"
-        analyst_memory_context = "- Fact 1 (confidence: 0.80)\n- Fact 2 (confidence: 0.90)"
+        analyst_memory_context = (
+            "- Fact 1 (confidence: 0.80)\n- Fact 2 (confidence: 0.90)"
+        )
 
         prefixed = f"{fallback_warning}\n\n{analyst_memory_context}"
         assert prefixed.startswith("[DATA QUALITY WARNING")

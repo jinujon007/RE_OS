@@ -39,8 +39,13 @@ _MANYATA_EMPLOYMENT: dict[int, int] = {
 # Surrounding villages whose transaction activity is influenced by Manyata.
 # These are the first residential catchments for Manyata employees.
 _SURROUNDING_VILLAGES: list[str] = [
-    "Nagawara", "Thanisandra", "Hebbal", "Byatarayanapura",
-    "Kodigehalli", "Jakkur", "Yelahanka",
+    "Nagawara",
+    "Thanisandra",
+    "Hebbal",
+    "Byatarayanapura",
+    "Kodigehalli",
+    "Jakkur",
+    "Yelahanka",
 ]
 
 # Seed coefficient: 350 units per 1,000 jobs (pre-calibration estimate)
@@ -92,7 +97,9 @@ class DemandCalibration:
                 ).fetchall()
 
             if not rows:
-                result.detail = "No registered_transactions found for Manyata-surrounding villages"
+                result.detail = (
+                    "No registered_transactions found for Manyata-surrounding villages"
+                )
                 return result
 
             self._compute_coefficient(rows, result)
@@ -153,6 +160,7 @@ class DemandCalibration:
             return
 
         import statistics
+
         coefficient = statistics.median(ratios)
         if len(ratios) >= 3:
             stdev = statistics.stdev(ratios) if len(ratios) >= 2 else 0.0
@@ -192,7 +200,9 @@ class DemandCalibration:
             try:
                 demand_signals.calibration_status = "CALIBRATED"
             except AttributeError:
-                logger.warning("[DemandCalibration] target object has no calibration_status field")
+                logger.warning(
+                    "[DemandCalibration] target object has no calibration_status field"
+                )
 
 
 # ── Convenience ─────────────────────────────────────────────────────────────

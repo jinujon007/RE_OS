@@ -3,6 +3,7 @@
 Tests field extraction, header detection, multi-page continuation stitching,
 and end-to-end parsing with synthetic EC Form 15 table fixtures.
 """
+
 from __future__ import annotations
 
 import json
@@ -44,13 +45,19 @@ from scrapers.kaveri_deeds import (
 
 _HEADER_ROWS = [
     # Row 0: Kannada header
-    ["\u0c95\u0caa\u0ccd\u0cb0(cid:18)(cid:4)\u0cb8\u0c82\u0c95",
-     "(ಎ) ಆಸಿಸ್ತಿ ವಿವರ", "ನಿವರ್ನಾಹ\nದಿನಾಂಕ",
-     "(ಬಿ) ದಸ್ತಿನೇಜನ ಸಸ್ವರಮೂ\nಹಣ ಮೌಲ್ಯೆ\n(₹)",
-     "ಕಕ್ಷಿದಾರರ ಹೆಸರು", "", "ಸಸಂ", "ಪುಟ", "ದಸ್ತಿನೇಜನ ಉಲೆಲ್ಲಿನೇಖ"],
+    [
+        "\u0c95\u0caa\u0ccd\u0cb0(cid:18)(cid:4)\u0cb8\u0c82\u0c95",
+        "(ಎ) ಆಸಿಸ್ತಿ ವಿವರ",
+        "ನಿವರ್ನಾಹ\nದಿನಾಂಕ",
+        "(ಬಿ) ದಸ್ತಿನೇಜನ ಸಸ್ವರಮೂ\nಹಣ ಮೌಲ್ಯೆ\n(₹)",
+        "ಕಕ್ಷಿದಾರರ ಹೆಸರು",
+        "",
+        "ಸಸಂ",
+        "ಪುಟ",
+        "ದಸ್ತಿನೇಜನ ಉಲೆಲ್ಲಿನೇಖ",
+    ],
     # Row 1: Sub-header
-    [None, None, None, None,
-     "ಬರೆದು ಕೊಟ್ಟವರು", "ಬರೆಯಿಸಿಕೊಂಡವರು", None, None, None],
+    [None, None, None, None, "ಬರೆದು ಕೊಟ್ಟವರು", "ಬರೆಯಿಸಿಕೊಂಡವರು", None, None, None],
     # Row 2: Column numbers
     ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
 ]
@@ -115,8 +122,7 @@ _TXN3_ROW = [
 # Transaction 4 — Sale Deed with hyphen survey, across villages
 _TXN4_ROW = [
     "4",
-    "Sy. No. 45/2-A, Index-II Village: Allalasandra, "
-    "Measurement: 1800 Sq.Feet",
+    "Sy. No. 45/2-A, Index-II Village: Allalasandra, Measurement: 1800 Sq.Feet",
     "22-03-2026",
     "Article Name:\nSale Deed;;\nMarket Value:6500000;\nConsideration Amount\n:6500000",
     "Muniyappa S/o Late Chikkaiah",
@@ -129,8 +135,7 @@ _TXN4_ROW = [
 # Transaction 5 — Minimal row with only doc_no, date, and consideration
 _TXN5_ROW = [
     "5",
-    "[LAND MARK] Sy. No. 26, Index-II Village: Mavallipura, "
-    "measuring 1 Acre 0 Guntas",
+    "[LAND MARK] Sy. No. 26, Index-II Village: Mavallipura, measuring 1 Acre 0 Guntas",
     "07-12-2005",
     "Article Name:\nSale;;\nMarket Value:365000;\nConsideration Amount\n:365000",
     "Some Seller",
@@ -194,7 +199,10 @@ def test_extract_date_none():
 
 
 def test_extract_deed_type():
-    assert _extract_deed_type("Article Name:\nSurrender of Lease;;") == "Surrender of Lease"
+    assert (
+        _extract_deed_type("Article Name:\nSurrender of Lease;;")
+        == "Surrender of Lease"
+    )
     assert _extract_deed_type("Article Name:\nDischarge Deed;;") == "Discharge Deed"
     assert _extract_deed_type("Article Name:\nSale Deed;;") == "Sale Deed"
     assert _extract_deed_type("Article Name:\nRelease deed ;;") == "Release deed"
@@ -317,7 +325,9 @@ def test_extract_extent_prefers_in_all():
 
 def test_extract_parties_clean():
     """Clean ASCII buyer/seller → medium confidence."""
-    seller, buyer, conf = _extract_parties("Venkatesh Gowda", "Infra Developers Pvt Ltd")
+    seller, buyer, conf = _extract_parties(
+        "Venkatesh Gowda", "Infra Developers Pvt Ltd"
+    )
     assert seller == "Venkatesh Gowda"
     assert buyer == "Infra Developers Pvt Ltd"
     assert conf == "medium"
@@ -530,6 +540,7 @@ def test_parse_inbox_file_pdf_mocked():
 def test_parse_inbox_file_unsupported():
     """Unsupported file type → empty."""
     from pathlib import Path
+
     records = parse_inbox_file(Path("test.txt"))
     assert records == []
     records = parse_inbox_file(Path("test.html"))
@@ -544,6 +555,7 @@ def test_parse_inbox_file_unsupported():
 def test_parse_inbox_all_empty_dir():
     """Empty inbox directory returns empty list."""
     import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
         inbox = Path(tmp)
         with patch("scrapers.kaveri_deeds._INBOX_DIR", inbox):
@@ -591,8 +603,16 @@ def test_parse_inbox_all_mocked():
 def test_write_and_read_checkpoint():
     """Write then read checkpoint round-trip."""
     records = [
-        {"doc_no": "BYP-1-14551-2022-23", "reg_date": "2023-03-03", "village": "Venkatala"},
-        {"doc_no": "YAN-1-06807-2020-21", "reg_date": "2021-02-15", "village": "Venkatala"},
+        {
+            "doc_no": "BYP-1-14551-2022-23",
+            "reg_date": "2023-03-03",
+            "village": "Venkatala",
+        },
+        {
+            "doc_no": "YAN-1-06807-2020-21",
+            "reg_date": "2021-02-15",
+            "village": "Venkatala",
+        },
     ]
     fpath = write_checkpoint(records, "inbox")
     assert fpath.exists()

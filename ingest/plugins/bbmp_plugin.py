@@ -11,6 +11,7 @@ The API endpoint is **not officially documented** and may require future
 adjustment if BBMP changes their portal. Monitor logs for "[BBMPPlugin]"
 WARNING messages indicating all sources failed.
 """
+
 from __future__ import annotations
 
 import json
@@ -48,17 +49,19 @@ def _search_via_api(ward: str) -> list[dict]:
         records = []
         items = results if isinstance(results, list) else results.get("data", [])
         for item in items[:10]:
-            records.append({
-                "khata_no": str(item.get("khataNo", "")),
-                "khata_type": str(item.get("khataType", "A")),
-                "property_address": str(item.get("propertyAddress", "")),
-                "owner_name": str(item.get("ownerName", "")),
-                "property_usage": str(item.get("propertyUsage", "")),
-                "zone": str(item.get("zone", "")),
-                "ward": str(item.get("ward", "")),
-                "survey_no": str(item.get("surveyNo", "")),
-                "is_active": bool(item.get("isActive", True)),
-            })
+            records.append(
+                {
+                    "khata_no": str(item.get("khataNo", "")),
+                    "khata_type": str(item.get("khataType", "A")),
+                    "property_address": str(item.get("propertyAddress", "")),
+                    "owner_name": str(item.get("ownerName", "")),
+                    "property_usage": str(item.get("propertyUsage", "")),
+                    "zone": str(item.get("zone", "")),
+                    "ward": str(item.get("ward", "")),
+                    "survey_no": str(item.get("surveyNo", "")),
+                    "is_active": bool(item.get("isActive", True)),
+                }
+            )
         return records
     except Exception as exc:
         logger.debug("[BBMPPlugin] API search failed for '{}': {}", ward, exc)
@@ -89,18 +92,22 @@ def _extract_from_rera(market: str) -> list[dict]:
                 {"market": f"%{market}%"},
             ).fetchall()
         for row in rows:
-            records.append({
-                "khata_no": str(row.bbmp_approval_no),
-                "khata_type": "B",
-                "property_address": str(row.project_name or ""),
-                "owner_name": "",
-                "property_usage": "residential",
-                "zone": "",
-                "ward": "",
-                "survey_no": "",
-                "is_active": True,
-            })
-        logger.info("[BBMPPlugin] {} khata records extracted from RERA details", len(records))
+            records.append(
+                {
+                    "khata_no": str(row.bbmp_approval_no),
+                    "khata_type": "B",
+                    "property_address": str(row.project_name or ""),
+                    "owner_name": "",
+                    "property_usage": "residential",
+                    "zone": "",
+                    "ward": "",
+                    "survey_no": "",
+                    "is_active": True,
+                }
+            )
+        logger.info(
+            "[BBMPPlugin] {} khata records extracted from RERA details", len(records)
+        )
         return records
     except Exception as exc:
         logger.debug("[BBMPPlugin] RERA fallback failed: {}", exc)
@@ -118,10 +125,15 @@ class BBMPPlugin(DataPlugin):
         for ward in wards:
             khata_results = _search_via_api(ward)
             if not khata_results:
-                logger.info("[BBMPPlugin] API returned 0 results for '{}' — trying RERA fallback", ward)
+                logger.info(
+                    "[BBMPPlugin] API returned 0 results for '{}' — trying RERA fallback",
+                    ward,
+                )
                 khata_results = _extract_from_rera(market)
             if not khata_results:
-                logger.warning("[BBMPPlugin] All sources returned 0 results for '{}'", ward)
+                logger.warning(
+                    "[BBMPPlugin] All sources returned 0 results for '{}'", ward
+                )
 
             for khata in khata_results:
                 khata_no = khata.get("khata_no", "")
@@ -140,12 +152,14 @@ class BBMPPlugin(DataPlugin):
                     "source": "bbmp_portal",
                     "scraped_at": datetime.utcnow().isoformat(),
                 }
-                records.append(ParsedRecord(
-                    entity_type="khata_record",
-                    source_id=khata_no,
-                    market=market,
-                    data=data,
-                ))
+                records.append(
+                    ParsedRecord(
+                        entity_type="khata_record",
+                        source_id=khata_no,
+                        market=market,
+                        data=data,
+                    )
+                )
 
         logger.info("[BBMPPlugin] {} khata records for {}", len(records), market)
         return records

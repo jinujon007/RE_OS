@@ -13,13 +13,20 @@ from typing import Any
 from loguru import logger
 
 from utils.process_automation import (
-    ValidationError, retry_with_backoff, run_with_timeout,
-    safe_extract_json, validate_bottleneck_report, validate_proposal_data,
-    LLM_TIMEOUT_S as _LLM_TIMEOUT, LLM_RETRY_MAX, HTTP_TIMEOUT_S,
+    ValidationError,
+    retry_with_backoff,
+    run_with_timeout,
+    safe_extract_json,
+    validate_bottleneck_report,
+    validate_proposal_data,
+    LLM_TIMEOUT_S as _LLM_TIMEOUT,
+    LLM_RETRY_MAX,
+    HTTP_TIMEOUT_S,
     HTTP_RETRY_MAX,
 )
 from config.metrics import (
-    process_audit_reports_total, process_audit_llm_calls_total,
+    process_audit_reports_total,
+    process_audit_llm_calls_total,
     process_audit_tasks_created_total,
 )
 
@@ -33,9 +40,12 @@ except ImportError:
 _LLM_LOCK = Lock()
 try:
     from config.llm_router import get_light_llm as _get_light_llm
+
     _LLM_IMPORTED = True
 except ImportError:
-    logger.warning("[EfficiencyOpt] config.llm_router not available — will use fallback only")
+    logger.warning(
+        "[EfficiencyOpt] config.llm_router not available — will use fallback only"
+    )
 
 _API_BASE_URL = os.environ.get("RE_OS_API_BASE_URL", "http://localhost:8050")
 
@@ -89,12 +99,16 @@ def _auto_create_task(proposal: ImprovementProposal) -> bool:
         return resp.status_code in (200, 201)
 
     result = retry_with_backoff(
-        _do_post, max_retries=HTTP_RETRY_MAX, context="auto_create_task",
+        _do_post,
+        max_retries=HTTP_RETRY_MAX,
+        context="auto_create_task",
     )
     if result:
         process_audit_tasks_created_total.labels(priority=proposal.priority).inc()
         return True
-    logger.warning("[EfficiencyOpt] Failed to auto-create task after {} retries", HTTP_RETRY_MAX)
+    logger.warning(
+        "[EfficiencyOpt] Failed to auto-create task after {} retries", HTTP_RETRY_MAX
+    )
     return False
 
 
@@ -120,14 +134,25 @@ class EfficiencyOptimizerAgent:
     def __init__(self):
         self._correlation_id = f"{self._CORRELATION_PREFIX}_{uuid.uuid4().hex[:8]}"
 
-    def run(self, bottleneck_report: dict[str, Any],
-            optimizer_report: dict[str, Any] | None = None) -> dict[str, Any]:
+    def run(
+        self,
+        bottleneck_report: dict[str, Any],
+        optimizer_report: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         validation_errors = validate_bottleneck_report(bottleneck_report)
         if validation_errors:
-            logger.warning("[{}] Input validation errors: {}", self._correlation_id, validation_errors)
+            logger.warning(
+                "[{}] Input validation errors: {}",
+                self._correlation_id,
+                validation_errors,
+            )
 
         proposal = self._generate_proposal(bottleneck_report, optimizer_report or {})
-        task_created = _auto_create_task(proposal) if proposal.priority in ("HIGH", "MEDIUM") else False
+        task_created = (
+            _auto_create_task(proposal)
+            if proposal.priority in ("HIGH", "MEDIUM")
+            else False
+        )
 
         process_audit_reports_total.labels(
             agent="efficiency_optimizer",
@@ -135,9 +160,12 @@ class EfficiencyOptimizerAgent:
         ).inc()
 
         logger.info(
-            "[{}] Proposal — title=\"{}\", priority={}, confidence={:.2f}, task_created={}",
-            self._correlation_id, proposal.title[:60], proposal.priority,
-            proposal.confidence, task_created,
+            '[{}] Proposal — title="{}", priority={}, confidence={:.2f}, task_created={}',
+            self._correlation_id,
+            proposal.title[:60],
+            proposal.priority,
+            proposal.confidence,
+            task_created,
         )
         return {
             "status": "done",
@@ -146,35 +174,41 @@ class EfficiencyOptimizerAgent:
             "correlation_id": self._correlation_id,
         }
 
-    def _generate_proposal(self, bottleneck: dict[str, Any],
-                           optimizer: dict[str, Any]) -> ImprovementProposal:
+    def _generate_proposal(
+        self, bottleneck: dict[str, Any], optimizer: dict[str, Any]
+    ) -> ImprovementProposal:
         if _LLM_IMPORTED:
             try:
                 llm_proposal = self._try_llm_proposal(bottleneck, optimizer)
                 if llm_proposal:
                     return llm_proposal
             except Exception as exc:
-                logger.warning("[{}] LLM proposal failed: {}", self._correlation_id, exc)
+                logger.warning(
+                    "[{}] LLM proposal failed: {}", self._correlation_id, exc
+                )
         return self._template_proposal(bottleneck)
 
-    def _try_llm_proposal(self, bottleneck: dict[str, Any],
-                          optimizer: dict[str, Any]) -> ImprovementProposal | None:
+    def _try_llm_proposal(
+        self, bottleneck: dict[str, Any], optimizer: dict[str, Any]
+    ) -> ImprovementProposal | None:
         llm = _get_light_llm()
 
         def _do_llm_call():
-            return llm.invoke([
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": (
-                        "Propose ONE concrete improvement to reduce token usage or runtime.\n\n"
-                        f"Bottleneck Report: {json.dumps(bottleneck, default=str)}\n\n"
-                        f"Optimizer Report: {json.dumps(optimizer, default=str)}\n\n"
-                        "Return JSON only with keys: title, description, target_file, "
-                        "priority, estimated_token_saving_pct, confidence."
-                    ),
-                },
-            ])
+            return llm.invoke(
+                [
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Propose ONE concrete improvement to reduce token usage or runtime.\n\n"
+                            f"Bottleneck Report: {json.dumps(bottleneck, default=str)}\n\n"
+                            f"Optimizer Report: {json.dumps(optimizer, default=str)}\n\n"
+                            "Return JSON only with keys: title, description, target_file, "
+                            "priority, estimated_token_saving_pct, confidence."
+                        ),
+                    },
+                ]
+            )
 
         response = retry_with_backoff(
             lambda: run_with_timeout(_do_llm_call, _LLM_TIMEOUT, "efficiency_opt_llm"),
@@ -183,7 +217,8 @@ class EfficiencyOptimizerAgent:
         )
         if response is None:
             process_audit_llm_calls_total.labels(
-                agent="efficiency_optimizer", result="failed",
+                agent="efficiency_optimizer",
+                result="failed",
             ).inc()
             return None
 
@@ -191,12 +226,14 @@ class EfficiencyOptimizerAgent:
         data = safe_extract_json(raw)
         if data is None:
             process_audit_llm_calls_total.labels(
-                agent="efficiency_optimizer", result="parse_error",
+                agent="efficiency_optimizer",
+                result="parse_error",
             ).inc()
             return None
 
         process_audit_llm_calls_total.labels(
-            agent="efficiency_optimizer", result="success",
+            agent="efficiency_optimizer",
+            result="success",
         ).inc()
 
         priority = str(data.get("priority", "LOW"))
@@ -209,7 +246,9 @@ class EfficiencyOptimizerAgent:
             description=str(data.get("description", "")),
             target_file=str(data.get("target_file", "")),
             priority=priority,
-            estimated_token_saving_pct=min(100.0, max(0.0, float(data.get("estimated_token_saving_pct", 0.0)))),
+            estimated_token_saving_pct=min(
+                100.0, max(0.0, float(data.get("estimated_token_saving_pct", 0.0)))
+            ),
             confidence=min(1.0, max(0.0, float(data.get("confidence", 0.0)))),
         )
 

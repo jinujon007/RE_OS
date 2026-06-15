@@ -2,6 +2,7 @@
 
 Unit-safe: route validation only. Full integration requires live Docker stack.
 """
+
 import os
 
 import pytest
@@ -84,6 +85,15 @@ def _validate_evaluate_response(data: dict):
     """Validate evaluate response has all 5 mandatory sections."""
     assert isinstance(data.get("board_session"), str) and len(data["board_session"]) > 0
     assert isinstance(data.get("deal_memo"), str) and len(data["deal_memo"]) >= 2000
-    assert isinstance(data.get("investor_brief"), str) and len(data["investor_brief"]) >= 2000
-    assert isinstance(data.get("shareholder_round"), list) and len(data["shareholder_round"]) == 4
-    assert isinstance(data.get("composite_score"), (int, float)) and 0 <= data["composite_score"] <= 1
+    assert (
+        isinstance(data.get("investor_brief"), str)
+        and len(data["investor_brief"]) >= 2000
+    )
+    assert (
+        isinstance(data.get("shareholder_round"), list)
+        and len(data["shareholder_round"]) == 4
+    )
+    assert (
+        isinstance(data.get("composite_score"), (int, float))
+        and 0 <= data["composite_score"] <= 1
+    )

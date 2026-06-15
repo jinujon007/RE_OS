@@ -33,6 +33,7 @@ def _mock_engine_with_rows(rows):
 
 def test_land_supply_plugin_instantiates():
     from ingest.plugins.land_supply_plugin import LandSupplyPlugin
+
     plugin = LandSupplyPlugin()
     assert plugin.plugin_id == "land_supply"
     assert plugin.source_id == "land_supply_scout"
@@ -95,7 +96,8 @@ def test_bda_news_extraction_finds_unit_count():
     from ingest.plugins.land_supply_plugin import LandSupplyPlugin
 
     row = _Row(
-        id="1", title="BDA approves 500 plots in new layout",
+        id="1",
+        title="BDA approves 500 plots in new layout",
         content="BDA layout near Yelahanka with 500 plots",
         published_at=None,
     )
@@ -124,7 +126,9 @@ def test_run_aggregates_all_phases():
     plugin = LandSupplyPlugin()
     with patch.object(plugin, "_rera_pipeline_phase", return_value=[MagicMock()]):
         with patch.object(plugin, "_scrape_kiadb_tenders", return_value=[MagicMock()]):
-            with patch.object(plugin, "_detect_supply_from_news", return_value=[MagicMock()]):
+            with patch.object(
+                plugin, "_detect_supply_from_news", return_value=[MagicMock()]
+            ):
                 results = plugin.run("Yelahanka")
 
     assert len(results) == 3

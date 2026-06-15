@@ -2,8 +2,10 @@
 RE_OS — Telegram Formatters (Sprint 65 — Interface Layer)
 Format election verdicts into compact 1200-char Telegram messages.
 """
+
 from typing import Any
 from loguru import logger
+
 
 def format_telegram_verdict(
     market: str,
@@ -87,7 +89,9 @@ def format_telegram_verdict(
     if investor_brief:
         lines.append("")
         lines.append("\ud83d\udcca Investor Brief")
-        key_metrics = investor_brief.get("key_metrics", investor_brief.get("highlights", ""))
+        key_metrics = investor_brief.get(
+            "key_metrics", investor_brief.get("highlights", "")
+        )
         if key_metrics:
             metrics_str = str(key_metrics)[:200]
             lines.append(metrics_str)
@@ -102,7 +106,9 @@ def format_telegram_verdict(
     return verdict
 
 
-def format_opportunity_alert(survey_no: str, score: float, market: str, next_action: str) -> str:
+def format_opportunity_alert(
+    survey_no: str, score: float, market: str, next_action: str
+) -> str:
     """Compact one-line opportunity alert for Telegram."""
     icon = "\U0001f7e2" if score >= 0.8 else "\U0001f7e1" if score >= 0.6 else "\u26aa"
     return f"{icon} {market} {survey_no}: {score:.0%} \u2014 {next_action[:50]}"

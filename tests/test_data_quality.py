@@ -3,8 +3,10 @@ RE_OS — Data Quality Tests (Sprint 45 — T-814)
 Unit tests for GE checkpoint integration, alert formatting, error handling,
 expectation definitions, and market-filtered SQL construction.
 """
+
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 import pandas as pd
@@ -23,7 +25,8 @@ from utils.data_quality import (
 class TestExpectationDef:
     def test_to_dict_returns_correct_keys(self):
         exp = ExpectationDef(
-            column="price_avg_psf", table="rera_projects",
+            column="price_avg_psf",
+            table="rera_projects",
             expectation_type="expect_column_values_to_be_between",
             kwargs={"min_value": 2000, "max_value": 25000},
             severity="ERROR",
@@ -41,8 +44,10 @@ class TestFailedExpectation:
     def test_bad_values_truncated_to_five_in_to_dict(self):
         exp = ExpectationDef(column="c", table="t", expectation_type="e")
         fe = FailedExpectation(
-            expectation=exp, message="10 bad values",
-            bad_values=list(range(10)), unexpected_count=10,
+            expectation=exp,
+            message="10 bad values",
+            bad_values=list(range(10)),
+            unexpected_count=10,
         )
         assert len(fe.bad_values) == 10
         d = fe.to_dict()
@@ -67,7 +72,11 @@ class TestDataQualityError:
     def test_init_with_dict_result(self):
         result = {
             "failed_expectations": [
-                {"column": "price_avg_psf", "table": "rera_projects", "severity": "ERROR"},
+                {
+                    "column": "price_avg_psf",
+                    "table": "rera_projects",
+                    "severity": "ERROR",
+                },
             ],
             "warnings": [],
         }
@@ -107,8 +116,13 @@ class TestFormatDataQualityAlert:
     def test_formats_error_messages(self):
         result = {
             "failed_expectations": [
-                {"column": "price_avg_psf", "table": "rera_projects",
-                 "expectation": "between", "bad_values": [999, 30000], "severity": "ERROR"},
+                {
+                    "column": "price_avg_psf",
+                    "table": "rera_projects",
+                    "expectation": "between",
+                    "bad_values": [999, 30000],
+                    "severity": "ERROR",
+                },
             ],
             "warnings": [],
         }
@@ -121,8 +135,12 @@ class TestFormatDataQualityAlert:
         result = {
             "failed_expectations": [],
             "warnings": [
-                {"column": "name", "table": "developers",
-                 "expectation": "not_null", "severity": "WARN"},
+                {
+                    "column": "name",
+                    "table": "developers",
+                    "expectation": "not_null",
+                    "severity": "WARN",
+                },
             ],
         }
         msg = format_data_quality_alert("Hebbal", result)
@@ -132,12 +150,21 @@ class TestFormatDataQualityAlert:
     def test_includes_both_errors_and_warnings(self):
         result = {
             "failed_expectations": [
-                {"column": "price_avg_psf", "table": "rera_projects",
-                 "expectation": "between", "bad_values": [999], "severity": "ERROR"},
+                {
+                    "column": "price_avg_psf",
+                    "table": "rera_projects",
+                    "expectation": "between",
+                    "bad_values": [999],
+                    "severity": "ERROR",
+                },
             ],
             "warnings": [
-                {"column": "name", "table": "developers",
-                 "expectation": "not_null", "severity": "WARN"},
+                {
+                    "column": "name",
+                    "table": "developers",
+                    "expectation": "not_null",
+                    "severity": "WARN",
+                },
             ],
         }
         msg = format_data_quality_alert("Yelahanka", result)
@@ -147,9 +174,13 @@ class TestFormatDataQualityAlert:
     def test_bad_values_appear_in_formatted_output(self):
         result = {
             "failed_expectations": [
-                {"column": "price_avg_psf", "table": "rera_projects",
-                 "expectation": "between", "bad_values": [999, 9999, 30000],
-                 "severity": "ERROR"},
+                {
+                    "column": "price_avg_psf",
+                    "table": "rera_projects",
+                    "expectation": "between",
+                    "bad_values": [999, 9999, 30000],
+                    "severity": "ERROR",
+                },
             ],
             "warnings": [],
         }
@@ -160,8 +191,13 @@ class TestFormatDataQualityAlert:
     def test_truncated_errors_capped_at_five(self):
         result = {
             "failed_expectations": [
-                {"column": f"col{i}", "table": "t", "expectation": "e",
-                 "severity": "ERROR"} for i in range(10)
+                {
+                    "column": f"col{i}",
+                    "table": "t",
+                    "expectation": "e",
+                    "severity": "ERROR",
+                }
+                for i in range(10)
             ],
             "warnings": [],
         }
@@ -235,6 +271,7 @@ class TestRunDataQualityCheckpoint:
 
     def test_handles_db_connection_error_gracefully(self):
         from sqlalchemy.exc import OperationalError
+
         mock_conn = MagicMock()
         mock_conn.__enter__.side_effect = OperationalError("DB unreachable", None, None)
         mock_engine = MagicMock()
@@ -265,8 +302,10 @@ class TestRunDataQualityCheckpoint:
     def test_collects_failed_expectations_on_violation(self):
         import pandas as pd
         from sqlalchemy.engine import Result
+
         exp = ExpectationDef(
-            column="price_avg_psf", table="rera_projects",
+            column="price_avg_psf",
+            table="rera_projects",
             expectation_type="expect_column_values_to_be_between",
             kwargs={"min_value": 0, "max_value": 100},
             severity="ERROR",
@@ -281,8 +320,10 @@ class TestRunDataQualityCheckpoint:
         mock_engine = MagicMock()
         mock_engine.connect.return_value.__enter__.return_value = mock_conn
 
-        with patch("utils.data_quality.get_engine", return_value=mock_engine), \
-             patch("utils.data_quality._dq_expectations", [exp]):
+        with (
+            patch("utils.data_quality.get_engine", return_value=mock_engine),
+            patch("utils.data_quality._dq_expectations", [exp]),
+        ):
             result = run_data_quality_checkpoint("Yelahanka")
 
         assert result["success"] is False
@@ -290,6 +331,7 @@ class TestRunDataQualityCheckpoint:
 
     def test_reuses_market_filter_in_sql(self):
         import pandas as pd
+
         mock_conn = MagicMock()
         mock_result = MagicMock()
         mock_result.fetchall.return_value = [(5000,)]
@@ -338,8 +380,10 @@ class TestRunDataQualityCheckpoint:
     def test_no_expectations_returns_skipped(self):
         """When _dq_expectations is empty, checkpoint returns status='skipped'."""
         mock_engine = MagicMock()
-        with patch("utils.data_quality.get_engine", return_value=mock_engine), \
-             patch("utils.data_quality._dq_expectations", []):
+        with (
+            patch("utils.data_quality.get_engine", return_value=mock_engine),
+            patch("utils.data_quality._dq_expectations", []),
+        ):
             result = run_data_quality_checkpoint("Yelahanka")
         assert result.get("status") == "skipped"
         assert result.get("note") == "no expectations configured"
@@ -347,6 +391,7 @@ class TestRunDataQualityCheckpoint:
     def test_all_nan_column_skipped(self):
         """When all values in a column are NaN, the check is skipped gracefully."""
         import pandas as pd
+
         mock_conn = MagicMock()
         mock_result = MagicMock()
         mock_result.fetchall.return_value = [(float("nan"),)]
@@ -378,18 +423,20 @@ class TestRunDataQualityCheckpoint:
 
 # ── T-1072: GV freshness check ──────────────────────────────────────────────
 
+
 class TestGVFreshness:
     def test_gv_freshness_check_alerts_when_stale(self):
         """check_gv_freshness alerts when gazette data is >18 months stale."""
         mock_conn = MagicMock()
         results = [MagicMock(), MagicMock()]
         results[0].fetchone.return_value = (2022,)  # gazette: stale
-        results[1].fetchone.return_value = (None,)   # portal: none
+        results[1].fetchone.return_value = (None,)  # portal: none
         mock_conn.execute.side_effect = results
         mock_engine = MagicMock()
         mock_engine.connect.return_value.__enter__.return_value = mock_conn
 
         from utils.data_quality import DataQualityMonitor
+
         with (
             patch("utils.data_quality.get_engine", return_value=mock_engine),
             patch("utils.discord_notifier.send_scraper_alert") as mock_alert,
@@ -405,15 +452,17 @@ class TestGVFreshness:
         """check_gv_freshness is silent when gazette data is recent."""
         mock_conn = MagicMock()
         from datetime import date
+
         cy = date.today().year
         results = [MagicMock(), MagicMock()]
-        results[0].fetchone.return_value = (cy,)   # gazette: fresh
+        results[0].fetchone.return_value = (cy,)  # gazette: fresh
         results[1].fetchone.return_value = (None,)  # portal: none
         mock_conn.execute.side_effect = results
         mock_engine = MagicMock()
         mock_engine.connect.return_value.__enter__.return_value = mock_conn
 
         from utils.data_quality import DataQualityMonitor
+
         with (
             patch("utils.data_quality.get_engine", return_value=mock_engine),
             patch("utils.discord_notifier.send_scraper_alert") as mock_alert,
@@ -428,15 +477,17 @@ class TestGVFreshness:
         """No alert when gazette_pdf absent but portal_scraped data is fresh."""
         mock_conn = MagicMock()
         from datetime import date
+
         cy = date.today().year
         results = [MagicMock(), MagicMock()]
-        results[0].fetchone.return_value = (None,)   # gazette: none
-        results[1].fetchone.return_value = (cy,)      # portal: fresh
+        results[0].fetchone.return_value = (None,)  # gazette: none
+        results[1].fetchone.return_value = (cy,)  # portal: fresh
         mock_conn.execute.side_effect = results
         mock_engine = MagicMock()
         mock_engine.connect.return_value.__enter__.return_value = mock_conn
 
         from utils.data_quality import DataQualityMonitor
+
         with (
             patch("utils.data_quality.get_engine", return_value=mock_engine),
             patch("utils.discord_notifier.send_scraper_alert") as mock_alert,

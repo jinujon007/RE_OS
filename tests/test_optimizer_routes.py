@@ -1,4 +1,5 @@
 """Unit tests for Optimizer routes and hook (T-1005 - Sprint 60)."""
+
 import pytest
 from unittest.mock import MagicMock, patch
 from starlette.testclient import TestClient

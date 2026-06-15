@@ -2,7 +2,11 @@
 
 import pytest
 from pathlib import Path
-from agents.runbook_documenter_agent import RunbookDocumenterAgent, _resolve_path, _fallback_runbook
+from agents.runbook_documenter_agent import (
+    RunbookDocumenterAgent,
+    _resolve_path,
+    _fallback_runbook,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -35,8 +39,20 @@ def test_runbook_creates_file(tmp_path, monkeypatch):
 def test_runbook_does_not_overwrite(tmp_path, monkeypatch):
     monkeypatch.setattr("agents.runbook_documenter_agent._SOLUTIONS_DIR", tmp_path)
     agent = RunbookDocumenterAgent()
-    r1 = agent.run(bottleneck_report={"bottleneck_stage": "scraping", "bottleneck_reason": "x", "recommendation": "y"})
-    r2 = agent.run(bottleneck_report={"bottleneck_stage": "scraping", "bottleneck_reason": "x", "recommendation": "y"})
+    r1 = agent.run(
+        bottleneck_report={
+            "bottleneck_stage": "scraping",
+            "bottleneck_reason": "x",
+            "recommendation": "y",
+        }
+    )
+    r2 = agent.run(
+        bottleneck_report={
+            "bottleneck_stage": "scraping",
+            "bottleneck_reason": "x",
+            "recommendation": "y",
+        }
+    )
     p1 = Path(r1["path"])
     p2 = Path(r2["path"])
     assert p1.exists()
@@ -80,7 +96,14 @@ def test_resolve_path_creates_v2(tmp_path, monkeypatch):
 
 def test_fallback_runbook_writes_content(tmp_path):
     path = tmp_path / "test_runbook.md"
-    result = _fallback_runbook(path, {"bottleneck_stage": "test", "bottleneck_reason": "reason", "recommendation": "fix it"})
+    result = _fallback_runbook(
+        path,
+        {
+            "bottleneck_stage": "test",
+            "bottleneck_reason": "reason",
+            "recommendation": "fix it",
+        },
+    )
     assert result == path
     assert path.exists()
     content = path.read_text(encoding="utf-8")

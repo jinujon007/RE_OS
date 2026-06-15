@@ -85,12 +85,20 @@ except ImportError:
     _fl_util.get_remote_address = MagicMock(return_value="127.0.0.1")
 
     class _FakeLimiter:
-        def __init__(self, *a, **kw): pass
-        def init_app(self, *a, **kw): pass
+        def __init__(self, *a, **kw):
+            pass
+
+        def init_app(self, *a, **kw):
+            pass
+
         def limit(self, *a, **kw):
-            def decorator(f): return f
+            def decorator(f):
+                return f
+
             return decorator
-        def exempt(self, f): return f
+
+        def exempt(self, f):
+            return f
 
     _fl.Limiter = _FakeLimiter
     sys.modules["flask_limiter"] = _fl
@@ -126,13 +134,21 @@ except ImportError:
     _aps_sched_blocking = types.ModuleType("apscheduler.schedulers.blocking")
 
     class _FakeBlockingScheduler:
-        def __init__(self, *a, **kw): pass
-        def add_job(self, *a, **kw): pass
-        def start(self): pass
-        def get_jobs(self): return []
+        def __init__(self, *a, **kw):
+            pass
+
+        def add_job(self, *a, **kw):
+            pass
+
+        def start(self):
+            pass
+
+        def get_jobs(self):
+            return []
 
     class _FakeCronTrigger:
-        def __init__(self, *a, **kw): pass
+        def __init__(self, *a, **kw):
+            pass
 
     _aps_sched_blocking.BlockingScheduler = _FakeBlockingScheduler
     _aps.schedulers = _aps_sched
@@ -163,12 +179,16 @@ except ImportError:
     class _FakeLimiter:
         def __init__(self, *a, **kw):
             pass
+
         def init_app(self, *a, **kw):
             pass
+
         def limit(self, *a, **kw):
             def decorator(f):
                 return f
+
             return decorator
+
         def exempt(self, f):
             return f
 
@@ -178,6 +198,3 @@ except ImportError:
     sys.modules["slowapi"] = _slowapi
     sys.modules["slowapi.util"] = _slowapi_util
     sys.modules["slowapi.errors"] = _slowapi_errors
-
-
-

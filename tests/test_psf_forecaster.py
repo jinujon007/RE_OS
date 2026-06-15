@@ -1,7 +1,9 @@
 """T-1109: PSFForecaster unit tests (numpy linear trend)."""
+
 import pytest
 from unittest.mock import MagicMock, patch
 from datetime import datetime
+
 pytestmark = pytest.mark.unit
 
 
@@ -91,7 +93,10 @@ def test_forecast_3m_extrapolates_correctly():
 
     slope_per_month = 100.0
     base = 6000.0
-    months = [(datetime(2025, m, 1), base + i * slope_per_month) for i, m in enumerate(range(1, 7))]
+    months = [
+        (datetime(2025, m, 1), base + i * slope_per_month)
+        for i, m in enumerate(range(1, 7))
+    ]
 
     with patch("utils.db.get_engine") as mock_eng:
         mock_conn = MagicMock()
@@ -199,8 +204,7 @@ def test_exactly_6_points_walkforward_edge():
         mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
         mock_conn.execute.return_value.scalar.return_value = __import__("uuid").uuid4()
         mock_conn.execute.return_value.fetchall.return_value = [
-            (datetime(2025, m, 1), float(6000.0 + m * 50))
-            for m in range(1, 7)
+            (datetime(2025, m, 1), float(6000.0 + m * 50)) for m in range(1, 7)
         ]
         f = PSFForecaster()
         result = f.forecast("Yelahanka")
@@ -218,8 +222,7 @@ def test_flat_trend_detected():
         mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
         mock_conn.execute.return_value.scalar.return_value = __import__("uuid").uuid4()
         mock_conn.execute.return_value.fetchall.return_value = [
-            (datetime(2025, m, 1), 6500.0)
-            for m in range(1, 7)
+            (datetime(2025, m, 1), 6500.0) for m in range(1, 7)
         ]
         f = PSFForecaster()
         result = f.forecast("Yelahanka")

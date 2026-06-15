@@ -1,4 +1,5 @@
 """T-1050 unit tests — Discord govt policy formatters."""
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -7,6 +8,7 @@ pytestmark = pytest.mark.unit
 
 def test_format_govt_policy_alert_high_signal():
     from utils.discord_notifier import format_govt_policy_alert
+
     event = {
         "headline": "Metro Phase 3 approved",
         "location_text": "Yelahanka",
@@ -26,6 +28,7 @@ def test_format_govt_policy_alert_high_signal():
 
 def test_format_govt_policy_alert_risk_signal():
     from utils.discord_notifier import format_govt_policy_alert
+
     event = {
         "headline": "HAL height restrictions risk",
         "location_text": "Hebbal",
@@ -53,7 +56,11 @@ def test_format_govt_policy_weeky_digest_has_score():
         {"headline": "STRR tender awarded", "impact_score": 7, "stage": "tender"},
     ]
     mock_result.top_policy_events = [
-        {"headline": "FSI revision proposed", "impact_score": 8, "stage": "announcement"},
+        {
+            "headline": "FSI revision proposed",
+            "impact_score": 8,
+            "stage": "announcement",
+        },
     ]
     mock_result.weekly_digest = "North Bengaluru sees strong infrastructure pipeline with metro and STRR progressing."
 
@@ -66,6 +73,7 @@ def test_format_govt_policy_weeky_digest_has_score():
 
 def test_send_govt_policy_alert():
     from utils.discord_notifier import send_govt_policy_alert
+
     with patch("utils.discord_notifier.send") as mock_send:
         event = {
             "headline": "Test alert",
@@ -79,6 +87,7 @@ def test_send_govt_policy_alert():
 
 def test_send_govt_policy_digest():
     from utils.discord_notifier import send_govt_policy_digest
+
     with patch("utils.discord_notifier.send") as mock_send:
         mock_result = MagicMock()
         mock_result.north_bengaluru_score = 0.7

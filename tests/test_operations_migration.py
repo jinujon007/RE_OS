@@ -1,11 +1,14 @@
 """Unit tests for Sprint 58 migration 0029_operations (T-993)."""
+
 import pytest
+
 pytestmark = pytest.mark.unit
 
 
 def _load_migration():
     import importlib.util
     import sys as _sys
+
     _spec = importlib.util.spec_from_file_location(
         "migration_0029",
         "alembic/versions/0029_operations.py",

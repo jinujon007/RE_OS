@@ -18,6 +18,7 @@ from scrapers.dc_conversion_scraper import run_scan, market_for_village
 
 try:
     from utils.parcel_linker import normalize_survey_no
+
     _HAS_PARCEL_LINKER = True
 except ImportError:
     _HAS_PARCEL_LINKER = False
@@ -56,7 +57,9 @@ class DCConversionPlugin(DataPlugin):
             data = {
                 "application_no": app_no,
                 "village": rec.get("village", ""),
-                "survey_no": normalize_survey_no(rec.get("survey_no", "")) if _HAS_PARCEL_LINKER and rec.get("survey_no") else rec.get("survey_no", ""),
+                "survey_no": normalize_survey_no(rec.get("survey_no", ""))
+                if _HAS_PARCEL_LINKER and rec.get("survey_no")
+                else rec.get("survey_no", ""),
                 "extent_acres": rec.get("extent_acres"),
                 "from_use": rec.get("from_use", ""),
                 "to_use": rec.get("to_use", ""),
@@ -104,9 +107,12 @@ class DCConversionPlugin(DataPlugin):
             return
         try:
             from utils.discord_notifier import send
+
             for key, lines in alerts_by_village.items():
-                send("bd_opportunities",
+                send(
+                    "bd_opportunities",
                     f"🔄 DC Conversion: {key}",
-                    f"{len(lines)} application(s):\n" + "\n".join(lines))
+                    f"{len(lines)} application(s):\n" + "\n".join(lines),
+                )
         except Exception as exc:
             logger.warning("[DCConversion] batched Discord alert failed: {}", exc)

@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import patch
 from scrapers.scout_memory import ScoutMemory
+
 pytestmark = pytest.mark.unit
 
 
@@ -9,6 +10,7 @@ class FakeModel:
 
     def encode(self, text, normalize_embeddings=True):
         import hashlib
+
         np = __import__("numpy")
         seed = int(hashlib.md5(text.encode()).hexdigest()[:8], 16)
         rng = np.random.RandomState(seed)
@@ -24,12 +26,15 @@ class TestSemanticDedup:
 
     def _make_scout(self, market="Yelahanka", tmp_path=None):
         from scrapers.scout_memory import ScoutMemory
+
         base = str(tmp_path) if tmp_path else None
         return ScoutMemory(market, base_dir=base)
 
     def _patch_model(self):
         """Mock _get_semantic_model to return FakeModel."""
-        return patch("scrapers.scout_memory._get_semantic_model", return_value=FakeModel())
+        return patch(
+            "scrapers.scout_memory._get_semantic_model", return_value=FakeModel()
+        )
 
     def test_sha_fastpath_skips_semantic(self, tmp_path):
         """Known CID should hit SHA fast-path, never call semantic check."""
@@ -37,20 +42,31 @@ class TestSemanticDedup:
         cid = scout.cid_project("Brigade", "Golden Gate", "Yelahanka")
         scout.record(cid, {"project_name": "Golden Gate", "developer_name": "Brigade"})
         with self._patch_model() as mock_model_fn:
-            result = scout.record(cid, {"project_name": "Golden Gate", "developer_name": "Brigade"})
+            result = scout.record(
+                cid, {"project_name": "Golden Gate", "developer_name": "Brigade"}
+            )
             assert result is False
             assert mock_model_fn.called is False
 
     def test_near_identical_text_blocked(self, tmp_path):
         """Near-duplicate text should be blocked by semantic check."""
         scout = self._make_scout(tmp_path=tmp_path)
-        data1 = {"project_name": "Prestige Lakeside Habitat", "developer_name": "Prestige"}
+        data1 = {
+            "project_name": "Prestige Lakeside Habitat",
+            "developer_name": "Prestige",
+        }
         cid1 = scout.cid_project("Prestige", "Lakeside", "Yelahanka")
         with self._patch_model():
             r1 = scout.record(cid1, data1)
             assert r1 is True
             cid2 = scout.cid_project("Prestige", "Lakeside-2", "Yelahanka")
-            r2 = scout.record(cid2, {"project_name": "Prestige Lakeside Habitat", "developer_name": "Prestige"})
+            r2 = scout.record(
+                cid2,
+                {
+                    "project_name": "Prestige Lakeside Habitat",
+                    "developer_name": "Prestige",
+                },
+            )
             assert r2 is False
 
     def test_different_text_stored_and_cached(self, tmp_path):
@@ -88,7 +104,13 @@ class TestSemanticDedup:
         with self._patch_model():
             for i in range(510):
                 cid = scout.cid_project("Dev", f"Proj{i}", "Yelahanka")
-                scout.record(cid, {"project_name": f"Project {i} Unique Name", "developer_name": "Dev"})
+                scout.record(
+                    cid,
+                    {
+                        "project_name": f"Project {i} Unique Name",
+                        "developer_name": "Dev",
+                    },
+                )
             market = "yelahanka"
             assert len(ScoutMemory._recent_embeddings[market]) <= 500
 
@@ -96,6 +118,7 @@ class TestSemanticDedup:
         """Orthogonal vectors with sim ≈ 0.0 should pass (below 0.92 threshold)."""
         scout = self._make_scout(tmp_path=tmp_path)
         from scrapers.scout_memory import _cosine_sim_norm
+
         vec_a = [1.0] + [0.0] * 383
         vec_b = [0.0] + [1.0] + [0.0] * 382
         sim = _cosine_sim_norm(vec_a, vec_b)
@@ -105,6 +128,7 @@ class TestSemanticDedup:
     def test_identical_vector_blocked(self, tmp_path):
         """Identical vectors with sim == 1.0 should be blocked (above 0.92 threshold)."""
         from scrapers.scout_memory import _cosine_sim_norm
+
         vec = [1.0] + [0.0] * 383
         sim = _cosine_sim_norm(vec, vec)
         assert sim == pytest.approx(1.0, abs=0.01)
@@ -136,4 +160,3 @@ class TestSemanticDedup:
             assert scout.record(cid2, {"project_name": "Brigade Omega"}) is True
             stats = scout.stats()
             assert stats["total_known"] == 2
-

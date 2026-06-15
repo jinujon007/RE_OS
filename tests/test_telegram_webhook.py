@@ -1,4 +1,5 @@
 """Tests for Telegram webhook endpoint — T-966."""
+
 from unittest.mock import MagicMock, patch
 
 import config.settings as _cfg
@@ -19,6 +20,7 @@ def _make_update(text="Yelahanka 2 acres 4500 PSF JD", chat_id=12345):
 def _client():
     from fastapi.testclient import TestClient
     from dashboard.app_fastapi import app
+
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -55,11 +57,17 @@ def test_telegram_webhook_parses_message():
     """Valid update → parse_message called, returns 200."""
     client = _client()
     low_conf = MagicMock(
-        market="Yelahanka", confidence=0.3, area_acres=0.0, ask_psf=0.0, deal_type="compare"
+        market="Yelahanka",
+        confidence=0.3,
+        area_acres=0.0,
+        ask_psf=0.0,
+        deal_type="compare",
     )
     with (
         patch.object(_cfg, "TELEGRAM_WEBHOOK_SECRET", "test_secret_123"),
-        patch("interface.telegram_bot.parse_message", return_value=low_conf) as mock_parse,
+        patch(
+            "interface.telegram_bot.parse_message", return_value=low_conf
+        ) as mock_parse,
         patch("dashboard.app_fastapi._send_telegram_message"),
     ):
         resp = client.post(
@@ -75,7 +83,11 @@ def test_telegram_webhook_dispatches_on_high_confidence():
     """High-confidence parse → dispatch_evaluation called + reply sent."""
     client = _client()
     high_conf = MagicMock(
-        market="Yelahanka", confidence=0.85, area_acres=2.0, ask_psf=4500.0, deal_type="jd"
+        market="Yelahanka",
+        confidence=0.85,
+        area_acres=2.0,
+        ask_psf=4500.0,
+        deal_type="jd",
     )
     with (
         patch.object(_cfg, "TELEGRAM_WEBHOOK_SECRET", "test_secret_123"),

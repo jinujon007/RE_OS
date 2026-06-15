@@ -5,6 +5,7 @@ from the Karnataka IGR portal. Uses a stable composite-source_id
 derived from (market, survey_no, consideration_amount, registration_date)
 so that re-scrapes produce the same source_id for the same transaction.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -16,7 +17,7 @@ __all__ = ["IGRPlugin"]
 
 def _stable_source_id(txn: dict, market: str) -> str:
     """Deterministic source_id from transaction content — never ordinal."""
-    raw = f"{market}|{txn.get('survey_no','')}|{txn.get('consideration_amount',0)}|{txn.get('registration_date','')}"
+    raw = f"{market}|{txn.get('survey_no', '')}|{txn.get('consideration_amount', 0)}|{txn.get('registration_date', '')}"
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
@@ -46,11 +47,13 @@ class IGRPlugin(DataPlugin):
                 "sro_office": str(txn.get("sro_office", ""))[:200],
                 "source": str(txn.get("source", "igr_portal")),
             }
-            records.append(ParsedRecord(
-                entity_type="igr_transaction",
-                source_id=source_id,
-                market=market,
-                data=data,
-            ))
+            records.append(
+                ParsedRecord(
+                    entity_type="igr_transaction",
+                    source_id=source_id,
+                    market=market,
+                    data=data,
+                )
+            )
         logger.info("[IGRPlugin] {} transactions for {}", len(records), market)
         return records

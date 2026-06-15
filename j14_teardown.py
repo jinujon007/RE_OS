@@ -17,7 +17,9 @@ from browser_use.llm.openai.chat import ChatOpenAI as BUChatOpenAI
 with open("d:/Brain/JINU JOSHI/03 LLS/02 Projects/RE_market/RE_OS/.env") as _f:
     _env = _f.read()
 SAMBANOVA_API_KEY = re.search(r"SAMBANOVA_API_KEY=(\S+)", _env).group(1)
-OUTPUT_DIR = Path("d:/Brain/JINU JOSHI/03 LLS/02 Projects/RE_market/RE_OS/outputs/j14_teardown")
+OUTPUT_DIR = Path(
+    "d:/Brain/JINU JOSHI/03 LLS/02 Projects/RE_market/RE_OS/outputs/j14_teardown"
+)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 PLATFORMS = {
@@ -86,10 +88,10 @@ async def run_teardown_for_platform(name: str, config: dict, llm) -> dict:
     """Run browser-use agent against one platform and return findings."""
     from browser_use import Agent
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"PLATFORM: {name.upper()}")
     print(f"URL: {config['url']}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     agent = Agent(
         task=config["task"],
@@ -141,21 +143,26 @@ async def main():
         )
 
     # Save final combined JSON
-    final_file = OUTPUT_DIR / f"j14_teardown_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+    final_file = (
+        OUTPUT_DIR / f"j14_teardown_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+    )
     final_file.write_text(
         json.dumps(all_results, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     print(f"\n\nAll results saved to: {final_file}")
 
     # Print summary
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("TEARDOWN COMPLETE — SUMMARY")
-    print("="*60)
+    print("=" * 60)
     for name, result in all_results.items():
         print(f"\n{name.upper()} — {result['status'].upper()}")
         if result["status"] == "success":
             # Print first 500 chars of findings
-            print(result["findings"][:800] + ("..." if len(result["findings"]) > 800 else ""))
+            print(
+                result["findings"][:800]
+                + ("..." if len(result["findings"]) > 800 else "")
+            )
 
 
 if __name__ == "__main__":

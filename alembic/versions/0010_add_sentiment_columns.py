@@ -4,6 +4,7 @@ Revision ID: 0010_add_sentiment_columns
 Revises: 0009_add_alerts_table
 Create Date: 2026-05-30
 """
+
 from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
@@ -18,12 +19,10 @@ def upgrade() -> None:
     # Use raw SQL with IF NOT EXISTS so this migration is idempotent when the
     # columns were already created by schema.sql (fresh Docker deployment path).
     op.execute(
-        "ALTER TABLE news_articles "
-        "ADD COLUMN IF NOT EXISTS sentiment_score FLOAT"
+        "ALTER TABLE news_articles ADD COLUMN IF NOT EXISTS sentiment_score FLOAT"
     )
     op.execute(
-        "ALTER TABLE news_articles "
-        "ADD COLUMN IF NOT EXISTS sentiment_label VARCHAR(20)"
+        "ALTER TABLE news_articles ADD COLUMN IF NOT EXISTS sentiment_label VARCHAR(20)"
     )
     op.execute(
         "CREATE INDEX IF NOT EXISTS idx_news_articles_sentiment_score "

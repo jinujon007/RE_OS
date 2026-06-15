@@ -1,13 +1,16 @@
 """T-953: Seed staleness SLO enforcement tests."""
+
 import pytest
 from unittest.mock import patch, MagicMock
+
 pytestmark = pytest.mark.unit
 
 
 def test_seed_staleness_triggers_deletion():
     """When live listings >= SLO_SEED_MIN_LIVE_LISTINGS, action is remove_seed_and_use_live."""
     from utils.data_quality import DataQualityMonitor
-    with patch('utils.db.get_engine') as mock_eng:
+
+    with patch("utils.db.get_engine") as mock_eng:
         mock_conn = MagicMock()
         mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
         mock_conn.execute.return_value.fetchall.return_value = [
@@ -22,7 +25,8 @@ def test_seed_staleness_triggers_deletion():
 def test_seed_staleness_no_action_below_threshold():
     """When live listings < SLO_SEED_MIN_LIVE_LISTINGS, no removal flag."""
     from utils.data_quality import DataQualityMonitor
-    with patch('utils.db.get_engine') as mock_eng:
+
+    with patch("utils.db.get_engine") as mock_eng:
         mock_conn = MagicMock()
         mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
         mock_conn.execute.return_value.fetchall.return_value = [
@@ -35,6 +39,7 @@ def test_seed_staleness_no_action_below_threshold():
 def test_seed_staleness_health_endpoint_data_exists():
     """_get_market_psf_fallback returns float for known market (not scheduler)."""
     from utils.data_quality import DataQualityMonitor
+
     dqm = DataQualityMonitor
-    assert hasattr(dqm, 'check_seed_staleness')
+    assert hasattr(dqm, "check_seed_staleness")
     assert callable(dqm.check_seed_staleness)

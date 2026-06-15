@@ -11,6 +11,7 @@ NOTE: This migration skips revision 0044. If Sprint 81 (T-1088) later adds
 0044_idx_listings_price_psf with down_revision=0043, Alembic will detect two
 heads and require a merge migration. Run "alembic merge heads" to resolve.
 """
+
 from typing import Union
 
 from alembic import op

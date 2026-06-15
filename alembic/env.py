@@ -51,6 +51,7 @@ engine = create_engine(DATABASE_URL, poolclass=pool.NullPool)
 # this is the Alembic migration context
 # it is used to run migrations against the database.
 
+
 def run_migrations_offline():
     """Run migrations in 'offline' mode.
 
@@ -85,6 +86,7 @@ def run_migrations_online():
 
         with context.begin_transaction():
             context.run_migrations()
+
 
 if context.is_offline_mode():
     run_migrations_offline()

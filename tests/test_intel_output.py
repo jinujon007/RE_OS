@@ -28,6 +28,7 @@ def _make_result(analyst_raw: str, ceo_raw: str):
 
 # ── CEO output long enough → use it ───────────────────────────────────────────
 
+
 def test_valid_ceo_output_used_as_report_body():
     ceo_text = "A" * 150
     result = _make_result("analyst brief", ceo_text)
@@ -45,12 +46,16 @@ def test_valid_ceo_output_exact_100_chars():
 
 
 def test_analyst_raw_correct_with_valid_ceo():
-    result = _make_result("The analyst says Devanahalli PSF 9666.", "CEO says: buy Devanahalli now at 9666 PSF, 18% above GV. Strong absorption. Full go.")
+    result = _make_result(
+        "The analyst says Devanahalli PSF 9666.",
+        "CEO says: buy Devanahalli now at 9666 PSF, 18% above GV. Strong absorption. Full go.",
+    )
     analyst_raw, _, _, _ = _extract_report_body(result)
     assert analyst_raw == "The analyst says Devanahalli PSF 9666."
 
 
 # ── CEO output too short → fall back to analyst ───────────────────────────────
+
 
 def test_short_ceo_output_triggers_fallback():
     result = _make_result("analyst brief here", "X" * 99)
@@ -75,6 +80,7 @@ def test_whitespace_only_ceo_triggers_fallback():
 
 # ── Only one task output (analyst only) ───────────────────────────────────────
 
+
 def test_single_task_output_uses_analyst_as_fallback():
     result = MagicMock()
     task = MagicMock()
@@ -86,6 +92,7 @@ def test_single_task_output_uses_analyst_as_fallback():
 
 
 # ── No tasks_output attribute ─────────────────────────────────────────────────
+
 
 def test_no_tasks_output_attr_uses_raw():
     result = MagicMock(spec=[])  # no tasks_output attribute
@@ -106,8 +113,11 @@ def test_tasks_output_none_falls_back_to_raw():
 
 # ── Return types ──────────────────────────────────────────────────────────────
 
+
 def test_returns_four_tuple():
-    result = _make_result("analyst", "CEO output with enough content to be valid here " * 3)
+    result = _make_result(
+        "analyst", "CEO output with enough content to be valid here " * 3
+    )
     out = _extract_report_body(result)
     assert len(out) == 4
 
@@ -120,6 +130,7 @@ def test_all_strings_returned():
 
 
 # ── Whitespace handling ───────────────────────────────────────────────────────
+
 
 def test_ceo_output_with_leading_whitespace_still_valid():
     ceo_text = "\n\n" + "Valid CEO synthesis content " * 5

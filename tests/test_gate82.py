@@ -8,6 +8,7 @@ Four assertions:
 
 All pass → GATE-82 ✅
 """
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -45,11 +46,13 @@ def test_gate82_mat_view_exists():
 
     engine = get_engine()
     with engine.connect() as conn:
-        row = conn.execute(text("""
+        row = conn.execute(
+            text("""
             SELECT matviewname, ispopulated
             FROM pg_matviews
             WHERE matviewname = 'v_market_brief_mat'
-        """)).fetchone()
+        """)
+        ).fetchone()
 
     assert row is not None, "v_market_brief_mat not found in pg_matviews"
     assert row[1] is True, "v_market_brief_mat is not populated"
@@ -58,6 +61,7 @@ def test_gate82_mat_view_exists():
 def test_gate82_performance_test_passes():
     """Assertion 4: test_market_id_lookup_count_for_200_records passes."""
     from tests.test_db_performance import test_market_id_lookup_count_for_200_records
+
     test_market_id_lookup_count_for_200_records()
 
 
@@ -75,7 +79,9 @@ def test_gate82_no_empty_registration_numbers():
     engine = get_engine()
     with engine.connect() as conn:
         count = conn.execute(
-            text("SELECT COUNT(*) FROM kaveri_registrations WHERE registration_number = ''")
+            text(
+                "SELECT COUNT(*) FROM kaveri_registrations WHERE registration_number = ''"
+            )
         ).scalar()
 
     assert count == 0, (

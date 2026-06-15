@@ -2,6 +2,7 @@
 RE_OS — Optimizing Agent (Phase 9 - Sprint 60)
 Analyzes optimizer report and generates recommendations.
 """
+
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -36,6 +37,7 @@ class OptimizingAgent:
     def _check_llm_available(self) -> bool:
         try:
             from config.llm_router import get_analysis_llm
+
             return True
         except Exception:
             return False
@@ -51,12 +53,18 @@ class OptimizingAgent:
             "target_file, priority (HIGH/MEDIUM/LOW), estimated_token_saving_pct (0-100), confidence (0-1)."
         )
 
-    def _fallback_recommendation(self, report: dict[str, Any]) -> ImprovingRecommendation:
+    def _fallback_recommendation(
+        self, report: dict[str, Any]
+    ) -> ImprovingRecommendation:
         """Rule-based fallback when LLM unavailable."""
         import uuid
         from datetime import datetime
 
-        over_budget = [e for e in report.get("token_summary", []) if e.get("over_budget_runs", 0) > 0]
+        over_budget = [
+            e
+            for e in report.get("token_summary", [])
+            if e.get("over_budget_runs", 0) > 0
+        ]
         if over_budget:
             agent = over_budget[0].get("agent_name", "unknown")
             over = over_budget[0].get("over_budget_runs", 0)
@@ -64,8 +72,8 @@ class OptimizingAgent:
                 proposal_id=str(uuid.uuid4()),
                 title=f"Review token budget: {agent} over budget {over}x in last 7 days",
                 description=f"Investigate {agent} agent token usage. {over} runs exceeded the budget limit. "
-                           "Consider reducing prompt length, implementing caching for repeated queries, "
-                           "or switching to a lighter LLM tier.",
+                "Consider reducing prompt length, implementing caching for repeated queries, "
+                "or switching to a lighter LLM tier.",
                 target_file="config/llm_router.py",
                 priority="MEDIUM",
                 estimated_token_saving_pct=15.0,
@@ -76,7 +84,7 @@ class OptimizingAgent:
             proposal_id=str(uuid.uuid4()),
             title="Review LLM token usage patterns",
             description="No over-budget agents detected, but regular monitoring recommended. "
-                       "Check redundancy findings for optimization opportunities.",
+            "Check redundancy findings for optimization opportunities.",
             target_file="utils/optimizer_report.py",
             priority="LOW",
             estimated_token_saving_pct=5.0,
@@ -99,10 +107,14 @@ class OptimizingAgent:
             # Build prompt with report summary
             summary_lines = []
             for entry in report.get("token_summary", [])[:3]:
-                summary_lines.append(f"  - {entry.get('agent_name')}: {entry.get('total_tokens_7d', 0)} tokens, "
-                                    f"{entry.get('over_budget_runs', 0)} over-budget")
+                summary_lines.append(
+                    f"  - {entry.get('agent_name')}: {entry.get('total_tokens_7d', 0)} tokens, "
+                    f"{entry.get('over_budget_runs', 0)} over-budget"
+                )
             for finding in report.get("redundancy_findings", [])[:3]:
-                summary_lines.append(f"  - {finding.get('type')}: {finding.get('recommendation', '')[:60]}")
+                summary_lines.append(
+                    f"  - {finding.get('type')}: {finding.get('recommendation', '')[:60]}"
+                )
 
             prompt = (
                 f"Report date: {report.get('report_date')}\n"
@@ -114,8 +126,10 @@ class OptimizingAgent:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(
                     llm.invoke,
-                    [{"role": "system", "content": self._build_system_prompt()},
-                     {"role": "user", "content": prompt}]
+                    [
+                        {"role": "system", "content": self._build_system_prompt()},
+                        {"role": "user", "content": prompt},
+                    ],
                 )
                 response = future.result(timeout=self._LLM_TIMEOUT_S)
 
@@ -142,7 +156,9 @@ class OptimizingAgent:
                 description=data.get("description", "")[:500],
                 target_file=data.get("target_file", ""),
                 priority=data.get("priority", "LOW")[:10],
-                estimated_token_saving_pct=float(data.get("estimated_token_saving_pct", 0)),
+                estimated_token_saving_pct=float(
+                    data.get("estimated_token_saving_pct", 0)
+                ),
                 confidence=float(data.get("confidence", 0)),
             )
 

@@ -3,6 +3,7 @@
 Parses migration files directly to avoid importing migration modules
 (which depend on geoalchemy2 and other heavy deps).
 """
+
 import re
 from pathlib import Path
 

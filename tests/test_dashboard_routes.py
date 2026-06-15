@@ -1,5 +1,6 @@
 import os
 import pytest
+
 pytestmark = pytest.mark.unit
 
 from starlette.testclient import TestClient
@@ -44,6 +45,7 @@ def mock_db():
     """Mock _get_sa_engine to return engine whose connect() yields a mock connection
     that returns empty results for any query."""
     from unittest.mock import MagicMock, patch
+
     mock_conn = MagicMock()
     mock_conn.execute.return_value.fetchall.return_value = []
     mock_conn.execute.return_value.scalar.return_value = 0
@@ -58,6 +60,7 @@ def mock_db():
 def mock_conflict_db():
     """Mock DB returning 3 conflict rows."""
     from unittest.mock import MagicMock, patch
+
     mock_conn = MagicMock()
     mock_conn.execute.return_value.scalar.return_value = 3
     mock_engine = MagicMock()
@@ -105,12 +108,18 @@ def test_conflict_count_mocked(mock_conflict_db):
 
 
 def test_conflict_badge_script_present_in_index_html():
-    path = os.path.join(os.path.dirname(__file__), "..", "dashboard", "templates", "index.html")
+    path = os.path.join(
+        os.path.dirname(__file__), "..", "dashboard", "templates", "index.html"
+    )
     with open(path, encoding="utf-8") as f:
         content = f.read()
     assert "conflict-badge" in content, "conflict-badge id not found in index.html"
-    assert "/api/memory/conflict-count" in content, "/api/memory/conflict-count endpoint not found in index.html"
-    assert "pollConflictBadge" in content, "pollConflictBadge function not found in index.html"
+    assert "/api/memory/conflict-count" in content, (
+        "/api/memory/conflict-count endpoint not found in index.html"
+    )
+    assert "pollConflictBadge" in content, (
+        "pollConflictBadge function not found in index.html"
+    )
 
 
 # ── Memory Panel Route (T-86B) ──
@@ -129,14 +138,29 @@ def test_memory_panel_route_returns_200():
 @pytest.fixture
 def mock_provenance_db():
     from unittest.mock import MagicMock, patch
+
     mock_row1 = MagicMock()
-    mock_row1.__getitem__.side_effect = lambda idx: ["Yelahanka", "portal_scraped", 100][idx]
+    mock_row1.__getitem__.side_effect = lambda idx: [
+        "Yelahanka",
+        "portal_scraped",
+        100,
+    ][idx]
     mock_row2 = MagicMock()
-    mock_row2.__getitem__.side_effect = lambda idx: ["Yelahanka", "seed_estimated", 50][idx]
+    mock_row2.__getitem__.side_effect = lambda idx: ["Yelahanka", "seed_estimated", 50][
+        idx
+    ]
     mock_row3 = MagicMock()
-    mock_row3.__getitem__.side_effect = lambda idx: ["Devanahalli", "portal_scraped", 200][idx]
+    mock_row3.__getitem__.side_effect = lambda idx: [
+        "Devanahalli",
+        "portal_scraped",
+        200,
+    ][idx]
     mock_conn = MagicMock()
-    mock_conn.execute.return_value.fetchall.return_value = [mock_row1, mock_row2, mock_row3]
+    mock_conn.execute.return_value.fetchall.return_value = [
+        mock_row1,
+        mock_row2,
+        mock_row3,
+    ]
     mock_engine = MagicMock()
     mock_engine.connect.return_value.__enter__.return_value = mock_conn
     with patch("dashboard.app_fastapi._get_sa_engine", return_value=mock_engine):
@@ -191,8 +215,11 @@ def test_provenance_computed_values(mock_provenance_db):
 def test_provenance_market_filter():
     """Test optional market filter. We mock only Yelahanka data."""
     from unittest.mock import MagicMock, patch
+
     mock_row = MagicMock()
-    mock_row.__getitem__.side_effect = lambda idx: ["Yelahanka", "portal_scraped", 100][idx]
+    mock_row.__getitem__.side_effect = lambda idx: ["Yelahanka", "portal_scraped", 100][
+        idx
+    ]
     mock_conn = MagicMock()
     mock_conn.execute.return_value.fetchall.return_value = [mock_row]
     mock_engine = MagicMock()
@@ -211,6 +238,7 @@ def test_provenance_market_filter():
 @pytest.fixture
 def mock_reliability_db():
     from unittest.mock import MagicMock, patch
+
     mock_row = MagicMock()
     mock_row.__getitem__.side_effect = lambda idx: [10, 8, "2026-06-11 06:00:00"][idx]
     mock_conn = MagicMock()
@@ -230,6 +258,7 @@ def test_reliability_endpoint_returns_200(mock_reliability_db):
 
 def test_reliability_has_all_scrapers(mock_reliability_db):
     from config.scraper_registry import SCRAPER_NAMES
+
     r = client.get("/api/scraper/reliability")
     assert r.status_code == 200
     body = r.json()
@@ -245,6 +274,7 @@ def test_reliability_has_all_scrapers(mock_reliability_db):
 def test_reliability_computed_values(mock_reliability_db):
     """Assert reliability_score is correctly computed: 8/10 = 0.8."""
     from config.scraper_registry import SCRAPER_NAMES
+
     r = client.get("/api/scraper/reliability")
     assert r.status_code == 200
     body = r.json()
@@ -257,6 +287,7 @@ def test_reliability_computed_values(mock_reliability_db):
 
 def test_reliability_zero_runs_returns_zero_score():
     from unittest.mock import MagicMock, patch
+
     mock_row = MagicMock()
     mock_row.__getitem__.side_effect = lambda idx: [0, 0, None][idx]
     mock_conn = MagicMock()
@@ -265,6 +296,7 @@ def test_reliability_zero_runs_returns_zero_score():
     mock_engine.connect.return_value.__enter__.return_value = mock_conn
     with patch("utils.scraper_reliability.get_engine", return_value=mock_engine):
         from utils.scraper_reliability import compute_scraper_reliability
+
         result = compute_scraper_reliability("nonexistent_scraper")
         assert result["runs"] == 0
         assert result["reliability_score"] == 0.0

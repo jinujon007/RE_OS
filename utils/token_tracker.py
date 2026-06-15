@@ -2,6 +2,7 @@
 RE_OS — Token Usage Tracker (Phase 9 - Sprint 60)
 Per-agent token budget tracking with database persistence.
 """
+
 import hashlib
 from typing import Any
 
@@ -73,14 +74,16 @@ def get_budget_summary(days: int = 7) -> list[dict[str, Any]]:
         budget = r[4] or 2000
         over = r[5] or 0
         pct = round(over / runs * 100, 1) if runs > 0 else 0.0
-        result.append({
-            "agent_name": agent,
-            "total_tokens_7d": int(total),
-            "avg_tokens_per_run": round(avg, 1),
-            "budget_limit": int(budget),
-            "over_budget_runs": int(over),
-            "over_budget_pct": pct,
-        })
+        result.append(
+            {
+                "agent_name": agent,
+                "total_tokens_7d": int(total),
+                "avg_tokens_per_run": round(avg, 1),
+                "budget_limit": int(budget),
+                "over_budget_runs": int(over),
+                "over_budget_pct": pct,
+            }
+        )
     return result
 
 

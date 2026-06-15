@@ -38,18 +38,19 @@ Design decisions:
     uses (IRR - 7% Gsec) / scenario_IRR_std because real estate IRR doesn't follow
     normal distribution assumptions of traditional Sharpe.
 """
+
 import json
 from dataclasses import dataclass, field
 
 # -- LLS Standard Assumptions -------------------------------------------------
-CONSTRUCTION_COST_PSF: float = 2200.0     # ₹/sqft hard cost
-TARGET_IRR_GO:         float = 20.0       # % -- project green-lights above this
-TARGET_IRR_MARGINAL:   float = 12.0       # % -- conditional zone
-EQUITY_RATIO:          float = 0.60       # 60% equity
-DEBT_RATIO:            float = 0.40       # 40% debt
-LAND_TO_RERA_MONTHS:   int   = 18
+CONSTRUCTION_COST_PSF: float = 2200.0  # ₹/sqft hard cost
+TARGET_IRR_GO: float = 20.0  # % -- project green-lights above this
+TARGET_IRR_MARGINAL: float = 12.0  # % -- conditional zone
+EQUITY_RATIO: float = 0.60  # 60% equity
+DEBT_RATIO: float = 0.40  # 40% debt
+LAND_TO_RERA_MONTHS: int = 18
 RERA_TO_POSSESSION_MONTHS: int = 36
-TOTAL_TIMELINE_MONTHS: int   = LAND_TO_RERA_MONTHS + RERA_TO_POSSESSION_MONTHS
+TOTAL_TIMELINE_MONTHS: int = LAND_TO_RERA_MONTHS + RERA_TO_POSSESSION_MONTHS
 
 
 @dataclass
@@ -60,7 +61,9 @@ class LandCostResult:
     raw_land_cost: float
     negotiated_land_cost: float
 
+
 _IGR_SOURCE_DEFAULT: str | None = None
+
 
 @dataclass
 class GDVResult:
@@ -68,8 +71,11 @@ class GDVResult:
     sell_psf: float
     gross_development_value: float
     monthly_revenue: float
-    igr_source: str | None = field(default=None)  # 'igr_portal' | 'igr_fallback' | 'listing_psf' | None
-    igr_record_count: int = field(default=0)       # number of IGR records used
+    igr_source: str | None = field(
+        default=None
+    )  # 'igr_portal' | 'igr_fallback' | 'listing_psf' | None
+    igr_record_count: int = field(default=0)  # number of IGR records used
+
 
 @dataclass
 class IRRResult:
@@ -83,15 +89,18 @@ class IRRResult:
     equity_required: float
     debt_required: float
     payback_months: int
-    verdict: str   # GO | MARGINAL | NO-GO
+    verdict: str  # GO | MARGINAL | NO-GO
     # ── Risk bands (Tier 1 — Financial Intelligence Depth) ──────────────────────
-    sharpe_ratio: float = 0.0        # RE-adapted Sharpe (irr - risk_free) / irr_std
-    max_drawdown_pct: float = 0.0    # Max peak-to-trough decline %
-    best_case_irr_pct: float = 0.0   # p75 (bull scenario)
+    sharpe_ratio: float = 0.0  # RE-adapted Sharpe (irr - risk_free) / irr_std
+    max_drawdown_pct: float = 0.0  # Max peak-to-trough decline %
+    best_case_irr_pct: float = 0.0  # p75 (bull scenario)
     worst_case_irr_pct: float = 0.0  # p25 (bear scenario)
     risk_free_return_pct: float = 7.0  # Indian Gsec benchmark %
     # ── Data provenance (T-794 — Sprint 42) ──────────────────────────────────────
-    psf_source_quality: str = "unknown"  # 'live_igr' | 'fallback_igr' | 'listing_only' | 'unknown'
+    psf_source_quality: str = (
+        "unknown"  # 'live_igr' | 'fallback_igr' | 'listing_only' | 'unknown'
+    )
+
 
 @dataclass
 class ScenarioResult:
@@ -122,11 +131,11 @@ def calc_land_cost(
 
 def compute_psf_source_quality(igr_source: str | None, igr_record_count: int) -> str:
     """Compute PSF source quality label from IGR data availability.
-    
+
     Args:
         igr_source: Source label from GDVEstimator ('igr_portal', 'insufficient_igr_records', etc.)
         igr_record_count: Number of IGR records used
-    
+
     Returns:
         'live_igr': ≥5 live IGR portal records (high confidence)
         'fallback_igr': <5 live IGR records or insufficient data
@@ -137,7 +146,11 @@ def compute_psf_source_quality(igr_source: str | None, igr_record_count: int) ->
         return "live_igr"
     elif igr_source == "igr_portal":  # count < 5, fallback due to insufficient records
         return "fallback_igr"
-    elif igr_source in ("insufficient_igr_records", "insufficient_records", "sanity_rejected"):
+    elif igr_source in (
+        "insufficient_igr_records",
+        "insufficient_records",
+        "sanity_rejected",
+    ):
         return "fallback_igr"
     elif igr_source in ("listing_psf", "no_data", "table_unavailable"):
         return "listing_only"
@@ -149,8 +162,8 @@ def compute_psf_source_quality(igr_source: str | None, igr_record_count: int) ->
 
 def calc_gdv(sellable_area_sqft: float, sell_psf: float) -> GDVResult:
     area = float(max(sellable_area_sqft, 0))
-    psf  = float(max(sell_psf, 0))
-    gdv  = area * psf
+    psf = float(max(sell_psf, 0))
+    gdv = area * psf
     monthly = gdv / max(RERA_TO_POSSESSION_MONTHS, 1)
     return GDVResult(
         sellable_area_sqft=area,
@@ -167,15 +180,15 @@ def calc_irr(
     construction_cost_psf: float = CONSTRUCTION_COST_PSF,
     timeline_months: int = TOTAL_TIMELINE_MONTHS,
 ) -> IRRResult:
-    lc   = max(land_cost, 0)
+    lc = max(land_cost, 0)
     area = max(sellable_area_sqft, 0)
     gdv_r = calc_gdv(area, sell_psf)
     const_cost = area * max(construction_cost_psf, 0)
     total_cost = lc + const_cost
     profit = gdv_r.gross_development_value - total_cost
     margin = (profit / max(gdv_r.gross_development_value, 1)) * 100
-    years  = max(timeline_months, 1) / 12
-    irr    = (profit / max(total_cost, 1)) / years * 100
+    years = max(timeline_months, 1) / 12
+    irr = (profit / max(total_cost, 1)) / years * 100
 
     if irr >= TARGET_IRR_GO:
         verdict = "GO"
@@ -184,7 +197,11 @@ def calc_irr(
     else:
         verdict = "NO-GO"
 
-    payback = int(total_cost / max(gdv_r.monthly_revenue, 1)) if gdv_r.monthly_revenue > 0 else 9999
+    payback = (
+        int(total_cost / max(gdv_r.monthly_revenue, 1))
+        if gdv_r.monthly_revenue > 0
+        else 9999
+    )
 
     return IRRResult(
         land_cost=round(lc),
@@ -209,19 +226,19 @@ def compare_scenarios(
     igr_record_count: int = 0,
 ) -> ScenarioResult:
     """Compare base/bull/bear IRR scenarios.
-    
+
     Args:
         land_cost: Negotiated land acquisition cost
         sellable_area_sqft: Total sellable area
         base_psf: Base case selling price per sqft
         igr_source: IGR data source label (optional, for psf_source_quality)
         igr_record_count: Number of IGR records used (optional, for psf_source_quality)
-    
+
     Returns:
         ScenarioResult with base/bull/bear IRRResults and recommendation
     """
-    bull_psf  = base_psf * 1.10   # +10% optimistic
-    bear_psf  = base_psf * 0.80   # -20% downside (industry standard for 54mo timeline)
+    bull_psf = base_psf * 1.10  # +10% optimistic
+    bear_psf = base_psf * 0.80  # -20% downside (industry standard for 54mo timeline)
 
     base = calc_irr(land_cost, sellable_area_sqft, base_psf)
     bull = calc_irr(land_cost, sellable_area_sqft, bull_psf)
@@ -241,6 +258,7 @@ def compare_scenarios(
     psf_quality = compute_psf_source_quality(igr_source, igr_record_count)
     if psf_quality != "live_igr":
         from loguru import logger as _log
+
         _log.warning(
             f"[IRR] PSF source quality: {psf_quality} (not live_igr) — "
             f"IRR is estimate based on {'fallback' if psf_quality == 'fallback_igr' else 'listing'} data, "
@@ -267,6 +285,7 @@ def compare_scenarios(
 
 # ── GDVEstimator (T-477 — IGR transaction PSF integration) ──────────────────
 
+
 class GDVEstimator:
     """Estimates GDV using IGR transaction PSF with listing PSF fallback.
 
@@ -284,11 +303,13 @@ class GDVEstimator:
     """
 
     MIN_IGR_RECORDS = 5
-    _CACHE_TTL_S = 900       # 15 minutes — positive results
+    _CACHE_TTL_S = 900  # 15 minutes — positive results
     _NODATA_CACHE_TTL_S = 300  # 5 minutes — negative results (re-check sooner)
     _MAX_AREA = 10_000_000
     _MARKET_CAP = 100
-    _PSF_MIN_SANITY = 500    # reject IGR PSF below ₹500/sqft (almost certainly data error)
+    _PSF_MIN_SANITY = (
+        500  # reject IGR PSF below ₹500/sqft (almost certainly data error)
+    )
     _PSF_MAX_SANITY = 50000  # reject IGR PSF above ₹50,000/sqft
 
     def __init__(self):
@@ -346,7 +367,13 @@ class GDVEstimator:
             return None
         if psf < self._PSF_MIN_SANITY or psf > self._PSF_MAX_SANITY:
             from loguru import logger as _log
-            _log.warning("[IGR] PSF {:.0f} outside sanity range [{}, {}] — rejecting", psf, self._PSF_MIN_SANITY, self._PSF_MAX_SANITY)
+
+            _log.warning(
+                "[IGR] PSF {:.0f} outside sanity range [{}, {}] — rejecting",
+                psf,
+                self._PSF_MIN_SANITY,
+                self._PSF_MAX_SANITY,
+            )
             return None
         return psf
 
@@ -370,6 +397,7 @@ class GDVEstimator:
           - insufficient_records: < MIN_IGR_RECORDS rows exist
         """
         import time as _time
+
         now = _time.time()
 
         # Check cache first
@@ -382,6 +410,7 @@ class GDVEstimator:
         try:
             from utils.db import get_engine
             from sqlalchemy import text
+
             engine = get_engine()
             with engine.connect() as conn:
                 row = conn.execute(
@@ -399,6 +428,7 @@ class GDVEstimator:
                 ).fetchone()
         except Exception as exc:
             from loguru import logger as _log
+
             _log.warning("[IGR] median PSF query failed for market={}: {}", market, exc)
             return None, 0, "table_unavailable"
 
@@ -430,7 +460,9 @@ class GDVEstimator:
 # Rationale: Real estate IRR doesn't follow normal distribution assumptions of
 # traditional financial Sharpe. The RE-adapted version uses scenario variance
 # as risk proxy instead of daily/monthly return volatility.
-_MIN_IRR_STD: float = 0.5  # minimum std in %pts — prevents inflated Sharpe from near-zero variance
+_MIN_IRR_STD: float = (
+    0.5  # minimum std in %pts — prevents inflated Sharpe from near-zero variance
+)
 
 
 def _build_monthly_returns(
@@ -459,6 +491,7 @@ def _build_monthly_returns(
       Both simplifications are acceptable for risk banding (not for DCF).
     """
     import pandas as _pd
+
     if equity_required <= 0 or gdv <= 0:
         return _pd.Series(dtype=float)
 
@@ -479,7 +512,9 @@ def _build_monthly_returns(
     return _pd.Series(cashflows) / equity_required
 
 
-def re_sharpe_ratio(irr_pct: float, risk_free_rate: float = 0.07, irr_std: float = 0.0) -> float:
+def re_sharpe_ratio(
+    irr_pct: float, risk_free_rate: float = 0.07, irr_std: float = 0.0
+) -> float:
     """Real-estate adapted Sharpe ratio: (IRR - risk-free rate) / IRR std.
 
     Uses scenario variance as risk proxy instead of return volatility —
@@ -501,7 +536,12 @@ def re_sharpe_ratio(irr_pct: float, risk_free_rate: float = 0.07, irr_std: float
         Float Sharpe ratio. 0.0 if irr_std is effectively zero or inputs degenerate.
     """
     import math as _math
-    if any(_math.isnan(v) for v in (irr_pct, risk_free_rate, irr_std) if isinstance(v, (int, float))):
+
+    if any(
+        _math.isnan(v)
+        for v in (irr_pct, risk_free_rate, irr_std)
+        if isinstance(v, (int, float))
+    ):
         return 0.0
     if irr_std <= _MIN_IRR_STD:
         return 0.0
@@ -552,6 +592,7 @@ def _compute_risk_metrics(
         return result
 
     import time as _time
+
     _t0 = _time.time()
     monthly_returns = _build_monthly_returns(
         land_cost, construction_cost, gdv, equity_required, timeline_months
@@ -569,10 +610,14 @@ def _compute_risk_metrics(
         if mdd_val is not None:
             result["max_drawdown_pct"] = round(mdd_val * 100, 2)
         else:
-            _log.debug("[IRR] max_drawdown returned NaN — likely degenerate cashflow series")
+            _log.debug(
+                "[IRR] max_drawdown returned NaN — likely degenerate cashflow series"
+            )
     except Exception:
         _log.warning("[IRR] empyrical max_drawdown failed (non-fatal)")
-        _log.debug("[IRR] risk metrics computation took {:.3f}s".format(_time.time() - _t0))
+        _log.debug(
+            "[IRR] risk metrics computation took {:.3f}s".format(_time.time() - _t0)
+        )
         return result
 
     _log.debug("[IRR] risk metrics computation took {:.3f}s".format(_time.time() - _t0))
@@ -582,15 +627,22 @@ def _compute_risk_metrics(
 # ── IGR Source Logging (T-477) ─────────────────────────────────────────────────
 
 
-def log_igr_lookup(market: str, source: str | None, record_count: int,
-                   psf: float, caller: str = "GDVEstimator"):
+def log_igr_lookup(
+    market: str,
+    source: str | None,
+    record_count: int,
+    psf: float,
+    caller: str = "GDVEstimator",
+):
     """Log IGR PSF lookup to agent_runs for audit trail.
     Non-fatal on failure — caller proceeds regardless.
     """
     from datetime import datetime, timezone
+
     try:
         from utils.db import get_engine
         from sqlalchemy import text
+
         engine = get_engine()
         with engine.begin() as conn:
             conn.execute(
@@ -602,13 +654,20 @@ def log_igr_lookup(market: str, source: str | None, record_count: int,
                 {
                     "agent_name": caller,
                     "market": market,
-                    "metadata": json.dumps({"source": source, "record_count": record_count, "psf": psf}),
+                    "metadata": json.dumps(
+                        {"source": source, "record_count": record_count, "psf": psf}
+                    ),
                     "started_at": datetime.now(timezone.utc),
                 },
             )
     except Exception:
         from loguru import logger as _log
-        _log.warning("[IGR] Failed to log lookup to agent_runs for market={} caller={}", market, caller)
+
+        _log.warning(
+            "[IGR] Failed to log lookup to agent_runs for market={} caller={}",
+            market,
+            caller,
+        )
 
 
 if __name__ == "__main__":
@@ -617,15 +676,23 @@ if __name__ == "__main__":
     area = 5 * 43560
     lc = calc_land_cost(area, 4000, 10.0)
     print("\n[5-acre Yelahanka, ₹6,500 PSF]")
-    print("Land cost: ₹{:.2f}Cr (raw: ₹{:.2f}Cr)".format(lc.negotiated_land_cost/1e7, lc.raw_land_cost/1e7))
+    print(
+        "Land cost: ₹{:.2f}Cr (raw: ₹{:.2f}Cr)".format(
+            lc.negotiated_land_cost / 1e7, lc.raw_land_cost / 1e7
+        )
+    )
     sellable = area * 0.65 * 2.5
     gdv = calc_gdv(sellable, 6500)
-    print("GDV: ₹{:.2f}Cr".format(gdv.gross_development_value/1e7))
+    print("GDV: ₹{:.2f}Cr".format(gdv.gross_development_value / 1e7))
     scenarios = compare_scenarios(lc.negotiated_land_cost, sellable, 6500)
-    print("Base: {:.1f}% ({})  Bull: {:.1f}%  Bear: {:.1f}%".format(
-        scenarios.base.simple_irr_pct, scenarios.base.verdict,
-        scenarios.bull.simple_irr_pct,
-        scenarios.bear.simple_irr_pct))
+    print(
+        "Base: {:.1f}% ({})  Bull: {:.1f}%  Bear: {:.1f}%".format(
+            scenarios.base.simple_irr_pct,
+            scenarios.base.verdict,
+            scenarios.bull.simple_irr_pct,
+            scenarios.bear.simple_irr_pct,
+        )
+    )
     print("Verdict: {}".format(scenarios.recommendation))
 
     # NO-GO case — expensive land, low PSF
@@ -641,5 +708,8 @@ if __name__ == "__main__":
     # Zero-land case — no crash
     print("\n[All zeros — no crash]")
     zero = calc_irr(0, 0, 0)
-    print("IRR: {}% ({}) | Equity: ₹{:,.0f} | Payback: {}mo".format(
-        zero.simple_irr_pct, zero.verdict, zero.equity_required, zero.payback_months))
+    print(
+        "IRR: {}% ({}) | Equity: ₹{:,.0f} | Payback: {}mo".format(
+            zero.simple_irr_pct, zero.verdict, zero.equity_required, zero.payback_months
+        )
+    )

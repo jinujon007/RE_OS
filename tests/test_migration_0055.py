@@ -5,8 +5,10 @@
 (2) UNIQUE constraint (village, survey_no) defined
 (3) FK columns parcel_id on both rera_projects and registered_transactions
 """
+
 from pathlib import Path
 import pytest
+
 pytestmark = pytest.mark.unit
 
 MIGRATION_PATH = Path("alembic/versions/0055_parcels_table.py")

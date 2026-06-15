@@ -4,6 +4,7 @@ All 10 criteria verified via config, schema, and code inspection.
 
 Also includes GATE-51 PSF criterion tests (T-943).
 """
+
 import pytest
 
 pytestmark = pytest.mark.unit
@@ -43,6 +44,7 @@ def assert_psf_in_gate51_range(psf: float | None, market: str) -> None:
 def test_gate_14_discord_send_callable():
     """GATE-14: Discord send() function exists and is callable."""
     from utils.discord_notifier import send
+
     assert callable(send)
 
 
@@ -50,6 +52,7 @@ def test_gate_containers_defined():
     """GATE-56 criterion: 5 required containers in docker-compose.yml."""
     import yaml
     import pathlib
+
     dc = yaml.safe_load(pathlib.Path("docker-compose.yml").read_text())
     services = set(dc.get("services", {}).keys())
     required = {"agents", "postgres", "redis", "ollama", "scheduler"}
@@ -64,7 +67,9 @@ def test_gate_rera_config_floors():
         pytest.fail(f"Could not import MARKET_RERA_CONFIG: {exc}")
     assert "Yelahanka" in MARKET_RERA_CONFIG, "Missing Yelahanka in MARKET_RERA_CONFIG"
     assert "Hebbal" in MARKET_RERA_CONFIG, "Missing Hebbal in MARKET_RERA_CONFIG"
-    assert "Devanahalli" in MARKET_RERA_CONFIG, "Missing Devanahalli in MARKET_RERA_CONFIG"
+    assert "Devanahalli" in MARKET_RERA_CONFIG, (
+        "Missing Devanahalli in MARKET_RERA_CONFIG"
+    )
     assert MARKET_RERA_CONFIG["Yelahanka"].get("expected_rows", 0) >= 150, (
         f"Yelahanka expected_rows={MARKET_RERA_CONFIG['Yelahanka'].get('expected_rows')} < 150"
     )
@@ -79,6 +84,7 @@ def test_gate_rera_config_floors():
 def test_gate_t207_closed_http_post():
     """GATE-56 / T-207: RERA scraper uses HTTP POST, not Playwright (T-207 closed)."""
     from scrapers.rera_karnataka import RERAKarnatakaScraper
+
     assert hasattr(RERAKarnatakaScraper, "SEARCH_URL")
     assert "projectViewDetails" in RERAKarnatakaScraper.SEARCH_URL
 
@@ -87,8 +93,13 @@ def test_gate_psf_fallback_market_aware():
     """GATE-56: PSF fallback is market-aware (_get_market_psf_fallback exists as function or method)."""
     from unittest.mock import patch
     import intelligence.financial_intel as fi_mod
+
     has_fn = hasattr(fi_mod, "_get_market_psf_fallback")
-    has_method = hasattr(fi_mod.FinancialIntelModule, "_get_market_psf_fallback") if hasattr(fi_mod, "FinancialIntelModule") else False
+    has_method = (
+        hasattr(fi_mod.FinancialIntelModule, "_get_market_psf_fallback")
+        if hasattr(fi_mod, "FinancialIntelModule")
+        else False
+    )
     assert has_fn or has_method, (
         "Market-aware PSF fallback function '_get_market_psf_fallback' not found "
         "at module level or on FinancialIntelModule"
@@ -98,6 +109,7 @@ def test_gate_psf_fallback_market_aware():
 def test_gate_ge_checkpoint_runs_without_error():
     """GATE-56: data_quality checkpoint runs without raising (pure pandas, no GE API dependency)."""
     from unittest.mock import MagicMock, patch
+
     mock_conn = MagicMock()
     mock_result = MagicMock()
     mock_result.fetchall.return_value = []
@@ -108,6 +120,7 @@ def test_gate_ge_checkpoint_runs_without_error():
 
     with patch("utils.data_quality.get_engine", return_value=mock_engine):
         from utils.data_quality import run_data_quality_checkpoint
+
         result = run_data_quality_checkpoint("Yelahanka")
 
     assert result["success"] is True
@@ -118,18 +131,23 @@ def test_gate_news_organizer_headline_fallback():
     """GATE-56 / T-930: news organizer maps 'headline' field to 'title' column."""
     import inspect
     from utils.db_organizer import DBOrganizer
+
     src = inspect.getsource(DBOrganizer._insert_news_article)
-    assert "headline" in src, "_insert_news_article must fall back to 'headline' field (T-930)"
+    assert "headline" in src, (
+        "_insert_news_article must fall back to 'headline' field (T-930)"
+    )
 
 
 def test_gate_igr_proxy_criterion():
     """GATE-53 / J-3: kaveri_registrations DDL has data_source column definition."""
     import pathlib
     import re
+
     schema = pathlib.Path("database/schema.sql").read_text()
     match = re.search(
         r"CREATE TABLE\s+kaveri_registrations\s*\((.*?)\);",
-        schema, re.DOTALL | re.IGNORECASE,
+        schema,
+        re.DOTALL | re.IGNORECASE,
     )
     assert match, "kaveri_registrations CREATE TABLE not found in schema.sql"
     cols_def = match.group(1)
@@ -142,10 +160,12 @@ def test_gate_guidance_values_data_source():
     """GATE-54: guidance_values DDL has data_source column definition."""
     import pathlib
     import re
+
     schema = pathlib.Path("database/schema.sql").read_text()
     match = re.search(
         r"CREATE TABLE\s+guidance_values\s*\((.*?)\);",
-        schema, re.DOTALL | re.IGNORECASE,
+        schema,
+        re.DOTALL | re.IGNORECASE,
     )
     assert match, "guidance_values CREATE TABLE not found in schema.sql"
     cols_def = match.group(1)
@@ -162,19 +182,19 @@ def test_gate_guidance_values_data_source():
 # NOT data provenance — T-944 fixes listing quality separately.
 
 _MOCK_QUERY = (
-    "SELECT avg_listing_psf FROM v_market_brief "
-    "WHERE micro_market ILIKE :m LIMIT 1"
+    "SELECT avg_listing_psf FROM v_market_brief WHERE micro_market ILIKE :m LIMIT 1"
 )
 
 
 def _mock_psf_query(psf_value: float | None) -> tuple:
     """Create a mocked DB environment returning a specific PSF value."""
     from unittest.mock import MagicMock, patch
-    mock_conn = MagicMock(spec=['execute'])
-    mock_result = MagicMock(spec=['fetchone', 'fetchall', 'keys'])
+
+    mock_conn = MagicMock(spec=["execute"])
+    mock_result = MagicMock(spec=["fetchone", "fetchall", "keys"])
     mock_result.fetchone.return_value = (psf_value,)
     mock_conn.execute.return_value = mock_result
-    mock_engine = MagicMock(spec=['connect'])
+    mock_engine = MagicMock(spec=["connect"])
     mock_engine.connect.return_value.__enter__.return_value = mock_conn
     return (mock_engine, mock_conn, mock_result)
 
@@ -183,6 +203,7 @@ def _run_psf_query(mock_engine) -> float | None:
     """Execute the GATE-51 PSF query against the mocked engine."""
     from utils.db import get_engine
     from sqlalchemy import text
+
     with get_engine().connect() as conn:
         row = conn.execute(
             text(_MOCK_QUERY),
@@ -198,6 +219,7 @@ class TestGate51PSFCriterion:
     def _setup_mock(self):
         """Apply get_engine patch for each test in this class."""
         from unittest.mock import patch
+
         self._patcher = patch("utils.db.get_engine")
         self._mock_get_engine = self._patcher.start()
         yield
@@ -213,6 +235,7 @@ class TestGate51PSFCriterion:
     def _assert_psf_fails(self, psf_value: float | None):
         """Given a failing PSF value, mock DB, query, and verify failure."""
         import pytest
+
         engine, _, _ = _mock_psf_query(psf_value)
         self._mock_get_engine.return_value = engine
         psf = _run_psf_query(engine)
@@ -265,6 +288,7 @@ class TestGate51PSFCriterion:
         """If the DB query itself fails, the error should propagate — do not swallow."""
         import pytest
         from unittest.mock import MagicMock
+
         bad_engine = MagicMock()
         bad_engine.connect.side_effect = RuntimeError("DB connection failed")
         self._mock_get_engine.return_value = bad_engine
@@ -277,6 +301,7 @@ def test_gate_56_unit_test_coverage():
     Checks module-level test functions AND class-based test methods.
     Expected: 11 gate criteria covered (GATE-14, 51, 53, 54, 56 sub-criteria)."""
     import re
+
     # Collect all test function names from current module
     test_funcs = {name for name in globals() if name.startswith("test_gate_")}
     # Collect class-based test methods (pytest collects classes starting with "Test")

@@ -8,6 +8,7 @@
 5. check_heartbeat_staleness passes on fresh heartbeat
 6. scheduler job count includes heartbeat when registered
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
@@ -22,6 +23,7 @@ def test_scheduler_dry_run_env_parsed():
     """SCHEDULER_DRY_RUN env var parsed correctly."""
     import os
     from config.settings import SCHEDULER_DRY_RUN
+
     # Default is False (not set)
     assert SCHEDULER_DRY_RUN is False
     # Set and re-parse (simulate via direct check)
@@ -29,6 +31,7 @@ def test_scheduler_dry_run_env_parsed():
     # Reimport to pick up new env
     from importlib import reload
     import config.settings
+
     reload(config.settings)
     assert config.settings.SCHEDULER_DRY_RUN is True
     # Clean up

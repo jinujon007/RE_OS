@@ -62,9 +62,24 @@ def upgrade():
         sa.Column("why_it_matters", sa.Text(), nullable=True),
         sa.Column("source_urls", ARRAY(sa.Text()), nullable=True),
         sa.Column("published_date", sa.Date(), nullable=True),
-        sa.Column("is_north_bengaluru", sa.Boolean(), nullable=False, server_default=sa.text("FALSE")),
-        sa.Column("scraped_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("NOW()"), nullable=False),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("NOW()"), nullable=False),
+        sa.Column(
+            "is_north_bengaluru",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.text("FALSE"),
+        ),
+        sa.Column(
+            "scraped_at",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.text("NOW()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.text("NOW()"),
+            nullable=False,
+        ),
     )
     op.create_check_constraint(
         "ck_govt_policy_category",

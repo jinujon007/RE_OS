@@ -4,6 +4,7 @@ Revision ID: 0018_add_surveys_developer_id
 Revises: 0017_regulatory_zones_market_fk
 Create Date: 2026-06-05
 """
+
 from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
@@ -20,9 +21,11 @@ def upgrade() -> None:
         ALTER TABLE surveys
         ADD COLUMN IF NOT EXISTS developer_id UUID REFERENCES developers(id) ON DELETE SET NULL
     """)
-    op.execute("CREATE INDEX IF NOT EXISTS idx_surveys_developer ON surveys (developer_id)")
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_surveys_developer ON surveys (developer_id)"
+    )
 
 
 def downgrade() -> None:
-    op.drop_index('idx_surveys_developer', 'surveys')
-    op.drop_column('surveys', 'developer_id')
+    op.drop_index("idx_surveys_developer", "surveys")
+    op.drop_column("surveys", "developer_id")

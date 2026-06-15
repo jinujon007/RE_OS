@@ -50,6 +50,7 @@ def _get_dev_embedding(name: str) -> list[float]:
         return _DEV_EMBED_CACHE[key]
     try:
         import requests as _req
+
         resp = _req.post(
             f"{OLLAMA_BASE_URL.rstrip('/')}/api/embeddings",
             json={"model": "nomic-embed-text", "prompt": key},
@@ -67,6 +68,7 @@ def _get_dev_embedding(name: str) -> list[float]:
 def _cosine(a: list[float], b: list[float]) -> float:
     """Pure-Python cosine similarity — no numpy."""
     import math
+
     if not a or not b or len(a) != len(b):
         return 0.0
     dot = sum(x * y for x, y in zip(a, b))
@@ -110,6 +112,7 @@ def _find_semantic_match(
         return best_id
     return None
 
+
 # Module-level shared engine — avoids creating a new connection pool on every
 # DBOrganizer() instantiation. SQLAlchemy engines are thread-safe.
 _SHARED_ENGINE = None
@@ -125,7 +128,6 @@ def _get_organizer_engine():
                     DATABASE_URL, pool_pre_ping=True, pool_size=5, max_overflow=2
                 )
     return _SHARED_ENGINE
-
 
 
 class DBOrganizer:
@@ -157,9 +159,7 @@ class DBOrganizer:
                     "all lookups will fall through to per-record DB queries"
                 )
             else:
-                logger.info(
-                    f"[DBOrganizer] Market ID cache loaded: {n} markets"
-                )
+                logger.info(f"[DBOrganizer] Market ID cache loaded: {n} markets")
         except Exception as exc:
             logger.warning(f"[DBOrganizer] Failed to load market cache: {exc}")
 
@@ -192,7 +192,10 @@ class DBOrganizer:
                     if dev_id:
                         dev_name = str(project.get("developer_name", "")).strip()
                         units = int(project.get("total_units", 0) or 0)
-                        if dev_id not in dev_grade_inputs or units > dev_grade_inputs[dev_id][1]:
+                        if (
+                            dev_id not in dev_grade_inputs
+                            or units > dev_grade_inputs[dev_id][1]
+                        ):
                             dev_grade_inputs[dev_id] = (dev_name, units)
                     if action == "inserted":
                         inserted += 1
@@ -227,7 +230,10 @@ class DBOrganizer:
                     {"market": market_name},
                 )
             except Exception as ts_exc:
-                logger.warning("[DBOrganizer] last_scraped_at update failed (non-fatal): %s", ts_exc)
+                logger.warning(
+                    "[DBOrganizer] last_scraped_at update failed (non-fatal): %s",
+                    ts_exc,
+                )
 
         duration = int(time.time() - started)
         stats = {
@@ -254,6 +260,7 @@ class DBOrganizer:
 
         # ── Data quality checkpoint (blocks Stage 3 on ERROR severity) ──
         from utils.data_quality import DataQualityError
+
         qc_result = self._run_quality_check(market_name, stats)
         if not qc_result["success"]:
             raise DataQualityError(market_name, qc_result)
@@ -272,6 +279,7 @@ class DBOrganizer:
                 format_data_quality_alert,
                 DataQualityError,
             )
+
             qc = run_data_quality_checkpoint(market_name)
             if qc["success"]:
                 return qc
@@ -284,6 +292,7 @@ class DBOrganizer:
 
             try:
                 import json as _json
+
                 with self.engine.begin() as log_conn:
                     log_conn.execute(
                         text("""
@@ -311,6 +320,7 @@ class DBOrganizer:
                 logger.warning(f"[DBOrganizer] Failed log quality failure: {log_exc}")
 
             from utils.discord_notifier import send_quality_alert
+
             alert_msg = format_data_quality_alert(market_name, qc)
             if alert_msg:
                 send_quality_alert(
@@ -322,9 +332,16 @@ class DBOrganizer:
             return qc
 
         except Exception as qc_exc:
-            logger.warning(f"[DBOrganizer] Quality check error (non-fatal): {qc_exc}", exc_info=True)
-            return {"success": True, "failed_expectations": [], "warnings": [],
-                    "note": f"Quality check exception: {qc_exc}"}
+            logger.warning(
+                f"[DBOrganizer] Quality check error (non-fatal): {qc_exc}",
+                exc_info=True,
+            )
+            return {
+                "success": True,
+                "failed_expectations": [],
+                "warnings": [],
+                "note": f"Quality check exception: {qc_exc}",
+            }
 
     def run_portal_scout(self, market_name: str, findings: list) -> dict:
         """Upsert portal scout findings into listings table using cid."""
@@ -535,7 +552,9 @@ class DBOrganizer:
         candidates = conn.execute(
             text("SELECT id::text, name_normalized FROM developers LIMIT 200")
         ).fetchall()
-        semantic_id = _find_semantic_match(conn, dev_norm, [(r[0], r[1]) for r in candidates])
+        semantic_id = _find_semantic_match(
+            conn, dev_norm, [(r[0], r[1]) for r in candidates]
+        )
         if semantic_id:
             return semantic_id
 
@@ -568,7 +587,9 @@ class DBOrganizer:
             {"grade": self._compute_grade(name, units), "id": dev_id}
             for dev_id, (name, units) in grade_inputs.items()
         ]
-        conn.execute(text("UPDATE developers SET grade = :grade WHERE id = :id"), params)
+        conn.execute(
+            text("UPDATE developers SET grade = :grade WHERE id = :id"), params
+        )
         logger.debug(f"[DBOrganizer] Batch graded {len(params)} developers")
 
     # ── Micro-market ───────────────────────────────────────────────────────────
@@ -590,7 +611,9 @@ class DBOrganizer:
                         f"— querying DB (cache miss)"
                     )
                     row = conn.execute(
-                        text("SELECT id FROM micro_markets WHERE LOWER(name) = LOWER(:n)"),
+                        text(
+                            "SELECT id FROM micro_markets WHERE LOWER(name) = LOWER(:n)"
+                        ),
                         {"n": market_name_key},
                     ).fetchone()
                     if row:
@@ -612,7 +635,9 @@ class DBOrganizer:
         elif source == "fallback_sample":
             data_source = "seed_estimated"
         else:
-            data_source = str(project.get("data_source", "seed_estimated") or "seed_estimated").strip()
+            data_source = str(
+                project.get("data_source", "seed_estimated") or "seed_estimated"
+            ).strip()
         if data_source not in self._VALID_DATA_SOURCES:
             logger.warning(
                 "[Organizer] Invalid data_source '%s' — defaulting to 'seed_estimated'",
@@ -760,13 +785,14 @@ class DBOrganizer:
     @staticmethod
     def _is_deprecated_checkpoint(filename: str) -> bool:
         """Return True if filename matches a deprecated scraper checkpoint pattern."""
-        is_dep = any(filename.startswith(p) for p in DBOrganizer._DEPRECATED_CHECKPOINT_PREFIXES)
+        is_dep = any(
+            filename.startswith(p) for p in DBOrganizer._DEPRECATED_CHECKPOINT_PREFIXES
+        )
         if is_dep:
             logger.info(f"Skipping deprecated listings_scraper checkpoint: {filename}")
         return is_dep
 
-
-# ── Kaveri — guidance values ───────────────────────────────────────────────
+    # ── Kaveri — guidance values ───────────────────────────────────────────────
 
     def _get_market_id_by_name(self, conn, market_name: str) -> str | None:
         """Look up micro_market.id by exact case-insensitive name match.
@@ -863,7 +889,9 @@ class DBOrganizer:
             return False
         # Strip non-alphanumeric prefix chars to avoid overly broad LIKE matches
         prefix = "".join(c for c in survey_no[:6] if c.isalnum()) + "%"
-        if len(prefix) < 3:  # prefix too short after sanitisation would match too broadly
+        if (
+            len(prefix) < 3
+        ):  # prefix too short after sanitisation would match too broadly
             return False
         reg_date = _safe_date(rec.get("registration_date"))
         amount = float(rec.get("transaction_amount", 0) or 0)
@@ -892,7 +920,9 @@ class DBOrganizer:
         reg_no = str(rec.get("registration_number", "")).strip()
         if reg_no:
             existing = conn.execute(
-                text("SELECT id FROM kaveri_registrations WHERE registration_number = :rn"),
+                text(
+                    "SELECT id FROM kaveri_registrations WHERE registration_number = :rn"
+                ),
                 {"rn": reg_no},
             ).fetchone()
             if existing:
@@ -965,6 +995,7 @@ class DBOrganizer:
         if not raw:
             return 0.0
         import re as _re
+
         s = str(raw)
         m = _re.search(r"[\d,]+\.?\d*", s.replace(",", ""))
         return float(m.group()) if m else 0.0
@@ -985,7 +1016,11 @@ class DBOrganizer:
         # Compute PSF from listed_price ÷ area_sqft — RERA portal has no pricing,
         # so listings are the only source of market-rate PSF data.
         area_sqft = self._parse_area_sqft(rec.get("area_sqft"))
-        price_psf = round(listed_price / area_sqft, 0) if area_sqft > 0 and listed_price > 0 else None
+        price_psf = (
+            round(listed_price / area_sqft, 0)
+            if area_sqft > 0 and listed_price > 0
+            else None
+        )
 
         conn.execute(
             text("""
@@ -1027,7 +1062,9 @@ class DBOrganizer:
     def _insert_news_article(self, conn, rec: dict):
         cid = str(rec.get("cid", "")).strip()
         if not cid:
-            raise ValueError("news article missing cid — skipping to prevent blank-key insertion")
+            raise ValueError(
+                "news article missing cid — skipping to prevent blank-key insertion"
+            )
         params = {
             "cid": cid,
             "title": rec.get("title") or rec.get("headline", ""),
@@ -1131,7 +1168,9 @@ class DBOrganizer:
             set_clauses.append("plan_approval_date = :plan_approval_date")
         if project_addr:
             params["project_address"] = project_addr
-            set_clauses.append("address = COALESCE(NULLIF(address, ''), :project_address)")
+            set_clauses.append(
+                "address = COALESCE(NULLIF(address, ''), :project_address)"
+            )
 
         survey_no = str(rec.get("survey_no") or "").strip()
         if survey_no:

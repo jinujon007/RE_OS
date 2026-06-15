@@ -3,6 +3,7 @@ Unit tests for agent_memory.generate_weekly_digest() — T-805 Sprint 44
 Tests weekly digest generation, top-5 selection, conflict exclusion,
 confidence boundary, error handling, None input, created_at format.
 """
+
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -128,7 +129,10 @@ class TestGenerateWeeklyDigest:
         generate_weekly_digest("Yelahanka")
         params = mock_conn.execute.call_args[0][1]
         assert "pattern" in params
-        assert "%Yelahanka%" in params["pattern"] or "%yelahanka%" in params["pattern"].lower()
+        assert (
+            "%Yelahanka%" in params["pattern"]
+            or "%yelahanka%" in params["pattern"].lower()
+        )
 
     def test_max_fact_length_truncates(self, mock_conn, mock_engine):
         long_fact = "X" * 500

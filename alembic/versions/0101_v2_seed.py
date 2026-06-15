@@ -4,6 +4,7 @@ Revision ID: 0101_v2_seed
 Revises: 0100_v2_schema
 Create Date: 2026-06-02
 """
+
 from typing import Sequence, Union
 from alembic import op
 

@@ -36,7 +36,11 @@ def _classify_freshness(last_scraped_at) -> tuple[str, float, bool]:
     """Classify a timestamp into LIVE/AGING/STALE with score."""
     if last_scraped_at is None:
         return "STALE", 0.0, True
-    ref = last_scraped_at if last_scraped_at.tzinfo else last_scraped_at.replace(tzinfo=timezone.utc)
+    ref = (
+        last_scraped_at
+        if last_scraped_at.tzinfo
+        else last_scraped_at.replace(tzinfo=timezone.utc)
+    )
     now = datetime.now(timezone.utc)
     age = now - ref
     if age <= _FRESHNESS_WINDOWS["live"]:
@@ -61,7 +65,11 @@ def get_source_status(market: str | None = None) -> list[dict]:
     always hit the DB — they are assumed to be ad-hoc queries.
     """
     now = time.time()
-    if market is None and (now - _cache["timestamp"]) < _CACHE_TTL and _cache["data"] is not None:
+    if (
+        market is None
+        and (now - _cache["timestamp"]) < _CACHE_TTL
+        and _cache["data"] is not None
+    ):
         return _cache["data"]
 
     plugin_ids = list(_PLUGIN_SOURCE_MAP.keys())
@@ -100,16 +108,18 @@ def get_source_status(market: str | None = None) -> list[dict]:
         label, score, is_stale = _classify_freshness(last_scraped)
         display_name, _icon = _PLUGIN_SOURCE_MAP.get(plugin_id, (plugin_id, ""))
 
-        results.append({
-            "source": display_name,
-            "plugin_id": plugin_id,
-            "market": market_name,
-            "last_scraped_at": last_scraped.isoformat() if last_scraped else None,
-            "record_count": record_count,
-            "freshness_score": score,
-            "label": label,
-            "is_stale": is_stale,
-        })
+        results.append(
+            {
+                "source": display_name,
+                "plugin_id": plugin_id,
+                "market": market_name,
+                "last_scraped_at": last_scraped.isoformat() if last_scraped else None,
+                "record_count": record_count,
+                "freshness_score": score,
+                "label": label,
+                "is_stale": is_stale,
+            }
+        )
 
     results.sort(key=lambda r: (r["label"] != "LIVE", r["source"], r["market"]))
     if market is None:

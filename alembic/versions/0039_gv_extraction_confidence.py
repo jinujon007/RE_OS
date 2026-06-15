@@ -6,6 +6,7 @@ Tracks OCR extraction quality: 1.0 = pure English, 0.7 = mixed Kannada/English,
 Migration chain:
     0038_govt_policy_events -> 0039_gv_extraction_confidence
 """
+
 from typing import Union
 
 import sqlalchemy as sa
@@ -20,7 +21,12 @@ depends_on: Union[str, None] = None
 def upgrade():
     op.add_column(
         "guidance_values",
-        sa.Column("extraction_confidence", sa.Float(), server_default=sa.text("0.7"), nullable=False),
+        sa.Column(
+            "extraction_confidence",
+            sa.Float(),
+            server_default=sa.text("0.7"),
+            nullable=False,
+        ),
     )
 
 

@@ -4,6 +4,7 @@ Two assertions:
 1. BD Head context has grade_b_pipeline key via _get_grade_b_pipeline
 2. grade_b_pipeline returns empty list when DB returns empty
 """
+
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -19,7 +20,9 @@ class TestGradeBPipelineInBDHead:
 
         with patch("crews.board_room_v2.get_engine") as mock_eng:
             mock_conn = MagicMock()
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             mock_conn.execute.return_value.fetchall.return_value = [
                 MagicMock(
                     developer_name="Test Builder",
@@ -43,7 +46,9 @@ class TestGradeBPipelineInBDHead:
 
         with patch("crews.board_room_v2.get_engine") as mock_eng:
             mock_conn = MagicMock()
-            mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
+            mock_eng.return_value.connect.return_value.__enter__.return_value = (
+                mock_conn
+            )
             mock_conn.execute.return_value.fetchall.return_value = []
             result = _get_grade_b_pipeline("Yelahanka")
 
@@ -53,4 +58,3 @@ class TestGradeBPipelineInBDHead:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

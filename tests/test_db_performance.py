@@ -6,6 +6,7 @@ Unit test:
 Integration test:
   - v_market_brief_mat_query_time: mat view query < 100ms
 """
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -33,7 +34,14 @@ def test_market_id_lookup_count_for_200_records():
         mock_conn.execute.reset_mock()
         mock_conn.reset_mock()
 
-        records = [{"locality": "Yelahanka New Town", "taluk": "", "rera_number": f"RERA/2024/{i}"} for i in range(200)]
+        records = [
+            {
+                "locality": "Yelahanka New Town",
+                "taluk": "",
+                "rera_number": f"RERA/2024/{i}",
+            }
+            for i in range(200)
+        ]
 
         with patch.object(org, "_run_quality_check", return_value={"success": True}):
             with patch.object(org, "engine") as mock_engine_begin:
@@ -44,8 +52,10 @@ def test_market_id_lookup_count_for_200_records():
                     pass
 
     micro_markets_selects = [
-        c for c in mock_conn.execute.call_args_list
-        if c.args and "SELECT" in str(c.args[0]).upper()
+        c
+        for c in mock_conn.execute.call_args_list
+        if c.args
+        and "SELECT" in str(c.args[0]).upper()
         and "micro_markets" in str(c.args[0]).lower()
         and "_market_id_cache" not in str(c.args[0])
     ]

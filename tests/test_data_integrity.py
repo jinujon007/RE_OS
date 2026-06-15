@@ -3,6 +3,7 @@
 All tests marked integration. Each assertion names the exact violation
 for CI/debugging traceability.
 """
+
 import ast
 from pathlib import Path
 
@@ -42,7 +43,9 @@ def test_no_orphaned_listings():
                 "AND rera_project_id NOT IN (SELECT id FROM rera_projects)"
             )
         ).scalar()
-    assert count == 0, f"Found {count} orphaned listings (rera_project_id missing from rera_projects)"
+    assert count == 0, (
+        f"Found {count} orphaned listings (rera_project_id missing from rera_projects)"
+    )
 
 
 def test_no_orphaned_kaveri_registrations():
@@ -81,7 +84,9 @@ def test_no_empty_string_registration_numbers():
                 "WHERE registration_number = ''"
             )
         ).scalar()
-    assert count == 0, f"Found {count} kaveri_registrations with empty registration_number"
+    assert count == 0, (
+        f"Found {count} kaveri_registrations with empty registration_number"
+    )
 
 
 def test_developer_name_normalized_unique():
@@ -112,4 +117,6 @@ def test_integrity_test_file_has_six_assertions():
         for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
     ]
-    assert len(test_fns) == 6, f"Expected 6 test functions, got {len(test_fns)}: {test_fns}"
+    assert len(test_fns) == 6, (
+        f"Expected 6 test functions, got {len(test_fns)}: {test_fns}"
+    )

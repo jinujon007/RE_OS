@@ -26,7 +26,7 @@ _HALLUCINATION_PHRASES = [
     "my training data",
 ]
 
-_PSF_PATTERN = re.compile(r'\u20b9\s*([\d,]+)\s*(?:psf|per\s*sq)', re.IGNORECASE)
+_PSF_PATTERN = re.compile(r"\u20b9\s*([\d,]+)\s*(?:psf|per\s*sq)", re.IGNORECASE)
 
 _PSF_MIN = 1500.0
 _PSF_MAX = 30000.0
@@ -44,7 +44,7 @@ def validate_intel_output(text: str, market: str) -> ValidationResult:
         warnings.append(f"HALLUCINATION markers: {found_phrases}")
 
     valid_markets = [m.lower().strip() for m in TARGET_MARKETS]
-    mentioned_markets = re.findall(r'\b(yelahanka|devanahalli|hebbal)\b', text_lower)
+    mentioned_markets = re.findall(r"\b(yelahanka|devanahalli|hebbal)\b", text_lower)
     invalid = [m for m in mentioned_markets if m not in valid_markets]
     if invalid:
         warnings.append(f"Unknown market references: {invalid}")
@@ -63,5 +63,7 @@ def validate_intel_output(text: str, market: str) -> ValidationResult:
         market_references_valid=not bool(invalid),
     )
     if warnings:
-        logger.warning(f"[OutputValidator] {len(warnings)} warnings for {market}: {warnings}")
+        logger.warning(
+            f"[OutputValidator] {len(warnings)} warnings for {market}: {warnings}"
+        )
     return result

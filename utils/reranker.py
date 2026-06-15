@@ -4,6 +4,7 @@ Reranks ChromaDB search results using a cross-encoder model for precision.
 Lazy-loads cross-encoder/ms-marco-MiniLM-L-6-v2 on first call (GPU-accelerated).
 Gracefully returns original hits on any failure — never blocks the pipeline.
 """
+
 import threading
 from typing import Any
 from loguru import logger
@@ -21,6 +22,7 @@ def _get_model():
             if _model is None:
                 try:
                     from sentence_transformers import CrossEncoder
+
                     _model = CrossEncoder(
                         "cross-encoder/ms-marco-MiniLM-L-6-v2",
                         device="cuda",
@@ -88,8 +90,14 @@ if __name__ == "__main__":
     try:
         reranker = CrossEncoderReranker()
         sample_hits = [
-            {"text": "Yelahanka sees 20% price jump in Q1 2026", "source": "report_1.txt"},
-            {"text": "Brigade launches new project in Hebbal", "source": "report_2.txt"},
+            {
+                "text": "Yelahanka sees 20% price jump in Q1 2026",
+                "source": "report_1.txt",
+            },
+            {
+                "text": "Brigade launches new project in Hebbal",
+                "source": "report_2.txt",
+            },
         ]
         results = reranker.rerank("Yelahanka price trend", sample_hits, top_n=2)
         for r in results:

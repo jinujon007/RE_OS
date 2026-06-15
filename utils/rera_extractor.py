@@ -13,6 +13,7 @@ Risk mitigations:
   - Regex handles both text and HTML formats
   - SSL context configured for corporate proxy compatibility
 """
+
 import json
 import os
 import re
@@ -24,10 +25,18 @@ from loguru import logger
 
 __all__ = ["RERAExtractor"]
 
-_OUTPUT_SCHEMA = frozenset({
-    "project_name", "developer_name", "survey_no", "units",
-    "launch_date", "completion_date", "status", "market",
-})
+_OUTPUT_SCHEMA = frozenset(
+    {
+        "project_name",
+        "developer_name",
+        "survey_no",
+        "units",
+        "launch_date",
+        "completion_date",
+        "status",
+        "market",
+    }
+)
 
 _DEFAULT_RESULT = {
     "project_name": "",
@@ -49,15 +58,15 @@ _OLLAMA_BASE_TIMEOUT = 30
 
 # Known RERA portal column patterns for HTML extraction
 _HTML_COLUMN_PATTERNS = [
-    (2, "project_name"),     # Column 2: REGISTRATION NO — skip, use column 5
-    (4, "developer_name"),   # Column 4: PROMOTER NAME
-    (5, "project_name"),     # Column 5: PROJECT NAME
-    (6, "status"),           # Column 6: STATUS
-    (7, "market"),           # Column 7: DISTRICT
+    (2, "project_name"),  # Column 2: REGISTRATION NO — skip, use column 5
+    (4, "developer_name"),  # Column 4: PROMOTER NAME
+    (5, "project_name"),  # Column 5: PROJECT NAME
+    (6, "status"),  # Column 6: STATUS
+    (7, "market"),  # Column 7: DISTRICT
     (8, "market_fallback"),  # Column 8: TALUK (fallback if no market)
-    (9, "project_type"),     # Column 9: PROJECT TYPE — skip
-    (10, "launch_date"),     # Column 10: APPROVED ON
-    (11, "completion_date"), # Column 11: PROPOSED COMPLETION DATE
+    (9, "project_type"),  # Column 9: PROJECT TYPE — skip
+    (10, "launch_date"),  # Column 10: APPROVED ON
+    (11, "completion_date"),  # Column 11: PROPOSED COMPLETION DATE
 ]
 
 
@@ -78,7 +87,10 @@ class RERAExtractor:
 
     def _check_ollama_model(self) -> bool:
         now = time.time()
-        if self._model_available is not None and (now - self._model_last_check) < _OLLAMA_CACHE_TTL:
+        if (
+            self._model_available is not None
+            and (now - self._model_last_check) < _OLLAMA_CACHE_TTL
+        ):
             return self._model_available
         try:
             req = urllib.request.Request(f"{self.ollama_base_url}/api/tags")
@@ -105,12 +117,14 @@ class RERAExtractor:
             "No explanation. No markdown.\n\n"
             f"Text:\n{raw_text[:2000]}"
         )
-        body = json.dumps({
-            "model": "rera-qwen",
-            "prompt": prompt,
-            "stream": False,
-            "temperature": 0.1,
-        }).encode()
+        body = json.dumps(
+            {
+                "model": "rera-qwen",
+                "prompt": prompt,
+                "stream": False,
+                "temperature": 0.1,
+            }
+        ).encode()
 
         last_error = None
         for attempt in range(_OLLAMA_MAX_RETRIES):
@@ -121,22 +135,30 @@ class RERAExtractor:
                     data=body,
                     headers={"Content-Type": "application/json"},
                 )
-                with urllib.request.urlopen(req, timeout=timeout, context=self._ssl_ctx) as resp:
+                with urllib.request.urlopen(
+                    req, timeout=timeout, context=self._ssl_ctx
+                ) as resp:
                     result = json.loads(resp.read().decode())
                     raw = result.get("response", "")
                     parsed = self._parse_json_from_text(raw)
                     if parsed and self._validate_schema(parsed):
                         return parsed
-                    logger.warning(f"[RERAExtractor] Ollama returned invalid JSON: {raw[:200]}")
+                    logger.warning(
+                        f"[RERAExtractor] Ollama returned invalid JSON: {raw[:200]}"
+                    )
                 break
             except Exception as exc:
                 last_error = exc
                 if attempt < _OLLAMA_MAX_RETRIES - 1:
-                    wait = 2 ** attempt
-                    logger.debug(f"[RERAExtractor] Ollama attempt {attempt+1} failed, retry in {wait}s: {exc}")
+                    wait = 2**attempt
+                    logger.debug(
+                        f"[RERAExtractor] Ollama attempt {attempt + 1} failed, retry in {wait}s: {exc}"
+                    )
                     time.sleep(wait)
                 else:
-                    logger.debug(f"[RERAExtractor] Ollama extraction failed after {_OLLAMA_MAX_RETRIES} retries: {last_error}")
+                    logger.debug(
+                        f"[RERAExtractor] Ollama extraction failed after {_OLLAMA_MAX_RETRIES} retries: {last_error}"
+                    )
         return None
 
     def _parse_json_from_text(self, text: str) -> Optional[dict]:
@@ -171,6 +193,7 @@ class RERAExtractor:
         soup = None
         try:
             from bs4 import BeautifulSoup
+
             soup = BeautifulSoup(raw_text, "lxml")
         except ImportError:
             pass
@@ -184,16 +207,24 @@ class RERAExtractor:
                     continue
                 if cells[0] in ("S.NO", "") or cells[1] in ("ACKNOWLEDGEMENT NO", ""):
                     continue
-                result["project_name"] = cells[5] if len(cells) > 5 else result.get("project_name", "")
-                result["developer_name"] = cells[4] if len(cells) > 4 else result.get("developer_name", "")
-                result["status"] = cells[6] if len(cells) > 6 else result.get("status", "")
+                result["project_name"] = (
+                    cells[5] if len(cells) > 5 else result.get("project_name", "")
+                )
+                result["developer_name"] = (
+                    cells[4] if len(cells) > 4 else result.get("developer_name", "")
+                )
+                result["status"] = (
+                    cells[6] if len(cells) > 6 else result.get("status", "")
+                )
                 if len(cells) > 10:
                     result["launch_date"] = cells[10]
                 if len(cells) > 11:
                     result["completion_date"] = cells[11]
                 if not result.get("market") and len(cells) > 7:
                     result["market"] = cells[7]
-                rera_match = re.search(r"[A-Z0-9/.-]+", cells[2] if len(cells) > 2 else "")
+                rera_match = re.search(
+                    r"[A-Z0-9/.-]+", cells[2] if len(cells) > 2 else ""
+                )
                 if rera_match:
                     result["survey_no"] = rera_match.group(0)
                 if not result.get("survey_no") and len(cells) > 1:
@@ -210,7 +241,9 @@ class RERAExtractor:
         if html_fields.get("project_name") or html_fields.get("developer_name"):
             result.update(html_fields)
             if result["units"] == 0:
-                units_match = re.search(r"(\d+)\s*(?:units|unit|flats)", raw_text, re.IGNORECASE)
+                units_match = re.search(
+                    r"(\d+)\s*(?:units|unit|flats)", raw_text, re.IGNORECASE
+                )
                 if units_match:
                     try:
                         result["units"] = int(units_match.group(1))
@@ -294,7 +327,15 @@ class RERAExtractor:
                 data["units"] = 0
         else:
             data["units"] = 0
-        for str_field in ("project_name", "developer_name", "survey_no", "launch_date", "completion_date", "status", "market"):
+        for str_field in (
+            "project_name",
+            "developer_name",
+            "survey_no",
+            "launch_date",
+            "completion_date",
+            "status",
+            "market",
+        ):
             if data.get(str_field) is not None and not isinstance(data[str_field], str):
                 data[str_field] = str(data[str_field])
         return data

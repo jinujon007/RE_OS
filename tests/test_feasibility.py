@@ -132,8 +132,13 @@ class TestFeasibilitySummaryVerdict:
         f = _sample()
         result = feasibility_summary(f)
         keys = {
-            "land_cost_total", "construction_cost_total", "gdv",
-            "breakeven_psf", "profit_margin_pct", "simple_irr_pct", "verdict",
+            "land_cost_total",
+            "construction_cost_total",
+            "gdv",
+            "breakeven_psf",
+            "profit_margin_pct",
+            "simple_irr_pct",
+            "verdict",
         }
         assert set(result.keys()) == keys
 
@@ -151,29 +156,37 @@ class TestInputSanitization:
 
     def test_efficiency_ratio_clamped_to_max_1(self):
         f = LandFeasibility(
-            land_area_sqft=10000, land_cost_psf=1500,
-            target_sell_psf=6500, efficiency_ratio=2.0,
+            land_area_sqft=10000,
+            land_cost_psf=1500,
+            target_sell_psf=6500,
+            efficiency_ratio=2.0,
         )
         assert f.efficiency_ratio == 1.0
 
     def test_efficiency_ratio_clamped_to_min_0_01(self):
         f = LandFeasibility(
-            land_area_sqft=10000, land_cost_psf=1500,
-            target_sell_psf=6500, efficiency_ratio=0,
+            land_area_sqft=10000,
+            land_cost_psf=1500,
+            target_sell_psf=6500,
+            efficiency_ratio=0,
         )
         assert f.efficiency_ratio == 0.01
 
     def test_fsi_clamped_to_min_0_1(self):
         f = LandFeasibility(
-            land_area_sqft=10000, land_cost_psf=1500,
-            target_sell_psf=6500, fsi=0,
+            land_area_sqft=10000,
+            land_cost_psf=1500,
+            target_sell_psf=6500,
+            fsi=0,
         )
         assert f.fsi == 0.1
 
     def test_timeline_months_min_1(self):
         f = LandFeasibility(
-            land_area_sqft=10000, land_cost_psf=1500,
-            target_sell_psf=6500, timeline_months=0,
+            land_area_sqft=10000,
+            land_cost_psf=1500,
+            target_sell_psf=6500,
+            timeline_months=0,
         )
         assert f.timeline_months == 1
 
@@ -183,10 +196,13 @@ class TestFeasibilityToolJsonParsing:
 
     def test_valid_json_produces_all_keys(self):
         from agents.analyst_agent import FeasibilityTool
+
         tool = FeasibilityTool()
-        result = json.loads(tool._run(
-            '{"land_area_sqft": 10000, "land_cost_psf": 1500, "target_sell_psf": 6500}'
-        ))
+        result = json.loads(
+            tool._run(
+                '{"land_area_sqft": 10000, "land_cost_psf": 1500, "target_sell_psf": 6500}'
+            )
+        )
         assert "verdict" in result
         assert "gdv" in result
         assert "breakeven_psf" in result
@@ -194,12 +210,14 @@ class TestFeasibilityToolJsonParsing:
 
     def test_invalid_json_returns_error(self):
         from agents.analyst_agent import FeasibilityTool
+
         tool = FeasibilityTool()
         result = json.loads(tool._run("not-json"))
         assert "error" in result
 
     def test_empty_json_uses_defaults(self):
         from agents.analyst_agent import FeasibilityTool
+
         tool = FeasibilityTool()
         result = json.loads(tool._run("{}"))
         assert "verdict" in result

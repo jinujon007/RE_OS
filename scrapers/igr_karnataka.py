@@ -19,6 +19,7 @@ Dedup: SHA-256(survey_no+registration_date+consideration_amount)[:32]
 Run standalone:
   python scrapers/igr_karnataka.py --market Devanahalli
 """
+
 from __future__ import annotations
 
 import argparse
@@ -36,9 +37,9 @@ from config.settings import TARGET_MARKETS
 
 # ── Market → District ID mapping (T-792) ─────────────────────────────
 MARKET_TO_DISTRICT_ID = {
-    "Yelahanka": "29",      # Bangalore Urban
-    "Devanahalli": "30",    # Bangalore Rural  
-    "Hebbal": "29",         # Bangalore Urban
+    "Yelahanka": "29",  # Bangalore Urban
+    "Devanahalli": "30",  # Bangalore Rural
+    "Hebbal": "29",  # Bangalore Urban
 }
 MARKET_TO_TALUK = {
     "Yelahanka": "Bangalore North",
@@ -77,15 +78,18 @@ _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
 ]
 
+
 def _get_rotated_headers() -> dict[str, str]:
     """Return headers with rotated User-Agent (T-792)."""
     import random
+
     return {
         "User-Agent": random.choice(_USER_AGENTS),
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "en-IN,en;q=0.9",
         "Referer": IGR_BASE_URL,
     }
+
 
 HEADERS: dict[str, str] = _get_rotated_headers()
 
@@ -117,6 +121,7 @@ def _is_scrapling_available() -> bool:
     if _SCRAPLING_OK is None:
         try:
             from scrapling.fetchers import Fetcher  # noqa: F401
+
             _SCRAPLING_OK = True
         except ImportError:
             _SCRAPLING_OK = False
@@ -128,10 +133,13 @@ def _scrapling_http_fetch(url: str, data: dict, headers: dict) -> str | None:
     """Scrapling HTTP fetch with TLS fingerprint spoof. Returns response text or None."""
     try:
         from scrapling.fetchers import Fetcher
+
         page = Fetcher.post(url, data=data, stealthy_headers=True)
         html = getattr(page, "html", None) or str(page)
         if len(html or "") < 100:
-            logger.warning(f"[IGRScout] Scrapling returned short response ({len(html or '')} chars)")
+            logger.warning(
+                f"[IGRScout] Scrapling returned short response ({len(html or '')} chars)"
+            )
             return None
         logger.info(f"[IGRScout] Scrapling HTTP returned {len(html)} chars")
         return html
@@ -150,27 +158,180 @@ def _fallback_transactions(market: str) -> list[dict[str, Any]]:
     """
     market_fb: dict[str, list[dict[str, Any]]] = {
         "Yelahanka": [
-            {"survey_no": "156/2", "seller": "Gopal Reddy", "buyer": "Naveen Kumar", "consideration_amount": 8500000, "area_sqft": 2400, "registration_date": "2026-05-15", "sro_office": "Yelahanka", "source": "fallback"},
-            {"survey_no": "158/1", "seller": "Anita Sharma", "buyer": "Ravi Shetty", "consideration_amount": 12000000, "area_sqft": 3000, "registration_date": "2026-05-10", "sro_office": "Yelahanka", "source": "fallback"},
-            {"survey_no": "160/3", "seller": "Venkatesh Rao", "buyer": "Priya Singh", "consideration_amount": 6500000, "area_sqft": 1800, "registration_date": "2026-04-28", "sro_office": "Yelahanka", "source": "fallback"},
-            {"survey_no": "162/5", "seller": "Suresh Babu", "buyer": "Karthik Mohan", "consideration_amount": 9500000, "area_sqft": 2600, "registration_date": "2026-04-20", "sro_office": "Yelahanka", "source": "fallback"},
-            {"survey_no": "165/1", "seller": "Lakshmi Devi", "buyer": "Arun Kumar", "consideration_amount": 18000000, "area_sqft": 4500, "registration_date": "2026-04-12", "sro_office": "Yelahanka", "source": "fallback"},
-            {"survey_no": "168/4", "seller": "Manjunath Gowda", "buyer": "Sunil Patel", "consideration_amount": 5200000, "area_sqft": 1500, "registration_date": "2026-04-05", "sro_office": "Yelahanka", "source": "fallback"},
+            {
+                "survey_no": "156/2",
+                "seller": "Gopal Reddy",
+                "buyer": "Naveen Kumar",
+                "consideration_amount": 8500000,
+                "area_sqft": 2400,
+                "registration_date": "2026-05-15",
+                "sro_office": "Yelahanka",
+                "source": "fallback",
+            },
+            {
+                "survey_no": "158/1",
+                "seller": "Anita Sharma",
+                "buyer": "Ravi Shetty",
+                "consideration_amount": 12000000,
+                "area_sqft": 3000,
+                "registration_date": "2026-05-10",
+                "sro_office": "Yelahanka",
+                "source": "fallback",
+            },
+            {
+                "survey_no": "160/3",
+                "seller": "Venkatesh Rao",
+                "buyer": "Priya Singh",
+                "consideration_amount": 6500000,
+                "area_sqft": 1800,
+                "registration_date": "2026-04-28",
+                "sro_office": "Yelahanka",
+                "source": "fallback",
+            },
+            {
+                "survey_no": "162/5",
+                "seller": "Suresh Babu",
+                "buyer": "Karthik Mohan",
+                "consideration_amount": 9500000,
+                "area_sqft": 2600,
+                "registration_date": "2026-04-20",
+                "sro_office": "Yelahanka",
+                "source": "fallback",
+            },
+            {
+                "survey_no": "165/1",
+                "seller": "Lakshmi Devi",
+                "buyer": "Arun Kumar",
+                "consideration_amount": 18000000,
+                "area_sqft": 4500,
+                "registration_date": "2026-04-12",
+                "sro_office": "Yelahanka",
+                "source": "fallback",
+            },
+            {
+                "survey_no": "168/4",
+                "seller": "Manjunath Gowda",
+                "buyer": "Sunil Patel",
+                "consideration_amount": 5200000,
+                "area_sqft": 1500,
+                "registration_date": "2026-04-05",
+                "sro_office": "Yelahanka",
+                "source": "fallback",
+            },
         ],
         "Devanahalli": [
-            {"survey_no": "123/4", "seller": "Krishna Murthy", "buyer": "Rajesh Kumar", "consideration_amount": 8500000, "area_sqft": 2400, "registration_date": "2026-05-18", "sro_office": "Devanahalli", "source": "fallback"},
-            {"survey_no": "125/1", "seller": "Shankar Gowda", "buyer": "Infra Developers Pvt Ltd", "consideration_amount": 12000000, "area_sqft": 3000, "registration_date": "2026-05-08", "sro_office": "Devanahalli", "source": "fallback"},
-            {"survey_no": "130/2", "seller": "Puttamma", "buyer": "Venkatesh Murthy", "consideration_amount": 9500000, "area_sqft": 2600, "registration_date": "2026-04-25", "sro_office": "Devanahalli", "source": "fallback"},
-            {"survey_no": "140/5", "seller": "Narasimha Reddy", "buyer": "Srinivas Constructions", "consideration_amount": 11000000, "area_sqft": 2800, "registration_date": "2026-04-10", "sro_office": "Devanahalli", "source": "fallback"},
-            {"survey_no": "150/3", "seller": "Byrappa", "buyer": "Mahesh Kumar", "consideration_amount": 7500000, "area_sqft": 2100, "registration_date": "2026-03-28", "sro_office": "Devanahalli", "source": "fallback"},
-            {"survey_no": "155/2", "seller": "Lakshmamma", "buyer": "Pavan Shetty", "consideration_amount": 6200000, "area_sqft": 1750, "registration_date": "2026-03-15", "sro_office": "Devanahalli", "source": "fallback"},
+            {
+                "survey_no": "123/4",
+                "seller": "Krishna Murthy",
+                "buyer": "Rajesh Kumar",
+                "consideration_amount": 8500000,
+                "area_sqft": 2400,
+                "registration_date": "2026-05-18",
+                "sro_office": "Devanahalli",
+                "source": "fallback",
+            },
+            {
+                "survey_no": "125/1",
+                "seller": "Shankar Gowda",
+                "buyer": "Infra Developers Pvt Ltd",
+                "consideration_amount": 12000000,
+                "area_sqft": 3000,
+                "registration_date": "2026-05-08",
+                "sro_office": "Devanahalli",
+                "source": "fallback",
+            },
+            {
+                "survey_no": "130/2",
+                "seller": "Puttamma",
+                "buyer": "Venkatesh Murthy",
+                "consideration_amount": 9500000,
+                "area_sqft": 2600,
+                "registration_date": "2026-04-25",
+                "sro_office": "Devanahalli",
+                "source": "fallback",
+            },
+            {
+                "survey_no": "140/5",
+                "seller": "Narasimha Reddy",
+                "buyer": "Srinivas Constructions",
+                "consideration_amount": 11000000,
+                "area_sqft": 2800,
+                "registration_date": "2026-04-10",
+                "sro_office": "Devanahalli",
+                "source": "fallback",
+            },
+            {
+                "survey_no": "150/3",
+                "seller": "Byrappa",
+                "buyer": "Mahesh Kumar",
+                "consideration_amount": 7500000,
+                "area_sqft": 2100,
+                "registration_date": "2026-03-28",
+                "sro_office": "Devanahalli",
+                "source": "fallback",
+            },
+            {
+                "survey_no": "155/2",
+                "seller": "Lakshmamma",
+                "buyer": "Pavan Shetty",
+                "consideration_amount": 6200000,
+                "area_sqft": 1750,
+                "registration_date": "2026-03-15",
+                "sro_office": "Devanahalli",
+                "source": "fallback",
+            },
         ],
         "Hebbal": [
-            {"survey_no": "78/2", "seller": "Shivakumar", "buyer": "Ananya Hegde", "consideration_amount": 14500000, "area_sqft": 3200, "registration_date": "2026-05-20", "sro_office": "Hebbal", "source": "fallback"},
-            {"survey_no": "82/1", "seller": "Ramesh Rao", "buyer": "Megha Enterprises", "consideration_amount": 22000000, "area_sqft": 4800, "registration_date": "2026-05-12", "sro_office": "Hebbal", "source": "fallback"},
-            {"survey_no": "85/3", "seller": "Padmavathi", "buyer": "Vijay Kumar", "consideration_amount": 8800000, "area_sqft": 2100, "registration_date": "2026-04-28", "sro_office": "Hebbal", "source": "fallback"},
-            {"survey_no": "90/5", "seller": "Nagaraj Gowda", "buyer": "Sindhu Developers", "consideration_amount": 17500000, "area_sqft": 3800, "registration_date": "2026-04-15", "sro_office": "Hebbal", "source": "fallback"},
-            {"survey_no": "92/2", "seller": "Asha Nair", "buyer": "Rohit Sharma", "consideration_amount": 6800000, "area_sqft": 1700, "registration_date": "2026-04-02", "sro_office": "Hebbal", "source": "fallback"},
+            {
+                "survey_no": "78/2",
+                "seller": "Shivakumar",
+                "buyer": "Ananya Hegde",
+                "consideration_amount": 14500000,
+                "area_sqft": 3200,
+                "registration_date": "2026-05-20",
+                "sro_office": "Hebbal",
+                "source": "fallback",
+            },
+            {
+                "survey_no": "82/1",
+                "seller": "Ramesh Rao",
+                "buyer": "Megha Enterprises",
+                "consideration_amount": 22000000,
+                "area_sqft": 4800,
+                "registration_date": "2026-05-12",
+                "sro_office": "Hebbal",
+                "source": "fallback",
+            },
+            {
+                "survey_no": "85/3",
+                "seller": "Padmavathi",
+                "buyer": "Vijay Kumar",
+                "consideration_amount": 8800000,
+                "area_sqft": 2100,
+                "registration_date": "2026-04-28",
+                "sro_office": "Hebbal",
+                "source": "fallback",
+            },
+            {
+                "survey_no": "90/5",
+                "seller": "Nagaraj Gowda",
+                "buyer": "Sindhu Developers",
+                "consideration_amount": 17500000,
+                "area_sqft": 3800,
+                "registration_date": "2026-04-15",
+                "sro_office": "Hebbal",
+                "source": "fallback",
+            },
+            {
+                "survey_no": "92/2",
+                "seller": "Asha Nair",
+                "buyer": "Rohit Sharma",
+                "consideration_amount": 6800000,
+                "area_sqft": 1700,
+                "registration_date": "2026-04-02",
+                "sro_office": "Hebbal",
+                "source": "fallback",
+            },
         ],
     }
     return market_fb.get(market, [])
@@ -191,9 +352,15 @@ class IGRTransactionScout:
     def __init__(self):
         self.session = None
         self.rate_limiter = RateLimiter()
-        self.metrics: dict[str, int] = {"scrapling_calls": 0, "post_calls": 0, "fallback_calls": 0, "rows_normalized": 0}
+        self.metrics: dict[str, int] = {
+            "scrapling_calls": 0,
+            "post_calls": 0,
+            "fallback_calls": 0,
+            "rows_normalized": 0,
+        }
         try:
             import requests as req_lib
+
             self.session = req_lib.Session()
             self.session.headers.update(_get_rotated_headers())
         except Exception as exc:
@@ -201,7 +368,9 @@ class IGRTransactionScout:
 
     # ── Scrapling HTTP path (T-792) ──────────────────────────────────────
 
-    def _scrape_via_scrapling(self, meta: dict, from_date: str, to_date: str) -> list[dict[str, Any]]:
+    def _scrape_via_scrapling(
+        self, meta: dict, from_date: str, to_date: str
+    ) -> list[dict[str, Any]]:
         """Scrapling HTTP fetch with TLS fingerprint spoof (T-792)."""
         self.metrics["scrapling_calls"] += 1
         payload = {
@@ -218,6 +387,7 @@ class IGRTransactionScout:
         records: list[dict[str, Any]] = []
         try:
             from bs4 import BeautifulSoup
+
             soup = BeautifulSoup(html, "html.parser")
             # Try to find data in table rows or script tags
             for row in soup.find_all("tr"):
@@ -237,7 +407,9 @@ class IGRTransactionScout:
                 "survey_no": cells[0].get_text(strip=True)[:100],
                 "seller": cells[1].get_text(strip=True)[:500],
                 "buyer": cells[2].get_text(strip=True)[:500],
-                "consideration_amount": int(cells[3].get_text(strip=True).replace(",", "") or "0"),
+                "consideration_amount": int(
+                    cells[3].get_text(strip=True).replace(",", "") or "0"
+                ),
                 "area_sqft": float(cells[4].get_text(strip=True) or "0"),
                 "registration_date": cells[5].get_text(strip=True)[:20],
                 "sro_office": meta.get("taluk", "")[:200],
@@ -247,7 +419,9 @@ class IGRTransactionScout:
 
     # ── Direct POST path (T-792) ───────────────────────────────────────────
 
-    def _scrape_via_post(self, meta: dict, from_date: str, to_date: str) -> list[dict[str, Any]]:
+    def _scrape_via_post(
+        self, meta: dict, from_date: str, to_date: str
+    ) -> list[dict[str, Any]]:
         """Direct POST to the registration search endpoint (T-792 fallback)."""
         if not self.session:
             return []
@@ -291,6 +465,7 @@ class IGRTransactionScout:
         records: list[dict[str, Any]] = []
         try:
             from bs4 import BeautifulSoup
+
             soup = BeautifulSoup(html, "html.parser")
             for row in soup.find_all("tr"):
                 cells = row.find_all(["td", "th"])
@@ -324,7 +499,9 @@ class IGRTransactionScout:
         raw_survey = str(row.get("regNo") or row.get("registrationNo") or "")[:100]
         raw_seller = str(row.get("sellerName") or "")[:500]
         raw_buyer = str(row.get("buyerName") or str(row.get("buyerType") or ""))[:500]
-        raw_date = str(row.get("registrationDate") or row.get("transactionDate") or "")[:20]
+        raw_date = str(row.get("registrationDate") or row.get("transactionDate") or "")[
+            :20
+        ]
         raw_sro = str(row.get("sroOffice") or meta.get("taluk", ""))[:200]
 
         consideration_raw = float(row.get("transactionAmount") or 0)
@@ -347,7 +524,9 @@ class IGRTransactionScout:
 
     # ── Public entry point ──────────────────────────────────────────
 
-    def run(self, market: str = "Yelahanka", days_back: int = 30) -> list[dict[str, Any]]:
+    def run(
+        self, market: str = "Yelahanka", days_back: int = 30
+    ) -> list[dict[str, Any]]:
         """Scrape IGR transactions for the given market.
 
         Args:
@@ -367,7 +546,9 @@ class IGRTransactionScout:
 
         meta = IGR_MARKET_META.get(market, {})
         if not meta:
-            scraper_runs_total.labels(source="igr", market=safe_scraper_market(market), status="failed").inc()
+            scraper_runs_total.labels(
+                source="igr", market=safe_scraper_market(market), status="failed"
+            ).inc()
             logger.error(f"[IGRScout] No metadata for market: {market}")
             return []
 
@@ -389,7 +570,9 @@ class IGRTransactionScout:
                 r["source"] = "igr_portal"
             scraper_runs_total.labels(source="igr", market=_m, status="success").inc()
             elapsed = time.time() - start_ts
-            logger.info(f"[IGRScout] Scrapling returned {len(records)} records for {market} ({elapsed:.1f}s)")
+            logger.info(
+                f"[IGRScout] Scrapling returned {len(records)} records for {market} ({elapsed:.1f}s)"
+            )
             return records
 
         # 2. Direct POST (T-792 fallback) — retry with backoff
@@ -399,29 +582,39 @@ class IGRTransactionScout:
             if records:
                 for r in records:
                     r["source"] = "igr_portal"
-                scraper_runs_total.labels(source="igr", market=_m, status="success").inc()
+                scraper_runs_total.labels(
+                    source="igr", market=_m, status="success"
+                ).inc()
                 elapsed = time.time() - start_ts
-                logger.info(f"[IGRScout] POST returned {len(records)} records for {market} ({elapsed:.1f}s)")
+                logger.info(
+                    f"[IGRScout] POST returned {len(records)} records for {market} ({elapsed:.1f}s)"
+                )
                 return records
             if attempt == 0:
                 backoff = 6
-                logger.debug(f"[IGRScout] POST attempt {attempt+1} failed — retrying in {backoff:.0f}s")
+                logger.debug(
+                    f"[IGRScout] POST attempt {attempt + 1} failed — retrying in {backoff:.0f}s"
+                )
                 time.sleep(backoff)
 
         # 3. Fallback (T-793) — explicit warning about IRR quality
         scraper_runs_total.labels(source="igr", market=_m, status="failed").inc()
         self.metrics["fallback_calls"] += 1
         elapsed = time.time() - start_ts
-        logger.warning(f"[IGRScout] IGR portal unreachable after {elapsed:.1f}s — fallback data inserted; IRR quality degraded")
+        logger.warning(
+            f"[IGRScout] IGR portal unreachable after {elapsed:.1f}s — fallback data inserted; IRR quality degraded"
+        )
         fb = _fallback_transactions(market)
         for r in fb:
             r["source"] = "fallback"
         logger.info(f"[IGRScout] Fallback returned {len(fb)} records for {market}")
         return fb
 
-# ── DB Insertion ────────────────────────────────────────────────
+    # ── DB Insertion ────────────────────────────────────────────────
 
-    def insert_transactions(self, records: list[dict[str, Any]], market: str = "") -> dict[str, int]:
+    def insert_transactions(
+        self, records: list[dict[str, Any]], market: str = ""
+    ) -> dict[str, int]:
         """Insert records into igr_transactions table via DBOrganizer pattern.
 
         Returns stats dict: {inserted, skipped, failed}.
@@ -478,7 +671,9 @@ class IGRTransactionScout:
                     else:
                         stats["skipped"] += 1
                 except Exception as exc:
-                    logger.warning(f"[IGRScout] Insert failed for {rec.get('survey_no')}: {exc}")
+                    logger.warning(
+                        f"[IGRScout] Insert failed for {rec.get('survey_no')}: {exc}"
+                    )
                     stats["failed"] += 1
 
         logger.info(f"[IGRScout] Insert stats: {stats}")
@@ -489,10 +684,21 @@ class IGRTransactionScout:
 
 
 def _main() -> None:
-    parser = argparse.ArgumentParser(description="Scrape Karnataka IGR portal for sale deeds.")
-    parser.add_argument("--market", required=True, choices=list(IGR_MARKET_META.keys()), help="Market to scrape")
-    parser.add_argument("--days", type=int, default=30, help="Days of history to scan (default: 30)")
-    parser.add_argument("--no-db", action="store_true", help="Print only, skip DB insert")
+    parser = argparse.ArgumentParser(
+        description="Scrape Karnataka IGR portal for sale deeds."
+    )
+    parser.add_argument(
+        "--market",
+        required=True,
+        choices=list(IGR_MARKET_META.keys()),
+        help="Market to scrape",
+    )
+    parser.add_argument(
+        "--days", type=int, default=30, help="Days of history to scan (default: 30)"
+    )
+    parser.add_argument(
+        "--no-db", action="store_true", help="Print only, skip DB insert"
+    )
     args = parser.parse_args()
 
     scout = IGRTransactionScout()
@@ -503,7 +709,9 @@ def _main() -> None:
 
     if transactions and not args.no_db:
         stats = scout.insert_transactions(transactions, market=args.market)
-        print(f"DB: {stats['inserted']} inserted, {stats['skipped']} skipped, {stats['failed']} failed")
+        print(
+            f"DB: {stats['inserted']} inserted, {stats['skipped']} skipped, {stats['failed']} failed"
+        )
 
 
 if __name__ == "__main__":

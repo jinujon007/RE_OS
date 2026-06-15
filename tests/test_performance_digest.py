@@ -1,4 +1,5 @@
 """Tests for PerformanceDigest — quarterly performance aggregator."""
+
 from datetime import date
 from unittest.mock import MagicMock, patch
 
@@ -67,13 +68,15 @@ def _make_mock_conn(seq_results: list[list]) -> MagicMock:
 class TestPerformanceDigest:
     @patch("utils.performance_digest.get_engine")
     def test_has_all_sections(self, mock_eng):
-        mock_conn = _make_mock_conn([
-            [(3, 12.5)],
-            [("Yelahanka", 5)],
-            [(2, 45.0)],
-            [("mou", "signed", 30.0)],
-            [(2, 10)],
-        ])
+        mock_conn = _make_mock_conn(
+            [
+                [(3, 12.5)],
+                [("Yelahanka", 5)],
+                [(2, 45.0)],
+                [("mou", "signed", 30.0)],
+                [(2, 10)],
+            ]
+        )
         mock_eng.return_value.connect.return_value.__enter__.return_value = mock_conn
 
         digest = PerformanceDigest.build("Q2-2026")

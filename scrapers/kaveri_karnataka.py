@@ -31,6 +31,7 @@ from config.metrics import scraper_runs_total
 _SCRAPLING_OK = False
 try:
     from scrapling.fetchers import Fetcher
+
     _SCRAPLING_OK = True
 except ImportError:
     pass
@@ -478,25 +479,33 @@ class KaveriScraper:
         # 1. Scrapling TLS spoof
         records = self._scrape_reg_with_scrapling(meta, from_date, to_date)
         if records:
-            logger.info(f"[KaveriScraper][Scrapling TLS][{market_name}] {len(records)} registration records")
+            logger.info(
+                f"[KaveriScraper][Scrapling TLS][{market_name}] {len(records)} registration records"
+            )
             return records
 
         # 2. kaveri2 mirror
         records = self._scrape_reg_from_mirror(meta, from_date, to_date)
         if records:
-            logger.info(f"[KaveriScraper][Mirror][{market_name}] {len(records)} registration records")
+            logger.info(
+                f"[KaveriScraper][Mirror][{market_name}] {len(records)} registration records"
+            )
             return records
 
         # 3. Playwright (legacy)
         records = self._scrape_reg_with_playwright(meta, from_date, to_date)
         if records:
-            logger.info(f"[KaveriScraper][Playwright][{market_name}] {len(records)} registration records")
+            logger.info(
+                f"[KaveriScraper][Playwright][{market_name}] {len(records)} registration records"
+            )
             return records
 
         # 4. Direct POST (legacy)
         records = self._scrape_reg_via_post(meta, from_date, to_date)
         if records:
-            logger.info(f"[KaveriScraper][POST][{market_name}] {len(records)} registration records")
+            logger.info(
+                f"[KaveriScraper][POST][{market_name}] {len(records)} registration records"
+            )
             return records
 
         # 5. Hardcoded fallback — always logged as warning, never silent
@@ -518,13 +527,16 @@ class KaveriScraper:
         """
         try:
             from scrapers.kaveri_gazette_parser import GazetteParser
+
             parser = GazetteParser()
             records = parser.scrape_guidance_values(market_name)
             for r in records:
                 r["data_source"] = "gazette_pdf"
             return records
         except Exception as exc:
-            logger.warning(f"[KaveriScraper][IGR Gazette] Failed for {market_name}: {exc}")
+            logger.warning(
+                f"[KaveriScraper][IGR Gazette] Failed for {market_name}: {exc}"
+            )
             return []
 
     # ── Registration Volume — Kaveri 2.0 API (SRO-level counts) ─────────────
@@ -538,12 +550,14 @@ class KaveriScraper:
         Uses SRO codes: Yelahanka=224 (Jala), Devanahalli=118, Hebbal=208.
         """
         from datetime import date as _date, timedelta
+
         if not to_date:
             to_date = _date.today().isoformat()
         if not from_date:
             from_date = (_date.today() - timedelta(days=180)).isoformat()
         try:
             from scrapers.kaveri_gazette_parser import GazetteParser
+
             parser = GazetteParser()
             return parser.scrape_registration_volume(market_name, from_date, to_date)
         except Exception as exc:
@@ -623,16 +637,22 @@ class KaveriScraper:
                     if isinstance(body, list) and body:
                         records = []
                         for item in body:
-                            records.append({
-                                "locality": item.get("locality", ""),
-                                "property_type": item.get("propertyType", "Residential"),
-                                "road_type": item.get("roadType", "Main Road"),
-                                "guidance_value_psf": float(
-                                    item.get("guidanceValuePsf", 0)
-                                ),
-                                "effective_from": item.get("effectiveFrom", "2024-04-01"),
-                                "source": "kaveri_portal",  # T-797: standardized live source
-                            })
+                            records.append(
+                                {
+                                    "locality": item.get("locality", ""),
+                                    "property_type": item.get(
+                                        "propertyType", "Residential"
+                                    ),
+                                    "road_type": item.get("roadType", "Main Road"),
+                                    "guidance_value_psf": float(
+                                        item.get("guidanceValuePsf", 0)
+                                    ),
+                                    "effective_from": item.get(
+                                        "effectiveFrom", "2024-04-01"
+                                    ),
+                                    "source": "kaveri_portal",  # T-797: standardized live source
+                                }
+                            )
                         records = [r for r in records if r["guidance_value_psf"] > 0]
                         if records:
                             logger.info(
@@ -682,10 +702,7 @@ class KaveriScraper:
             return []
 
         # Try to extract JSON data from the page
-        json_match = re.search(
-            r'getAllRegistrations.*?(\[.*?\])',
-            html, re.DOTALL
-        )
+        json_match = re.search(r"getAllRegistrations.*?(\[.*?\])", html, re.DOTALL)
         if json_match:
             try:
                 data = json.loads(json_match.group(1))
@@ -1101,12 +1118,16 @@ if __name__ == "__main__":
 
     if args.type in ("gv", "both"):
         gv = scraper.scrape_guidance_values(args.market)
-        scraper_runs_total.labels(source="kaveri", market=args.market, status="success").inc()
+        scraper_runs_total.labels(
+            source="kaveri", market=args.market, status="success"
+        ).inc()
         print(f"\n── Guidance Values ({len(gv)} records) ──")
         print(json.dumps(gv[:3], indent=2, default=str))
 
     if args.type in ("reg", "both"):
         reg = scraper.scrape_registrations(args.market, months_back=args.months)
-        scraper_runs_total.labels(source="kaveri", market=args.market, status="success").inc()
+        scraper_runs_total.labels(
+            source="kaveri", market=args.market, status="success"
+        ).inc()
         print(f"\n── Registrations ({len(reg)} records) ──")
         print(json.dumps(reg[:3], indent=2, default=str))

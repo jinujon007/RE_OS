@@ -121,7 +121,9 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 # ── RERA PLAYWRIGHT FALLBACK ─────────────────────────────────────────────────
 # Markets where HTTP POST fails and Playwright form-interaction fallback is used.
 RERA_USE_PLAYWRIGHT_MARKETS: list[str] = ["Yelahanka", "Hebbal"]
-RERA_ALERT_COOLDOWN_SECONDS: int = 3600  # min interval between FALLBACK_SEED alerts per market
+RERA_ALERT_COOLDOWN_SECONDS: int = (
+    3600  # min interval between FALLBACK_SEED alerts per market
+)
 
 # Dropdown option values for Playwright form fill — portal may use different
 # values than the POST payload for certain markets.
@@ -133,7 +135,11 @@ RERA_PLAYWRIGHT_LOCALITY_VALUES: dict[str, tuple[str, str]] = {
 }
 
 # ── MARKETS ──────────────────────────────────────────────────────────────────
-TARGET_MARKETS = [m.strip() for m in os.getenv("TARGET_MARKETS", "Yelahanka,Devanahalli,Hebbal").split(",") if m.strip()]
+TARGET_MARKETS = [
+    m.strip()
+    for m in os.getenv("TARGET_MARKETS", "Yelahanka,Devanahalli,Hebbal").split(",")
+    if m.strip()
+]
 
 # RERA Karnataka portal — confirmed live via browser inspection 2026-05-14
 # Form: POST https://rera.karnataka.gov.in/projectViewDetails
@@ -170,8 +176,7 @@ KAVERI_BASE_URL = "https://kaveri.karnataka.gov.in"
 
 # ── OBSIDIAN VAULT ─────────────────────────────────────────────────────────────────
 OBSIDIAN_VAULT_PATH = os.getenv(
-    "OBSIDIAN_VAULT_PATH",
-    r"D:\\Brain\\JINU JOSHI\\03 LLS\\01 Wiki"
+    "OBSIDIAN_VAULT_PATH", r"D:\\Brain\\JINU JOSHI\\03 LLS\\01 Wiki"
 )
 # ── TELEGRAM ALERTS ─────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -232,24 +237,28 @@ GRADE_B_DEVELOPER_URLS: dict[str, str] = {
 }
 
 # ── Discord (Phase 7 — Alerts) ────────────────────────────────────────────────
-DISCORD_WEBHOOK_RERA_YELAHANKA   = os.environ.get("DISCORD_WEBHOOK_RERA_YELAHANKA", "")
-DISCORD_WEBHOOK_RERA_DEVANAHALLI = os.environ.get("DISCORD_WEBHOOK_RERA_DEVANAHALLI", "")
-DISCORD_WEBHOOK_RERA_HEBBAL      = os.environ.get("DISCORD_WEBHOOK_RERA_HEBBAL", "")
-DISCORD_WEBHOOK_COMPETITOR       = os.environ.get("DISCORD_WEBHOOK_COMPETITOR", "")
-DISCORD_WEBHOOK_PRICE            = os.environ.get("DISCORD_WEBHOOK_PRICE", "")
-DISCORD_WEBHOOK_INTEL            = os.environ.get("DISCORD_WEBHOOK_INTEL", "")
-DISCORD_WEBHOOK_SYSTEM           = os.environ.get("DISCORD_WEBHOOK_SYSTEM", "")
-DISCORD_WEBHOOK_BD_OPPORTUNITIES = os.environ.get("DISCORD_WEBHOOK_BD_OPPORTUNITIES", "")
+DISCORD_WEBHOOK_RERA_YELAHANKA = os.environ.get("DISCORD_WEBHOOK_RERA_YELAHANKA", "")
+DISCORD_WEBHOOK_RERA_DEVANAHALLI = os.environ.get(
+    "DISCORD_WEBHOOK_RERA_DEVANAHALLI", ""
+)
+DISCORD_WEBHOOK_RERA_HEBBAL = os.environ.get("DISCORD_WEBHOOK_RERA_HEBBAL", "")
+DISCORD_WEBHOOK_COMPETITOR = os.environ.get("DISCORD_WEBHOOK_COMPETITOR", "")
+DISCORD_WEBHOOK_PRICE = os.environ.get("DISCORD_WEBHOOK_PRICE", "")
+DISCORD_WEBHOOK_INTEL = os.environ.get("DISCORD_WEBHOOK_INTEL", "")
+DISCORD_WEBHOOK_SYSTEM = os.environ.get("DISCORD_WEBHOOK_SYSTEM", "")
+DISCORD_WEBHOOK_BD_OPPORTUNITIES = os.environ.get(
+    "DISCORD_WEBHOOK_BD_OPPORTUNITIES", ""
+)
 DISCORD_WEBHOOK_GOVT_POLICY = os.environ.get("DISCORD_WEBHOOK_GOVT_POLICY", "")
 
 DISCORD_CHANNELS = {
-    "rera_yelahanka":   DISCORD_WEBHOOK_RERA_YELAHANKA,
+    "rera_yelahanka": DISCORD_WEBHOOK_RERA_YELAHANKA,
     "rera_devanahalli": DISCORD_WEBHOOK_RERA_DEVANAHALLI,
-    "rera_hebbal":      DISCORD_WEBHOOK_RERA_HEBBAL,
-    "competitor":       DISCORD_WEBHOOK_COMPETITOR,
-    "price":            DISCORD_WEBHOOK_PRICE,
-    "intel":            DISCORD_WEBHOOK_INTEL,
-    "system":           DISCORD_WEBHOOK_SYSTEM,
+    "rera_hebbal": DISCORD_WEBHOOK_RERA_HEBBAL,
+    "competitor": DISCORD_WEBHOOK_COMPETITOR,
+    "price": DISCORD_WEBHOOK_PRICE,
+    "intel": DISCORD_WEBHOOK_INTEL,
+    "system": DISCORD_WEBHOOK_SYSTEM,
     "bd_opportunities": DISCORD_WEBHOOK_BD_OPPORTUNITIES,
     "govt_policy_scout": DISCORD_WEBHOOK_GOVT_POLICY,
 }
@@ -260,14 +269,18 @@ DISCORD_CHANNELS = {
 # Valid values: a crontab-style dict with day_of_week, hour, minute.
 # Example: {"kaveri_bhoomi": {"day_of_week": "sun", "hour": 5, "minute": 0}}
 PLUGIN_SCHEDULES: dict[str, dict | None] = {
-    "rera_karnataka": None,          # daily at 02:00 IST
+    "rera_karnataka": None,  # daily at 02:00 IST
     "igr_karnataka": {"day_of_week": "sun", "hour": 5, "minute": 30},
     "kaveri_bhoomi": {"day_of_week": "sun", "hour": 5, "minute": 0},
-    "kaveri_deeds": {"day_of_week": "sun", "hour": 3, "minute": 0},  # Sunday 03:00 IST — deed extraction, separate from GV run
-    "portal_scout": None,            # daily at 02:00 IST
+    "kaveri_deeds": {
+        "day_of_week": "sun",
+        "hour": 3,
+        "minute": 0,
+    },  # Sunday 03:00 IST — deed extraction, separate from GV run
+    "portal_scout": None,  # daily at 02:00 IST
     "developer_scout": None,  # daily at 02:00 IST — vigorous monitoring for all 15 developers
-    "news_scout": None,              # daily at 02:00 IST
-    "distressed_scan": None,         # daily at 02:00 IST
+    "news_scout": None,  # daily at 02:00 IST
+    "distressed_scan": None,  # daily at 02:00 IST
     "bbmp_khata": {"day_of_week": "wed", "hour": 4, "minute": 0},
 }
 
@@ -329,6 +342,7 @@ DATA_FLOOR_MARKETS: dict[str, int] = {
     "Hebbal": 200,
 }
 
+
 # ── SCHEDULER DIET (Sprint 91 — GATE-91) ─────────────────────────────────────
 # When False, org-sim jobs (PR brief, process audit, CEO letter) are NOT registered.
 # Code is untouched — only the scheduler.add_job() call is gated.
@@ -336,6 +350,7 @@ DATA_FLOOR_MARKETS: dict[str, int] = {
 def _parse_bool_env(key: str, default: str) -> bool:
     val = os.getenv(key, default).strip().lower()
     return val in ("1", "true", "yes", "on", "enabled")
+
 
 SCHEDULER_ENABLE_ORG_SIM = _parse_bool_env("SCHEDULER_ENABLE_ORG_SIM", "false")
 SCHEDULER_DRY_RUN = _parse_bool_env("SCHEDULER_DRY_RUN", "false")
