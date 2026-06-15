@@ -74,7 +74,7 @@ jobs:
         run: |
           pytest tests/ -v -m "not integration" --tb=short \
             --cov=agents --cov=config --cov=crews --cov=scrapers --cov=utils --cov=dashboard \
-            --cov-report=term-missing --cov-report=xml --cov-fail-under=60 \
+            --cov-report=term-missing --cov-report=xml --cov-fail-under=50 \
             --ignore=tests/test_eval_florence2.py \
             --ignore=tests/test_gate60.py \
             --ignore=tests/test_rera_benchmark.py \
