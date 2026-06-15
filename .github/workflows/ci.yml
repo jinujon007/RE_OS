@@ -362,8 +362,15 @@ jobs:
               FAILED=1
             fi
           done
+          # Check for files that were moved to docs/ — must not re-appear at root
+          for f in SETUP.md HOW_TO_RUN.md CONTRIBUTING.md SECURITY.md; do
+            if git ls-files --error-unmatch "$f" 2>/dev/null; then
+              echo "BLOCKED: $f belongs in docs/ not root"
+              FAILED=1
+            fi
+          done
           # Check for dev directories
-          for dir in "01 Daily" "plans" "kilo_logs" "kilo_output" ".compound-engineering" "test-results"; do
+          for dir in "01 Daily" "plans" "kilo_logs" "kilo_output" ".compound-engineering" "test-results" "dbt"; do
             if git ls-files | grep -q "^${dir}/"; then
               echo "BLOCKED: ${dir}/ contains tracked files — dev directories must not enter the product repo"
               FAILED=1

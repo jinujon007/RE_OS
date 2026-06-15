@@ -128,6 +128,17 @@ scripts/
 plans/
 test-results/
 
+# ── DEFERRED LAYERS ── not yet wired into production runtime ──────────────────
+# dbt transformation layer — deferred Tier 2 (no active sprint; models track schema.sql views)
+dbt/
+# Prefect orchestration — deferred (APScheduler handles all scheduling)
+prefect_flows/
+
+# ── PLANNING & AUDIT DOCS ── internal AI-generated analysis, not product docs ─
+(CAI) *.md
+# SYSTEM_DESIGN.md duplicates ARCHITECTURE.md — keep ARCHITECTURE.md as the canonical doc
+SYSTEM_DESIGN.md
+
 AGENTS.md
 task.md
 DEVLOG.md

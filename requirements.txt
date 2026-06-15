@@ -23,7 +23,7 @@ httpx[http2]==0.28.1
 # Scrapling: TLS fingerprint spoofing (Fetcher) + stealth Playwright (DynamicFetcher)
 # Replaces plain requests for bot-protected portals. No scrapling install needed —
 # DynamicFetcher reuses the Playwright Chromium already at PLAYWRIGHT_BROWSERS_PATH.
-scrapling[fetchers]>=0.4.0
+scrapling[fetchers]>=0.4.0,<1.0.0
 
 # Task queue
 redis==7.4.0
@@ -98,14 +98,14 @@ pdfplumber>=0.11.0
 
 # Document → Markdown conversion (PDF, DOCX, XLSX, PPTX, HTML, images, etc.)
 # Used by: Legal Head (EC PDFs), RERA detail scout (approval docs), IGR (Excel downloads)
-markitdown>=0.1.0
+markitdown>=0.1.0,<1.0.0
 
 # Evaluation — ROUGE quality metrics for analyst briefs (no torch required)
-rouge-score>=0.1.2
+rouge-score>=0.1.2,<1.0.0
 
 # HF embeddings + reranking + evaluation (Sprints 32–37)
-sentence-transformers>=2.7.0  # semantic dedup + cross-encoder reranker
-evaluate>=0.4.0  # BERTScore weekly eval
+sentence-transformers>=2.7.0,<4.0.0  # semantic dedup + cross-encoder reranker
+evaluate>=0.4.0,<2.0.0  # BERTScore weekly eval
 
 # ── Sprint 36 — HF RERA Extractor (QLoRA Fine-Tune) ──────────────────────────
 # Training: pip install these in the agents container for GPU fine-tuning
@@ -117,7 +117,7 @@ evaluate>=0.4.0  # BERTScore weekly eval
 # bitsandbytes>=0.43.0     # 4-bit quantization (nf4)
 # datasets>=2.18.0         # HuggingFace Dataset wrapper
 # llama-cpp-python>=0.2.0  # GGUF export (CUDA-enabled)
-datasets>=2.18.0  # eval harness
+datasets>=2.18.0,<4.0.0  # eval harness
 
 # Testing
 pytest>=9.0.3

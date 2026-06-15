@@ -380,14 +380,17 @@ A `Makefile` wraps the most common commands. Requires `make` installed.
 
 | File | What It Covers |
 |------|----------------|
+| [docs/quickstart.md](docs/quickstart.md) | **Start here** — zero to first scan in 20 minutes |
+| [docs/setup.md](docs/setup.md) | First-time setup from zero to first run |
+| [docs/operations.md](docs/operations.md) | Daily operation — every command, every error, every fix |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Deep-dive: agents, pipeline stages, data flow, LLM routing, DB schema |
+| [RELEASES.md](RELEASES.md) | Version history — v0.1 through v2.0 milestones |
 | [ROADMAP.md](ROADMAP.md) | Phased roadmap with milestones and gates |
-| [HOW_TO_RUN.md](HOW_TO_RUN.md) | Daily operation — every command, every error, every fix |
-| [SETUP.md](SETUP.md) | First-time setup from zero to first run |
 | [VISION.md](VISION.md) | 14-phase vision for the full Virtual Real Estate Office |
 | [MODELS.md](MODELS.md) | Free model reference and daily capacity math |
 | [CHANGELOG.md](CHANGELOG.md) | File-level change log (all phases) |
-| [docs/](docs/) | API reference, agent catalogue, deployment guides |
+| [docs/api-reference.md](docs/api-reference.md) | Full API endpoint reference |
+| [docs/solutions/](docs/solutions/) | Architecture patterns and operational solutions |
 
 ---
 
