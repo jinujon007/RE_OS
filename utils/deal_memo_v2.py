@@ -30,7 +30,7 @@ def _section(title: str, body: str) -> dict:
 def _executive_summary(pkg: IntelPackage, ctx: dict) -> str:
     m = ctx["market_pulse"]
     f = ctx["financial_evaluation"]
-    l = ctx["legal_picture"]
+    legal = ctx["legal_picture"]
     d = ctx["demand_signals"]
     lines = [
         f"Survey {pkg.survey_no} in {pkg.market} — Deal type: {pkg.deal_type}.",
@@ -38,7 +38,7 @@ def _executive_summary(pkg: IntelPackage, ctx: dict) -> str:
         f"{m['months_of_supply']} months of supply ({m['supply_label']}).",
         f"Financial: best structure is {f['best_structure']} — "
         f"see Financial Analysis section for IRR details.",
-        f"Legal risk: {l['risk_level']} — {l['details_teaser']}.",
+        f"Legal risk: {legal['risk_level']} — {legal['details_teaser']}.",
         f"Demand signal: {d['demand_signal']} (score {d['demand_score']}).",
         f"Source: IntelPackage collected at {pkg.collected_at}.",
     ]
@@ -83,17 +83,17 @@ def _financial_analysis(pkg: IntelPackage, ctx: dict) -> str:
 
 
 def _legal_regulatory(pkg: IntelPackage, ctx: dict) -> str:
-    l = ctx["legal_picture"]
+    legal = ctx["legal_picture"]
     lines = [
-        f"Risk level: {l['risk_level']} (source: legal_picture.risk_level)",
-        f"Zone: {l['zone']} — risk: {l['zone_risk_level']}",
-        f"Guidance value PSF: \u20b9{l['guidance_value_psf']}",
-        f"Litigation risk: {l['litigation_risk']}",
-        f"Land use conversion needed: {l['land_use_conversion_needed']}",
-        f"Inheritance risk: {l['inheritance_risk']}",
+        f"Risk level: {legal['risk_level']} (source: legal_picture.risk_level)",
+        f"Zone: {legal['zone']} — risk: {legal['zone_risk_level']}",
+        f"Guidance value PSF: \u20b9{legal['guidance_value_psf']}",
+        f"Litigation risk: {legal['litigation_risk']}",
+        f"Land use conversion needed: {legal['land_use_conversion_needed']}",
+        f"Inheritance risk: {legal['inheritance_risk']}",
         "",
         "Title risk details:",
-        f"{l['details']}",
+        f"{legal['details']}",
     ]
     return "\n".join(lines)
 
@@ -133,13 +133,13 @@ def _demand_timing(pkg: IntelPackage, ctx: dict) -> str:
 
 def _recommendation(pkg: IntelPackage, ctx: dict) -> str:
     f = ctx["financial_evaluation"]
-    l = ctx["legal_picture"]
+    legal = ctx["legal_picture"]
     lines = []
     if f["best_structure"] != "N/A":
         lines.append(f"Recommended structure: {f['best_structure']}")
         lines.append(f"Financial verdict: {f['recommendation']}")
-    lines.append(f"Legal risk level: {l['risk_level']}")
-    lines.append(_legal_verdict_line(l["risk_level"]))
+    lines.append(f"Legal risk level: {legal['risk_level']}")
+    lines.append(_legal_verdict_line(legal["risk_level"]))
     lines.append("")
     lines.append("Next steps:")
     lines.append("1. Confirm deal structure with landowner.")

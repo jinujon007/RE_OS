@@ -1,0 +1,10 @@
+[extend]
+# Use gitleaks default rules as the base
+
+[[allowlists]]
+description = "detect-secrets baseline — hashed_secret values are SHA1 hashes, not real secrets"
+paths = [".secrets.baseline"]
+
+[[allowlists]]
+description = "TASK_QUEUE.md false positive — task description text matching generic-api-key pattern"
+commits = ["13e19b3196a517ee9d17c88c4840f94db46bc49a"]

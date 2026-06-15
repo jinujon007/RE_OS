@@ -119,7 +119,7 @@ def upgrade():
             name="ck_gcc_work_model",
         ),
         sa.CheckConstraint(
-            f"signal_maturity_level IN ({', '.join(str(l) for l in _MATURITY_LEVELS)})",
+            f"signal_maturity_level IN ({', '.join(str(lvl) for lvl in _MATURITY_LEVELS)})",
             name="ck_gcc_maturity_level",
         ),
         sa.CheckConstraint(

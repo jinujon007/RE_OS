@@ -570,8 +570,14 @@ CREATE TABLE IF NOT EXISTS agent_memories (
 CREATE INDEX IF NOT EXISTS idx_agent_memories_agent ON agent_memories(agent_id, market);
 CREATE INDEX IF NOT EXISTS idx_agent_memories_confidence ON agent_memories(confidence DESC);
 -- Unique constraint required for ON CONFLICT upsert in write_memory()
-ALTER TABLE agent_memories
-  ADD CONSTRAINT IF NOT EXISTS agent_memories_unique_fact UNIQUE (agent_id, market, fact);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'agent_memories_unique_fact'
+    ) THEN
+        ALTER TABLE agent_memories ADD CONSTRAINT agent_memories_unique_fact UNIQUE (agent_id, market, fact);
+    END IF;
+END $$;
 
 -- ============================================================
 -- BOARD SESSIONS
@@ -1023,7 +1029,7 @@ CREATE INDEX IF NOT EXISTS idx_forecasts_market ON market_forecasts(micro_market
 -- ============================================================
 -- V_DEVELOPER_TRENDS — Developer trend lines (T-923)
 -- ============================================================
-CREATE VIEW IF NOT EXISTS v_developer_trends AS
+CREATE OR REPLACE VIEW v_developer_trends AS
 SELECT
     d.name AS developer,
     d.grade,

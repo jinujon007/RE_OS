@@ -202,8 +202,8 @@ class TestDataFreshness:
         freshness = data.get("freshness", [])
         if len(freshness) > 1:
             labels = [f["label"] for f in freshness]
-            live_idx = [i for i, l in enumerate(labels) if l == "LIVE"]
-            stale_idx = [i for i, l in enumerate(labels) if l == "STALE"]
+            live_idx = [i for i, lbl in enumerate(labels) if lbl == "LIVE"]
+            stale_idx = [i for i, lbl in enumerate(labels) if lbl == "STALE"]
             if live_idx and stale_idx:
                 assert max(live_idx) < min(stale_idx), (
                     "LIVE entries must sort before STALE"

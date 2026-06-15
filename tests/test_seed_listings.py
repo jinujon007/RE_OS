@@ -126,7 +126,7 @@ class TestSeedListingsInsert:
             {"id": "1", "source": "seed_estimated", "locality": "Test"},
             {"id": "2", "source": "seed_estimated", "locality": "Test"},
         ]
-        for l in listings:
+        for listing in listings:
             for c in [
                 "source_listing_id",
                 "source_url",
@@ -154,7 +154,7 @@ class TestSeedListingsInsert:
                 "data_source",
                 "is_active",
             ]:
-                l.setdefault(c, None)
+                listing.setdefault(c, None)
         result = _insert_listings(mock_conn, listings)
         assert result == 2
         # SAVEPOINT pattern: 3 calls per listing (SAVEPOINT + INSERT + RELEASE)

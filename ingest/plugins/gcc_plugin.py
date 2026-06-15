@@ -31,7 +31,7 @@ from typing import Any
 
 from loguru import logger
 
-from ingest.base import DataPlugin, ParsedRecord
+from ingest.base import DataPlugin, ParsedRecord, ValidationResult
 
 __all__ = ["GCCPlugin"]
 
@@ -485,9 +485,7 @@ class GCCPlugin(DataPlugin):
         )
         return records
 
-    def validate(self, record: ParsedRecord) -> "ValidationResult":  # type: ignore[name-defined]
-        from ingest.base import ValidationResult
-
+    def validate(self, record: ParsedRecord) -> ValidationResult:
         errors = []
         if not record.data.get("canonical_id"):
             errors.append("canonical_id required")
