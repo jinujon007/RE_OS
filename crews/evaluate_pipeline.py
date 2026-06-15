@@ -494,7 +494,7 @@ def _run_pipeline(
 
         _update_job(job_id, status="running", msg="Board Room")
         t1 = _time_mod.time()
-        from crews.board_room_v2 import run_board_session_v2
+        from crews.intel_board_room import run_board_session_v2
 
         board_result = run_board_session_v2(pkg, pitch=pitch)
         dept_count = len(board_result.responses)

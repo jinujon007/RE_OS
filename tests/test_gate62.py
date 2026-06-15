@@ -113,7 +113,7 @@ class TestGate62CompetitiveIntel:
         assert callable(weekly_competitive_digest)
 
     def test_board_room_bd_head_gets_competitive_context(self):
-        from crews.board_room_v2 import _get_competitive_context
+        from crews.intel_board_room import _get_competitive_context
 
         with patch(
             "intelligence.competitive_intel.CompetitiveIntelEngine"

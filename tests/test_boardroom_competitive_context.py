@@ -9,7 +9,7 @@ pytestmark = pytest.mark.unit
 class TestBoardroomCompetitiveContext:
     def test_bd_head_task_includes_competitive_context(self):
         from intelligence.registry import IntelPackage
-        from crews.board_room_v2 import _get_competitive_context
+        from crews.intel_board_room import _get_competitive_context
 
         pkg = IntelPackage(
             survey_no="45/2", market="Yelahanka", collected_at="2026-06-06T00:00:00"
@@ -42,7 +42,7 @@ class TestBoardroomCompetitiveContext:
         assert "85" in context
 
     def test_competitive_context_skipped_on_engine_failure(self):
-        from crews.board_room_v2 import _get_competitive_context
+        from crews.intel_board_room import _get_competitive_context
 
         with patch(
             "intelligence.competitive_intel.CompetitiveIntelEngine"

@@ -80,9 +80,9 @@ def test_gate72_distress_endpoint_rejects_blank_market():
 
 
 def test_bd_head_context_includes_jdv_targets():
-    from crews.board_room_v2 import _get_jdv_jv_targets
+    from crews.intel_board_room import _get_jdv_jv_targets
 
-    with patch("crews.board_room_v2.get_engine") as mock_engine:
+    with patch("crews.intel_board_room.get_engine") as mock_engine:
         conn = MagicMock()
         conn.execute.return_value.fetchall.return_value = [
             SimpleNamespace(developer_name="Brigade")

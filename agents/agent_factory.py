@@ -74,7 +74,7 @@ def _get_tool_registry() -> dict[str, type]:
             TypologyRecommenderTool,
             GreenCoverageTool,
         )
-        from agents.board_room.legal_head import (
+        from agents.legal_head_agent import (
             RERAComplianceTool,
             ZoneRiskTool,
             EncumbranceCheckTool,

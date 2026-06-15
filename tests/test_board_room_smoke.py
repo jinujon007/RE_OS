@@ -10,9 +10,9 @@ import pytest
 
 @pytest.mark.test_id("G87-BR1")
 @pytest.mark.unit
-def test_board_room_v2_importable():
+def test_intel_board_room_importable():
     """Board Room v2 module imports cleanly (route coverage gate)."""
-    import crews.board_room_v2  # noqa: F401
+    import crews.intel_board_room  # noqa: F401
 
 
 @pytest.mark.test_id("G87-BR2")

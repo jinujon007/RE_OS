@@ -2,7 +2,7 @@
 RE_OS — IntelPackage Context Builder (Shared)
 ===============================================
 Single source of truth for converting an IntelPackage to a formatted context dict.
-Used by board_room_v2, deal_memo_v2, and investor_brief_v2 to avoid DRY violations.
+Used by intel_board_room, deal_memo_v2, and investor_brief_v2 to avoid DRY violations.
 
 All formatting helpers are here — every module that needs IntelPackage data
 as human-readable text calls ``build_intel_context(pkg)``.

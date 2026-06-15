@@ -16,9 +16,9 @@ class TestGradeBPipelineInBDHead:
 
     def test_bd_head_context_has_grade_b_pipeline_key(self):
         """Assertion 1: _get_grade_b_pipeline returns Grade B projects from DB."""
-        from crews.board_room_v2 import _get_grade_b_pipeline
+        from crews.intel_board_room import _get_grade_b_pipeline
 
-        with patch("crews.board_room_v2.get_engine") as mock_eng:
+        with patch("crews.intel_board_room.get_engine") as mock_eng:
             mock_conn = MagicMock()
             mock_eng.return_value.connect.return_value.__enter__.return_value = (
                 mock_conn
@@ -42,9 +42,9 @@ class TestGradeBPipelineInBDHead:
 
     def test_grade_b_pipeline_shows_none_when_db_empty(self):
         """Assertion 2: returns empty list when no Grade B pipeline projects exist."""
-        from crews.board_room_v2 import _get_grade_b_pipeline
+        from crews.intel_board_room import _get_grade_b_pipeline
 
-        with patch("crews.board_room_v2.get_engine") as mock_eng:
+        with patch("crews.intel_board_room.get_engine") as mock_eng:
             mock_conn = MagicMock()
             mock_eng.return_value.connect.return_value.__enter__.return_value = (
                 mock_conn

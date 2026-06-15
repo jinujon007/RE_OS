@@ -91,9 +91,9 @@ def test_a4_db_backup_importable():
 
 
 @pytest.mark.test_id("G87-A5")
-def test_a5_board_room_v2_importable():
+def test_a5_intel_board_room_importable():
     """(5) Board Room v2 module imports without error."""
-    import crews.board_room_v2  # noqa: F401
+    import crews.intel_board_room  # noqa: F401
 
 
 @pytest.mark.test_id("G87-A6")

@@ -25,7 +25,7 @@ from loguru import logger
 from sqlalchemy import text
 
 from config.llm_router import get_analysis_llm, get_heavy_llm
-from agents.board_room.legal_head import build_legal_head_agent
+from agents.legal_head_agent import build_legal_head_agent
 from utils.db import get_engine
 from utils.fsi_calculator import calculate_fsi, recommend_unit_mix
 from utils.board_room_eval import BoardRoomEvaluator

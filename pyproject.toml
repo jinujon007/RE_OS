@@ -1,3 +1,28 @@
+[project]
+name = "re_os"
+version = "2.0.0"
+description = "Autonomous multi-agent AI system for institutional-grade real estate market intelligence"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+keywords = ["real-estate", "market-intelligence", "ai-agents", "crewai", "rera", "bengaluru"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+
+[project.urls]
+Homepage = "https://github.com/jinujon007/RE_OS"
+Documentation = "https://github.com/jinujon007/RE_OS/blob/master/docs/quickstart.md"
+Repository = "https://github.com/jinujon007/RE_OS"
+"Bug Tracker" = "https://github.com/jinujon007/RE_OS/issues"
+Changelog = "https://github.com/jinujon007/RE_OS/blob/master/RELEASES.md"
+
+# ── Ruff ──────────────────────────────────────────────────────────────────────
 [tool.ruff]
 target-version = "py311"
 line-length = 100
@@ -9,15 +34,22 @@ exclude = [
     "kilo_logs",
     "__pycache__",
     ".pytest_cache",
+    "alembic/versions",   # generated migrations — tolerate style drift
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
 ignore = [
     "E501",   # line-too-long — handled by formatter
     "E741",   # ambiguous variable name (l, O, I) — too noisy in SQL-heavy code
     "F401",   # unused-import — some imports are side-effect-only
+    "B008",   # function calls in default args (FastAPI/crewai pattern)
+    "SIM108", # ternary — sometimes less readable
+    "UP007",  # X | Y union syntax — kept explicit for crewai Pydantic compat
 ]
+
+[tool.ruff.lint.isort]
+known-first-party = ["agents", "config", "crews", "dashboard", "scrapers", "utils"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["F401", "F811"]           # test fixtures re-import intentionally
@@ -25,9 +57,37 @@ ignore = [
 "utils/diagnose.py" = ["E402"]        # diagnostic script — sys.path patch before imports is intentional
 "utils/status.py" = ["E402"]          # standalone script — sys.path patch before imports is intentional
 
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ── Pytest ────────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "integration: requires live DB and Docker stack — deselect with -m 'not integration'",
+    "slow: runtime > 10s",
+    "live: hits external APIs (RERA portal, listing sites)",
+]
 addopts = "-v --tb=short"
+
+# ── Coverage ──────────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["agents", "config", "crews", "dashboard", "scrapers", "utils"]
+omit = [
+    "*/test_*",
+    "*/conftest*",
+    "alembic/*",
+    "scripts/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]

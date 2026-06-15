@@ -1,6 +1,6 @@
 # RE_OS — Real Estate Intelligence OS
-# Multi-agent system: PostgreSQL+PostGIS | Ollama | Redis | Agent Crew
-# Boot: docker compose up -d
+# Multi-agent system: PostgreSQL+PostGIS | Ollama | Redis | Agent Crew | Prometheus | Grafana
+# Boot: docker compose up -d   (7 containers)
 
 # ── SHARED ENVIRONMENT (applied to both agents + scheduler) ───────────────────
 x-agent-env: &agent-env
@@ -42,7 +42,8 @@ x-agent-volumes: &agent-volumes
   - hf_cache:/root/.cache/huggingface
   - chroma_data:/app/data/chroma
   - ./backups:/backups
-  - "D:\\Brain\\JINU JOSHI\\03 LLS\\01 Wiki\\markets\\bangalore:/app/obsidian_sync"
+  # Obsidian sync: mount your local vault in docker-compose.override.yml — not here
+  # Example: - "/path/to/your/obsidian/markets:/app/obsidian_sync"
 
 services:
 
@@ -163,6 +164,44 @@ services:
       start_period: 30s
     command: python config/scheduler.py
 
+  # ── METRICS COLLECTION ────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: re_os_prometheus
+    restart: unless-stopped
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    # Port not published — Grafana accesses via internal network (http://re_os_prometheus:9090)
+    depends_on:
+      - agents
+
+  # ── DASHBOARDS ─────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: re_os_grafana
+    restart: unless-stopped
+    environment:
+      # Anonymous access: read-only viewer (not admin — security hardening)
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "false"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-re_os_admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
 volumes:
   postgres_data:
   ollama_data:
@@ -171,4 +210,6 @@ volumes:
   re_os_logs:
   hf_cache:
   chroma_data:
+  prometheus_data:
+  grafana_data:
   # re_os_backups: removed — replaced by bind mount ./backups:/backups (Sprint 83)

@@ -45,3 +45,13 @@ Thumbs.db
 # Docs that don't affect runtime
 *.md
 LICENSE
+
+# Sensitive: property deed PDFs contain PII under Indian law — never bake into image
+data/kaveri_deeds/inbox/
+
+# Generated runtime data
+data/eval/
+data/training/
+data/scout_memory/
+chroma_data/
+backups/

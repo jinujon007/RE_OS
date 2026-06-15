@@ -225,7 +225,8 @@ class ScoutMemory:
             if k not in ("scraped_at", "cid", "is_new", "raw_snippet")
         }
         return hashlib.md5(
-            json.dumps(safe, sort_keys=True, default=str).encode()
+            json.dumps(safe, sort_keys=True, default=str).encode(),
+            usedforsecurity=False,
         ).hexdigest()
 
     # ── Semantic dedup ──────────────────────────────────────────────────────

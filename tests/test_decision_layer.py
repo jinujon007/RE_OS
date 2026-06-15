@@ -106,16 +106,16 @@ class TestInvestorBriefGeneration:
 # ── Board Room V2 Tests ───────────────────────────────────────────────────────
 
 
-class TestBoardRoomV2:
-    def test_board_room_v2_import(self):
+class TestIntelBoardRoom:
+    def test_intel_board_room_import(self):
         """BoardRoomV2 module can be imported."""
-        from crews.board_room_v2 import run_board_session_v2, BoardSessionV2Result
+        from crews.intel_board_room import run_board_session_v2, BoardSessionV2Result
 
         assert callable(run_board_session_v2)
 
     def test_board_session_result_dataclass(self):
         """BoardSessionV2Result has required fields."""
-        from crews.board_room_v2 import BoardSessionV2Result
+        from crews.intel_board_room import BoardSessionV2Result
 
         result = BoardSessionV2Result(
             session_id="test-session",
@@ -217,7 +217,7 @@ class TestGate48Pipeline:
 
     def test_board_session_result_stores_responses(self):
         """BoardSessionV2Result stores dept head responses correctly."""
-        from crews.board_room_v2 import BoardSessionV2Result
+        from crews.intel_board_room import BoardSessionV2Result
 
         result = BoardSessionV2Result(
             session_id="gate48-test",
@@ -259,7 +259,7 @@ class TestGate48Pipeline:
 
         with (
             patch("crews.evaluate_pipeline.IntelRegistry") as mock_reg,
-            patch("crews.board_room_v2.run_board_session_v2", return_value=mock_board),
+            patch("crews.intel_board_room.run_board_session_v2", return_value=mock_board),
         ):
             mock_reg.return_value.get_full_picture.return_value = pkg
             result = start_evaluate(

@@ -155,6 +155,14 @@ KILO_BRIEF.md
 *.canvas
 RE_OS Home.md
 01 Daily/
+# Catch any re-occurrence of vault directory path (private-use chars + Wiki dir)
+*Brain*JINU*Wiki/
+
+# ── LOCAL COMPOSE OVERRIDES ── machine-specific config (Obsidian mount, etc.) ─
+docker-compose.override.yml
+
+# ── INTERNAL SPRINT REVIEWS ── not for public repo ────────────────────────────
+docs/archive/
 
 # ── CODE INTELLIGENCE INDEX ── generated at runtime ──────────────────────────
 .codegraph/

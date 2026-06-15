@@ -178,7 +178,7 @@ flowchart TB
 - **Agent Hiring** — YAML agent registry; hire specialist agents from the dashboard without Python changes or Docker rebuilds
 - **Checkpointed pipeline** — today's Stage 1 checkpoint means failed runs restart from Stage 3; no re-scraping
 - **Autonomous scheduling** — APScheduler runs RERA refresh at 2 AM IST daily; market snapshots at 6 AM; embedding + sentiment jobs at 4:30–5 AM
-- **Observability** — Prometheus + Grafana pre-configured in docker-compose; anonymous admin access to dashboards out of the box
+- **Observability** — Prometheus + Grafana pre-configured in docker-compose; anonymous read-only access to dashboards out of the box; admin login via `GRAFANA_ADMIN_PASSWORD` in `.env`
 - **Scout Division** — six specialised scouts: RERA Karnataka, RERA Detail, Portal, Developer, News, Kaveri. SHA-based dedup via ScoutMemory.
 
 ---
@@ -287,7 +287,7 @@ Open `http://localhost:8050` after `docker compose up -d`.
 
 Board Room: `POST /api/board/run` with `{"market": "Yelahanka", "pitch": "5-acre R2 site, target launch ₹6,500 PSF"}` → 5-dept concurrent evaluation → structured deal memo in ~90 seconds.
 
-Grafana dashboards: `http://localhost:3000` (anonymous admin, pre-provisioned RE_OS dashboard).
+Grafana dashboards: `http://localhost:3000` (anonymous read-only, pre-provisioned RE_OS dashboard; admin login: `admin` / `GRAFANA_ADMIN_PASSWORD`).
 
 ---
 
@@ -402,7 +402,7 @@ A `Makefile` wraps the most common commands. Requires `make` installed.
 - [x] **Phase 4** — Agent Memory: confidence decay, weekly cron, pipeline injection
 - [x] **Phase 5** — Engineering Dept: FSI calculator, Typology recommender, Green coverage, Renderer
 - [x] **Phase 6** — Finance Dept: IRR model, JD/JV feasibility, Board Room auto-IRR
-- [x] **Phase 7** — Discord Alerts: 5 formatters wired (GATE-14 live verification pending)
+- [x] **Phase 7** — Discord Alerts: 5 formatters wired, GATE-14 ✅ PASSED (live Discord verified)
 - [x] **Phase 8** — Agent Hiring: YAML registry, agent factory, dashboard hire-from-template
 - [x] **Phase 8.5** — Intelligence Layer: ChromaDB semantic search, FinBERT sentiment, BGE-M3, cross-encoder reranker
 - [x] **Phase 12** — Legal Dept: RERA compliance checker, zone risk, encumbrance from DB
