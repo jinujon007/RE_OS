@@ -65,7 +65,7 @@ jobs:
             psycopg2-binary sqlalchemy alembic \
             "prometheus-client>=0.21.0" \
             redis requests \
-            fastapi starlette httpx pandas geoalchemy2 shapely jinja2 tenacity
+            fastapi "slowapi>=0.1.9,<0.2.0" starlette httpx pandas geoalchemy2 shapely jinja2 tenacity
 
       - name: Run unit tests
         env:
@@ -314,6 +314,7 @@ jobs:
       - name: Run data integrity checks
         env:
           DB_PASSWORD: re_os_test
+          DATABASE_URL: postgresql://re_os_user:re_os_test@localhost:5432/re_os_test
         run: |
           pytest tests/test_data_integrity.py -m integration -v --tb=short
 
