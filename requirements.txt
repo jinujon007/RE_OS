@@ -67,7 +67,7 @@ tenacity>=8.1.0
 # Terminal output — capped by embedchain transitive dep (rich<14.0.0)
 rich>=13.7.0,<14.0.0
 # Chromadb capped by embedchain transitive dep
-chromadb>=0.5.10,<0.6.0
+chromadb>=1.5.9,<1.6.0
 
 # Future: workflow orchestration
 # prefect>=2.0.0
