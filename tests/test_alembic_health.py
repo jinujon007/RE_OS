@@ -26,7 +26,7 @@ def _parse_down_revision(text: str) -> list[str]:
     m = re.search(r"""^down_revision\s*(?::[^=]+)?\s*=\s*""", text, re.MULTILINE)
     if not m:
         return []
-    rest = text[m.end():].lstrip()
+    rest = text[m.end() :].lstrip()
     if rest.startswith("None"):
         return []
     if rest.startswith("("):

@@ -177,7 +177,9 @@ class TestLandownerCRM:
                 [("Devanahalli", 4, 7500.0)],
             ]
             client = _fresh_client()
-            resp = client.get("/api/landowners/pipeline", headers={"X-API-Key": "test-key"})
+            resp = client.get(
+                "/api/landowners/pipeline", headers={"X-API-Key": "test-key"}
+            )
             assert resp.status_code == 200
             data = resp.json()
             assert "by_status" in data
