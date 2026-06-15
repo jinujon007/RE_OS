@@ -8,7 +8,7 @@ pytestmark = pytest.mark.unit
 
 client = TestClient(app)
 
-_TEST_KEY = "test-api-key"
+_TEST_KEY = "test-key"
 
 
 def test_process_audit_route_returns_200():

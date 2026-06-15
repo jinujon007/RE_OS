@@ -188,6 +188,7 @@ _READ_ONLY_PATHS = frozenset(
         "/api/optimizer/report",
         "/api/digest/weekly",
         "/api/digest/monthly",
+        "/api/llm/quota",
         "/optimizer",
         "/api/ops/v2-readiness",
     }

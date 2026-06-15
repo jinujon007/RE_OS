@@ -50,7 +50,7 @@ class TestLandownerCRM:
                     "owner_name": "Venkatesh Gowda",
                     "contact_phone": "9876543210",
                 },
-                headers={"X-API-Key": "test"},
+                headers={"X-API-Key": "test-key"},
             )
             assert resp.status_code == 201
             data = resp.json()
@@ -68,7 +68,7 @@ class TestLandownerCRM:
                     "owner_name": "Test",
                     "contact_type": "invalid_type",
                 },
-                headers={"X-API-Key": "test"},
+                headers={"X-API-Key": "test-key"},
             )
             assert resp.status_code == 400
             assert "invalid contact_type" in resp.text
@@ -97,7 +97,7 @@ class TestLandownerCRM:
             ]
             client = _fresh_client()
             resp = client.get(
-                "/api/landowners?market=Devanahalli", headers={"X-API-Key": "test"}
+                "/api/landowners?market=Devanahalli", headers={"X-API-Key": "test-key"}
             )
             assert resp.status_code == 200
             data = resp.json()
@@ -130,7 +130,7 @@ class TestLandownerCRM:
             ]
             client = _fresh_client()
             resp = client.get(
-                "/api/landowners?market=Devanahalli", headers={"X-API-Key": "test"}
+                "/api/landowners?market=Devanahalli", headers={"X-API-Key": "test-key"}
             )
             assert resp.status_code == 200
 
@@ -160,7 +160,7 @@ class TestLandownerCRM:
                 json={
                     "approach_status": "warm",
                 },
-                headers={"X-API-Key": "test"},
+                headers={"X-API-Key": "test-key"},
             )
             assert resp.status_code == 200
             data = resp.json()
@@ -177,7 +177,7 @@ class TestLandownerCRM:
                 [("Devanahalli", 4, 7500.0)],
             ]
             client = _fresh_client()
-            resp = client.get("/api/landowners/pipeline", headers={"X-API-Key": "test"})
+            resp = client.get("/api/landowners/pipeline", headers={"X-API-Key": "test-key"})
             assert resp.status_code == 200
             data = resp.json()
             assert "by_status" in data

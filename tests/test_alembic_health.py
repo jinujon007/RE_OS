@@ -22,10 +22,11 @@ _REV_RE = re.compile(
 def _parse_down_revision(text: str) -> list[str]:
     # Match both typed (`down_revision: Union[str, None] = ...`) and
     # untyped (`down_revision = ...`) forms, anchored to start of line.
-    m = re.search(r"""^down_revision\s*(?::[^=]+)?\s*=\s*(.+)""", text, re.MULTILINE)
+    # Capture everything from the `=` onward (multi-line tuples included).
+    m = re.search(r"""^down_revision\s*(?::[^=]+)?\s*=\s*""", text, re.MULTILINE)
     if not m:
         return []
-    rest = m.group(1).lstrip()
+    rest = text[m.end():].lstrip()
     if rest.startswith("None"):
         return []
     if rest.startswith("("):

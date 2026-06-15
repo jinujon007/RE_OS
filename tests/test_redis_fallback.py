@@ -63,7 +63,7 @@ def test_rate_limiter_uses_memory_fallback():
     try:
         os.environ["REDIS_URL"] = "memory://"
         client = _reload_app()
-        resp = client.get("/api/health/live", headers={"X-API-Key": "test-api-key"})
+        resp = client.get("/api/health/live", headers={"X-API-Key": "test-key"})
         assert resp.status_code == 200
     finally:
         os.environ["REDIS_URL"] = "memory://"

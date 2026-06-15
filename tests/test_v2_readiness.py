@@ -137,7 +137,7 @@ def test_v2_panel_returns_200():
 
 # ── POST /api/ops/v2-declare — T-1132 ──
 
-_AUTH = {"X-API-Key": "test-api-key"}
+_AUTH = {"X-API-Key": "test-key"}
 
 
 def test_v2_declare_400_when_not_ready():

@@ -161,7 +161,7 @@ optimizer_tokens_tracked_total = _counter(
 digest_runs_total = _counter(
     "digest_runs_total",
     "Total digest runs (weekly + monthly)",
-    ["digest_type", "market", "status"],
+    ["type", "status"],
 )
 
 kaveri_deeds_records_parsed = _counter(

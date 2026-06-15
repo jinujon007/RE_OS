@@ -57,7 +57,7 @@ def test_create_landowner_returns_201():
                 "market": "Devanahalli",
                 "owner_name": "Test Owner",
             },
-            headers={"X-API-Key": "test"},
+            headers={"X-API-Key": "test-key"},
         )
         assert resp.status_code == 201
 
@@ -79,7 +79,7 @@ def test_landowners_pipeline_returns_by_status():
             [("Devanahalli", 4, 7500.0)],
         ]
         client = _fresh_client()
-        resp = client.get("/api/landowners/pipeline", headers={"X-API-Key": "test"})
+        resp = client.get("/api/landowners/pipeline", headers={"X-API-Key": "test-key"})
         assert resp.status_code == 200
         data = resp.json()
         assert "by_status" in data
