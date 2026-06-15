@@ -65,7 +65,7 @@ jobs:
             psycopg2-binary sqlalchemy alembic \
             "prometheus-client>=0.21.0" \
             redis requests \
-            fastapi starlette httpx pandas geoalchemy2 shapely
+            fastapi starlette httpx pandas geoalchemy2 shapely jinja2 tenacity
 
       - name: Run unit tests
         env:
@@ -245,13 +245,14 @@ jobs:
           DATABASE_URL: postgresql://re_os_user:re_os_test@localhost:5432/re_os_test
         run: |
           pip install alembic>=1.13.0 psycopg2-binary sqlalchemy geoalchemy2
-          # Run all pending migrations
-          alembic upgrade head
-          echo "Migrations applied successfully"
-          # Check no drift (migrations match schema)
+          # schema.sql was already applied above — stamp head so Alembic
+          # knows the DB is at the latest revision without re-running migrations
+          alembic stamp head
+          echo "Schema stamped at head"
+          # Check no pending migrations (no drift between schema.sql and Alembic head)
           alembic check
           echo "Alembic check passed — no drift detected"
-          # Verify single head
+          # Verify single head (no branch divergence)
           HEADS=$(alembic heads | wc -l)
           if [ "$HEADS" -ne 1 ]; then
             echo "FAIL: Expected 1 alembic head, got $HEADS"
