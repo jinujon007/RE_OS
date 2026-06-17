@@ -325,7 +325,7 @@ def score_tone(text: str, api_key: str | object = _SENTINEL) -> dict[str, float]
     Litigious, Constraining, Positive, Negative).
     Returns dict with one key per tone (0.0-1.0) or None if API unavailable.
     """
-    key: str = HF_API_KEY if api_key is _SENTINEL else api_key
+    key: str = HF_API_KEY if api_key is _SENTINEL else api_key  # type: ignore[assignment]
     if not key or not text:
         return None
 

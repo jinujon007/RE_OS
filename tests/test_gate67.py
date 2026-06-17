@@ -60,10 +60,8 @@ class TestGate67:
         assert len(result) == 0
 
     def test_weekly_pr_job_registered_in_scheduler(self):
-        import inspect
-        import config.scheduler as sched_mod
-
-        source = inspect.getsource(sched_mod)
+        import pathlib
+        source = pathlib.Path("config/scheduler/digest_jobs.py").read_text(encoding="utf-8")
         assert "weekly_pr_brief" in source
         assert 'id="weekly_pr_brief"' in source or "id='weekly_pr_brief'" in source
 

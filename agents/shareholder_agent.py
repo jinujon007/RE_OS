@@ -30,7 +30,7 @@ _SHAREHOLDER_DEFAULTS = {
 def load_shareholder_specs() -> list[dict]:
     """Load all shareholder_*.yaml files from the registry directory.
     Returns list of spec dicts, excludes non-shareholder files."""
-    specs = []
+    specs: list[dict] = []
     if not _REGISTRY_DIR.exists():
         logger.warning("[ShareholderAgent] Registry dir not found: %s", _REGISTRY_DIR)
         return specs
@@ -90,7 +90,7 @@ def create_shareholder_agent(spec: dict):
 def build_all_shareholders() -> list:
     """Load all shareholder specs and create agents. Returns list of (spec, Agent) tuples.
     Skips specs that fail to load or create. Never raises."""
-    agents = []
+    agents: list = []
     specs = load_shareholder_specs()
     if not specs:
         logger.info("[ShareholderAgent] No shareholder specs found — J-2 not complete")

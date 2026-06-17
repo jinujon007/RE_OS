@@ -81,7 +81,7 @@ class TenderPlugin(DataPlugin):
         logger.info("[TenderPlugin] {} tenders for {}", len(records), market or "all")
         return records
 
-    def validate(self, record: ParsedRecord) -> bool:
+    def validate(self, record: ParsedRecord) -> bool:  # type: ignore[override]
         """Validate a tender record."""
         errors = []
         data = record.data

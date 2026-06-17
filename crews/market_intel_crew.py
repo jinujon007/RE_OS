@@ -62,7 +62,7 @@ from utils.obsidian_sync import sync_to_obsidian
 _RATE_LIMIT_RETRIES = 3
 
 _DB_STATS_DEFAULT = {"inserted": 0, "updated": 0, "failed": 0, "duration_seconds": 0}
-_MARKET_LOG_SINKS = {}
+_MARKET_LOG_SINKS: dict = {}
 
 
 def _market_slug(market: str) -> str:
@@ -82,7 +82,7 @@ def _ensure_market_log_sink(market: str) -> None:
         rotation="5 MB",
         retention=5,
         level="INFO",
-        filter=lambda record, m=market: record["extra"].get("market") == m,
+        filter=lambda record, m=market: record["extra"].get("market") == m,  # type: ignore[misc]
     )
     _MARKET_LOG_SINKS[slug] = sink_id
 

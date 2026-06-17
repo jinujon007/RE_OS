@@ -15,7 +15,7 @@ import pytest
 pytestmark = pytest.mark.unit
 
 MIGRATION_PATH = Path("alembic/versions/0055_parcels_table.py")
-SCHEDULER_PATH = Path("config/scheduler.py")
+SCHEDULER_PATH = Path("config/scheduler/maintenance_jobs.py")
 
 
 def test_a1_parcels_model_importable():

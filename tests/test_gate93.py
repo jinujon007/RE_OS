@@ -15,12 +15,11 @@ pytestmark = pytest.mark.unit
 
 
 def test_gate93_assertion1_scheduler_jobs_registered():
-    """Assertion 1: All 4 GATE-93 jobs registered in scheduler.
-
-    Uses text analysis of the scheduler file rather than importing
-    the full scheduler, which would require APScheduler runtime.
-    """
-    config_text = open("config/scheduler.py", encoding="utf-8").read()
+    """Assertion 1: All 4 GATE-93 jobs registered in scheduler submodules."""
+    import pathlib
+    maintenance = pathlib.Path("config/scheduler/maintenance_jobs.py").read_text(encoding="utf-8")
+    kaveri = pathlib.Path("config/scheduler/kaveri_jobs.py").read_text(encoding="utf-8")
+    config_text = maintenance + "\n" + kaveri
     assert 'id="offsite_backup_weekly"' in config_text, (
         "offsite_backup_weekly job missing"
     )

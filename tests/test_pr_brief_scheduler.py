@@ -10,10 +10,8 @@ class TestWeeklyPRBriefJob:
     def test_weekly_pr_job_registered(self):
         """Verify the weekly_pr_brief job is registered in scheduler by
         checking job id appears in scheduler source with correct cron."""
-        import inspect
-        import config.scheduler as sched_mod
-
-        source = inspect.getsource(sched_mod)
+        import pathlib
+        source = pathlib.Path("config/scheduler/digest_jobs.py").read_text(encoding="utf-8")
         assert "weekly_pr_brief" in source
         assert (
             'day_of_week="mon", hour=2, minute=0' in source

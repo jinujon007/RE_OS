@@ -40,7 +40,13 @@ def test_a1_market_intel_crew_and_scouts_importable():
 @pytest.mark.test_id("G87-A2")
 def test_a2_scheduler_job_count_at_least_15():
     """(2) Scheduler module has >= 15 registered jobs, no duplicate IDs."""
-    text = Path("config/scheduler.py").read_text(encoding="utf-8")
+    scheduler_dir = Path("config/scheduler")
+    text = ""
+    if scheduler_dir.is_dir():
+        for py_file in sorted(scheduler_dir.glob("*.py")):
+            text += py_file.read_text(encoding="utf-8") + "\n"
+    else:
+        text = Path("config/scheduler.py").read_text(encoding="utf-8")
     # Uses non-greedy match across lines: matches add_job(..., id="job_id", ...)
     ids = re.findall(
         r"""scheduler\.add_job\(  # function call start

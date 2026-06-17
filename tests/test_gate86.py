@@ -45,24 +45,39 @@ def test_task_queue_gate86_passed():
 
 
 def test_memory_explorer_response_schema():
-    """Rapid schema check: instantiate MemoryExplorerResponse directly (no DB)."""
-    from dashboard.app_fastapi import MemoryExplorerResponse, MemoryItem
+    """Rapid schema check: verify endpoint returns correct shape (no DB)."""
+    from unittest.mock import patch, MagicMock
+    from starlette.testclient import TestClient
+    from dashboard.app_fastapi import app
 
-    resp = MemoryExplorerResponse(total=0, page=1, per_page=20, memories=[])
-    assert resp.total == 0
-    assert resp.page == 1
-    assert resp.per_page == 20
-    assert resp.memories == []
-    # Verify MemoryItem fields
-    item = MemoryItem(id="x", agent_id="a", market="m", fact="f", source_count=2)
-    assert item.source_count == 2
+    client = TestClient(app)
+    with patch("dashboard.routers.data._get_sa_engine") as mock_engine:
+        mock_conn = MagicMock()
+        mock_engine.return_value.connect.return_value.__enter__.return_value = mock_conn
+        mock_conn.execute.return_value.scalar.return_value = 0
+        mock_conn.execute.return_value.fetchall.return_value = []
+        resp = client.get("/api/memory/explorer")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "total" in data
+    assert "page" in data
+    assert "memories" in data
 
 
 def test_conflict_count_response_schema():
-    from dashboard.app_fastapi import ConflictCountResponse
+    from unittest.mock import patch, MagicMock
+    from starlette.testclient import TestClient
+    from dashboard.app_fastapi import app
 
-    resp = ConflictCountResponse(unresolved_conflicts=5)
-    assert resp.unresolved_conflicts == 5
+    client = TestClient(app)
+    with patch("dashboard.routers.data._get_sa_engine") as mock_engine:
+        mock_conn = MagicMock()
+        mock_engine.return_value.connect.return_value.__enter__.return_value = mock_conn
+        mock_conn.execute.return_value.scalar.return_value = 5
+        resp = client.get("/api/memory/conflict-count")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["unresolved_conflicts"] == 5
 
 
 def test_templates_exist():

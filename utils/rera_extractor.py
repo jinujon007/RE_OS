@@ -189,7 +189,7 @@ class RERAExtractor:
 
     def _extract_fields_from_html(self, raw_text: str) -> dict:
         """Extract fields from RERA portal HTML table rows (<tr><td>...)."""
-        result = {}
+        result: dict = {}
         soup = None
         try:
             from bs4 import BeautifulSoup

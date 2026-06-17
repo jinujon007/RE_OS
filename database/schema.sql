@@ -1047,3 +1047,9 @@ ORDER BY new_projects_365d DESC;
 INSERT INTO alembic_version (version_num)
 VALUES ('0050_merge_sprint81_82')
 ON CONFLICT (version_num) DO NOTHING;
+\n\n-- ============================================================
+-- GATE-99: parcel_ownership_chain (RTC data from Bhoomi portal)
+-- Migration: 0061_parcel_ownership_chain.py
+-- Parsed ownership history per survey_no. Daily dedup.
+-- ============================================================
+-- DDL via migration 0061_parcel_ownership_chain.py

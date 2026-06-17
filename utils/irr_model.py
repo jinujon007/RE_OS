@@ -670,6 +670,100 @@ def log_igr_lookup(
         )
 
 
+# ── CashFlow Projection (Sprint 101 — T-1194) ──────────────────────────────────
+
+
+@dataclass
+class MonthlyCashFlowRow:
+    """Single month of a project cash-flow projection."""
+    month: int
+    construction_outflow_cr: float
+    interest_payment_cr: float
+    brokerage_charge_cr: float
+    sales_inflow_cr: float
+    cumulative_cash_position_cr: float
+
+
+@dataclass
+class CashFlowSummary:
+    peak_negative_cr: float
+    breakeven_month: int | None
+    roi_annualized_pct: float | None
+
+
+@dataclass
+class CashFlowProjection:
+    """Monthly cash-flow projection for a real estate project."""
+    schedule: list[MonthlyCashFlowRow]
+    summary: CashFlowSummary
+
+
+def build_cash_flow(
+    land_cost_cr: float,
+    gdc_cr: float,
+    construction_cost_cr: float,
+    loan_pct: float = 0.5,
+    interest_rate: float = 0.12,
+    cp_brokerage_pct: float = 0.013,
+    months: int = 36,
+) -> CashFlowProjection:
+    lc = max(land_cost_cr or 0.0, 0.0) * 1e7
+    gdc = max(gdc_cr or 0.0, 0.0) * 1e7
+    const = max(construction_cost_cr or 0.0, 0.0) * 1e7
+    loan_pct = max(loan_pct or 0.0, 0.0)
+    interest_rate = max(interest_rate or 0.0, 0.0)
+    cp_brokerage_pct = max(cp_brokerage_pct or 0.0, 0.0)
+    months = max(months or 1, 1)
+    loan_amount = lc * loan_pct
+    monthly_interest = loan_amount * interest_rate / 12.0
+    monthly_const = const / months
+    brokerage = gdc * cp_brokerage_pct
+    monthly_revenue = gdc / months
+    cumulative = -lc
+    rows: list[MonthlyCashFlowRow] = []
+    breakeven_month: int | None = None
+    peak_negative = -lc
+    total_outflow = lc
+    total_inflow = 0.0
+
+    for m in range(1, months + 1):
+        outflow = monthly_const
+        _interest = monthly_interest
+        _brokerage = brokerage if m == 6 else 0.0
+        _inflow = monthly_revenue
+        out = outflow + _interest + _brokerage
+        cumulative += _inflow - out
+        total_outflow += out
+        total_inflow += _inflow
+
+        rows.append(MonthlyCashFlowRow(
+            month=m,
+            construction_outflow_cr=round(outflow / 1e7, 4),
+            interest_payment_cr=round(_interest / 1e7, 4),
+            brokerage_charge_cr=round(_brokerage / 1e7, 4),
+            sales_inflow_cr=round(_inflow / 1e7, 4),
+            cumulative_cash_position_cr=round(cumulative / 1e7, 4),
+        ))
+        if cumulative / 1e7 < peak_negative / 1e7:
+            peak_negative = cumulative
+        if breakeven_month is None and cumulative >= 0:
+            breakeven_month = m
+
+    total_out = total_outflow / 1e7
+    total_in = total_inflow / 1e7
+    profit = total_in - total_out
+    roi = (profit / max(total_out, 1)) / (months / 12.0) * 100.0
+
+    return CashFlowProjection(
+        schedule=rows,
+        summary=CashFlowSummary(
+            peak_negative_cr=round(peak_negative / 1e7, 4),
+            breakeven_month=breakeven_month,
+            roi_annualized_pct=round(roi, 2),
+        ),
+    )
+
+
 if __name__ == "__main__":
     print("=== IRR Model Self-Test =========================")
     # 5-acre Yelahanka — typically GO

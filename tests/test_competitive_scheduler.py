@@ -39,6 +39,6 @@ class TestCompetitiveScheduler:
             "intelligence.competitive_intel.CompetitiveIntelEngine"
         ) as MockEngine:
             MockEngine.side_effect = Exception("Engine failure")
-            with patch("config.scheduler.logger") as mock_log:
+            with patch("config.scheduler.intel_jobs.logger") as mock_log:
                 weekly_competitive_digest()
                 mock_log.warning.assert_called()

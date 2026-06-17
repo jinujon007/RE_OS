@@ -95,7 +95,7 @@ def test_data_floor_check_runs_for_all_markets():
     mock_fn = MagicMock(return_value=True)
     with (
         patch("utils.data_quality_monitor.check_live_data_floor", mock_fn),
-        patch("config.scheduler.get_engine"),
+        patch("config.scheduler.maintenance_jobs.get_engine"),
     ):
         from config.scheduler import run_data_floor_check
 
@@ -106,6 +106,9 @@ def test_data_floor_check_runs_for_all_markets():
 
 
 def test_data_floor_job_registered_in_scheduler():
-    with open("config/scheduler.py", encoding="utf-8") as f:
-        content = f.read()
+    from config.scheduler import start_scheduler
+    assert callable(start_scheduler)
+    # Job registration moved to config/scheduler/maintenance_jobs.py
+    import pathlib
+    content = pathlib.Path("config/scheduler/maintenance_jobs.py").read_text(encoding="utf-8")
     assert 'id="data_floor_check"' in content or "id='data_floor_check'" in content

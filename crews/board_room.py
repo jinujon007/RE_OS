@@ -87,7 +87,8 @@ def _query_market_supply(market: str) -> tuple[str, str]:
     if not market:
         return "N/A", "N/A"
     try:
-        from utils.db import get_engine as _ge, db_query_duration_seconds
+        from utils.db import get_engine as _ge
+        from config.metrics import db_query_duration_seconds
         from sqlalchemy import text as _st
 
         with _ge().connect() as _c:
@@ -155,7 +156,8 @@ def _ceo_decompose(pitch: str, market: str, _session_excluded: set) -> Optional[
 
         mos_context = ""
         try:
-            from utils.db import get_engine as _mos_ge, db_query_duration_seconds
+            from config.metrics import db_query_duration_seconds
+            from utils.db import get_engine as _mos_ge
             from sqlalchemy import text as _mos_st
 
             with _mos_ge().connect() as _mos_c:
@@ -776,7 +778,26 @@ def _run_dept_heads(
                         "[board_room] encumbrance auto-context failed: %s", enc_exc
                     )
 
-                legal_context = f"\n\n[AUTO LEGAL CONTEXT — {market} | Zone {detected_zone}]\n{zone_txt}{dev_txt}{enc_txt}\n"
+                title_txt = ""
+                survey_match = re.search(r'\b(\d{1,4}/[\w\-]+)\b', pitch)
+                if survey_match:
+                    survey_no = survey_match.group(1)
+                    try:
+                        from utils.title_risk import TitleRiskChecklist
+                        tr = TitleRiskChecklist.from_parcel(survey_no, market)
+                        title_txt = (
+                            f"\n[TITLE RISK CHECKLIST — {survey_no}] "
+                            f"Khata: {tr.khata_status} | EC: {tr.ec_check} | "
+                            f"DC: {tr.dc_conversion} | RERA: {tr.rera_registration} | "
+                            f"Overall: {tr.overall_risk}"
+                        )
+                    except Exception as tit_exc:
+                        logger.debug(
+                            "[board_room] TitleRiskChecklist failed for %s: %s",
+                            survey_no, tit_exc,
+                        )
+
+                legal_context = f"\n\n[AUTO LEGAL CONTEXT — {market} | Zone {detected_zone}]\n{zone_txt}{dev_txt}{enc_txt}{title_txt}\n"
             except ImportError as imp_exc:
                 logger.error(
                     "[board_room] legal module import failed — check dependencies: %s",
@@ -1234,7 +1255,7 @@ def get_board_session(session_id: str) -> Optional[dict]:
                 "ops": row["ops_response"],
                 "legal": row["legal_response"],
             }
-            ceo_extra = {}
+            ceo_extra: dict = {}
             if row["ceo_synthesis"]:
                 try:
                     ceo_extra = (

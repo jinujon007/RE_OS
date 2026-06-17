@@ -12,8 +12,8 @@ class TestMonthlyCEOLogic:
         """Verify monthly CEO letter generates content without errors."""
         with (
             patch("utils.performance_digest.PerformanceDigest.build") as mock_digest,
-            patch("config.scheduler.get_engine") as mock_eng,
-            patch("config.scheduler.logger"),
+            patch("config.scheduler.digest_jobs.get_engine") as mock_eng,
+            patch("config.scheduler.digest_jobs.logger"),
         ):
             mock_digest.return_value = {
                 "deal_metrics": {"deal_count": 5, "avg_irr_pct": 12.5},
@@ -41,10 +41,10 @@ class TestMonthlyCEOLogic:
         """Verify the letter is saved to correct output directory."""
         with (
             patch("utils.performance_digest.PerformanceDigest.build") as mock_digest,
-            patch("config.scheduler.get_engine") as mock_eng,
+            patch("config.scheduler.digest_jobs.get_engine") as mock_eng,
             patch("pathlib.Path.write_text") as mock_write,
             patch("pathlib.Path.mkdir") as mock_mkdir,
-            patch("config.scheduler.logger"),
+            patch("config.scheduler.digest_jobs.logger"),
         ):
             mock_digest.return_value = {
                 "deal_metrics": {"deal_count": 0, "avg_irr_pct": None},
@@ -75,9 +75,9 @@ class TestMonthlyCEOLogic:
         """Verify monthly letter doesn't crash when DB is unavailable."""
         with (
             patch("utils.performance_digest.PerformanceDigest.build") as mock_digest,
-            patch("config.scheduler.get_engine", side_effect=Exception("DB down")),
+            patch("config.scheduler.digest_jobs.get_engine", side_effect=Exception("DB down")),
             patch("pathlib.Path.write_text") as mock_write,
-            patch("config.scheduler.logger"),
+            patch("config.scheduler.digest_jobs.logger"),
         ):
             mock_digest.return_value = {
                 "deal_metrics": {"deal_count": 0, "avg_irr_pct": None},

@@ -56,11 +56,11 @@ def _write_digest(results: list, digest_type: str, date_str: str | None = None) 
         logger.warning(f"[ObsidianExport] Unknown digest type: {digest_type}")
         return ""
 
-    expected_type = tmpl["result_type"]
+    expected_type: type = tmpl["result_type"]  # type: ignore[assignment]
     for r in results:
         if not isinstance(r, expected_type):
             logger.warning(
-                f"[ObsidianExport] Expected {expected_type.__name__}, got {type(r).__name__} — skipping"
+                f"[ObsidianExport] Expected {expected_type.__name__}, got {type(r).__name__} — skipping"  # type: ignore[attr-defined]
             )
             return ""
 
@@ -82,7 +82,7 @@ def _write_digest(results: list, digest_type: str, date_str: str | None = None) 
     for r in results:
         lines.append(f"## {r.market}")
         lines.append("")
-        for label, fn in tmpl["fields"]:
+        for label, fn in tmpl["fields"]:  # type: ignore[attr-defined]
             lines.append(f"**{label}:** {fn(r)}")
         if tmpl["list_launches"]:
             for c in r.competitor_launches[:5]:

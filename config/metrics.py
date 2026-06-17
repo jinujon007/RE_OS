@@ -6,10 +6,12 @@ duplicate-registration errors during test collection when the same module
 is imported via multiple paths.
 """
 
+from typing import Sequence
+
 from prometheus_client import Counter, Histogram, REGISTRY as _R
 
 
-def _counter(name: str, doc: str, labels: tuple = ()) -> Counter:
+def _counter(name: str, doc: str, labels: Sequence[str] = ()) -> Counter:
     existing = _R._names_to_collectors.get(name)
     if existing is not None:
         return existing
@@ -19,7 +21,7 @@ def _counter(name: str, doc: str, labels: tuple = ()) -> Counter:
         return _R._names_to_collectors.get(name)
 
 
-def _histogram(name: str, doc: str, labels: tuple = (), buckets=None) -> Histogram:
+def _histogram(name: str, doc: str, labels: Sequence[str] = (), buckets=None) -> Histogram:
     existing = _R._names_to_collectors.get(name)
     if existing is not None:
         return existing
@@ -180,4 +182,16 @@ kaveri_deeds_spread_computations = _counter(
     "kaveri_deeds_spread_computations_total",
     "Total registered-vs-ask PSF spread computations",
     ["market", "status"],
+)
+
+parcel_enrichment_total = _counter(
+    "parcel_enrichment_total",
+    "Total parcel RTC enrichment attempts by market and result",
+    ["market", "result"],
+)
+
+parcel_parser_completeness = _counter(
+    "parcel_parser_completeness_bucket",
+    "Bhoomi RTCParser completeness score buckets by threshold",
+    ["threshold"],
 )

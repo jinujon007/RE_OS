@@ -181,8 +181,8 @@ class MarketSummaryTool(BaseTool):
             }
 
             inv = result.get("inventory", {})
-            mos = inv.get("months_of_supply")
-            label = inv.get("supply_label")
+            mos = inv.get("months_of_supply")  # type: ignore[attr-defined]
+            label = inv.get("supply_label")  # type: ignore[attr-defined]
             if mos is not None and label:
                 result["inventory_signal"] = f"Inventory signal: {mos} months ({label})"
 
@@ -509,7 +509,7 @@ class FeasibilityAnalystTool(BaseTool):
             fsi_r = calculate_fsi(land_area, zone, efficiency, market)
             lc_r = calc_land_cost(land_area, gv_psf, disc)
 
-            igr_info = {"igr_source": None, "igr_record_count": 0}
+            igr_info: dict = {"igr_source": None, "igr_record_count": 0}
             market_safe = (market or "").strip()
             if market_safe:
                 try:
@@ -522,7 +522,7 @@ class FeasibilityAnalystTool(BaseTool):
                         sell_psf = gdv_r.sell_psf
                         igr_info = {
                             "igr_source": gdv_r.igr_source,
-                            "igr_record_count": gdv_r.igr_record_count,
+                            "igr_record_count": int(gdv_r.igr_record_count),  # type: ignore[arg-type]
                         }
                         log_igr_lookup(
                             market_safe,

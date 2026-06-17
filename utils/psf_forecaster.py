@@ -133,7 +133,7 @@ class PSFForecaster:
 
             if len(raw_y) >= self._SMOOTH_THRESHOLD:
                 y = np.convolve(raw_y, [1 / 3, 1 / 3, 1 / 3], mode="valid")
-                x = np.arange(1, len(y) + 1, dtype=float)
+                x: np.ndarray = np.arange(1, len(y) + 1, dtype=float)
                 last_x = float(x[-1])
                 raw_used = raw_y  # keep raw for walk-forward
             else:
@@ -188,7 +188,7 @@ class PSFForecaster:
             if len(raw_used) >= self._MIN_OBS + self._WF_HOLDOUT:
                 errors = []
                 n = len(raw_used)
-                wf_x = np.arange(n, dtype=float)
+                wf_x: np.ndarray = np.arange(n, dtype=float)
                 for i in range(n - self._WF_HOLDOUT, n):
                     train_x = wf_x[:i]
                     train_y = raw_used[:i]

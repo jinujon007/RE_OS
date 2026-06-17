@@ -20,6 +20,8 @@ Risk Register:
 from datetime import datetime, timezone
 from loguru import logger
 
+from utils.developer_alias import DeveloperAliasResolver
+
 __all__ = ["CompetitiveIntelEngine"]
 
 _MARKET_JOIN = "LEFT JOIN micro_markets mm ON mm.id = rp.micro_market_id"
@@ -236,7 +238,7 @@ class CompetitiveIntelEngine:
         return [
             {
                 "project_name": str(r[0]) if r[0] else "",
-                "developer_name": str(r[1]) if r[1] else "",
+                "developer_name": DeveloperAliasResolver.canonical(str(r[1])) if r[1] else "",
                 "developer_grade": str(r[2]) if r[2] else "",
                 "market": str(r[3]) if r[3] else "",
                 "total_units": int(r[4]) if r[4] else 0,
@@ -253,7 +255,7 @@ class CompetitiveIntelEngine:
         return [
             {
                 "project_name": str(r[0]) if r[0] else "",
-                "developer_name": str(r[1]) if r[1] else "",
+                "developer_name": DeveloperAliasResolver.canonical(str(r[1])) if r[1] else "",
                 "market": str(r[2]) if r[2] else "",
                 "psf_before": float(r[3]) if r[3] else None,
                 "psf_now": float(r[4]) if r[4] else None,
@@ -281,7 +283,7 @@ class CompetitiveIntelEngine:
         return [
             {
                 "project_name": str(r[0]) if r[0] else "",
-                "developer_name": str(r[1]) if r[1] else "",
+                "developer_name": DeveloperAliasResolver.canonical(str(r[1])) if r[1] else "",
                 "developer_grade": str(r[2]) if r[2] else "",
                 "market": str(r[3]) if r[3] else "",
                 "absorption_pct": float(r[4]) if r[4] else 0.0,

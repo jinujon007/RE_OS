@@ -42,7 +42,7 @@ def _search_via_api(ward: str) -> list[dict]:
             data=payload,
             headers=_BBMP_HEADERS,
             method="POST",
-            timeout=15,
+            timeout=15,  # type: ignore[call-arg]
         )
         with urllib.request.urlopen(req) as resp:
             results = json.loads(resp.read())

@@ -213,6 +213,40 @@ re_os_llm_requests_total{provider="groq",tier="heavy",status="success"} 87
 re_os_active_agents 0
 ```
 
+### `GET /api/ops/kill-criteria` 🔑
+Returns automated kill-criteria audit for deed throughput, corridor accuracy, and decision journal.
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `as_of` | No | ISO date (YYYY-MM-DD) to evaluate criteria as-of. Defaults to today. Useful for testing future trigger scenarios. |
+
+Rate limit: 10/hour.
+
+```json
+{
+  "deed_throughput": {
+    "status": "OK",
+    "weeks_with_data": 4,
+    "avg_deeds_per_week": 15.0,
+    "verdict": "Avg 15.0 deeds/week over 4 weeks — above 10/week threshold."
+  },
+  "corridor_accuracy": {
+    "status": "INSUFFICIENT_DATA",
+    "verdict": "INSUFFICIENT_DATA",
+    "tau_proxy": null,
+    "notes": ["Only 1 corridor has registered deed data."]
+  },
+  "decision_journal": {
+    "status": "OK",
+    "entry_count": 2,
+    "last_entry_date": "2026-07-15",
+    "verdict": "2 entries logged. Last entry: 2026-07-15."
+  },
+  "overall": "OK",
+  "as_of": "2026-08-01T09:00:00+00:00"
+}
+```
+
 ---
 
 ## Error Responses

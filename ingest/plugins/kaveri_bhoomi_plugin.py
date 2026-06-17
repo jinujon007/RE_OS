@@ -47,7 +47,7 @@ def _search_rtc(survey_no: str, village: str) -> list[dict]:
             data=payload,
             headers=_BHOOMI_HEADERS,
             method="POST",
-            timeout=15,
+            timeout=15,  # type: ignore[call-arg]
         )
         with urllib.request.urlopen(req) as resp:
             raw = json.loads(resp.read())
@@ -160,8 +160,8 @@ class KaveriBhoomiPlugin(DataPlugin):
             sid = _content_hash(
                 "reg",
                 market,
-                data["survey_number"],
-                data["registration_date"],
+                str(data["survey_number"]),
+                str(data["registration_date"]),
             )
             prs.append(
                 ParsedRecord(

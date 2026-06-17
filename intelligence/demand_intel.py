@@ -108,6 +108,9 @@ class DemandSignals:
     # Set to "CALIBRATED" by demand_calibration.py once coefficient verified.
     calibration_status: str = "UNCALIBRATED"
 
+    # Sprint 101 — NRI demand signal (T-1197)
+    nri_score: float | None = None
+
     signals: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
@@ -245,6 +248,7 @@ class DemandIntel:
 
             self._load_gcc_signal(ds, mi)
             self._load_govt_pipeline_signal(ds, mi)
+            self._compute_nri_demand_score(ds, mi)
             self._compute_price_momentum(ds)
             self._compute_demand_signal(ds)
             self._compute_demand_score_v2(ds)
@@ -360,42 +364,49 @@ class DemandIntel:
         if row and row[0] is not None:
             ds.ticket_size_median_cr = round(float(row[0]), 2)
 
+    V5_WEIGHTS: dict[str, float] = {
+        "absorption": 0.27,
+        "kaveri": 0.162,
+        "listing": 0.108,
+        "config": 0.108,
+        "gcc": 0.117,
+        "infra": 0.135,
+        "nri": 0.10,
+    }
+
     def _compute_demand_score_v2(self, ds: DemandSignals):
-        """Composite demand score [0, 1] from up to 6 weighted factors.
+        """Composite demand score [0, 1] from up to 7 weighted factors.
 
-        V4 weights (Sprint 75 — GATE-75, 6 components):
-          absorption_pct_norm  × 0.30  (was 0.35)
-          kaveri_norm          × 0.18  (was 0.25)
-          listing_count_norm   × 0.12  (was 0.18)
-          config_balance       × 0.12  (was 0.07)
-          gcc_north_norm       × 0.13  (was 0.15)
-          infra_pipeline_norm  × 0.15  (NEW — govt/infra/policy pipeline)
-
-        gcc_north_norm is the leading indicator for corporate demand.
-        infra_pipeline_norm is the leading indicator for government-driven
-        demand. Rising infra + flat absorption = demand accumulating from
-        infrastructure-led development before listings reflect it.
+        V5 weights (Sprint 101 — T-1197, 7 components):
+          absorption_pct_norm  × 0.27  (was 0.30, -10% rebalance)
+          kaveri_norm          × 0.162 (was 0.18, -10%)
+          listing_count_norm   × 0.108 (was 0.12, -10%)
+          config_balance       × 0.108 (was 0.12, -10%)
+          gcc_north_norm       × 0.117 (was 0.13, -10%)
+          infra_pipeline_norm  × 0.135 (was 0.15, -10%)
+          nri_score            × 0.10  (NEW — NRI demand signal)
 
         Falls back to a clamped transform of v1 demand_score when no
-        v2/v3/v4 components are available: max(0, (v1 + 5) / 10, 1).
+        v2/v3/v4/v5 components are available: max(0, (v1 + 5) / 10, 1).
         """
         components: list[float] = []
         weights: list[float] = []
+        _W = self.V5_WEIGHTS
 
         if ds.absorption_pct is not None:
             components.append(min(ds.absorption_pct / 100.0, 1.0))
-            weights.append(0.30)
+            weights.append(_W["absorption"])
 
         if ds.kaveri_velocity_ratio is not None:
             components.append(
                 min(ds.kaveri_velocity_ratio / self._KAVERI_VELOCITY_CEILING, 1.0)
             )
-            weights.append(0.18)
+            weights.append(_W["kaveri"])
 
         if ds.listing_count_30d > 0:
             listing_norm = min(ds.listing_count_30d / 200.0, 1.0)
             components.append(listing_norm)
-            weights.append(0.12)
+            weights.append(_W["listing"])
 
         if ds.config_absorption:
             values = [v for v in ds.config_absorption.values() if v is not None]
@@ -406,17 +417,19 @@ class DemandIntel:
                 else:
                     balance = 1.0
                 components.append(max(0.0, min(balance, 1.0)))
-                weights.append(0.12)
+                weights.append(_W["config"])
 
-        # 5th component: GCC forward-looking pipeline (Sprint 67)
         if ds.gcc_north_norm is not None and ds.gcc_north_norm >= 0.0:
             components.append(min(ds.gcc_north_norm, 1.0))
-            weights.append(0.13)
+            weights.append(_W["gcc"])
 
-        # 6th component: Govt/Infra/Policy pipeline (Sprint 75 — GATE-75)
         if ds.infra_pipeline_norm is not None and ds.infra_pipeline_norm >= 0.0:
             components.append(min(ds.infra_pipeline_norm, 1.0))
-            weights.append(0.15)
+            weights.append(_W["infra"])
+
+        if ds.nri_score is not None and ds.nri_score >= 0.0:
+            components.append(min(ds.nri_score / 10.0, 1.0))
+            weights.append(_W["nri"])
 
         if components:
             total_weight = sum(weights)
@@ -803,6 +816,75 @@ class DemandIntel:
                 exc,
             )
             ds.infra_pipeline_norm = 0.5  # neutral fallback
+
+    @staticmethod
+    def _table_has_column(conn, table: str, column: str) -> bool:
+        from sqlalchemy import text
+        try:
+            row = conn.execute(
+                text("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = :t AND column_name = :c
+                """),
+                {"t": table, "c": column},
+            ).fetchone()
+            return row is not None
+        except Exception:
+            return False
+
+    def _compute_nri_demand_score(self, ds: DemandSignals, mi: dict):
+        """NRI demand proxy: news mentions + NRI buyer listings.
+
+        Proxy signals:
+        (1) news_articles with NRI mention + market name in last 90d — each article adds 0.5, max 5.0
+        (2) listings with buyer_type='nri' in market in last 90d — each adds 1.0, max 5.0
+        Returns sum of (1) and (2), capped at 10. Gracefully degrades if columns/tables missing.
+        """
+        try:
+            from utils.db import get_engine
+            from sqlalchemy import text
+
+            with get_engine().connect() as conn:
+                mkt_name = mi["name"]
+                news_count = conn.execute(
+                    text("""
+                        SELECT COUNT(*) FROM news_articles na
+                        JOIN micro_markets mm ON mm.id = na.micro_market_id
+                        WHERE mm.slug = :slug
+                          AND na.content ILIKE '%NRI%'
+                          AND na.published_at > NOW() - INTERVAL '90 days'
+                    """),
+                    {"slug": mi["slug"]},
+                ).scalar() or 0
+
+                listing_count = 0
+                if self._table_has_column(conn, "listings", "buyer_type"):
+                    listing_count = conn.execute(
+                        text("""
+                            SELECT COUNT(*) FROM listings l
+                            JOIN micro_markets mm ON mm.id = l.micro_market_id
+                            WHERE mm.slug = :slug
+                              AND l.buyer_type ILIKE '%nri%'
+                              AND l.last_seen_at > NOW() - INTERVAL '90 days'
+                        """),
+                        {"slug": mi["slug"]},
+                    ).scalar() or 0
+
+            news_score = min(news_count * 0.5, 5.0)
+            listing_score = min(listing_count * 1.0, 5.0)
+            total = news_score + listing_score
+            ds.nri_score = round(min(total, 10.0), 4)
+
+            if ds.nri_score and ds.nri_score > 0:
+                ds.signals.append(
+                    f"NRI demand signal: {ds.nri_score:.2f}"
+                    f" (news={news_count}, nri_listings={listing_count})"
+                )
+        except Exception as exc:
+            logger.debug(
+                "[DemandIntel] NRI signal failed for {}: {}", mi["name"], exc
+            )
+            ds.nri_score = 0.0
 
     def _compute_price_momentum(self, ds: DemandSignals):
         if ds.listing_trend_30d_pct is not None:

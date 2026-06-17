@@ -29,14 +29,9 @@ class TestBhoomiAutoSurvey:
         mock_engine.connect.return_value.__enter__.return_value = mock_conn
         mock_engine.begin.return_value.__enter__.return_value = mock_conn
 
-        with patch("config.scheduler.get_engine", return_value=mock_engine):
-            with patch("config.scheduler._bhoomi_already_ran", return_value=False):
-                with patch("config.scheduler._mark_bhoomi_ran"):
-                    with patch(
-                        "scrapers.bhoomi_scraper.fetch",
-                        return_value={"bhoomi_status": "unavailable"},
-                    ):
-                        run_bhoomi_auto_survey(market="Yelahanka")
+        with patch("config.scheduler.kaveri_jobs.get_engine", return_value=mock_engine):
+            with patch("config.scheduler.kaveri_jobs._bhoomi_already_ran", return_value=False):
+                run_bhoomi_auto_survey(market="Yelahanka")
 
         rera_calls = 0
         for call_args, _ in mock_conn.execute.call_args_list:
@@ -60,9 +55,9 @@ class TestBhoomiAutoSurvey:
         mock_engine.connect.return_value.__enter__.return_value = mock_conn
         mock_engine.begin.return_value.__enter__.return_value = mock_conn
 
-        with patch("config.scheduler.get_engine", return_value=mock_engine):
-            with patch("config.scheduler._bhoomi_already_ran", return_value=False):
-                with patch("config.scheduler._mark_bhoomi_ran"):
+        with patch("config.scheduler.kaveri_jobs.get_engine", return_value=mock_engine):
+            with patch("config.scheduler.kaveri_jobs._bhoomi_already_ran", return_value=False):
+                with patch("config.scheduler.kaveri_jobs._mark_bhoomi_ran"):
                     with patch(
                         "scrapers.bhoomi_scraper.fetch",
                         return_value={
@@ -110,9 +105,9 @@ class TestBhoomiAutoSurvey:
             bhoomi_call_count[0] += 1
             return bhoomi_results[idx]
 
-        with patch("config.scheduler.get_engine", return_value=mock_engine):
-            with patch("config.scheduler._bhoomi_already_ran", return_value=False):
-                with patch("config.scheduler._mark_bhoomi_ran"):
+        with patch("config.scheduler.kaveri_jobs.get_engine", return_value=mock_engine):
+            with patch("config.scheduler.kaveri_jobs._bhoomi_already_ran", return_value=False):
+                with patch("config.scheduler.kaveri_jobs._mark_bhoomi_ran"):
                     with patch(
                         "scrapers.bhoomi_scraper.fetch", side_effect=_mock_bhoomi_fetch
                     ):

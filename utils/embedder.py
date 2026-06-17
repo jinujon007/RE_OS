@@ -291,7 +291,7 @@ class _BaseChromaStore:
     def count(self) -> int:
         try:
             self._ensure_initialized()
-            return self._collection.count()
+            return self._collection.count()  # type: ignore[attr-defined]
         except Exception:
             return 0
 
@@ -372,13 +372,13 @@ class IntelEmbedder(_BaseChromaStore):
                 # Split on sentence boundaries (newline or period + space)
                 sentences = re.split(r"(?<=[.\n])\s+", text)
                 chunks = []
-                current = []
+                current: list = []
                 current_len = 0
                 for sent in sentences:
                     if current_len + len(sent) > _CHUNK_SIZE and current:
                         chunks.append(" ".join(current))
                         # Keep overlap sentences from the tail of current window
-                        overlap = []
+                        overlap: list = []
                         overlap_len = 0
                         for s in reversed(current):
                             if overlap_len + len(s) > _CHUNK_OVERLAP:
@@ -400,11 +400,11 @@ class IntelEmbedder(_BaseChromaStore):
                 for j, chunk in enumerate(chunks):
                     chunk_id = f"intel:{path.stem}:chunk{j}"
                     # Check per-document — avoids loading all IDs into memory
-                    existing = self._collection.get(ids=[chunk_id])
+                    existing = self._collection.get(ids=[chunk_id])  # type: ignore[attr-defined]
                     if existing["ids"]:
                         skipped += 1
                         continue
-                    self._collection.add(
+                    self._collection.add(  # type: ignore[attr-defined]
                         documents=[chunk],
                         ids=[chunk_id],
                         metadatas=[
@@ -427,7 +427,7 @@ class IntelEmbedder(_BaseChromaStore):
         _dur = time_module.time() - _start
         # Log ChromaDB collection size if available
         try:
-            coll_size = self._collection.count()
+            coll_size = self._collection.count()  # type: ignore[attr-defined]
             logger.info(
                 f"[Embedder] Intel index done — indexed={indexed} skipped={skipped} failed={failed} "
                 f"in {_dur:.1f}s | ChromaDB collection size: {coll_size}"
@@ -478,7 +478,7 @@ class IntelEmbedder(_BaseChromaStore):
                         )
                 except Exception:
                     continue
-        results.sort(key=lambda x: x["score"], reverse=True)
+        results.sort(key=lambda x: x["score"], reverse=True)  # type: ignore[arg-type, return-value]
         return results[:n]
 
     def search(
@@ -515,7 +515,7 @@ class IntelEmbedder(_BaseChromaStore):
 
         where = {"market": market} if market else None
         try:
-            count = self._collection.count()
+            count = self._collection.count()  # type: ignore[attr-defined]
             if count == 0:
                 keyword_results = self._keyword_search_fallback(
                     query, n=n, market=market
@@ -529,7 +529,7 @@ class IntelEmbedder(_BaseChromaStore):
                 _metrics["search_empty"] += 1
                 return []
             fetch_n = min(n * 3 if rerank else n, count)
-            results = self._collection.query(
+            results = self._collection.query(  # type: ignore[attr-defined]
                 query_texts=[query],
                 n_results=fetch_n,
                 where=where,
@@ -590,7 +590,7 @@ class MemoryEmbedder(_BaseChromaStore):
         """Upsert a single memory fact into the vector store."""
         try:
             self._ensure_initialized()
-            self._collection.upsert(
+            self._collection.upsert(  # type: ignore[attr-defined]
                 documents=[fact],
                 ids=[memory_id],
                 metadatas=[
@@ -626,10 +626,10 @@ class MemoryEmbedder(_BaseChromaStore):
 
         try:
             self._ensure_initialized()
-            count = self._collection.count()
+            count = self._collection.count()  # type: ignore[attr-defined]
             if count == 0:
                 return []
-            results = self._collection.query(
+            results = self._collection.query(  # type: ignore[attr-defined]
                 query_texts=[query],
                 n_results=min(n * 2, count),
                 where=where if where else None,

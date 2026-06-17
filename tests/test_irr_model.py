@@ -530,3 +530,52 @@ class TestDataclassContracts:
         assert isinstance(s.bull, IRRResult)
         assert isinstance(s.bear, IRRResult)
         assert isinstance(s.recommendation, str)
+
+
+class TestCashFlow:
+    def test_cashflow_month_zero_no_inflow(self):
+        from utils.irr_model import build_cash_flow
+        result = build_cash_flow(land_cost_cr=10.0, gdc_cr=25.0, construction_cost_cr=15.0,
+                                  loan_pct=0.5, months=36)
+        assert len(result.schedule) == 36
+        assert result.schedule[0].construction_outflow_cr > 0
+        assert result.schedule[0].cumulative_cash_position_cr < 0
+
+    def test_cashflow_brokerage_appears_at_month_6(self):
+        from utils.irr_model import build_cash_flow
+        result = build_cash_flow(land_cost_cr=10.0, gdc_cr=25.0, construction_cost_cr=15.0,
+                                  cp_brokerage_pct=0.013, months=36)
+        assert result.schedule[5].brokerage_charge_cr > 0
+        for i, row in enumerate(result.schedule):
+            if i != 5:
+                assert row.brokerage_charge_cr == 0.0, f"Brokerage at month {i+1} should be 0"
+
+    def test_cashflow_breakeven_month_detected(self):
+        from utils.irr_model import build_cash_flow
+        result = build_cash_flow(land_cost_cr=10.0, gdc_cr=50.0, construction_cost_cr=15.0,
+                                  loan_pct=0.5, months=36)
+        assert result.summary.breakeven_month is not None
+        assert result.summary.peak_negative_cr < 0
+        assert result.summary.roi_annualized_pct is not None
+
+    def test_cashflow_zero_inputs_no_crash(self):
+        from utils.irr_model import build_cash_flow
+        result = build_cash_flow(land_cost_cr=0, gdc_cr=0, construction_cost_cr=0)
+        assert len(result.schedule) == 36
+        assert result.summary.roi_annualized_pct == 0.0
+
+    def test_cashflow_single_month_no_division_by_zero(self):
+        from utils.irr_model import build_cash_flow
+        result = build_cash_flow(land_cost_cr=10.0, gdc_cr=50.0, construction_cost_cr=15.0, months=1)
+        assert len(result.schedule) == 1
+        assert result.summary.roi_annualized_pct is not None
+
+    def test_cashflow_dataclass_types(self):
+        from utils.irr_model import CashFlowProjection, MonthlyCashFlowRow, CashFlowSummary
+        sched = [MonthlyCashFlowRow(month=1, construction_outflow_cr=0.0, interest_payment_cr=0.0,
+                                     brokerage_charge_cr=0.0, sales_inflow_cr=0.0,
+                                     cumulative_cash_position_cr=0.0)]
+        summary = CashFlowSummary(peak_negative_cr=0.0, breakeven_month=None, roi_annualized_pct=0.0)
+        proj = CashFlowProjection(schedule=sched, summary=summary)
+        assert isinstance(proj, CashFlowProjection)
+        assert proj.schedule[0].month == 1

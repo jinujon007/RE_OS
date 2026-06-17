@@ -53,7 +53,7 @@ class BoardRoomEvaluator:
     def flag_low_coherence(
         self, questions: dict, responses: dict, threshold: float = 0.35
     ) -> list[str]:
-        flagged = []
+        flagged: list[str] = []
         if not questions or not responses:
             return flagged
         if not all(

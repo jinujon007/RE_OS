@@ -360,5 +360,14 @@ def _parse_bool_env(key: str, default: str) -> bool:
 SCHEDULER_ENABLE_ORG_SIM = _parse_bool_env("SCHEDULER_ENABLE_ORG_SIM", "false")
 SCHEDULER_DRY_RUN = _parse_bool_env("SCHEDULER_DRY_RUN", "false")
 
+# ── DEVELOPER ALIASES (Sprint 101 — T-1196) ──────────────────────────────────
+DEVELOPER_ALIASES: dict[str, list[str]] = {
+    "Brigade": ["Brigade Enterprises", "Brigade Group", "Brigade Realty",
+                "Brigade Properties", "Brigade Infra", "M/s Brigade"],
+    "Prestige": ["Prestige Estates", "Prestige Group", "Prestige Constructions",
+                 "Prestige Properties"],
+    "Sobha": ["Sobha Limited", "Sobha Developers", "Sobha Realty", "Sobha Ltd"],
+}
+
 # ── AGENT RUN STATUSES ────────────────────────────────────────────────────────
 AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]

@@ -45,7 +45,7 @@ def test_gate90_assertion_1_endpoint_exists():
             (None,),
         ]
     )
-    with patch("dashboard.app_fastapi._get_sa_engine", return_value=engine):
+    with patch("dashboard.routers.ops._get_sa_engine", return_value=engine):
         resp = client.get("/api/ops/v2-readiness")
     assert resp.status_code == 200
     data = resp.json()
@@ -63,7 +63,7 @@ def test_gate90_assertion_2_not_ready():
             (None,),
         ]
     )
-    with patch("dashboard.app_fastapi._get_sa_engine", return_value=engine):
+    with patch("dashboard.routers.ops._get_sa_engine", return_value=engine):
         resp = client.get("/api/ops/v2-readiness")
     data = resp.json()
     assert data["v2_ready"] is False
@@ -81,7 +81,7 @@ def test_gate90_assertion_3_ready():
             (45.3,),
         ]
     )
-    with patch("dashboard.app_fastapi._get_sa_engine", return_value=engine):
+    with patch("dashboard.routers.ops._get_sa_engine", return_value=engine):
         resp = client.get("/api/ops/v2-readiness")
     data = resp.json()
     assert data["v2_ready"] is True
