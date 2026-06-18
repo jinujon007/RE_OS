@@ -175,10 +175,7 @@ services:
         reservations:
           memory: 512M
     healthcheck:
-      # Two-stage check: (1) module importable (code is valid), (2) scheduler process alive
-      # via heartbeat table row (written every 30min by run_scheduler_heartbeat).
-      # Falls back to module import check if DB is unreachable (startup race).
-      test: ["CMD-SHELL", "python -c \"from config.scheduler import start_scheduler; print('module ok')\" 2>/dev/null && python -c \"from utils.db import get_engine; from sqlalchemy import text; r=get_engine().execute(text(\\\"SELECT 1 FROM agent_runs WHERE agent_name='scheduler_heartbeat' AND created_at > NOW()-INTERVAL '90 minutes' LIMIT 1\\\")).fetchone(); exit(0 if r else 1)\" 2>/dev/null || python -c \"from config.scheduler import start_scheduler; print('degraded')\""]
+      test: ["CMD-SHELL", "python config/healthcheck.py"]
       interval: 120s
       timeout: 15s
       retries: 3

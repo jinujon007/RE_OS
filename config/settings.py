@@ -4,6 +4,7 @@ All environment variables and constants in one place.
 """
 
 import os
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -339,13 +340,60 @@ GCC_TRACKED_EMPLOYERS: list[dict[str, str]] = [
     {"employer": "Micron", "hub": "Karle Tech Park"},
 ]
 
-# ── DATA FLOOR MARKETS (Sprint 89 — GATE-89) ─────────────────────────────────
+# ── DATA FLOOR MARKETS (Sprint 89 — GATE-89, auto-updated T-1290) ────────────
 # Minimum live (non-seed) RERA records per market before alerting via Discord.
-DATA_FLOOR_MARKETS: dict[str, int] = {
+# Used as fallback when DB is unreachable or count < 200.
+_DATA_FLOOR_FALLBACK: dict[str, int] = {
     "Yelahanka": 50,
     "Devanahalli": 100,
     "Hebbal": 200,
 }
+# Backward-compat alias for existing code that imports DATA_FLOOR_MARKETS directly.
+DATA_FLOOR_MARKETS: dict[str, int] = dict(_DATA_FLOOR_FALLBACK)
+
+# Module-level cache for get_data_floor()
+_data_floor_cache: dict[str, tuple[int, float]] = {}
+_data_floor_cache_ttl = 3600  # seconds
+
+
+def get_data_floor(market: str) -> int:
+    """Get minimum live RERA records floor for a market.
+
+    Tries live DB count first (exact market match, no wildcards).
+    If count >= 200, floor = 50% of count (auto-scales with data growth).
+    If count < 200 or DB unreachable: uses hardcoded fallback.
+    Caches result for 3600s in module-level dict.
+    NOT thread-safe by design — scheduler runs jobs sequentially.
+    """
+    now = time.time()
+    cached = _data_floor_cache.get(market)
+    if cached is not None and now - cached[1] < _data_floor_cache_ttl:
+        return cached[0]
+
+    try:
+        from sqlalchemy import text
+        from utils.db import get_engine
+
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT COUNT(*) FROM rera_projects rp
+                    JOIN micro_markets mm ON mm.id = rp.micro_market_id
+                    WHERE mm.name = :market
+                      AND rp.data_source != 'seed_estimated'
+                """),
+                {"market": market},
+            ).fetchone()
+        count = row[0] if row else 0
+        if count >= 200:
+            floor = int(count * 0.5)
+        else:
+            floor = _DATA_FLOOR_FALLBACK.get(market, 50)
+    except Exception:
+        floor = _DATA_FLOOR_FALLBACK.get(market, 50)
+
+    _data_floor_cache[market] = (floor, now)
+    return floor
 
 
 # ── SCHEDULER DIET (Sprint 91 — GATE-91) ─────────────────────────────────────
@@ -382,6 +430,12 @@ DEVELOPER_ALIASES: dict[str, list[str]] = {
     "Concorde": ["Concorde Group", "Concorde Developers", "Concorde Nirman",
                  "Concorde Properties"],
 }
+
+# ── SLO (GATE-119) ────────────────────────────────────────────────────────────
+SLO_SCHEDULER_TARGET = float(os.getenv("SLO_SCHEDULER_TARGET", "0.95"))
+SLO_SCHEDULER_BREACH_DAYS = max(1, int(os.getenv("SLO_SCHEDULER_BREACH_DAYS", "3")))
+SLO_SCHEDULER_WARN_DAYS = max(1, int(os.getenv("SLO_SCHEDULER_WARN_DAYS", "2")))
+SLO_BOARD_ROOM_P95_TARGET_S = max(1.0, float(os.getenv("SLO_BOARD_ROOM_P95_TARGET_S", "90.0")))
 
 # ── AGENT RUN STATUSES ────────────────────────────────────────────────────────
 AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]

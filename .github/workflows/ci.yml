@@ -76,6 +76,30 @@ jobs:
             --cov=agents --cov=config --cov=crews --cov=scrapers --cov=utils --cov=dashboard \
             --cov-report=term-missing --cov-report=xml --cov-fail-under=50
 
+      - name: Check no new skip/xfail without TRACK comment
+        # Gate: any new pytest.mark.skip / skipif / xfail line must carry a
+        # trailing ``# TRACK: <ticket-or-reason>`` comment.
+        # Falls back to HEAD~1 when origin/master is unavailable (shallow clone,
+        # detached HEAD, first commit).
+        run: |
+          BASE="origin/master"
+          if ! git rev-parse --verify "$BASE" &>/dev/null; then
+            BASE="HEAD~1"
+            echo "warning: $BASE not found — using HEAD~1 as diff base"
+          fi
+          VIOLS=$(git diff "$BASE" -- tests/ 2>/dev/null \
+            | grep '^+' \
+            | grep -E 'pytest\.mark\.(skip|xfail)' \
+            | grep -v '#\s*TRACK:' \
+            || true)
+          if [ -n "$VIOLS" ]; then
+            echo "FAIL: New pytest.mark.skip or pytest.mark.xfail without # TRACK: comment"
+            echo "Add a trailing comment:  # TRACK: <ticket-or-reason>"
+            echo "$VIOLS"
+            exit 1
+          fi
+          echo "No new untracked skips — clean"
+
       - name: Sprint 50 — HF Intelligence CI gate (finbert-tone + LegalDocQA)
         run: |
           echo "Running finbert-tone + LegalDocQA unit tests (mocked, no HF API)"
@@ -112,6 +136,52 @@ jobs:
             echo "BERTScore regression: latest=$LATEST < threshold=$THRESHOLD (previous=$PREV - 0.05)"
             exit 1
           fi
+
+  api-spec-drift:
+    name: API Spec Drift Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: lint
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install deps
+        run: |
+          pip install fastapi "slowapi>=0.1.9,<0.2.0" starlette \
+            prometheus-client sqlalchemy psycopg2-binary redis requests \
+            httpx pandas geoalchemy2 shapely jinja2 tenacity \
+            beautifulsoup4 lxml pyyaml pdfplumber python-dotenv
+
+      - name: Export live spec and diff against committed
+        shell: bash
+        run: |
+          set -euo pipefail
+          TMP_SPEC=$(mktemp)
+          python scripts/export_openapi.py --dry-run > "$TMP_SPEC"
+          # Strip x-generated-at from both files, then diff
+          python -c "
+import json, sys
+for path in sys.argv[1:]:
+    data = json.load(open(path))
+    data.pop('x-generated-at', None)
+    json.dump(data, open(path + '.stripped', 'w'), indent=2, sort_keys=True)
+" "$TMP_SPEC" docs/api-v1.json
+          if ! diff -q "$TMP_SPEC.stripped" docs/api-v1.json.stripped > /dev/null 2>&1; then
+            echo "::error::API spec drift detected — run 'make spec' and commit docs/api-v1.json"
+            diff "$TMP_SPEC.stripped" docs/api-v1.json.stripped || true
+            rm -f "$TMP_SPEC" "$TMP_SPEC.stripped" docs/api-v1.json.stripped
+            exit 1
+          fi
+          rm -f "$TMP_SPEC" "$TMP_SPEC.stripped" docs/api-v1.json.stripped
+          echo "API spec is in sync with committed docs/api-v1.json"
 
   secrets-scan:
     name: Secrets Scan

@@ -274,3 +274,10 @@ dead_letter_retry_total = _counter(
     "Dead letter queue retry attempts by entity_type and result",
     ["entity_type", "result"],
 )
+
+# ── Sprint 115 — Redis connectivity gauge (R1.16) ──────────────────────────
+
+redis_connected = _gauge(
+    "redis_connected",
+    "1 if Redis client is connected and pingable, 0 if unavailable or disconnected",
+)

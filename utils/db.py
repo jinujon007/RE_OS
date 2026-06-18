@@ -1,6 +1,8 @@
 """Shared SQLAlchemy engine factory for RE_OS."""
 
+import logging
 import threading
+import time as _time_mod
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, event, text
@@ -9,6 +11,8 @@ from config.settings import DATABASE_URL
 
 _engine = None
 _lock = threading.Lock()
+_pool_exhaustion_lock = threading.Lock()
+_pool_is_exhausted = False
 
 # ── DB connection pool Prometheus gauges (T-1248) ────────────────────────────
 # Metrics updated via pool event listeners — no polling, no health endpoint
@@ -35,12 +39,48 @@ def _wire_pool_metrics(engine_ref):
         def _pool_checkout(dbapi_con, con_record, con_proxy):
             db_pool_checkedout.set(engine_ref.pool.checkedout())
             db_pool_overflow.set(engine_ref.pool.overflow())
+            _check_pool_exhaustion(engine_ref)
 
         @event.listens_for(engine_ref.pool, "checkin")
         def _pool_checkin(dbapi_con, con_record):
             db_pool_checkedout.set(engine_ref.pool.checkedout())
     except Exception:
         pass
+
+
+def _check_pool_exhaustion(engine_ref):
+    """T-1263: Fire Discord alert when pool is fully saturated.
+
+    Uses AlertSuppressor for dedup (4-hour cooldown consistent with other alerts).
+    _pool_is_exhausted flag prevents redundant work while already suppressed (R1.7).
+    _pool_exhaustion_lock protects state transitions (R1.8).
+    """
+    global _pool_is_exhausted
+    if _pool_is_exhausted:
+        return
+    pool = engine_ref.pool
+    max_connections = pool.size() + pool.overflow()
+    checked_out = pool.checkedout()
+    if checked_out >= max_connections and max_connections > 0:
+        with _pool_exhaustion_lock:
+            if _pool_is_exhausted:
+                return
+            try:
+                from utils.discord_notifier import AlertSuppressor, send_ops_alert
+                if not AlertSuppressor.suppress("db_pool_exhausted", cooldown_hours=4):
+                    send_ops_alert(
+                        "db_pool_exhausted",
+                        f"DB connection pool exhausted — {checked_out}/{max_connections} checked out. "
+                        f"Consider increasing pool_size or reducing concurrent requests.",
+                    )
+                _pool_is_exhausted = True
+            except Exception:
+                logging.getLogger("re_os.db").warning(
+                    "Pool exhausted (%d/%d) but Discord alert failed",
+                    checked_out, max_connections,
+                )
+    else:
+        _pool_is_exhausted = False
 
 
 def _patch_pool_wait_time(pool):

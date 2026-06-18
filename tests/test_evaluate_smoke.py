@@ -33,7 +33,7 @@ def test_evaluate_pipeline_importable():
 
 @pytest.mark.test_id("G87-EV3")
 @pytest.mark.integration
-@pytest.mark.skipif(
+@pytest.mark.skipif(  # TRACK: Requires live database + LLM providers
     "not os.environ.get('DATABASE_URL') or not os.environ.get('DB_PASSWORD')",
     reason="Requires live database + LLM providers (DATABASE_URL + DB_PASSWORD in env)",
 )

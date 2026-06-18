@@ -111,6 +111,67 @@ def run_memory_decay():
     logger.info(f"[Scheduler] Memory decay: {n} rows deleted")
 
 
+def run_confidence_decay_check():
+    """Weekly confidence decay validation — Monday 04:00 UTC (T-1289).
+
+    Runs after run_memory_decay() (03:00 UTC). Queries agent_memories for
+    records updated in the last 7 days with confidence < 1.0.
+    If count = 0, sends Discord alert (169h ≈ 7-day + 1h suppression).
+
+    Grace period: skips alerting in the first week after deployment
+    (checks agent_runs for any prior memory_decay execution).
+    """
+    from utils.discord_notifier import send_ops_alert
+
+    try:
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT COUNT(*) FROM agent_memories
+                    WHERE updated_at > NOW() - INTERVAL '7 days'
+                      AND confidence < 1.0
+                """)
+            ).fetchone()
+        count = row[0] if row else 0
+    except Exception as exc:
+        logger.warning("[Scheduler] Confidence decay check DB error: {}", exc)
+        return
+
+    if count == 0:
+        # Grace period: check if memory_decay has ever run
+        try:
+            with get_engine().connect() as conn:
+                decay_row = conn.execute(
+                    text("""
+                        SELECT COUNT(*) FROM agent_runs
+                        WHERE agent_name = 'memory_decay'
+                    """)
+                ).fetchone()
+            has_ever_run = (decay_row and decay_row[0] > 0)
+        except Exception:
+            has_ever_run = True  # fail open: alert rather than silently skip
+
+        if not has_ever_run:
+            logger.info(
+                "[Scheduler] Confidence decay check: memory_decay never ran — "
+                "grace period active, skipping alert"
+            )
+            return
+
+        title = "CONFIDENCE_DECAY_STALLED"
+        # 169h ≈ 7-day interval + 1h margin to prevent race between run and cooldown expiry
+        if _ops_already_alerted(title, cooldown_hours=169):
+            logger.info("[Scheduler] Confidence decay alert already sent this week — suppressing")
+            return
+        send_ops_alert(
+            title,
+            "Confidence decay not running — 0 memory records updated this week. Check scheduler.",
+        )
+        logger.warning("[Scheduler] Confidence decay check ALERT — 0 records decayed")
+    else:
+        logger.info("[Scheduler] Confidence decay healthy — {} records decayed this week", count)
+
+
 def run_seed_staleness_check():
     """Check seed data staleness and remove stale seeds where live data sufficient.
     Runs at 06:05 IST, 5 min after market snapshot.
@@ -350,21 +411,23 @@ def run_data_floor_check():
 
     Dual responsibility:
     1. Alerts Discord via send_ops_alert if any market's live RERA count
-       drops below its configured floor.
+       drops below its configured floor (auto-computed via get_data_floor()).
     2. Checks scheduler heartbeat staleness — alerts if last heartbeat >2h old
        (silent scheduler death detection).
 
     Logs combined outcome to agent_runs.
     """
-    from config.settings import DATA_FLOOR_MARKETS
+    from config.settings import get_data_floor, TARGET_MARKETS
     from utils.data_quality_monitor import check_live_data_floor
 
     logger.info("[Scheduler] Data floor + heartbeat check starting")
 
     # Data floor check per market
     all_ok = True
-    for market, floor in DATA_FLOOR_MARKETS.items():
+    markets = TARGET_MARKETS
+    for market in markets:
         try:
+            floor = get_data_floor(market)
             ok = check_live_data_floor(market, floor=floor)
             if ok:
                 logger.info("[Scheduler] Data floor {}: OK (floor={})", market, floor)
@@ -398,7 +461,7 @@ def run_data_floor_check():
                 """),
                 {
                     "status": "success" if all_ok else "warning",
-                    "notes": f"checked {len(DATA_FLOOR_MARKETS)} markets + heartbeat; all_ok={all_ok}",
+                    "notes": f"checked {len(markets)} markets + heartbeat; all_ok={all_ok}",
                 },
             )
     except Exception as exc:
@@ -488,6 +551,23 @@ def run_kill_criteria_check():
     send_ops_alert("KILL_CRITERIA_AUDIT", msg)
 
 
+def run_data_floor_refresh():
+    """Monthly data floor cache refresh — 1st of month 05:00 UTC (T-1290).
+
+    Clears the module-level cache in config.settings so get_data_floor()
+    recomputes from live DB counts on next call.
+
+    Uses lazy `import config.settings as _settings` instead of a top-level
+    import to avoid circular imports (settings imports scheduler helpers).
+    """
+    try:
+        import config.settings as _settings
+        _settings._data_floor_cache.clear()
+        logger.info("[Scheduler] Data floor cache cleared — will recompute on next check")
+    except Exception as exc:
+        logger.warning("[Scheduler] Data floor refresh failed: {}", exc)
+
+
 def run_chromadb_maintenance():
     """Quarterly ChromaDB maintenance — purge stale embeddings >90 days (T-1247).
 
@@ -540,6 +620,84 @@ def run_failed_record_retry():
         logger.warning("[Scheduler] Dead letter retry failed: {}", exc)
 
 
+def run_dlq_purge():
+    """Weekly DLQ purge — delete permanently failed records older than 30 days (GATE-117, T-1273).
+
+    Runs via scheduler Sunday 02:00 UTC. Discord alert if deleted > 100.
+    """
+    try:
+        from utils.dead_letter_queue import purge_old_records
+
+        deleted = purge_old_records(max_age_days=30)
+        logger.info("[Scheduler] DLQ purge: {} records deleted", deleted)
+    except Exception as exc:
+        logger.warning("[Scheduler] DLQ purge failed: {}", exc)
+
+
+def run_corridor_backtest_weekly():
+    """Weekly corridor backtest — Monday 03:00 UTC (GATE-116, T-1269).
+
+    Runs backtest for all seeded corridors. Alerts Discord if any corridor's
+    verdict changes from PASS to FAIL or INSUFFICIENT_DATA to FAIL.
+    """
+    from scripts.run_corridor_backtest import run_backtest
+    from utils.discord_notifier import send
+
+    engine = get_engine()
+    prev_verdicts: dict[str, str] = {}
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT DISTINCT ON (corridor_name) corridor_name, verdict
+                FROM corridor_backtest_verdicts
+                ORDER BY corridor_name, created_at DESC
+            """)).fetchall()
+            prev_verdicts = {str(r[0]): str(r[1]) for r in rows if r[1]}
+    except Exception as exc:
+        logger.warning("[CorridorBacktest] Could not load previous verdicts: {}", exc)
+
+    try:
+        results = run_backtest()
+    except Exception as exc:
+        logger.error("[CorridorBacktest] Backtest run failed: {}", exc)
+        return
+
+    alerts: list[str] = []
+    for r in results:
+        name = r["corridor_name"]
+        try:
+            with engine.connect() as conn:
+                row = conn.execute(text("""
+                    SELECT verdict FROM corridor_backtest_verdicts
+                    WHERE corridor_name = :name
+                    ORDER BY created_at DESC LIMIT 1
+                """), {"name": name}).fetchone()
+            current_verdict = str(row[0]) if row else None
+        except Exception:
+            current_verdict = None
+
+        if current_verdict == "FAIL":
+            prev = prev_verdicts.get(name)
+            if prev and prev != "FAIL":
+                alerts.append(
+                    f"\u26a0\ufe0f Corridor '{name}' verdict changed: {prev} \u2192 FAIL"
+                )
+        elif current_verdict == "PASS":
+            prev = prev_verdicts.get(name)
+            if prev == "FAIL":
+                alerts.append(
+                    f"\u2705 Corridor '{name}' recovered: FAIL \u2192 PASS"
+                )
+
+    if alerts:
+        msg = "\n".join(alerts)
+        try:
+            send("ops", "\u26a0\ufe0f Corridor Backtest Verdict Change", msg)
+            logger.info("[CorridorBacktest] Discord alert sent for verdict changes")
+        except Exception as exc:
+            logger.warning("[CorridorBacktest] Failed to send Discord alert: {}", exc)
+
+
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
     """Register maintenance-related scheduler jobs."""
     from apscheduler.triggers.cron import CronTrigger
@@ -550,6 +708,14 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         CronTrigger(day_of_week="mon", hour=3, minute=0, timezone="UTC"),
         id="memory_decay",
         name="Weekly Agent Memory Decay",
+        misfire_grace_time=3600,
+    )
+    # Weekly confidence decay validation — Monday 04:00 UTC (T-1289)
+    scheduler.add_job(
+        lambda: safe_job(run_confidence_decay_check, "confidence_decay_check"),
+        CronTrigger(day_of_week="mon", hour=4, minute=0, timezone="UTC"),
+        id="confidence_decay_check",
+        name="Weekly Confidence Decay Validation (alerts if 0 records decayed)",
         misfire_grace_time=3600,
     )
     # Seed staleness check at 6:05 AM IST (5 min after market snapshot)
@@ -679,6 +845,30 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         id="failed_record_retry",
         name="Daily Dead Letter Queue Retry (re-attempt failed upserts)",
         misfire_grace_time=3600,
+    )
+    # Weekly DLQ purge — Sunday 02:00 UTC (GATE-117, T-1273)
+    scheduler.add_job(
+        lambda: safe_job(run_dlq_purge, "dlq_purge"),
+        CronTrigger(day_of_week="sun", hour=2, minute=0, timezone="UTC"),
+        id="dlq_purge",
+        name="Weekly DLQ Purge (delete permanently failed records >30d old)",
+        misfire_grace_time=7200,
+    )
+    # Weekly corridor backtest — Monday 03:00 UTC = 08:30 IST (GATE-116, T-1269)
+    scheduler.add_job(
+        lambda: safe_job(run_corridor_backtest_weekly, "corridor_backtest_weekly"),
+        CronTrigger(day_of_week="mon", hour=3, minute=0, timezone="UTC"),
+        id="corridor_backtest_weekly",
+        name="Weekly Corridor Backtest (score vs distance rank correlation)",
+        misfire_grace_time=7200,
+    )
+    # Monthly data floor cache refresh — 1st of month 05:00 UTC (T-1290)
+    scheduler.add_job(
+        lambda: safe_job(run_data_floor_refresh, "data_floor_refresh"),
+        CronTrigger(day=1, hour=5, minute=0, timezone="UTC"),
+        id="data_floor_refresh",
+        name="Monthly Data Floor Cache Refresh (recompute from live DB)",
+        misfire_grace_time=7200,
     )
     # Quarterly ChromaDB maintenance — every 90 days at 01:00 UTC (T-1247)
     # Grace period = 7 days: if scheduler is down for up to a week, the

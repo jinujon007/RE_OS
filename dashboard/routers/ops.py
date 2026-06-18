@@ -1699,6 +1699,89 @@ def _compute_v2_readiness(conn) -> V2ReadinessResponse:
     )
 
 
+# ── SLO ──────────────────────────────────────────────────────────────────
+
+
+class SLOMetricsResponse(BaseModel):
+    scheduler_success_rate: float
+    scheduler_target: float
+    scheduler_ok: bool
+    board_room_p95_s: float | None = None
+    board_room_target_s: float
+    board_room_ok: bool | None = None
+    window_days: int = 7
+    computed_at: str
+
+
+# Prometheus gauges for SLO values (scraped by re_os_prometheus)
+from config.metrics import _gauge as _slo_gauge
+
+_slo_scheduler_rate_gauge = _slo_gauge(
+    "slo_scheduler_success_rate",
+    "Scheduler success rate over 7d rolling window [0.0, 1.0]",
+)
+_slo_board_p95_gauge = _slo_gauge(
+    "slo_board_room_p95_s",
+    "Board Room p95 response time in seconds over 7d rolling window",
+)
+
+
+def _compute_slo_metrics(conn) -> SLOMetricsResponse:
+    from config.settings import (
+        SLO_SCHEDULER_TARGET,
+        SLO_BOARD_ROOM_P95_TARGET_S,
+    )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with db_query_duration_seconds.labels(query_name="slo_scheduler_rate").time():
+        rate_row = conn.execute(
+            _sa_text("""
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successes
+                FROM agent_runs
+                WHERE created_at > NOW() - INTERVAL '7 days'
+            """)
+        ).fetchone()
+        total_runs = rate_row[0] if rate_row else 0
+        successes = rate_row[1] if rate_row else 0
+        scheduler_success_rate = round(successes / total_runs, 4) if total_runs > 0 else 0.0
+    with db_query_duration_seconds.labels(query_name="slo_board_p95").time():
+        p95_row = conn.execute(
+            _sa_text("""
+                SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY response_time_s)
+                FROM board_sessions
+                WHERE response_time_s IS NOT NULL
+                  AND created_at > NOW() - INTERVAL '7 days'
+            """)
+        ).fetchone()
+        board_room_p95_s = round(float(p95_row[0]), 2) if p95_row and p95_row[0] is not None else None
+    # Update Prometheus gauges for Grafana visibility
+    _slo_scheduler_rate_gauge.set(scheduler_success_rate)
+    _slo_board_p95_gauge.set(board_room_p95_s if board_room_p95_s is not None else -1.0)
+    scheduler_ok = scheduler_success_rate >= SLO_SCHEDULER_TARGET
+    board_room_ok = board_room_p95_s is not None and board_room_p95_s < SLO_BOARD_ROOM_P95_TARGET_S
+    return SLOMetricsResponse(
+        scheduler_success_rate=scheduler_success_rate,
+        scheduler_target=SLO_SCHEDULER_TARGET,
+        scheduler_ok=scheduler_ok,
+        board_room_p95_s=board_room_p95_s,
+        board_room_target_s=SLO_BOARD_ROOM_P95_TARGET_S,
+        board_room_ok=board_room_ok,
+        computed_at=now_iso,
+    )
+
+
+@router.get("/ops/slo", response_model=SLOMetricsResponse, summary="Live SLO measurement")
+@limiter.limit("60/hour")
+async def ops_slo(request: Request):
+    try:
+        with _get_sa_engine().connect() as conn:
+            return _compute_slo_metrics(conn)
+    except Exception as exc:
+        logger.error("[ops_slo] %s", exc)
+        return _err_resp(str(exc), request, 500, "Ops")
+
+
 @router.get("/ops/v2-readiness", response_model=V2ReadinessResponse, summary="V2.0 readiness check")
 @limiter.limit("60/hour")
 async def v2_readiness(request: Request):
@@ -1874,77 +1957,266 @@ async def audit_log(request: Request, limit: int = Query(default=50, ge=1, le=20
         return {"entries": [], "count": 0}
 
 
-# ── Kill Criteria Checkpoint (GATE-102) ─────────────────────────────────────
+# ── Kill Criteria Dashboard (GATE-118, T-1277) ─────────────────────────────
 
 
-class DeedThroughputResponse(BaseModel):
-    status: str
-    weeks_with_data: int
-    avg_deeds_per_week: float
-    verdict: str
+class KillCriteriaDeedThroughput(BaseModel):
+    weekly_avg_deeds: float = 0.0
+    weeks_measured: int = 0
+    target: int = 50
+    on_track: bool = False
 
 
-class CorridorAccuracyResponse(BaseModel):
-    status: str
-    verdict: str
-    tau_proxy: float | None = None
-    notes: list[str] = []
+class KillCriteriaLedger(BaseModel):
+    hit_rate: float = 0.0
+    total_verdicts: int = 0
+    target_hit_rate: float = 0.6
 
 
-class DecisionJournalResponse(BaseModel):
-    status: str
-    entry_count: int
-    last_entry_date: str | None = None
-    verdict: str
+class KillCriteriaCorridorItem(BaseModel):
+    name: str
+    verdict: str = "INSUFFICIENT_DATA"
 
 
-class KillCriteriaResponse(BaseModel):
-    deed_throughput: DeedThroughputResponse
-    corridor_accuracy: CorridorAccuracyResponse
-    decision_journal: DecisionJournalResponse
-    overall: str
-    as_of: str
+class KillCriteriaCorridor(BaseModel):
+    corridors: list[KillCriteriaCorridorItem] = []
+
+
+class KillCriteriaDeadlines(BaseModel):
+    deed_throughput: str = "2026-08-15"
+    days_remaining: int = 0
+    decision_journal: str = "2026-12-31"
+    dj_days_remaining: int = 0
+
+
+class NewKillCriteriaResponse(BaseModel):
+    deed_throughput: KillCriteriaDeedThroughput
+    ledger: KillCriteriaLedger
+    corridor: KillCriteriaCorridor
+    deadlines: KillCriteriaDeadlines
+    decision_journal_entries: int = 0
 
 
 @router.get(
     "/ops/kill-criteria",
-    response_model=KillCriteriaResponse,
-    summary="Automated kill-criteria audit (deed throughput, corridor accuracy, decision journal)",
+    response_model=NewKillCriteriaResponse,
+    summary="Kill criteria dashboard (deed throughput, ledger hit-rate, corridor verdicts, deadlines)",
 )
 @limiter.limit("10/hour")
-async def kill_criteria(
-    request: Request,
-    as_of: str | None = Query(
-        default=None,
-        description="ISO date to evaluate criteria as-of (default: today). "
-        "Useful for testing future trigger scenarios, e.g. 2026-12-01.",
-    ),
-):
-    from utils.kill_criteria import KillCriteriaAuditor
-
+async def kill_criteria(request: Request):
     try:
-        parsed_as_of: date | None = None
-        if as_of:
-            parsed_as_of = datetime.strptime(as_of, "%Y-%m-%d").date()
+        with _get_sa_engine().connect() as conn:
+            deed_row = conn.execute(_sa_text("""
+                SELECT
+                    COUNT(*)::float / NULLIF(EXTRACT(WEEK FROM NOW()) - EXTRACT(WEEK FROM MIN(created_at)), 0) AS weekly_avg,
+                    COUNT(*)::int AS total_deeds,
+                    EXTRACT(WEEK FROM NOW())::int - EXTRACT(WEEK FROM MIN(created_at))::int AS weeks
+                FROM registered_transactions WHERE deed_type = 'Sale'
+            """)).fetchone()
+            weekly_avg = round(float(deed_row[0]), 1) if deed_row and deed_row[0] else 0.0
+            weeks_measured = int(deed_row[2]) if deed_row and deed_row[2] else 0
 
-        auditor = KillCriteriaAuditor()
-        deed = auditor.check_deed_throughput(as_of=parsed_as_of)
-        corridor = auditor.check_corridor_accuracy()
-        journal = auditor.check_decision_journal()
+            hit = conn.execute(_sa_text("SELECT COUNT(*) FROM prediction_ledger WHERE verdict = 'hit'")).scalar() or 0
+            miss = conn.execute(_sa_text("SELECT COUNT(*) FROM prediction_ledger WHERE verdict = 'miss'")).scalar() or 0
+            total_verdicts = hit + miss
+            hit_rate = round(hit / max(total_verdicts, 1), 4)
 
-        overall = KillCriteriaAuditor.compute_overall([deed, corridor, journal])
+            corridor_rows = conn.execute(_sa_text("""
+                SELECT DISTINCT ON (corridor_name) corridor_name, verdict
+                FROM corridor_backtest_verdicts
+                ORDER BY corridor_name, created_at DESC
+            """)).fetchall()
+            corridor_map = {str(r[0]): str(r[1]) for r in corridor_rows}
+            from utils.corridor_scorer_v2 import _CORRIDOR_SEEDS
+            _KNOWN_CORRIDOR_NAMES = [s.corridor_id for s in _CORRIDOR_SEEDS]
+            _corridor_verdicts = [
+                KillCriteriaCorridorItem(
+                    name=name,
+                    verdict=corridor_map.get(name, "INSUFFICIENT_DATA"),
+                )
+                for name in _KNOWN_CORRIDOR_NAMES
+            ]
 
-        return KillCriteriaResponse(
-            deed_throughput=DeedThroughputResponse(**deed),
-            corridor_accuracy=CorridorAccuracyResponse(**corridor),
-            decision_journal=DecisionJournalResponse(**journal),
-            overall=overall,
-            as_of=datetime.now(timezone.utc).isoformat(),
+            try:
+                dj_count = conn.execute(_sa_text("SELECT COUNT(*) FROM decision_journal")).scalar() or 0
+            except Exception as _dj_exc:
+                _dj_str = str(_dj_exc)
+                if "relation" in _dj_str and "does not exist" in _dj_str:
+                    dj_count = 0
+                else:
+                    raise
+
+        today = date.today()
+        deed_deadline = date(2026, 8, 15)
+        dj_deadline = date(2026, 12, 31)
+
+        data = NewKillCriteriaResponse(
+            deed_throughput=KillCriteriaDeedThroughput(
+                weekly_avg_deeds=weekly_avg,
+                weeks_measured=weeks_measured,
+                target=50,
+                on_track=weekly_avg >= 50,
+            ),
+            ledger=KillCriteriaLedger(
+                hit_rate=hit_rate,
+                total_verdicts=total_verdicts,
+                target_hit_rate=0.6,
+            ),
+            corridor=KillCriteriaCorridor(corridors=_corridor_verdicts),
+            deadlines=KillCriteriaDeadlines(
+                deed_throughput="2026-08-15",
+                days_remaining=(deed_deadline - today).days,
+                decision_journal="2026-12-31",
+                dj_days_remaining=(dj_deadline - today).days,
+            ),
+            decision_journal_entries=dj_count,
         )
-    except ValueError as exc:
-        return _err_resp(f"Invalid as_of format (use YYYY-MM-DD): {exc}", request, 400, "Ops")
+        etag = compute_etag(data.model_dump())
+        _check = check_etag(request, etag)
+        if _check:
+            return _check
+        return JSONResponse(content=data.model_dump(), headers={"ETag": f'"{etag}"'})
     except Exception as exc:
         logger.error("[kill_criteria] %s", exc)
+        return _err_resp(str(exc), request, 500, "Ops")
+
+
+# ── Decision Journal (GATE-118, T-1280) ─────────────────────────────────────
+# Decision type/outcome values MUST match CHECK constraints in
+# alembic/versions/0067_decision_journal.py — update both in sync.
+
+_DECISION_TYPES = frozenset({"land_acquisition", "pricing", "jv_jd_target", "market_exit", "product_decision"})
+_DECISION_OUTCOMES = frozenset({"acted", "deferred", "rejected"})
+
+
+class DecisionJournalEntry(BaseModel):
+    entry_date: date
+    decision_type: str
+    market: str | None = None
+    intel_used: str | None = None
+    outcome: str | None = None
+    notes: str | None = None
+
+
+class DecisionJournalCreateResponse(BaseModel):
+    id: int
+    created_at: str
+
+
+class DecisionJournalItem(BaseModel):
+    id: int
+    entry_date: str | None = None
+    decision_type: str
+    market: str | None = None
+    intel_used: str | None = None
+    outcome: str | None = None
+    notes: str | None = None
+    created_at: str | None = None
+
+
+class DecisionJournalGetResponse(BaseModel):
+    total: int
+    entries: list[DecisionJournalItem]
+
+
+@router.post(
+    "/ops/decision-journal",
+    response_model=DecisionJournalCreateResponse,
+    summary="Record a decision journal entry",
+    status_code=201,
+)
+@limiter.limit("30/minute")
+async def create_decision_journal(body: DecisionJournalEntry, request: Request):
+    from dashboard.state import _has_role
+    if not _has_role(request.state.role, "admin"):
+        return _err_resp("insufficient_role — admin required", request, 403, "Ops")
+    if body.decision_type not in _DECISION_TYPES:
+        return _err_resp(f"invalid decision_type: {body.decision_type}", request, 422, "Ops")
+    if body.outcome is not None and body.outcome not in _DECISION_OUTCOMES:
+        return _err_resp(f"invalid outcome: {body.outcome}", request, 422, "Ops")
+    try:
+        with _get_sa_engine().begin() as conn:
+            row = conn.execute(
+                _sa_text("""
+                    INSERT INTO decision_journal (entry_date, decision_type, market, intel_used, outcome, notes)
+                    VALUES (:entry_date, :decision_type, :market, :intel_used, :outcome, :notes)
+                    RETURNING id, created_at
+                """),
+                {
+                    "entry_date": body.entry_date.isoformat(),
+                    "decision_type": body.decision_type,
+                    "market": body.market,
+                    "intel_used": body.intel_used,
+                    "outcome": body.outcome,
+                    "notes": body.notes,
+                },
+            ).fetchone()
+        return DecisionJournalCreateResponse(
+            id=int(row[0]),
+            created_at=row[1].isoformat() if row[1] else "",
+        )
+    except Exception as exc:
+        logger.error("[create_decision_journal] %s", exc)
+        return _err_resp(str(exc), request, 500, "Ops")
+
+
+@router.get(
+    "/ops/decision-journal",
+    response_model=DecisionJournalGetResponse,
+    summary="List decision journal entries, paginated",
+)
+@limiter.limit("60/minute")
+async def list_decision_journal(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    market: str | None = Query(default=None, description="Filter by market (case-insensitive)"),
+    decision_type: str | None = Query(default=None, description="Filter by decision type"),
+):
+    try:
+        with _get_sa_engine().connect() as conn:
+            where_clauses: list[str] = []
+            params: dict[str, object] = {"lim": limit, "off": offset}
+            if market:
+                where_clauses.append("market ILIKE :mkt")
+                params["mkt"] = f"%{market}%"
+            if decision_type:
+                if decision_type not in _DECISION_TYPES:
+                    return _err_resp(f"invalid decision_type filter: {decision_type}", request, 422, "Ops")
+                where_clauses.append("decision_type = :dt")
+                params["dt"] = decision_type
+            where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+            count_params = {k: v for k, v in params.items() if k not in ("lim", "off")}
+            total = conn.execute(
+                _sa_text(f"SELECT COUNT(*) FROM decision_journal{where_sql}"), count_params
+            ).scalar() or 0
+            rows = conn.execute(
+                _sa_text(f"""
+                    SELECT id, entry_date, decision_type, market, intel_used, outcome, notes, created_at
+                    FROM decision_journal{where_sql}
+                    ORDER BY entry_date DESC, id DESC
+                    LIMIT :lim OFFSET :off
+                """),
+                params,
+            ).fetchall()
+        return DecisionJournalGetResponse(
+            total=total,
+            entries=[
+                DecisionJournalItem(
+                    id=int(r[0]),
+                    entry_date=r[1].isoformat() if r[1] else None,
+                    decision_type=r[2] or "",
+                    market=r[3],
+                    intel_used=r[4],
+                    outcome=r[5],
+                    notes=r[6],
+                    created_at=r[7].isoformat() if r[7] else None,
+                )
+                for r in rows
+            ],
+        )
+    except Exception as exc:
+        logger.error("[list_decision_journal] %s", exc)
         return _err_resp(str(exc), request, 500, "Ops")
 
 
@@ -2038,4 +2310,76 @@ async def ops_ledger(request: Request):
         return JSONResponse(content=data.model_dump(), headers={"ETag": f'"{etag}"'})
     except Exception as exc:
         logger.error("[ops_ledger] %s", exc)
+        return _err_resp(str(exc), request, 500, "Ops")
+
+
+# ── Corridor Backtest Verdicts (GATE-116, T-1270) ────────────────────────────
+
+
+class CorridorBacktestVerdict(BaseModel):
+    corridor_name: str
+    last_run_date: str | None = None
+    rank_correlation: float | None = None
+    kill_criterion_met: bool | None = None
+    verdict: str | None = None
+
+
+class CorridorBacktestResponse(BaseModel):
+    corridors: list[CorridorBacktestVerdict]
+    as_of: str
+
+
+@router.get(
+    "/ops/corridor-backtest",
+    response_model=CorridorBacktestResponse,
+    summary="Latest corridor backtest verdicts per corridor",
+    description="Returns the most recent backtest verdict for each seeded corridor. "
+    "Read-only, readable by any authenticated role.",
+)
+@limiter.limit("60/minute")
+async def ops_corridor_backtest(request: Request):
+    try:
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text("""
+                    SELECT DISTINCT ON (corridor_name)
+                        corridor_name,
+                        run_date,
+                        rank_correlation,
+                        kill_criterion_met,
+                        verdict
+                    FROM corridor_backtest_verdicts
+                    ORDER BY corridor_name, created_at DESC
+                """)
+            ).fetchall()
+
+        corridors = [
+            CorridorBacktestVerdict(
+                corridor_name=str(r[0]),
+                last_run_date=str(r[1]) if r[1] else None,
+                rank_correlation=float(r[2]) if r[2] is not None else None,
+                kill_criterion_met=bool(r[3]) if r[3] is not None else None,
+                verdict=str(r[4]) if r[4] else None,
+            )
+            for r in rows
+        ]
+
+        if not corridors:
+            from utils.corridor_scorer_v2 import _CORRIDOR_SEEDS
+            corridors = [
+                CorridorBacktestVerdict(corridor_name=s.corridor_id)
+                for s in _CORRIDOR_SEEDS
+            ]
+
+        data = CorridorBacktestResponse(
+            corridors=corridors,
+            as_of=datetime.now(timezone.utc).isoformat(),
+        )
+        etag = compute_etag(data.model_dump())
+        _check = check_etag(request, etag)
+        if _check:
+            return _check
+        return JSONResponse(content=data.model_dump(), headers={"ETag": f'"{etag}"'})
+    except Exception as exc:
+        logger.error("[ops_corridor_backtest] %s", exc)
         return _err_resp(str(exc), request, 500, "Ops")

@@ -1,17 +1,24 @@
 {
   "title": "System Health",
   "uid": "system_health",
-  "description": "DB latency, Prometheus targets, Redis status, API error rate — overall system health",
+  "description": "DB latency, Prometheus targets, Redis status, API error rate \u00e2\u20ac\u201d overall system health",
   "version": 1,
   "timezone": "utc",
   "editable": true,
   "refresh": "15s",
-  "tags": ["re_os", "system", "health", "infrastructure"],
+  "tags": [
+    "re_os",
+    "system",
+    "health",
+    "infrastructure"
+  ],
   "panels": [
     {
       "title": "Prometheus Targets Up",
       "type": "stat",
-      "datasource": { "uid": "prometheus" },
+      "datasource": {
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "count(up{job=\"re_os\"} == 1)",
@@ -22,49 +29,83 @@
           "legendFormat": "Down"
         }
       ],
-      "gridPos": { "h": 6, "w": 4, "x": 0, "y": 0 }
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      }
     },
     {
       "title": "API Request Rate by Method",
       "type": "timeseries",
-      "datasource": { "uid": "prometheus" },
+      "datasource": {
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "rate(http_requests_total[5m])",
           "legendFormat": "{{method}}"
         }
       ],
-      "gridPos": { "h": 6, "w": 10, "x": 4, "y": 0 }
+      "gridPos": {
+        "h": 6,
+        "w": 10,
+        "x": 4,
+        "y": 0
+      }
     },
     {
       "title": "API Error Rate (5xx %)",
       "type": "gauge",
-      "datasource": { "uid": "prometheus" },
+      "datasource": {
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "rate(http_requests_total{status=~\"5..\"}[5m]) / rate(http_requests_total[5m]) * 100",
           "legendFormat": "Error %"
         }
       ],
-      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 10 } },
-      "gridPos": { "h": 6, "w": 10, "x": 14, "y": 0 }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 10
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 10,
+        "x": 14,
+        "y": 0
+      }
     },
     {
       "title": "DB Query Rate",
       "type": "timeseries",
-      "datasource": { "uid": "prometheus" },
+      "datasource": {
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "rate(db_query_duration_seconds_count[5m])",
           "legendFormat": "{{query_name}}"
         }
       ],
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 }
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      }
     },
     {
       "title": "DB p99 Latency",
       "type": "stat",
-      "datasource": { "uid": "prometheus" },
+      "datasource": {
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.99, sum(rate(db_query_duration_seconds_bucket[5m])) by (le))",
@@ -72,26 +113,59 @@
         }
       ],
       "fieldConfig": {
-        "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{"value": null, "color": "green"}, {"value": 2, "color": "orange"}, {"value": 5, "color": "red"}] } }
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 2,
+                "color": "orange"
+              },
+              {
+                "value": 5,
+                "color": "red"
+              }
+            ]
+          }
+        }
       },
-      "gridPos": { "h": 8, "w": 4, "x": 12, "y": 6 }
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 12,
+        "y": 6
+      }
     },
     {
       "title": "Pipeline Runs",
       "type": "stat",
-      "datasource": { "uid": "prometheus" },
+      "datasource": {
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum(increase(pipeline_runs_total[24h])) by (market)",
           "legendFormat": "{{market}}"
         }
       ],
-      "gridPos": { "h": 8, "w": 4, "x": 16, "y": 6 }
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 16,
+        "y": 6
+      }
     },
     {
-      "title": "DB Pool — Checked Out",
+      "title": "DB Pool \u00e2\u20ac\u201d Checked Out",
       "type": "timeseries",
-      "datasource": { "uid": "prometheus" },
+      "datasource": {
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "db_pool_checkedout",
@@ -106,9 +180,82 @@
           "legendFormat": "Overflow"
         }
       ],
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 14 },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 14
+      },
       "fieldConfig": {
-        "defaults": { "unit": "short", "min": 0, "thresholds": { "mode": "absolute", "steps": [{"value": null, "color": "green"}, {"value": 8, "color": "orange"}, {"value": 15, "color": "red"}], "description": "Thresholds assume pool_size=10 (default). Orange when checked_out >=80%, red >=150%. Adjust if pool_size changes." } }
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 8,
+                "color": "orange"
+              },
+              {
+                "value": 15,
+                "color": "red"
+              }
+            ],
+            "description": "Thresholds assume pool_size=10 (default). Orange when checked_out >=80%, red >=150%. Adjust if pool_size changes."
+          }
+        }
+      }
+    },
+    {
+      "title": "Redis Connectivity",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 14
+      },
+      "targets": [
+        {
+          "expr": "redis_connected",
+          "legendFormat": "Connected"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "value": "1",
+              "text": "Connected",
+              "color": "green"
+            },
+            {
+              "type": "value",
+              "value": "0",
+              "text": "Disconnected",
+              "color": "red"
+            }
+          ]
+        }
       }
     }
   ],

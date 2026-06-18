@@ -37,7 +37,7 @@ def test_board_room_routes_registered():
 
 @pytest.mark.test_id("G87-BR3")
 @pytest.mark.integration
-@pytest.mark.skipif(
+@pytest.mark.skipif(  # TRACK: Requires live database (DATABASE_URL + DB_PASSWORD in env)
     "not os.environ.get('DATABASE_URL') or not os.environ.get('DB_PASSWORD')",
     reason="Requires live database (DATABASE_URL + DB_PASSWORD in env)",
 )

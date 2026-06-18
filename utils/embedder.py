@@ -39,7 +39,7 @@ import os
 import re
 import threading
 import time as time_module
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import requests
@@ -411,7 +411,7 @@ class IntelEmbedder(_BaseChromaStore):
                             {
                                 "source": str(path.name),
                                 "market": market,
-                                "indexed_at": datetime.now().isoformat(),
+                                "indexed_at": datetime.now(timezone.utc).isoformat(),
                             }
                         ],
                     )
@@ -536,6 +536,21 @@ class IntelEmbedder(_BaseChromaStore):
             )
             hits = self._format_hits(results)
             _metrics["search_chroma_hits"] += 1
+            # Track query time for safe-purge — update queried_at on returned docs.
+            # Uses UTC to remain TZ-agnostic across container deployments.
+            try:
+                ids_to_update = [
+                    doc_id for doc_id, meta in zip(results.get("ids", [[]])[0], results.get("metadatas", [[]])[0])
+                    if meta is not None
+                ]
+                if ids_to_update:
+                    now_utc = datetime.now(timezone.utc).isoformat()
+                    self._collection.update(  # type: ignore[attr-defined]
+                        ids=ids_to_update,
+                        metadatas=[{"queried_at": now_utc}] * len(ids_to_update),
+                    )
+            except Exception:
+                logger.warning("[Embedder] Failed to update queried_at metadata — safe-purge metadata may be stale")
             if rerank and hits:
                 try:
                     r = _get_reranker()
@@ -598,7 +613,7 @@ class MemoryEmbedder(_BaseChromaStore):
                         "agent_id": agent_id,
                         "market": market,
                         "confidence": confidence,
-                        "updated_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
                     }
                 ],
             )
@@ -655,13 +670,16 @@ def purge_stale_embeddings(days: int = 90) -> int:
     re_os_memories, re_os_memories_st) to catch embeddings created when Ollama
     was down (sentence-transformers suffix).
 
+    Skips collections that have been queried in the last 24 hours (safe-purge
+    guard — prevents mid-query deletion of actively used embeddings).
     Deletes in-page batches of 100 to bound memory usage on large collections.
     Returns total deleted count. Safe to run quarterly.
     Alerts expected via scheduler job if deleted count is abnormally high.
     """
     total_deleted = 0
-    now_ts = datetime.now().timestamp()
-    cutoff_ms = (now_ts - days * 86400) * 1000
+    now_utc = datetime.now(timezone.utc)
+    cutoff_ms = (now_utc.timestamp() - days * 86400) * 1000
+    cutoff_24h_iso = (now_utc - timedelta(hours=24)).isoformat()
     try:
         client = _get_chroma_client()
         base_names = (_INTEL_COLLECTION, _MEMORY_COLLECTION)
@@ -673,6 +691,25 @@ def purge_stale_embeddings(days: int = 90) -> int:
                     collection = client.get_collection(name=name)
                 except ValueError:
                     continue
+                # Safe-purge check: skip if any document was queried in the last 24h.
+                # Uses UTC-based ISO string to remain TZ-agnostic across deployments.
+                try:
+                    recent = collection.get(
+                        limit=1,
+                        where={"queried_at": {"$gt": cutoff_24h_iso}},
+                        include=["metadatas"],
+                    )
+                    if recent["ids"]:
+                        logger.info(
+                            "[Embedder Maintenance] Skipping active collection '{}' — queried within 24h",
+                            name,
+                        )
+                        continue
+                except Exception as exc:
+                    logger.debug(
+                        "[Embedder Maintenance] queried_at check skipped for '{}': {}",
+                        name, exc,
+                    )
                 logger.debug("[Embedder Maintenance] Scanning collection '{}'", name)
                 offset = 0
                 batch_size = 100

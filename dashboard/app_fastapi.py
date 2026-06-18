@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from contextlib import asynccontextmanager
 
 # Import all metrics so they register with the global Prometheus REGISTRY.
 from config.metrics import (  # noqa: F401
@@ -101,11 +102,33 @@ _validate_rbac_config()
 
 # ── FastAPI App ──────────────────────────────────────────────────────────────
 
+@asynccontextmanager
+async def _lifespan(app_instance: FastAPI):
+    """Startup: launch Redis health-check daemon thread (T-1262).
+
+    Uses daemon thread — exits with the process, no cleanup needed.
+    Wrapped in try/except so a failed health-thread start never crashes
+    the app server (R1.5).
+    """
+    from dashboard.redis_health import _redis_health_loop
+    try:
+        _health_thread = threading.Thread(
+            target=_redis_health_loop, daemon=True, name="redis-health"
+        )
+        _health_thread.start()
+        logger.info("[lifespan] Redis health-check thread 'redis-health' started")
+    except Exception:
+        logger.exception("[lifespan] Failed to start Redis health-check thread — continuing without it")
+    yield
+    logger.debug("[lifespan] Shutting down")
+
+
 app = FastAPI(
     title="RE_OS Dashboard",
     version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=_lifespan,
 )
 # ── CORS ─────────────────────────────────────────────────────────────────────
 

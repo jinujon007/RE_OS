@@ -67,7 +67,7 @@ def test_market_id_lookup_count_for_200_records():
 
 
 @pytest.mark.integration
-@pytest.mark.skipif("not os.environ.get('DATABASE_URL')")
+@pytest.mark.skipif("not os.environ.get('DATABASE_URL')")  # TRACK: requires DATABASE_URL
 def test_v_market_brief_mat_query_time():
     """SELECT * FROM v_market_brief_mat must complete < 100ms."""
     import os

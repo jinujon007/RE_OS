@@ -13,7 +13,7 @@ import pytest
 
 pytestmark = [
     pytest.mark.unit,
-    pytest.mark.skip(reason="gate-declaration tests coupled to VISION.md/TASK_QUEUE.md — skipped in batch CI"),
+    pytest.mark.skip(reason="gate-declaration tests coupled to VISION.md/TASK_QUEUE.md — skipped in batch CI"),  # TRACK: gate-declaration tests coupled to VISION.md/TASK_QUEUE.md — skipped in batch CI
 ]
 
 from starlette.testclient import TestClient

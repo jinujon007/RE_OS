@@ -10,34 +10,32 @@ pytestmark = [pytest.mark.unit, pytest.mark.slow]
 from starlette.testclient import TestClient
 from dashboard.app_fastapi import app
 
-client = TestClient(app)
+_client = TestClient(app)
 
 
-def test_health_no_auth():
-    r = client.get("/api/v1/health")
+def test_health(dashboard_client):
+    r = dashboard_client.get("/api/v1/health")
     assert r.status_code == 200
 
 
 def test_run_trigger_requires_auth(monkeypatch):
     monkeypatch.setenv("DASHBOARD_API_KEY", "secret")
-    r = client.post("/api/v1/run/yelahanka")
+    r = _client.post("/api/v1/run/yelahanka")
     assert r.status_code == 401
 
 
-def test_run_trigger_with_auth(monkeypatch):
-    monkeypatch.setenv("DASHBOARD_API_KEY", "secret")
-    r = client.post("/api/v1/run/yelahanka", headers={"X-API-Key": "secret"})
+def test_run_trigger_with_auth(dashboard_client):
+    r = dashboard_client.post("/api/v1/run/yelahanka")
     assert r.status_code in (200, 202, 409)
 
 
-def test_db_state_no_auth():
-    r = client.get("/api/v1/db/state")
+def test_db_state(dashboard_client):
+    r = dashboard_client.get("/api/v1/db/state")
     assert r.status_code in (200, 500)
 
 
-def test_run_invalid_market_returns_400(monkeypatch):
-    monkeypatch.setenv("DASHBOARD_API_KEY", "secret")
-    r = client.post("/api/v1/run/fakecity", headers={"X-API-Key": "secret"})
+def test_run_invalid_market_returns_400(dashboard_client):
+    r = dashboard_client.post("/api/v1/run/fakecity")
     assert r.status_code == 400
 
 
@@ -46,8 +44,7 @@ def test_run_invalid_market_returns_400(monkeypatch):
 
 @pytest.fixture
 def mock_db():
-    """Mock _get_sa_engine to return engine whose connect() yields a mock connection
-    that returns empty results for any query."""
+    """Mock _get_sa_engine used by data.py routes to return empty results."""
     from unittest.mock import MagicMock, patch
 
     mock_conn = MagicMock()
@@ -56,7 +53,8 @@ def mock_db():
     mock_engine = MagicMock()
     mock_engine.connect.return_value.__enter__.return_value = mock_conn
     mock_engine.begin.return_value.__enter__.return_value = mock_conn
-    with patch("dashboard.app_fastapi._get_sa_engine", return_value=mock_engine):
+    # routes in data.py import _get_sa_engine from dashboard.state
+    with patch("dashboard.routers.data._get_sa_engine", return_value=mock_engine):
         yield
 
 
@@ -69,32 +67,30 @@ def mock_conflict_db():
     mock_conn.execute.return_value.scalar.return_value = 3
     mock_engine = MagicMock()
     mock_engine.connect.return_value.__enter__.return_value = mock_conn
-    with patch("dashboard.app_fastapi._get_sa_engine", return_value=mock_engine):
+    with patch("dashboard.routers.data._get_sa_engine", return_value=mock_engine):
         yield
 
 
-def test_memory_explorer_endpoint_returns_200(mock_db):
-    r = client.get("/api/v1/memory/explorer")
-    assert r.status_code in (200, 500)  # 200 when DB mocked, 500 without DB
-    if r.status_code == 200:
-        body = r.json()
-        assert "total" in body
-        assert "page" in body
-        assert "per_page" in body
-        assert "memories" in body
+def test_memory_explorer_endpoint_returns_200(mock_db, dashboard_client):
+    r = dashboard_client.get("/api/v1/memory/explorer")
+    assert r.status_code == 200
+    body = r.json()
+    assert "total" in body
+    assert "page" in body
+    assert "per_page" in body
+    assert "memories" in body
 
 
-def test_memory_explorer_respects_market_filter(mock_db):
-    r = client.get("/api/v1/memory/explorer?market=Yelahanka")
-    assert r.status_code in (200, 500)
-    if r.status_code == 200:
-        body = r.json()
-        assert body["page"] == 1
-        assert body["per_page"] == 20
+def test_memory_explorer_respects_market_filter(mock_db, dashboard_client):
+    r = dashboard_client.get("/api/v1/memory/explorer?market=Yelahanka")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["page"] == 1
+    assert body["per_page"] == 20
 
 
-def test_conflict_count_endpoint_returns_integer():
-    r = client.get("/api/v1/memory/conflict-count")
+def test_conflict_count_endpoint_returns_integer(dashboard_client):
+    r = dashboard_client.get("/api/v1/memory/conflict-count")
     assert r.status_code in (200, 500)
     if r.status_code == 200:
         body = r.json()
@@ -102,8 +98,8 @@ def test_conflict_count_endpoint_returns_integer():
         assert isinstance(body["unresolved_conflicts"], int)
 
 
-def test_conflict_count_mocked(mock_conflict_db):
-    r = client.get("/api/v1/memory/conflict-count")
+def test_conflict_count_mocked(mock_conflict_db, dashboard_client):
+    r = dashboard_client.get("/api/v1/memory/conflict-count")
     assert r.status_code == 200
     assert r.json()["unresolved_conflicts"] == 3
 
@@ -129,8 +125,8 @@ def test_conflict_badge_script_present_in_index_html():
 # ── Memory Panel Route (T-86B) ──
 
 
-def test_memory_panel_route_returns_200():
-    r = client.get("/memory")
+def test_memory_panel_route_returns_200(dashboard_client):
+    r = dashboard_client.get("/api/v1/memory")
     assert r.status_code == 200
     assert "text/html" in r.headers.get("content-type", "")
     assert "AGENT MEMORY EXPLORER" in r.text
@@ -167,20 +163,20 @@ def mock_provenance_db():
     ]
     mock_engine = MagicMock()
     mock_engine.connect.return_value.__enter__.return_value = mock_conn
-    with patch("dashboard.app_fastapi._get_sa_engine", return_value=mock_engine):
+    with patch("dashboard.routers.data._get_sa_engine", return_value=mock_engine):
         yield
 
 
-def test_provenance_endpoint_returns_200(mock_provenance_db):
-    r = client.get("/api/v1/data/provenance")
+def test_provenance_endpoint_returns_200(mock_provenance_db, dashboard_client):
+    r = dashboard_client.get("/api/v1/data/provenance")
     assert r.status_code == 200
     body = r.json()
     assert "Yelahanka" in body
     assert "Devanahalli" in body
 
 
-def test_provenance_has_all_markets(mock_provenance_db):
-    r = client.get("/api/v1/data/provenance")
+def test_provenance_has_all_markets(mock_provenance_db, dashboard_client):
+    r = dashboard_client.get("/api/v1/data/provenance")
     assert r.status_code == 200
     body = r.json()
     assert "Yelahanka" in body
@@ -193,8 +189,8 @@ def test_provenance_has_all_markets(mock_provenance_db):
     assert "guidance" in yel
 
 
-def test_live_pct_is_float_between_0_and_100(mock_provenance_db):
-    r = client.get("/api/v1/data/provenance")
+def test_live_pct_is_float_between_0_and_100(mock_provenance_db, dashboard_client):
+    r = dashboard_client.get("/api/v1/data/provenance")
     assert r.status_code == 200
     body = r.json()
     for market_data in body.values():
@@ -202,9 +198,9 @@ def test_live_pct_is_float_between_0_and_100(mock_provenance_db):
         assert 0.0 <= market_data["live_pct"] <= 100.0
 
 
-def test_provenance_computed_values(mock_provenance_db):
+def test_provenance_computed_values(mock_provenance_db, dashboard_client):
     """Assert live_pct is correctly computed: Yelahanka=66.7%, Devanahalli=100%."""
-    r = client.get("/api/v1/data/provenance")
+    r = dashboard_client.get("/api/v1/data/provenance")
     assert r.status_code == 200
     body = r.json()
     assert body["Yelahanka"]["live_pct"] == 66.7
@@ -216,7 +212,7 @@ def test_provenance_computed_values(mock_provenance_db):
     assert body["Devanahalli"]["live"] == 200
 
 
-def test_provenance_market_filter():
+def test_provenance_market_filter(dashboard_client):
     """Test optional market filter. We mock only Yelahanka data."""
     from unittest.mock import MagicMock, patch
 
@@ -228,8 +224,8 @@ def test_provenance_market_filter():
     mock_conn.execute.return_value.fetchall.return_value = [mock_row]
     mock_engine = MagicMock()
     mock_engine.connect.return_value.__enter__.return_value = mock_conn
-    with patch("dashboard.app_fastapi._get_sa_engine", return_value=mock_engine):
-        r = client.get("/api/v1/data/provenance?market=Yelahanka")
+    with patch("dashboard.routers.data._get_sa_engine", return_value=mock_engine):
+        r = dashboard_client.get("/api/v1/data/provenance?market=Yelahanka")
     assert r.status_code == 200
     body = r.json()
     assert "Yelahanka" in body
@@ -253,17 +249,17 @@ def mock_reliability_db():
         yield
 
 
-def test_reliability_endpoint_returns_200(mock_reliability_db):
-    r = client.get("/api/v1/scraper/reliability")
+def test_reliability_endpoint_returns_200(mock_reliability_db, dashboard_client):
+    r = dashboard_client.get("/api/v1/scraper/reliability")
     assert r.status_code == 200
     body = r.json()
     assert len(body) > 0
 
 
-def test_reliability_has_all_scrapers(mock_reliability_db):
+def test_reliability_has_all_scrapers(mock_reliability_db, dashboard_client):
     from config.scraper_registry import SCRAPER_NAMES
 
-    r = client.get("/api/v1/scraper/reliability")
+    r = dashboard_client.get("/api/v1/scraper/reliability")
     assert r.status_code == 200
     body = r.json()
     for scraper in SCRAPER_NAMES:
@@ -275,11 +271,11 @@ def test_reliability_has_all_scrapers(mock_reliability_db):
         assert "last_run" in s
 
 
-def test_reliability_computed_values(mock_reliability_db):
+def test_reliability_computed_values(mock_reliability_db, dashboard_client):
     """Assert reliability_score is correctly computed: 8/10 = 0.8."""
     from config.scraper_registry import SCRAPER_NAMES
 
-    r = client.get("/api/v1/scraper/reliability")
+    r = dashboard_client.get("/api/v1/scraper/reliability")
     assert r.status_code == 200
     body = r.json()
     for scraper in SCRAPER_NAMES:
@@ -292,27 +288,27 @@ def test_reliability_computed_values(mock_reliability_db):
 # ── T-1218: API versioning /api/v1/ prefix + legacy redirect ─────────────
 
 
-def test_v1_health_returns_200():
+def test_v1_health_returns_200(dashboard_client):
     """GET /api/v1/health returns 200 (rate-limited read-only endpoint)."""
-    r = client.get("/api/v1/health")
+    r = dashboard_client.get("/api/v1/health")
     assert r.status_code == 200
 
 
-def test_legacy_api_redirects_to_v1():
+def test_legacy_api_redirects_to_v1(dashboard_client):
     """GET /api/health redirects (301) to /api/v1/health."""
-    r = client.get("/api/health", follow_redirects=False)
+    r = dashboard_client.get("/api/health", follow_redirects=False)
     assert r.status_code == 301
     assert r.headers.get("location") == "/api/v1/health"
 
 
-def test_v1_evaluate_route_registered():
+def test_v1_evaluate_route_registered(dashboard_client):
     """GET /api/v1/evaluate/{job_id} returns 404 (expected for unknown job) not 405 or 500."""
-    r = client.get("/api/v1/evaluate/00000000-0000-0000-0000-000000000000", follow_redirects=False)
+    r = dashboard_client.get("/api/v1/evaluate/00000000-0000-0000-0000-000000000000", follow_redirects=False)
     # 200 (with error body), 404, or 422 are all valid responses from a registered route
     assert r.status_code in (200, 404, 422), f"Unexpected status: {r.status_code}"
 
 
-def test_read_only_paths_use_v1_prefix():
+def test_read_only_paths_use_v1_prefix(dashboard_client):
     """_READ_ONLY_PATHS includes /api/v1/ entries."""
     from dashboard.state import _READ_ONLY_PATHS
     assert "/api/v1/health" in _READ_ONLY_PATHS
@@ -339,6 +335,38 @@ def test_reliability_zero_runs_returns_zero_score():
 
 
 # ── T-1219: Unified error response schema ──────────────────────────────
+
+
+def test_wrong_api_key_returns_401(monkeypatch):
+    """Request with wrong X-API-Key returns 401 (unknown → None role → 401)."""
+    monkeypatch.setenv("DASHBOARD_API_KEY", "real-key")
+    monkeypatch.setenv("DASHBOARD_API_KEY_READ", "read-key")
+    from dashboard.state import _reset_api_keys
+    _reset_api_keys()
+    r = _client.get(
+        "/api/v1/health",
+        headers={"X-API-Key": "wrong-key"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 401, f"Expected 401 for wrong key, got {r.status_code}"
+    body = r.json()
+    assert "code" in body
+
+
+def test_read_only_key_cannot_write(monkeypatch):
+    """Read-only key on a write path returns 403."""
+    monkeypatch.setenv("DASHBOARD_API_KEY", "admin-key")
+    monkeypatch.setenv("DASHBOARD_API_KEY_READ", "read-key")
+    from dashboard.state import _reset_api_keys
+    _reset_api_keys()
+    r = _client.post(
+        "/api/v1/run/yelahanka",
+        headers={"X-API-Key": "read-key"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 403, f"Expected 403 for read key on write, got {r.status_code}"
+
+
 # Note: 401 test must run LAST because _ensure_api_keys caches the first key
 
 
@@ -348,7 +376,7 @@ def test_unified_error_response_has_request_id(monkeypatch):
     monkeypatch.delenv("DASHBOARD_API_KEY", raising=False)
     from dashboard.state import _reset_api_keys
     _reset_api_keys()
-    r = client.get("/api/v1/market/forecast/NonexistentMarket", follow_redirects=False)
+    r = _client.get("/api/v1/market/forecast/NonexistentMarket", follow_redirects=False)
     assert r.status_code == 400
     body = r.json()
     assert "request_id" in body, f"Missing 'request_id' in {body}"
@@ -361,7 +389,7 @@ def test_unified_error_response_has_code_field(monkeypatch):
     monkeypatch.delenv("DASHBOARD_API_KEY", raising=False)
     from dashboard.state import _reset_api_keys
     _reset_api_keys()
-    r = client.get("/api/v1/market/forecast/NonexistentMarket", follow_redirects=False)
+    r = _client.get("/api/v1/market/forecast/NonexistentMarket", follow_redirects=False)
     assert r.status_code == 400
     body = r.json()
     assert "code" in body, f"Missing 'code' in {body}"
@@ -374,7 +402,7 @@ def test_unified_401_response_with_code_field(monkeypatch):
     monkeypatch.setenv("DASHBOARD_API_KEY", "secret-key-for-test")
     from dashboard.state import _reset_api_keys
     _reset_api_keys()
-    r = client.post("/api/v1/run/yelahanka", follow_redirects=False)
+    r = _client.post("/api/v1/run/yelahanka", follow_redirects=False)
     assert r.status_code == 401
     body = r.json()
     assert "code" in body
@@ -399,11 +427,11 @@ def test_etag_returns_304_on_match(monkeypatch):
     monkeypatch.delenv("DASHBOARD_API_KEY", raising=False)
     from dashboard.state import _reset_api_keys
     _reset_api_keys()
-    r = client.get("/api/v1/intel/cards", follow_redirects=False)
+    r = _client.get("/api/v1/intel/cards", follow_redirects=False)
     if r.status_code != 200:
         pytest.skip(f"intel/cards returned {r.status_code}, need DB")
     etag = r.headers.get("etag", "").strip('" ')
-    r2 = client.get("/api/v1/intel/cards", headers={"If-None-Match": etag}, follow_redirects=False)
+    r2 = _client.get("/api/v1/intel/cards", headers={"If-None-Match": etag}, follow_redirects=False)
     assert r2.status_code == 304
 
 
@@ -413,7 +441,7 @@ def test_etag_returns_200_on_mismatch(monkeypatch):
     monkeypatch.delenv("DASHBOARD_API_KEY", raising=False)
     from dashboard.state import _reset_api_keys
     _reset_api_keys()
-    r = client.get("/api/v1/market/forecast/NonexistentMarket", follow_redirects=False)
+    r = _client.get("/api/v1/market/forecast/NonexistentMarket", follow_redirects=False)
     assert r.status_code == 400
     body = r.json()
     assert "code" in body
@@ -437,7 +465,7 @@ def test_rate_limit_headers_omitted_on_unlimited_endpoints(monkeypatch):
     monkeypatch.delenv("DASHBOARD_API_KEY", raising=False)
     from dashboard.state import _reset_api_keys
     _reset_api_keys()
-    r = client.get("/api/v1/health/live", follow_redirects=False)
+    r = _client.get("/api/v1/health/live", follow_redirects=False)
     assert r.status_code == 200
     assert "X-RateLimit-Limit" not in r.headers, (
         "Non-rate-limited endpoints should not advertise a fake rate limit"
@@ -490,32 +518,20 @@ def mock_ledger_db():
         yield
 
 
-def test_ops_ledger_returns_200(mock_ledger_db, monkeypatch):
-    monkeypatch.setenv("DASHBOARD_API_KEY", "test-key")
-    r = client.get(
-        "/api/v1/ops/ledger",
-        headers={"X-API-Key": "test-key"},
-    )
+def test_ops_ledger_returns_200(mock_ledger_db, dashboard_client):
+    r = dashboard_client.get("/api/v1/ops/ledger")
     assert r.status_code == 200
 
 
-def test_ledger_hit_rate_bounded_0_to_1(mock_ledger_db, monkeypatch):
-    monkeypatch.setenv("DASHBOARD_API_KEY", "test-key")
-    r = client.get(
-        "/api/v1/ops/ledger",
-        headers={"X-API-Key": "test-key"},
-    )
+def test_ledger_hit_rate_bounded_0_to_1(mock_ledger_db, dashboard_client):
+    r = dashboard_client.get("/api/v1/ops/ledger")
     body = r.json()
     assert 0.0 <= body["hit_rate"] <= 1.0
     assert body["hit_rate"] == pytest.approx(0.8333, rel=0.01)
 
 
-def test_ledger_module_breakdown_has_all_modules(mock_ledger_db, monkeypatch):
-    monkeypatch.setenv("DASHBOARD_API_KEY", "test-key")
-    r = client.get(
-        "/api/v1/ops/ledger",
-        headers={"X-API-Key": "test-key"},
-    )
+def test_ledger_module_breakdown_has_all_modules(mock_ledger_db, dashboard_client):
+    r = dashboard_client.get("/api/v1/ops/ledger")
     body = r.json()
     assert "psf_forecast" in body["module_breakdown"]
     assert "opportunity_score" in body["module_breakdown"]

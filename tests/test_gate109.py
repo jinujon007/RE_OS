@@ -14,14 +14,7 @@ from unittest.mock import patch, MagicMock
 
 pytestmark = pytest.mark.unit
 
-# Seed data shared with test_demand_calibration.py: 5-year linear trend R²≈0.97
-_LINEAR_SEED_DATA = [
-    (2019, 500, 5500.0),
-    (2020, 900, 5800.0),
-    (2021, 930, 6000.0),
-    (2022, 960, 6200.0),
-    (2023, 990, 6500.0),
-]
+from tests.fixtures.seed_data import LINEAR_SEED_DATA
 
 
 def test_calibration_result_importable_with_status():
@@ -78,7 +71,7 @@ def test_calibration_verdict_not_uncalibrated_with_good_data():
     mock_engine = MagicMock()
     mock_conn = MagicMock()
     mock_engine.connect.return_value.__enter__.return_value = mock_conn
-    mock_conn.execute.return_value.fetchall.return_value = _LINEAR_SEED_DATA
+    mock_conn.execute.return_value.fetchall.return_value = LINEAR_SEED_DATA
     result = run_manyata_backcast(mock_engine)
     assert result.verdict != "UNCALIBRATED", (
         f"Expected CALIBRATED with good synthetic data, got {result.verdict}: {result.detail}"

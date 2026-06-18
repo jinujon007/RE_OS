@@ -56,7 +56,7 @@ def test_v_market_brief_mat_has_unique_index():
 # ── Integration tests (require live DB + migration applied) ──────────────────
 
 
-@pytest.mark.skipif("not os.environ.get('DATABASE_URL')")
+@pytest.mark.skipif("not os.environ.get('DATABASE_URL')")  # TRACK: requires DATABASE_URL
 def test_v_market_brief_mat_exists():
     """pg_matviews has v_market_brief_mat with ispopulated=true."""
     import os
@@ -76,7 +76,7 @@ def test_v_market_brief_mat_exists():
     assert row[1] is True, "v_market_brief_mat is not populated"
 
 
-@pytest.mark.skipif("not os.environ.get('DATABASE_URL')")
+@pytest.mark.skipif("not os.environ.get('DATABASE_URL')")  # TRACK: requires DATABASE_URL
 def test_v_market_brief_mat_has_rows():
     """SELECT COUNT(*) FROM v_market_brief_mat >= 1."""
     import os

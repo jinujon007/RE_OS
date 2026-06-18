@@ -1,56 +1,61 @@
 """
-RE_OS — Corridor Scorer v2 (Sprint 100 — T-1191)
+RE_OS — Corridor Scorer v2 (Sprint 100 — T-1191, GATE-116)
 
-Extends CorridorScorer v1 with PostGIS spatial joins for corridor village
-membership. Overrides `_get_corridor_villages()` to query `registered_transactions`
-lat/lng against `corridor_boundaries` polygons via ST_Within, falling back to
-the v1 static village list on PostGIS error.
+Overrides `_get_corridor_villages()` to use PostGIS ST_Buffer spatial queries
+around corridor centroid points, replacing the AABB approach (ST_MakeEnvelope).
+Centroid seeds are defined in `_CORRIDOR_SEEDS` (1km circular buffer).
+Falls back to v1 static village list or corridor_boundaries table.
 
-Adds `as_geojson` parameter to `score_all()` so each CorridorScore includes
-the corridor's boundary polygon as a GeoJSON Feature.
+Adds `as_geojson` parameter to `score_all()` — boundary is computed from
+ST_Buffer for seeded corridors, or loaded from corridor_boundaries table.
 """
 
 from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
 from loguru import logger
-from prometheus_client import Counter, Histogram
+from sqlalchemy import text
+
+from config.metrics import _counter, _histogram
 
 from utils.corridor_scorer import CORRIDOR_DEFINITIONS, CorridorScore, CorridorScorer
 
 __all__ = [
     "CorridorScorerV2",
     "CorridorScoreV2",
+    "CorridorBoundaryV2",
+    "get_corridor_seed",
 ]
 
 # ── Prometheus Metrics ───────────────────────────────────────────────────────
 
-_corridor_scoring_total = Counter(
+_corridor_scoring_total = _counter(
     "corridor_scoring_total",
     "Total corridor scoring operations (v2)",
     ["corridor_id", "mode"],
 )
-_corridor_scoring_duration = Histogram(
+_corridor_scoring_duration = _histogram(
     "corridor_scoring_duration_seconds",
     "Corridor scoring duration in seconds",
     ["corridor_id"],
     buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
 )
-_corridor_village_source = Counter(
+_corridor_village_source = _counter(
     "corridor_village_source_total",
-    "Village resolution source: v2_spatial, v2_fallback_no_results, v1_fallback_error",
+    "Village resolution source: buffer/table/retry/fallback",
     ["corridor_id", "source"],
 )
-_corridor_boundary_cache_hits = Counter(
+_corridor_boundary_cache_hits = _counter(
     "corridor_boundary_cache_hits_total",
     "GeoJSON boundary cache hits",
     ["corridor_id"],
 )
-_corridor_boundary_cache_misses = Counter(
+_corridor_boundary_cache_misses = _counter(
     "corridor_boundary_cache_misses_total",
     "GeoJSON boundary cache misses",
     ["corridor_id"],
@@ -60,6 +65,49 @@ _corridor_boundary_cache_misses = Counter(
 
 _BOUNDARY_CACHE_TTL_SECONDS = 300
 _boundary_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
+
+# ── Corridor Centroid Seeds (ST_Buffer, not AABB) ────────────────────────────
+# Centroids from OSM data (Gate-109 R3 audit). Replaces AABB bounding boxes
+# with circular ST_Buffer polygons. Radius 1km (~0.009° at Bangalore latitude
+# 13°N) chosen as the typical catchment: a 10-min walk or 2-min auto-rickshaw
+# reach from the corridor centre line. For NH-44's diagonal alignment, this
+# eliminates the ~2.8km corner overreach that AABB produced (the AABB rectangle
+# around NH-44 extended 2.8km beyond the road at diagonal corners).
+#
+# Corridor definitions and centroids:
+#   nh44 (Bellary Road / NH-44): 13.13, 77.60 — Yelahanka junction,
+#         midway along N-Blr corridor
+#   hebbal_yelahanka (SH-104):   13.05, 77.57 — Hebbal flyover area,
+#         densest GCC employment cluster
+#   doddaballapur:                13.22, 77.59 — midpoint on Doddaballapur
+#         Road, ~5km N of Yelahanka, distinct from NH-44
+
+
+@dataclass
+class CorridorBoundaryV2:
+    corridor_id: str
+    centroid_lon: float
+    centroid_lat: float
+    radius_m: int = 1000
+
+
+_CORRIDOR_SEEDS: list[CorridorBoundaryV2] = [
+    CorridorBoundaryV2("nh44", 13.13, 77.60),
+    CorridorBoundaryV2("hebbal_yelahanka", 13.05, 77.57),
+    CorridorBoundaryV2("doddaballapur", 13.22, 77.59),
+]
+
+
+def _get_corridor_seed(corridor_id: str) -> CorridorBoundaryV2 | None:
+    for s in _CORRIDOR_SEEDS:
+        if s.corridor_id == corridor_id:
+            return s
+    return None
+
+
+def get_corridor_seed(corridor_id: str) -> CorridorBoundaryV2 | None:
+    """Public wrapper — return centroid seed for a corridor ID, or None."""
+    return _get_corridor_seed(corridor_id)
 
 
 class CorridorScoreV2(CorridorScore):
@@ -238,8 +286,10 @@ class CorridorScorerV2(CorridorScorer):
         try:
             villages = self._query_spatial_villages(corridor_id, notes)
             if villages:
+                seed = _get_corridor_seed(corridor_id)
+                source = "v2_spatial_buffer" if seed is not None else "v2_spatial_table"
                 _corridor_village_source.labels(
-                    corridor_id=corridor_id, source="v2_spatial"
+                    corridor_id=corridor_id, source=source
                 ).inc()
                 return villages
 
@@ -264,8 +314,10 @@ class CorridorScorerV2(CorridorScorer):
                 )
                 villages = self._query_spatial_villages(corridor_id, notes)
                 if villages:
+                    seed = _get_corridor_seed(corridor_id)
+                    source = "v2_spatial_buffer_retry" if seed is not None else "v2_spatial_table_retry"
                     _corridor_village_source.labels(
-                        corridor_id=corridor_id, source="v2_spatial_retry"
+                        corridor_id=corridor_id, source=source
                     ).inc()
                     return villages
             except Exception as retry_exc:
@@ -288,41 +340,70 @@ class CorridorScorerV2(CorridorScorer):
         corridor_id: str,
         notes: list[str],
     ) -> list[str]:
-        """Execute ST_Within spatial join query.
+        """Execute ST_Buffer spatial query around corridor centroid.
 
-        Raises on DB error; returns empty list on no matches.
-        Returns empty list immediately if corridor_id is empty.
+        Uses circular buffer (ST_Buffer) around the corridor's centroid point
+        instead of AABB bounding boxes (ST_MakeEnvelope). For NH-44's diagonal
+        alignment, this eliminates the ~2.8km corner overreach that AABB produced.
+
+        Falls back to corridor_boundaries table join if no centroid seed exists
+        for the given corridor_id (backward compat).
         """
         if not corridor_id or not corridor_id.strip():
             notes.append("v2-spatial: empty corridor_id — returning no villages")
             return []
 
+        seed = _get_corridor_seed(corridor_id)
+
         engine = self._get_engine()
-        from sqlalchemy import text
+
+        if seed is not None:
+            query = text("""
+                SELECT DISTINCT r.village
+                FROM registered_transactions r
+                WHERE ST_Within(
+                      ST_SetSRID(ST_MakePoint(r.longitude, r.latitude), 4326),
+                      ST_Buffer(
+                          ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
+                          :radius_m
+                      )::geometry
+                  )
+                  AND r.village IS NOT NULL
+                  AND r.village != ''
+                  AND r.longitude IS NOT NULL
+                  AND r.latitude IS NOT NULL
+            """)
+            params: dict[str, Any] = {
+                "lon": seed.centroid_lon,
+                "lat": seed.centroid_lat,
+                "radius_m": seed.radius_m,
+            }
+            source_label = "v2_spatial_buffer"
+        else:
+            query = text("""
+                SELECT DISTINCT r.village
+                FROM registered_transactions r
+                JOIN corridor_boundaries cb
+                  ON ST_Within(
+                       ST_SetSRID(ST_MakePoint(r.longitude, r.latitude), 4326),
+                       cb.geom
+                     )
+                WHERE cb.corridor_id = :cid
+                  AND r.village IS NOT NULL
+                  AND r.village != ''
+                  AND r.longitude IS NOT NULL
+                  AND r.latitude IS NOT NULL
+            """)
+            params = {"cid": corridor_id}
+            source_label = "v2_spatial_table"
 
         with engine.connect() as conn:
-            rows = conn.execute(
-                text("""
-                    SELECT DISTINCT r.village
-                    FROM registered_transactions r
-                    JOIN corridor_boundaries cb
-                      ON ST_Within(
-                           ST_SetSRID(ST_MakePoint(r.longitude, r.latitude), 4326),
-                           cb.geom
-                         )
-                    WHERE cb.corridor_id = :cid
-                      AND r.village IS NOT NULL
-                      AND r.village != ''
-                      AND r.longitude IS NOT NULL
-                      AND r.latitude IS NOT NULL
-                """),
-                {"cid": corridor_id},
-            ).fetchall()
+            rows = conn.execute(query, params).fetchall()
 
         villages = [str(r[0]) for r in rows if r[0]]
         if villages:
             notes.append(
-                f"v2-spatial: {len(villages)} villages resolved via PostGIS "
+                f"v2-spatial: {len(villages)} villages resolved via {source_label} "
                 f"for corridor '{corridor_id}'"
             )
         return villages
@@ -335,7 +416,11 @@ class CorridorScorerV2(CorridorScorer):
         return []
 
     def _load_boundary_geojsons(self) -> dict[str, dict[str, Any] | None]:
-        """Load all corridor boundary polygons as GeoJSON Features with TTL cache.
+        """Load corridor boundary polygons as GeoJSON Features with TTL cache.
+
+        For seeded corridors (ST_Buffer centroids), computes the buffer polygon
+        dynamically. For non-seeded corridors, falls back to corridor_boundaries
+        table (AABB geometry, backward compat).
 
         Cache TTL is configured via _BOUNDARY_CACHE_TTL_SECONDS (default 300s).
         Thread-safe for concurrent readers.
@@ -352,7 +437,45 @@ class CorridorScorerV2(CorridorScorer):
         result: dict[str, dict[str, Any] | None] = {}
         try:
             engine = self._get_engine()
-            from sqlalchemy import text
+
+            for cdef in CORRIDOR_DEFINITIONS:
+                cid = cdef["id"]
+                seed = _get_corridor_seed(cid)
+                if seed is not None:
+                    with engine.connect() as conn:
+                        row = conn.execute(
+                            text("""
+                                SELECT ST_AsGeoJSON(
+                                    ST_Buffer(
+                                        ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
+                                        :radius_m
+                                    )::geometry
+                                )
+                            """),
+                            {"lon": seed.centroid_lon, "lat": seed.centroid_lat,
+                             "radius_m": seed.radius_m},
+                        ).fetchone()
+                    geojson_str = row[0] if row else None
+                    if geojson_str:
+                        try:
+                            geom_dict = json.loads(geojson_str)
+                            result[cid] = {
+                                "type": "Feature",
+                                "geometry": geom_dict,
+                                "properties": {
+                                    "corridor_id": cid,
+                                    "data_source": "st_buffer",
+                                    "centroid_lon": seed.centroid_lon,
+                                    "centroid_lat": seed.centroid_lat,
+                                    "radius_m": seed.radius_m,
+                                },
+                            }
+                        except (json.JSONDecodeError, TypeError):
+                            result[cid] = None
+                    else:
+                        result[cid] = None
+                else:
+                    result[cid] = None
 
             with engine.connect() as conn:
                 rows = conn.execute(
@@ -365,6 +488,8 @@ class CorridorScorerV2(CorridorScorer):
 
             for row in rows:
                 cid = str(row[0])
+                if cid in result and result[cid] is not None:
+                    continue
                 geojson_str = row[1]
                 if geojson_str:
                     try:
@@ -372,7 +497,7 @@ class CorridorScorerV2(CorridorScorer):
                         result[cid] = {
                             "type": "Feature",
                             "geometry": geom_dict,
-                            "properties": {"corridor_id": cid},
+                            "properties": {"corridor_id": cid, "data_source": "aabb_table"},
                         }
                     except (json.JSONDecodeError, TypeError):
                         result[cid] = None

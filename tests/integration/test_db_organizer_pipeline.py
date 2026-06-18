@@ -21,7 +21,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 _TEST_DB_URL = os.environ.get("TEST_DATABASE_URL", "")
-pytestmark = pytest.mark.skipif(
+pytestmark = pytest.mark.skipif(  # TRACK: TEST_DATABASE_URL not set — skipping integration tests
     not _TEST_DB_URL,
     reason="TEST_DATABASE_URL not set — skipping integration tests",
 )

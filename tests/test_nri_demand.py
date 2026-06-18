@@ -30,8 +30,8 @@ class TestNriDemandSignal:
         mi = {"slug": "yelahanka", "name": "Yelahanka"}
         ds.absorption_pct = 50.0
         ds.listing_count_30d = 10
-        with patch.object(di, '_compute_nri_demand_score', wraps=lambda ds, mi: setattr(ds, 'nri_score', 0.0)):
-            di._compute_nri_demand_score(ds, mi)
+        with patch.object(di, '_compute_nri_demand_score', wraps=lambda conn, ds, mi: setattr(ds, 'nri_score', 0.0)):
+            di._compute_nri_demand_score(None, ds, mi)
         assert ds.nri_score is not None
         assert ds.nri_score == 0.0
 

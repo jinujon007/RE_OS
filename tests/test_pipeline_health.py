@@ -24,7 +24,7 @@ def _db_available() -> bool:
         return False
 
 
-_skip_no_db = pytest.mark.skipif(not _db_available(), reason="PostgreSQL not reachable")
+_skip_no_db = pytest.mark.skipif(not _db_available(), reason="PostgreSQL not reachable")  # TRACK: PostgreSQL not reachable
 
 
 # ── Test 1: Pipeline stage_2_end events appear in agent_runs ──────────────────
@@ -190,7 +190,7 @@ def _docker_running() -> bool:
         return False
 
 
-@pytest.mark.skipif(
+@pytest.mark.skipif(  # TRACK: re_os_scheduler container not running
     not _docker_running(), reason="re_os_scheduler container not running"
 )
 class TestSchedulerHealthcheck:

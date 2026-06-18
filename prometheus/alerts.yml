@@ -75,3 +75,16 @@ groups:
           description: "Scraper success rate is {{ $value | humanizePercentage }}. SLO target: >= 70%."
           runbook_url: "https://github.com/jinujon007/RE_OS/wiki/Runbooks#scraper-degradation"
           action: "Check scraper health at /api/scraper/reliability. Review individual scraper logs."
+
+      - alert: RedisUnreachable
+        expr: |
+          redis_connected == 0
+        for: 1m
+        labels:
+          severity: warning
+          team: engineering
+        annotations:
+          summary: "Redis server unreachable"
+          description: "Redis health-check ping has failed for 1 minute. In-memory fallback is active — pipeline state may briefly diverge across workers."
+          runbook_url: "https://github.com/jinujon007/RE_OS/wiki/Runbooks#redis-failover"
+          action: "Check Redis container: `docker compose ps redis`. Restart if unhealthy. Review agents container health check logs."

@@ -7,7 +7,7 @@ import pytest
 
 pytestmark = [
     pytest.mark.unit,
-    pytest.mark.skip(reason="requires torch + transformers — not installed in CI"),
+    pytest.mark.skip(reason="requires torch + transformers — not installed in CI"),  # TRACK: requires torch + transformers — not installed in CI
 ]
 
 from unittest.mock import MagicMock, patch

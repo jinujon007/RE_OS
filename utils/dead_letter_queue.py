@@ -21,6 +21,106 @@ logger = logging.getLogger("re_os.dead_letter_queue")
 _RETRY_BATCH_SIZE = 20
 _DLQ_ALERT_THRESHOLD = 50  # Discord alert when >50 records in queue
 
+# Mapping from DLQ entity_type to the DB table used by _replay_record.
+# Used for schema validation: we check that incoming record keys exist
+# as columns on the target table before attempting the upsert.
+_ENTITY_TABLE_MAP: dict[str, str] = {
+    "rera_project": "rera_projects",
+    "rera_projects": "rera_projects",
+    "registration": "registered_transactions",
+    "registered_transaction": "registered_transactions",
+}
+
+
+class SchemaDriftError(Exception):
+    """Raised when a DLQ replay record has keys that don't match the live table schema.
+
+    Attributes:
+        table — the target DB table name
+        missing_columns — column names expected but absent from the record
+    """
+    def __init__(self, table: str, missing_columns: list[str]):
+        self.table = table
+        self.missing_columns = missing_columns
+        super().__init__(f"Schema drift on '{table}': missing columns {missing_columns}")
+
+
+def _fetch_table_columns(conn, table: str) -> set[str]:
+    """Query PostgreSQL information_schema for live column names.
+
+    Returns a set of column names for the given table. Falls back to empty set
+    on any error (caller must handle gracefully).
+    """
+    try:
+        rows = conn.execute(
+            text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = :table
+            """),
+            {"table": table},
+        ).fetchall()
+        return {r[0] for r in rows}
+    except Exception:
+        logger.warning("[DLQ] Failed to fetch schema for table '%s'", table)
+        return set()
+
+
+def _fetch_db_generated_columns(conn, table: str) -> set[str]:
+    """Query information_schema for columns that are DB-generated (have defaults, are identity, or generated).
+
+    These columns are excluded from schema-drift validation because the DB
+    populates them automatically — the record is not expected to supply values.
+    Falls back to empty set on error (validation degrades to conservative mode).
+    """
+    try:
+        rows = conn.execute(
+            text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = :table
+                  AND (column_default IS NOT NULL
+                       OR is_generated = 'ALWAYS'
+                       OR is_identity = 'YES')
+            """),
+            {"table": table},
+        ).fetchall()
+        return {r[0] for r in rows}
+    except Exception:
+        logger.warning("[DLQ] Failed to fetch generated columns for table '%s'", table)
+        return set()
+
+
+def _validate_schema(conn, entity_type: str, raw: dict) -> None:
+    """Validate that all required columns for the entity_type exist in the record.
+
+    Raises SchemaDriftError if any live column (that is NOT DB-generated) is missing
+    from the incoming record. Dynamically discovers DB-generated columns via
+    information_schema instead of maintaining a static whitelist — schema evolution
+    safe (new identity/default columns are auto-excluded).
+
+    This is a best-effort guard, not an exhaustive constraint check:
+    - Only checks columns that the record COULD supply.
+    - Does not validate data types, NOT NULL without default, or CHECK constraints.
+    """
+    table = _ENTITY_TABLE_MAP.get(entity_type)
+    if table is None:
+        return
+
+    live_columns = _fetch_table_columns(conn, table)
+    if not live_columns:
+        return
+
+    auto_columns = _fetch_db_generated_columns(conn, table)
+    # Also skip common system columns that information_schema may not mark as generated
+    auto_columns.update({"parcel_id"})
+
+    record_keys = {k.lower() for k in raw.keys()}
+    missing = sorted(
+        c for c in live_columns
+        if c.lower() not in record_keys and c.lower() not in auto_columns
+    )
+    if missing:
+        raise SchemaDriftError(table, missing)
+
 
 def get_failed_records(
     engine: Engine | None = None,
@@ -54,6 +154,41 @@ def get_queue_depth(engine: Engine | None = None) -> int:
             text("SELECT COUNT(*) FROM ingest_failed_records WHERE retry_count < 3"),
         ).scalar()
     return row or 0
+
+
+def purge_old_records(
+    engine: Engine | None = None,
+    max_age_days: int = 30,
+) -> int:
+    """Delete DLQ records that have permanently failed and are older than max_age_days.
+
+    Only deletes records where retry_count >= max_retries (i.e. permanently failed,
+    not pending retry). Returns the number of deleted rows.
+    """
+    if engine is None:
+        engine = get_engine()
+    with engine.begin() as conn:
+        result = conn.execute(
+            text("""
+                DELETE FROM ingest_failed_records
+                WHERE failed_at < NOW() - (:days || ' days')::interval
+                  AND retry_count >= 3
+            """),
+            {"days": max_age_days},
+        )
+        deleted = result.rowcount or 0
+        if deleted > 100:
+            try:
+                from utils.discord_notifier import send_ops_alert
+                send_ops_alert(
+                    "DLQ_HIGH_PURGE",
+                    f"DLQ auto-purge deleted {deleted} records (>100 threshold) — "
+                    f"possible abnormal failure rate.",
+                )
+            except Exception as exc:
+                logger.warning("[DLQ] Failed to send high-purge alert: %s", exc)
+        logger.info("[DLQ] Purged %d old failed records (>%d days)", deleted, max_age_days)
+        return deleted
 
 
 def check_queue_depth_and_alert(engine: Engine | None = None) -> int:
@@ -121,6 +256,26 @@ def retry_failed_records(
                 conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
                 dead_letter_retry_total.labels(entity_type=entity_type, result="success").inc()
                 succeeded += 1
+            except SchemaDriftError as sde:
+                conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
+                conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
+                logger.error("[DLQ] Schema drift: %s — skipping record %s", sde, row_id)
+                try:
+                    from utils.discord_notifier import send_ops_alert
+                    send_ops_alert(
+                        "DLQ_SCHEMA_DRIFT",
+                        f"DLQ schema drift on '{sde.table}' — manual intervention required. "
+                        f"Record {row_id} skipped. Missing columns: {sde.missing_columns}",
+                    )
+                except Exception as alert_exc:
+                    logger.warning("[DLQ] Failed to send schema drift alert: %s", alert_exc)
+                conn.execute(
+                    text("UPDATE ingest_failed_records SET retry_count = retry_count + 1, error_text = :err WHERE id = :rid"),
+                    {"err": f"SchemaDriftError: {sde}"[:500], "rid": row_id},
+                )
+                dead_letter_retry_total.labels(entity_type=entity_type, result="schema_drift").inc()
+                failed += 1
+                errors.append(f"{entity_type}/{row_id}: SCHEMA_DRIFT — {sde}")
             except Exception as exc:
                 conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp}"))
                 conn.execute(text(f"RELEASE SAVEPOINT {sp}"))
@@ -146,6 +301,7 @@ def _replay_record(conn, entity_type: str, raw: dict) -> None:
     Delegates to DBOrganizer's upsert methods rather than duplicating SQL.
     If DBOrganizer schema evolves, replay stays in sync automatically.
     """
+    _validate_schema(conn, entity_type, raw)
     from utils.db_organizer import DBOrganizer
 
     market = raw.get("market") or raw.get("micro_market") or "Yelahanka"

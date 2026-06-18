@@ -25,7 +25,7 @@ from tests.helpers import db_reachable
 
 pytestmark = [
     pytest.mark.unit,
-    pytest.mark.skip(reason="gate-declaration tests coupled to TASK_QUEUE.md/CLAUDE.md — skipped in batch CI"),
+    pytest.mark.skip(reason="gate-declaration tests coupled to TASK_QUEUE.md/CLAUDE.md — skipped in batch CI"),  # TRACK: gate-declaration tests coupled to TASK_QUEUE.md/CLAUDE.md — skipped in batch CI
 ]
 
 REPO = Path(__file__).resolve().parent.parent
@@ -90,7 +90,7 @@ def test_claude_md_open_issues_cleared() -> None:
 
 @pytest.mark.test_id("A3")
 @pytest.mark.integration
-@pytest.mark.skipif(
+@pytest.mark.skipif(  # TRACK: PostgreSQL not reachable — requires live DB
     not db_reachable(), reason="PostgreSQL not reachable — requires live DB"
 )
 def test_alembic_check_passes() -> None:

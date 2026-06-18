@@ -12,6 +12,8 @@ from sqlalchemy import text
 from utils.db import get_engine
 from config.settings import TARGET_MARKETS
 
+_sa_text = text  # alias for SLO functions (T-1284) — keep `text` for legacy consumers
+
 
 def run_weekly_digest():
     """Weekly digest generation — Monday 04:00 IST (after conflict detection).
@@ -446,6 +448,200 @@ def run_ledger_verdict_digest():
         logger.warning("[LedgerDigest] Failed (non-fatal): {}", exc)
 
 
+def _compute_slo_metrics(conn) -> dict:
+    """Compute live SLO metrics from DB using an existing connection."""
+    rate_row = conn.execute(
+        _sa_text("""
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successes
+            FROM agent_runs WHERE created_at > NOW() - INTERVAL '7 days'
+        """)
+    ).fetchone()
+    total_runs = rate_row[0] if rate_row else 0
+    successes = rate_row[1] if rate_row else 0
+    scheduler_success_rate = round(successes / total_runs, 4) if total_runs > 0 else 0.0
+    p95_row = conn.execute(
+        _sa_text("""
+            SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY response_time_s)
+            FROM board_sessions
+            WHERE response_time_s IS NOT NULL
+              AND created_at > NOW() - INTERVAL '7 days'
+        """)
+    ).fetchone()
+    board_room_p95_s = round(float(p95_row[0]), 2) if p95_row and p95_row[0] is not None else None
+    return {"scheduler_success_rate": scheduler_success_rate, "board_room_p95_s": board_room_p95_s}
+
+
+def _slo_dedup_key(msg: str) -> str:
+    """Deterministic dedup key from message prefix — survives scheduler restart.
+    Uses first 80 chars of the message (before dynamic values) to identify
+    the alert type while tolerating minor changes in percentage values."""
+    import hashlib
+    return hashlib.md5(msg.encode("utf-8")).hexdigest()[:16]
+
+
+def _alert_slo(level: str, msg: str, cooldown_hours: int = 24) -> None:
+    """Send Discord SLO alert with suppression. Level in ('breach','warning').
+    Suppression key is deterministic (md5 of message prefix) — survives
+    scheduler restart without duplicate alerts."""
+    try:
+        prefix = f"slo_{level}"
+        dedup_key = _slo_dedup_key(msg)
+        marker_id = f"{prefix}:{dedup_key}"
+        if _digest_already_sent(marker_id, cooldown_hours=cooldown_hours):
+            logger.debug("[SLO] {} suppressed (dedup) — already sent within {}h: {}",
+                         level, cooldown_hours, msg[:80])
+            return
+        from utils.discord_notifier import send
+        title = f"SLO {level.title()}"
+        send("ops", title, msg)
+        _mark_digest_sent(marker_id)
+        logger.info("[SLO] {} alert sent (dedup={}): {}", level, marker_id, msg[:120])
+    except Exception as exc:
+        logger.warning("[SLO] {} alert send failed: {}", level, exc)
+
+
+def run_slo_burn_check():
+    """Daily 07:00 UTC — Check SLO burn rate and alert on breach.
+    If scheduler success rate < SLO_SCHEDULER_TARGET for 3 consecutive days: RED alert.
+    If Board Room p95 > SLO_BOARD_ROOM_P95_TARGET_S: YELLOW warning."""
+    from config.settings import (
+        SLO_SCHEDULER_TARGET,
+        SLO_BOARD_ROOM_P95_TARGET_S,
+        SLO_SCHEDULER_BREACH_DAYS,
+        SLO_SCHEDULER_WARN_DAYS,
+    )
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            metrics = _compute_slo_metrics(conn)
+            scheduler_rate = metrics["scheduler_success_rate"]
+            board_p95 = metrics["board_room_p95_s"]
+
+            # Check last N days of scheduler success rate from agent_runs.
+            # Uses DISTINCT ON to guarantee exactly 1 row per calendar day even
+            # with multiple agent_runs entries on the same day.
+            daily_rates = conn.execute(
+                _sa_text("""
+                    WITH daily AS (
+                        SELECT DISTINCT ON (DATE(created_at))
+                            DATE(created_at) AS d,
+                            COUNT(*) AS total,
+                            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successes
+                        FROM agent_runs
+                        WHERE created_at > NOW() - INTERVAL '5 days'
+                        GROUP BY DATE(created_at)
+                        ORDER BY d DESC
+                        LIMIT :n_days
+                    )
+                    SELECT d,
+                           CASE WHEN total = 0 THEN 0.0 ELSE successes::float / total END AS rate
+                    FROM daily
+                    ORDER BY d
+                """),
+                {"n_days": SLO_SCHEDULER_BREACH_DAYS},
+            ).fetchall()
+
+            logger.debug(
+                "[SLO] Daily rates (last {}d): {}",
+                SLO_SCHEDULER_BREACH_DAYS,
+                [(str(r[0]), round(r[1], 4)) for r in daily_rates],
+            )
+
+            low_rates = [r for r in daily_rates if r[1] < SLO_SCHEDULER_TARGET]
+            current_pct = round(scheduler_rate * 100, 1)
+            target_pct = round(SLO_SCHEDULER_TARGET * 100, 1)
+
+            if len(low_rates) >= SLO_SCHEDULER_BREACH_DAYS:
+                _alert_slo(
+                    "breach",
+                    f"[SLO] 🔴 BREACH — Scheduler success rate <{target_pct}% "
+                    f"for {SLO_SCHEDULER_BREACH_DAYS} days "
+                    f"(current: {current_pct}%). Error budget exhausted.",
+                    cooldown_hours=24,
+                )
+            elif len(low_rates) >= SLO_SCHEDULER_WARN_DAYS:
+                _alert_slo(
+                    "warning",
+                    f"[SLO] 🟡 WARNING — Scheduler success rate <{target_pct}% "
+                    f"for {SLO_SCHEDULER_WARN_DAYS} days "
+                    f"(current: {current_pct}%). Approaching error budget limit.",
+                    cooldown_hours=12,
+                )
+
+            if board_p95 is not None and board_p95 > SLO_BOARD_ROOM_P95_TARGET_S:
+                _alert_slo(
+                    "warning",
+                    f"[SLO] 🟡 WARNING — Board Room p95 = {board_p95}s "
+                    f"(target <{int(SLO_BOARD_ROOM_P95_TARGET_S)}s).",
+                    cooldown_hours=12,
+                )
+
+        logger.info(
+            "[SLO] Burn check complete — scheduler_rate={:.1%}, board_p95={}",
+            scheduler_rate, board_p95 if board_p95 is not None else "N/A",
+        )
+    except Exception as exc:
+        logger.warning("[SLO] Burn check failed (non-fatal): {}", exc)
+
+
+def run_deed_throughput_digest():
+    """Weekly deed throughput Discord digest — Monday 09:00 UTC (GATE-118, T-1278).
+    Queries last 7 days deed count, cumulative count, weekly avg, days until deadline.
+    Posts to #intel-reports. Warnings if below target."""
+    try:
+        from utils.db import get_engine as _dtd_engine
+        from utils.discord_notifier import send as _dtd_send
+        from datetime import date as _dtd_date
+
+        if _digest_already_sent("deed_throughput", cooldown_hours=47):
+            logger.info("[DeedDigest] Dedup: already sent within 47h — skipping")
+            return
+
+        engine = _dtd_engine()
+        with engine.connect() as conn:
+            week_row = conn.execute(
+                text("""
+                    SELECT COUNT(*)::int AS week_count
+                    FROM registered_transactions
+                    WHERE deed_type = 'Sale' AND created_at >= NOW() - INTERVAL '7 days'
+                """)
+            ).fetchone()
+            week_count = week_row[0] if week_row else 0
+
+            cum_row = conn.execute(
+                text("""
+                    SELECT COUNT(*)::int AS cum_count,
+                           COUNT(*)::float / NULLIF(EXTRACT(WEEK FROM NOW()) - EXTRACT(WEEK FROM MIN(created_at)), 0) AS weekly_avg
+                    FROM registered_transactions WHERE deed_type = 'Sale'
+                """)
+            ).fetchone()
+            cum_count = cum_row[0] if cum_row else 0
+            weekly_avg = round(float(cum_row[1]), 1) if cum_row and cum_row[1] else 0.0
+
+        today = _dtd_date.today()
+        deadline = _dtd_date(2026, 8, 15)
+        days_remaining = (deadline - today).days
+
+        msg = (
+            f"\U0001f4cb Deed Throughput \u2014 Week of {today.isoformat()}\n"
+            f"Deeds this week: {week_count} | Cumulative: {cum_count} | "
+            f"Weekly avg: {weekly_avg} | Deadline: {days_remaining} days"
+        )
+        if weekly_avg < 50:
+            msg += (
+                "\n\u26a0\ufe0f BELOW TARGET (50/week) \u2014 "
+                f"at {weekly_avg}/wk, pipeline needs {50 - weekly_avg:.0f} more deeds/wk"
+            )
+
+        _dtd_send("intel_reports", "\U0001f4cb Deed Throughput", msg)
+        _mark_digest_sent("deed_throughput")
+        logger.info("[DeedDigest] Sent: {} deeds this week, {:.1f} avg, {}d to deadline",
+                     week_count, weekly_avg, days_remaining)
+    except Exception as exc:
+        logger.warning("[DeedDigest] Failed (non-fatal): {}", exc)
+
+
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
     """Register digest-related scheduler jobs."""
     from apscheduler.triggers.cron import CronTrigger
@@ -517,4 +713,20 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         id="ledger_verdict_digest",
         name="Monthly Prediction Ledger Verdict Digest → #intel-reports",
         misfire_grace_time=7200,
+    )
+    # Weekly deed throughput digest — Monday 09:00 UTC (GATE-118, T-1278)
+    scheduler.add_job(
+        lambda: safe_job(run_deed_throughput_digest, "deed_throughput_digest"),
+        CronTrigger(day_of_week="mon", hour=9, minute=0, timezone="UTC"),
+        id="deed_throughput_digest",
+        name="Monday Deed Throughput Digest → #intel-reports",
+        misfire_grace_time=3600,
+    )
+    # SLO burn-rate check — daily 07:00 UTC (GATE-119, T-1284)
+    scheduler.add_job(
+        lambda: safe_job(run_slo_burn_check, "slo_burn_check"),
+        CronTrigger(hour=7, minute=0, timezone="UTC"),
+        id="slo_burn_check",
+        name="Daily SLO Burn-Rate Check (scheduler + board room)",
+        misfire_grace_time=3600,
     )

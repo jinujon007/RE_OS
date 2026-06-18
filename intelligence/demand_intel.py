@@ -245,10 +245,10 @@ class DemandIntel:
                 self._load_absorption_trend(conn, ds, mi)
                 self._load_days_on_market_by_config(conn, ds, mi)
                 self._load_pipeline_supply(conn, ds, mi)
+                self._compute_nri_demand_score(conn, ds, mi)
 
             self._load_gcc_signal(ds, mi)
             self._load_govt_pipeline_signal(ds, mi)
-            self._compute_nri_demand_score(ds, mi)
             self._compute_price_momentum(ds)
             self._compute_demand_signal(ds)
             self._compute_demand_score_v2(ds)
@@ -832,8 +832,9 @@ class DemandIntel:
         except Exception:
             return False
 
-    def _compute_nri_demand_score(self, ds: DemandSignals, mi: dict):
+    def _compute_nri_demand_score(self, conn, ds: DemandSignals, mi: dict):
         """NRI demand proxy: registered_transactions buyer_type (primary) + news fallback.
+        Uses caller-provided connection — no engine creation.
 
         (1) registered_transactions WHERE buyer_type='nri' in market villages in last 90d
             — each deed adds 1.0, max 5.0.
@@ -841,33 +842,34 @@ class DemandIntel:
             fall back to news_articles ILIKE '%NRI%' with [LOW_CONFIDENCE] label.
         Returns score [0.0, 10.0]. Single DB connection; graceful degradation.
         """
+        if conn is None:
+            logger.warning("[DemandIntel] NRI signal skipped — conn is None")
+            ds.nri_score = 0.0
+            return
         try:
-            from utils.db import get_engine
             from sqlalchemy import text
 
-            engine = get_engine()
-            with engine.connect() as conn:
-                mkt_name = mi["name"]
-                mkt_pat = f"%{mkt_name}%"
+            mkt_name = mi["name"]
+            mkt_pat = f"%{mkt_name}%"
 
-                deed_count = conn.execute(
-                    text("""
-                        SELECT COUNT(*) FROM registered_transactions rt
-                        WHERE rt.buyer_type = 'nri'
-                          AND rt.reg_date > NOW() - INTERVAL '90 days'
-                          AND rt.village ILIKE :pat
-                    """),
-                    {"pat": mkt_pat},
-                ).scalar() or 0
+            deed_count = conn.execute(
+                text("""
+                    SELECT COUNT(*) FROM registered_transactions rt
+                    WHERE rt.buyer_type = 'nri'
+                      AND rt.reg_date > NOW() - INTERVAL '90 days'
+                      AND rt.village ILIKE :pat
+                """),
+                {"pat": mkt_pat},
+            ).scalar() or 0
 
-                row_count = conn.execute(
-                    text("""
-                        SELECT COUNT(*) FROM registered_transactions rt
-                        WHERE rt.reg_date > NOW() - INTERVAL '365 days'
-                          AND rt.village ILIKE :pat
-                    """),
-                    {"pat": mkt_pat},
-                ).scalar() or 0
+            row_count = conn.execute(
+                text("""
+                    SELECT COUNT(*) FROM registered_transactions rt
+                    WHERE rt.reg_date > NOW() - INTERVAL '365 days'
+                      AND rt.village ILIKE :pat
+                """),
+                {"pat": mkt_pat},
+            ).scalar() or 0
 
             if deed_count > 0:
                 deed_score = min(deed_count * 1.0, 5.0)
@@ -879,17 +881,16 @@ class DemandIntel:
                 return
 
             if row_count < 5:
-                with get_engine().connect() as conn:
-                    news_count = conn.execute(
-                        text("""
-                            SELECT COUNT(*) FROM news_articles na
-                            JOIN micro_markets mm ON mm.id = na.micro_market_id
-                            WHERE mm.slug = :slug
-                              AND na.content ILIKE '%NRI%'
-                              AND na.published_at > NOW() - INTERVAL '90 days'
-                        """),
-                        {"slug": mi["slug"]},
-                    ).scalar() or 0
+                news_count = conn.execute(
+                    text("""
+                        SELECT COUNT(*) FROM news_articles na
+                        JOIN micro_markets mm ON mm.id = na.micro_market_id
+                        WHERE mm.slug = :slug
+                          AND na.content ILIKE '%NRI%'
+                          AND na.published_at > NOW() - INTERVAL '90 days'
+                    """),
+                    {"slug": mi["slug"]},
+                ).scalar() or 0
 
                 if news_count > 0:
                     fallback_score = min(news_count * 0.5, 5.0)

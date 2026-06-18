@@ -20,7 +20,7 @@ from tests.helpers import db_reachable
 pytestmark = pytest.mark.integration
 
 
-@pytest.mark.skipif(
+@pytest.mark.skipif(  # TRACK: PostgreSQL not reachable — requires live DB (skipped)
     not db_reachable(),
     reason="PostgreSQL not reachable — requires live DB (skipped)",
 )

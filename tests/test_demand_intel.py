@@ -1,7 +1,7 @@
 """DemandIntel tests — str + T-1235 NRI signal."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 pytestmark = pytest.mark.unit
 
@@ -48,9 +48,7 @@ def test_nri_signal_uses_deed_buyer_type_when_available():
 
     conn = _conn_with_results([3, 100])
 
-    with patch("utils.db.get_engine") as mock_eng:
-        mock_eng.return_value.connect.return_value.__enter__.return_value = conn
-        di._compute_nri_demand_score(ds, mi)
+    di._compute_nri_demand_score(conn, ds, mi)
 
     assert ds.nri_score is not None and ds.nri_score > 0
     assert any("nri buyer_type" in s for s in ds.signals), (
@@ -68,9 +66,7 @@ def test_nri_signal_fallback_on_insufficient_deeds():
     conn = _conn_with_results([0, 3, 4])
     # 0 deed_count, 3 rows (<5 → fallback), 4 news articles
 
-    with patch("utils.db.get_engine") as mock_eng:
-        mock_eng.return_value.connect.return_value.__enter__.return_value = conn
-        di._compute_nri_demand_score(ds, mi)
+    di._compute_nri_demand_score(conn, ds, mi)
 
     assert any("news_fallback" in s for s in ds.signals), (
         f"Expected fallback signal, got {ds.signals}"
@@ -86,9 +82,7 @@ def test_nri_low_confidence_label_on_fallback():
 
     conn = _conn_with_results([0, 3, 2])
 
-    with patch("utils.db.get_engine") as mock_eng:
-        mock_eng.return_value.connect.return_value.__enter__.return_value = conn
-        di._compute_nri_demand_score(ds, mi)
+    di._compute_nri_demand_score(conn, ds, mi)
 
     assert any("LOW_CONFIDENCE" in s for s in ds.signals), (
         f"Expected [LOW_CONFIDENCE] label, got {ds.signals}"

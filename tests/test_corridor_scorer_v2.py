@@ -76,8 +76,8 @@ def test_v2_falls_back_to_v1_on_postgis_error():
     assert villages == expected, f"Expected v1 fallback {expected}, got {villages}"
 
 
-def test_spatial_query_uses_st_within():
-    """_query_spatial_villages executes ST_Within with correct table references."""
+def test_spatial_query_uses_st_buffer():
+    """_query_spatial_villages uses ST_Buffer for seeded corridors (not AABB)."""
     from utils.corridor_scorer_v2 import CorridorScorerV2
 
     engine = _make_mock_engine()
@@ -100,11 +100,45 @@ def test_spatial_query_uses_st_within():
     call_sql = conn_mock.execute.call_args[0][0].text if hasattr(
         conn_mock.execute.call_args[0][0], "text"
     ) else str(conn_mock.execute.call_args[0][0])
+    assert "ST_Buffer" in call_sql, "Must use ST_Buffer not ST_MakeEnvelope"
+    assert "ST_MakeEnvelope" not in call_sql, "AABB removed"
     assert "ST_Within" in call_sql
     assert "ST_SetSRID" in call_sql
-    assert "ST_MakePoint" in call_sql
-    assert "corridor_boundaries" in call_sql
+    assert ":lon" in call_sql or ":radius_m" in call_sql
     assert "r.longitude IS NOT NULL" in call_sql or "longitude" in call_sql
+
+    call_params = conn_mock.execute.call_args[0][1] if len(
+        conn_mock.execute.call_args[0]
+    ) > 1 else {}
+    assert call_params.get("lon") == 13.13, f"Expected lon=13.13, got {call_params.get('lon')}"
+    assert call_params.get("lat") == 77.60, f"Expected lat=77.60, got {call_params.get('lat')}"
+    assert call_params.get("radius_m") == 1000, f"Expected radius_m=1000, got {call_params.get('radius_m')}"
+
+
+def test_nh44_diagonal_does_not_overreach():
+    """ST_Buffer radius excludes AABB corner (no overreach)."""
+    from utils.corridor_scorer_v2 import CorridorBoundaryV2
+    import math
+
+    seed = CorridorBoundaryV2("nh44", 13.13, 77.60, radius_m=1000)
+    corner_lat = seed.centroid_lat + 0.02
+    corner_lon = seed.centroid_lon + 0.02
+    dlat = math.radians(corner_lat - seed.centroid_lat)
+    dlon = math.radians(corner_lon - seed.centroid_lon)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(seed.centroid_lat)) * math.cos(math.radians(corner_lat)) * math.sin(dlon / 2) ** 2
+    dist_m = 6371000 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    assert dist_m > seed.radius_m, (
+        f"AABB corner at ({corner_lat}, {corner_lon}) is {dist_m:.0f}m from centroid "
+        f"— inside buffer radius {seed.radius_m}m (would overreach)"
+    )
+
+
+def test_corridor_radius_default_1000m():
+    """CorridorBoundaryV2 radius_m defaults to 1000m."""
+    from utils.corridor_scorer_v2 import CorridorBoundaryV2
+
+    seed = CorridorBoundaryV2("nh44", 13.13, 77.60)
+    assert seed.radius_m == 1000
 
 
 def test_backtest_delegates_to_v1():

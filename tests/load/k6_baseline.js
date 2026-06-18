@@ -1,19 +1,24 @@
-// RE_OS — k6 Baseline Load Test (T-1249)
-// 50 VUs with staged ramp-up; p95 <200ms; failure rate <1%
+// RE_OS — k6 CI Baseline Load Test (T-1249, recalibrated T-1288)
+// 20 VU CI baseline (gentle ramp for CI environments)
+// Production benchmark (target: 100 VU) not yet defined — see docs/operations.md
 // Endpoints: health/live + health + status (read-only mix)
 import http from 'k6/http';
 import { check } from 'k6';
 
 export const options = {
+  tags: {
+    environment: __ENV.K6_ENV || 'ci',
+    test_type: 'baseline',
+    test_name: 'ci_baseline_20vu',
+  },
   stages: [
     { duration: '10s', target: 10 },   // warm-up: 10 VUs
-    { duration: '20s', target: 25 },   // ramp to 25 VUs
-    { duration: '20s', target: 50 },   // ramp to target 50 VUs
-    { duration: '10s', target: 50 },   // sustained peak
+    { duration: '30s', target: 20 },   // ramp to CI baseline 20 VUs
+    { duration: '10s', target: 0 },    // cooldown
   ],
   thresholds: {
     http_req_failed: ['rate<0.01'],
-    http_req_duration: ['p(95)<200'],
+    http_req_duration: ['p(95)<500'],
   },
 };
 

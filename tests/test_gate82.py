@@ -37,7 +37,7 @@ def test_gate82_market_cache_has_3_markets():
 
 
 @pytest.mark.integration
-@pytest.mark.skipif("not os.environ.get('DATABASE_URL')")
+@pytest.mark.skipif("not os.environ.get('DATABASE_URL')")  # TRACK: requires DATABASE_URL
 def test_gate82_mat_view_exists():
     """Assertion 2: pg_matviews has v_market_brief_mat with ispopulated = true."""
     import os
@@ -69,7 +69,7 @@ def test_gate82_performance_test_passes():
 
 
 @pytest.mark.integration
-@pytest.mark.skipif("not os.environ.get('DATABASE_URL')")
+@pytest.mark.skipif("not os.environ.get('DATABASE_URL')")  # TRACK: requires DATABASE_URL
 def test_gate82_no_empty_registration_numbers():
     """Assertion 3: kaveri_registrations WHERE registration_number = '' count = 0."""
     import os

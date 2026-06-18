@@ -8,7 +8,7 @@
         db db-inventory db-projects db-developers db-reset \
         dashboard grafana prometheus \
         lint format syntax-check test test-cov health \
-        ollama-pull install-hooks ci clean migrate
+        ollama-pull install-hooks ci clean migrate spec
 
 # ── STACK ─────────────────────────────────────────────────────────────────────
 
@@ -115,7 +115,19 @@ install-hooks:
 	git config core.hooksPath .githooks
 	@echo "Pre-commit hook active. Dev files will be blocked at commit time."
 
-ci: lint test syntax-check
+# ── API SPEC ────────────────────────────────────────────────────────────────
+
+.PHONY: spec
+
+SPEC_SCRIPT = scripts/export_openapi.py
+
+spec:
+	@test -f $(SPEC_SCRIPT) || (echo "ERROR: $(SPEC_SCRIPT) not found — run from repo root"; exit 1)
+	python $(SPEC_SCRIPT)
+	@echo ""
+	@echo "Next: git add docs/api-v1.json && make ci"
+
+ci: spec lint syntax-check test
 
 syntax-check:
 	python -m py_compile \

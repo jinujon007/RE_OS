@@ -97,15 +97,7 @@ def test_get_calibration_status_returns_string():
 
 # ── T-1233: Manyata Backcast ─────────────────────────────────────────────────
 
-# Shared synthetic seed data: 5 years with clear linear trend (R² ≈ 0.97).
-# Units absorbed grow with Manyata employment ramp, yielding R² ≥ 0.6.
-_LINEAR_SEED_DATA: list = [
-    (2019, 500, 5500.0),
-    (2020, 900, 5800.0),
-    (2021, 930, 6000.0),
-    (2022, 960, 6200.0),
-    (2023, 990, 6500.0),
-]
+from tests.fixtures.seed_data import LINEAR_SEED_DATA
 
 
 def test_calibration_result_has_coefficient():
@@ -135,7 +127,7 @@ def test_calibrated_removes_prefix_when_r2_sufficient():
     mock_engine = MagicMock()
     mock_conn = MagicMock()
     mock_engine.connect.return_value.__enter__.return_value = mock_conn
-    mock_conn.execute.return_value.fetchall.return_value = _LINEAR_SEED_DATA
+    mock_conn.execute.return_value.fetchall.return_value = LINEAR_SEED_DATA
     result = run_manyata_backcast(mock_engine)
     assert result.verdict == "CALIBRATED"
     assert result.coefficient > 0

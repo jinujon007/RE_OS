@@ -84,8 +84,8 @@ def _validate_redis_config() -> str:
     """Validate Redis config and return storage URI.
 
     Raises RuntimeError if Redis is configured without a password (non-memory://).
-    Called lazily by limiter init to avoid crashing module imports
-    (mypy, pytest collection, docs generation).
+    Called at module load by Limiter() — if REDIS_PASSWORD is unset and REDIS_URL
+    is not memory://, this raises at import time and crashes the FastAPI process.
     """
     url = _REDIS_URL
     if not url:
@@ -120,32 +120,54 @@ _REDIS_HASH_KEY = "re_os:pipeline_running"
 _REDIS_TTL_SECONDS = 3600  # 1h — prevents stale entries on pod crash
 _REDIS_CLIENT_INSTANCE = None
 _REDIS_CLIENT_LOCK = threading.Lock()
+_REDIS_RECONNECT_COOLDOWN = 30  # seconds between reconnect attempts
+_last_redis_attempt = 0.0  # sentinel: 0.0 always triggers first attempt (monotonic clock floor)
+
+
+def _attempt_redis_connect():
+    """Attempt to create a Redis client. Sets instance on success, False on failure.
+    Thread-safe: only call while holding _REDIS_CLIENT_LOCK."""
+    global _REDIS_CLIENT_INSTANCE, _last_redis_attempt
+    _last_redis_attempt = time.monotonic()
+    try:
+        import redis as _redis_mod
+        from config.settings import REDIS_URL as _redis_url
+        _REDIS_CLIENT_INSTANCE = _redis_mod.from_url(
+            _redis_url,
+            decode_responses=True,
+            socket_connect_timeout=2,
+            socket_keepalive=True,
+            health_check_interval=30,
+        )
+    except _redis_mod.ConnectionError as exc:
+        logger.warning("[Redis running] Connection pool exhausted or unavailable: %s — using in-memory fallback", exc)
+        _REDIS_CLIENT_INSTANCE = False
+    except Exception as exc:
+        logger.debug("[Redis running] Client init failed: %s — using in-memory fallback", exc)
+        _REDIS_CLIENT_INSTANCE = False
 
 
 def _get_redis_client():
     """Module-level lazy singleton Redis client with connection pool.
 
     Returns None if Redis is unavailable (triggers in-memory fallback).
-    Connection reused across all calls — safe for --workers N.
+    Automatically retries connection every _REDIS_RECONNECT_COOLDOWN seconds
+    after a failure (T-1261). Connection reused — safe for --workers N.
+
+    Thread-safe: uses double-checked locking with a single cooldown gate
+    inside the lock to prevent thundering-herd reconnect attempts.
     """
-    global _REDIS_CLIENT_INSTANCE
+    global _REDIS_CLIENT_INSTANCE, _last_redis_attempt
     if _REDIS_CLIENT_INSTANCE is None:
         with _REDIS_CLIENT_LOCK:
             if _REDIS_CLIENT_INSTANCE is None:
-                try:
-                    import redis as _redis_mod
-                    from config.settings import REDIS_URL as _redis_url
-
-                    _REDIS_CLIENT_INSTANCE = _redis_mod.from_url(
-                        _redis_url,
-                        decode_responses=True,
-                        socket_connect_timeout=2,
-                        socket_keepalive=True,
-                        health_check_interval=30,
-                    )
-                except Exception as exc:
-                    logger.debug("[Redis running] Client init failed: %s — using in-memory fallback", exc)
-                    _REDIS_CLIENT_INSTANCE = False
+                _attempt_redis_connect()
+    elif _REDIS_CLIENT_INSTANCE is False:
+        with _REDIS_CLIENT_LOCK:
+            if _REDIS_CLIENT_INSTANCE is False:
+                now = time.monotonic()
+                if now - _last_redis_attempt > _REDIS_RECONNECT_COOLDOWN:
+                    _attempt_redis_connect()
     return _REDIS_CLIENT_INSTANCE if _REDIS_CLIENT_INSTANCE is not False else None
 
 
@@ -454,9 +476,14 @@ _READ_ONLY_PATHS = frozenset(
         "/api/v1/digest/monthly", "/api/v1/llm/quota",
         "/api/v1/ops/v2-readiness",
         "/api/v1/ops/kill-criteria",
+        "/api/v1/ops/corridor-backtest",
+        "/api/ops/corridor-backtest",
         "/api/v1/ops/ledger",
-        # ops/slo is only in v1 form (no legacy /api/ops/slo existed)
+        "/api/ops/slo",
         "/api/v1/ops/slo",
+        "/api/v1/ops/corridor-backtest",
+        "/api/v1/ops/decision-journal",
+        "/api/ops/decision-journal",
     }
 )
 _READ_ONLY_PREFIXES = (

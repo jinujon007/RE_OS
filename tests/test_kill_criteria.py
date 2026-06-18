@@ -321,45 +321,92 @@ def test_compute_overall_trigger_overrides_at_risk():
     assert KillCriteriaAuditor.compute_overall(results) == "TRIGGER"
 
 
-# ── 5. Endpoint (requires FastAPI app) ──────────────────────────────────────
+# ── 5. Endpoint — T-1277 (GATE-118) ─────────────────────────────────────────
 
 
-def test_kill_criteria_endpoint_returns_200():
+def test_kill_criteria_endpoint_200():
     import os
     from unittest.mock import patch
 
-    with patch.dict(os.environ, {"DASHBOARD_API_KEY": "test-key"}, clear=False):
+    with patch.dict(os.environ, {"DASHBOARD_API_KEY_ADMIN": "test-key", "DASHBOARD_API_KEY": ""}, clear=False):
         from dashboard.app_fastapi import app
         from starlette.testclient import TestClient
 
         client = TestClient(app)
-        resp = client.get("/api/ops/kill-criteria", headers={"X-API-Key": "test-key"})
+        resp = client.get("/api/v1/ops/kill-criteria", headers={"X-API-Key": "test-key"})
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
         body = resp.json()
-        assert "overall" in body
         assert "deed_throughput" in body
-        assert "corridor_accuracy" in body
-        assert "decision_journal" in body
+        assert "ledger" in body
+        assert "corridor" in body
+        assert "deadlines" in body
+        assert "decision_journal_entries" in body
+        assert body["deed_throughput"]["target"] == 50
+        assert body["ledger"]["target_hit_rate"] == 0.6
 
 
-def test_kill_criteria_endpoint_respects_as_of_param():
+def test_kill_criteria_deadline_days_remaining():
+    from datetime import date
+    today = date.today()
+    deed_dl = date(2026, 8, 15)
+    dj_dl = date(2026, 12, 31)
+    dr = (deed_dl - today).days
+    djr = (dj_dl - today).days
     import os
     from unittest.mock import patch
 
-    with patch.dict(os.environ, {"DASHBOARD_API_KEY": "test-key"}, clear=False):
+    with patch.dict(os.environ, {"DASHBOARD_API_KEY_ADMIN": "test-key", "DASHBOARD_API_KEY": ""}, clear=False):
         from dashboard.app_fastapi import app
         from starlette.testclient import TestClient
 
         client = TestClient(app)
-        resp = client.get(
-            "/api/ops/kill-criteria?as_of=2026-12-15",
-            headers={"X-API-Key": "test-key"},
-        )
-        assert resp.status_code in (200, 400, 500), f"Unexpected status: {resp.status_code}"
-        if resp.status_code == 200:
+        resp = client.get("/api/v1/ops/kill-criteria", headers={"X-API-Key": "test-key"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["deadlines"]["days_remaining"] == dr
+        assert body["deadlines"]["dj_days_remaining"] == djr
+        assert body["deadlines"]["deed_throughput"] == "2026-08-15"
+        assert body["deadlines"]["decision_journal"] == "2026-12-31"
+
+
+def test_kill_criteria_deed_throughput_formula():
+    from unittest.mock import MagicMock, patch
+    from datetime import datetime
+
+    import os
+    with patch.dict(os.environ, {"DASHBOARD_API_KEY_ADMIN": "test-key", "DASHBOARD_API_KEY": ""}, clear=False):
+        from dashboard.app_fastapi import app
+        from starlette.testclient import TestClient
+
+        mock_conn = MagicMock()
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+        deed_row = (50.0, 150, 3)
+
+        ledger_hit = MagicMock()
+        ledger_hit.scalar.return_value = 30
+        ledger_miss = MagicMock()
+        ledger_miss.scalar.return_value = 10
+        corridor_fetch = MagicMock()
+        corridor_fetch.fetchall.return_value = []
+        dj_count = MagicMock()
+        dj_count.scalar.return_value = 0
+
+        mock_conn.execute.side_effect = [
+            MagicMock(fetchone=MagicMock(return_value=deed_row)),
+            ledger_hit, ledger_miss,
+            corridor_fetch,
+            dj_count,
+        ]
+
+        with patch("dashboard.routers.ops._get_sa_engine", return_value=mock_engine):
+            client = TestClient(app)
+            resp = client.get("/api/v1/ops/kill-criteria", headers={"X-API-Key": "test-key"})
+            assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
             body = resp.json()
-            assert "overall" in body
-            assert "decision_journal" in body
+            assert body["deed_throughput"]["weekly_avg_deeds"] == 50.0
+            assert body["deed_throughput"]["on_track"] is True
 
 
 # ── 6. Scheduler job registration ──────────────────────────────────────────

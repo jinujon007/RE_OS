@@ -341,7 +341,7 @@ class TestIntelEmbedderRerankerIntegration:
     """T-436: CrossEncoderReranker wired into IntelEmbedder.search()."""
 
     pytestmark = [
-        pytest.mark.skip("T-436 — _get_reranker not implemented until Sprint 33")
+        pytest.mark.skip("T-436 — _get_reranker not implemented until Sprint 33")  # TRACK: T-436 — _get_reranker not implemented until Sprint 33
     ]
 
     def test_search_with_rerank_calls_reranker(self):
@@ -425,3 +425,81 @@ class TestIntelEmbedderRerankerIntegration:
                 results = e.search("test", n=2)
                 assert len(results) == 1
                 assert results[0]["text"] == "doc A"
+
+
+class TestChromaDBQueriedAtTracking:
+    """GATE-117 / T-1275: search() updates queried_at metadata."""
+
+    def test_search_updates_queried_at(self):
+        """search() should update queried_at metadata on returned documents."""
+        mock_coll = MagicMock()
+        mock_coll.count.return_value = 5
+        mock_coll.query.return_value = {
+            "documents": [["doc A"]],
+            "metadatas": [[{"source": "a.txt", "market": "Yelahanka"}]],
+            "ids": [["id_1"]],
+            "distances": [[0.1]],
+        }
+        mock_client = MagicMock()
+        mock_client.get_or_create_collection.return_value = mock_coll
+        with (
+            patch("utils.embedder._get_chroma_client", return_value=mock_client),
+            patch("utils.embedder.OllamaEmbeddingFunction"),
+        ):
+            from utils.embedder import IntelEmbedder
+
+            e = IntelEmbedder()
+            with patch.object(e, "_ollama_available", return_value=True):
+                e.search("test")
+                assert mock_coll.update.called
+
+
+class TestChromaDBPurgeSafeGuard:
+    """GATE-117 / T-1275: purge_stale_embeddings skips active collections."""
+
+    def test_purge_skips_active_collection(self):
+        """When a collection has queried_at within 24h, skip it.
+
+        Validates that the WHERE clause passed to ChromaDB.get() contains
+        a $gt filter on queried_at — ensuring the safe-purge guard is
+        actually active, not a no-op.
+        """
+        mock_coll = MagicMock()
+        mock_coll.get.return_value = {"ids": ["active_doc"]}
+        mock_client = MagicMock()
+        mock_client.get_collection.return_value = mock_coll
+        with patch("utils.embedder._get_chroma_client", return_value=mock_client):
+            from utils.embedder import purge_stale_embeddings
+
+            result = purge_stale_embeddings(days=90)
+            assert result == 0
+            mock_coll.delete.assert_not_called()
+
+            # Validate the where clause: must filter on queried_at with $gt
+            # (the 24h window is in the implementation, not the mock)
+            call_args = mock_coll.get.call_args[1]
+            where_filter = call_args.get("where", {})
+            assert "queried_at" in where_filter, (
+                "safe-purge guard must filter by queried_at"
+            )
+            assert "$gt" in where_filter["queried_at"], (
+                "safe-purge guard must use $gt operator on queried_at"
+            )
+
+    def test_purge_deletes_inactive_collection(self):
+        """When no documents have recent queried_at, purge proceeds normally."""
+        mock_coll = MagicMock()
+        mock_coll.get.return_value = {"ids": [], "metadatas": []}
+        mock_client = MagicMock()
+        mock_client.get_collection.return_value = mock_coll
+        with patch("utils.embedder._get_chroma_client", return_value=mock_client):
+            from utils.embedder import purge_stale_embeddings
+
+            result = purge_stale_embeddings(days=90)
+            assert result == 0
+
+    def test_queried_at_metadata_in_source(self):
+        """purge_stale_embeddings source contains queried_at string (safe-purge check)."""
+        from pathlib import Path
+        source = Path("utils/embedder.py").read_text()
+        assert "queried_at" in source

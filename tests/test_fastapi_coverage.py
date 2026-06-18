@@ -60,7 +60,7 @@ class TestSurveysEndpoint:
             )
         assert r.status_code in (200, 201, 401)
 
-    @pytest.mark.xfail(
+    @pytest.mark.xfail(  # TRACK: Requires live PostgreSQL (mock complexity with SQLAlchemy begin())
         reason="Requires live PostgreSQL (mock complexity with SQLAlchemy begin())"
     )
     def test_create_survey_with_auth(self):
