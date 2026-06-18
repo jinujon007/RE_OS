@@ -22,6 +22,14 @@ T-720/T-721: Risk Metrics (Tier 1 — Financial Intelligence Depth)
   _compute_risk_metrics(): orchestrates both RE-Sharpe and empyrical metrics.
   Graceful degrades when empyrical not installed — still emits RE-adapted Sharpe.
 
+T-1203—T-1207 (Sprint 103 / GATE-103): True IRR Fix
+  calc_irr_npv(): NPV-solving IRR using numpy-financial. Validates against npf.npv()
+    to reject false roots. Replaces the annualized ROI that was mislabelled as IRR.
+  _compute_absorption_curve(): Curved revenue distribution based on sales velocity.
+    Replaces flat revenue assumption — revenue front-loaded when velocity > 0.
+  build_cash_flow() extended with irr_npv_pct on CashFlowSummary and curved
+    absorption via sales_velocity_units_per_month parameter.
+
 Design decisions:
   - GDVEstimator returns psf=0.0 when insufficient IGR data (< MIN_IGR_RECORDS).
     Caller provides the fallback PSF (listing PSF from market data). This separation
@@ -37,10 +45,18 @@ Design decisions:
     IRR-based) is the primary Sharpe used in Board Room context. The RE-adapted version
     uses (IRR - 7% Gsec) / scenario_IRR_std because real estate IRR doesn't follow
     normal distribution assumptions of traditional Sharpe.
+  - Risk metrics use a fixed 54-month schedule (_build_monthly_returns) while
+    build_cash_flow() accepts configurable months. This is intentional — risk
+    banding needs a standardised horizon, cash projection needs caller flexibility.
+  - calc_irr_npv validates with npf.npv() because npf.irr() (Newton-Raphson with
+    single seed) can converge to false roots for cash flows with multiple sign
+    changes. The NPV check adds ~5µs per call.
 """
 
 import json
 from dataclasses import dataclass, field
+
+from config.metrics import irr_computations_total, cashflow_build_duration_seconds, absorption_curve_calls_total
 
 # -- LLS Standard Assumptions -------------------------------------------------
 CONSTRUCTION_COST_PSF: float = 2200.0  # ₹/sqft hard cost
@@ -438,13 +454,13 @@ class GDVEstimator:
                 result = (validated, int(row[1]), "igr_portal")
                 ttl = self._CACHE_TTL_S
             else:
-                result = (None, int(row[1]), "sanity_rejected")
+                result = (0.0, int(row[1]), "sanity_rejected")
                 ttl = self._NODATA_CACHE_TTL_S
         elif row:
-            result = (None, int(row[1]), "insufficient_records")
+            result = (0.0, int(row[1]), "insufficient_records")
             ttl = self._NODATA_CACHE_TTL_S
         else:
-            result = (None, 0, "no_data")
+            result = (0.0, 0, "no_data")
             ttl = self._NODATA_CACHE_TTL_S
 
         self._cache[market] = (result[0], result[1], result[2], now + ttl)
@@ -670,6 +686,149 @@ def log_igr_lookup(
         )
 
 
+# ── calc_irr_npv — NPV-solving IRR (Sprint 103 — T-1203) ───────────────────────
+
+_NPV_TOLERANCE: float = 1.0  # Accept ±₹1 NPV as converged
+_MAX_CASH_FLOW_LENGTH: int = 1200  # 100 years monthly
+
+
+def _log_irr_debug(msg: str, *args):
+    from loguru import logger as _log
+    _log.debug("[IRR_NPV] " + msg, *args)
+
+
+def calc_irr_npv(cash_flows: list[float], caller: str = "unknown") -> float | None:
+    """Compute NPV-solving IRR from monthly cash flows using numpy-financial.
+
+    Validates the result by computing NPV at the found rate — if
+    abs(NPV) > _NPV_TOLERANCE, the Newton-Raphson solver converged
+    to a false root and None is returned.
+
+    Args:
+        cash_flows: Monthly cash flows. First element is initial investment (negative),
+                   remaining are net monthly receipts. Max length 1200.
+        caller: Label for Prometheus metrics ('build_cash_flow', 'board_room', 'fixture').
+
+    Returns:
+        Annualized IRR percentage rounded to 2 decimal places, or None if
+        the cash flow array cannot produce a meaningful IRR.
+    """
+    import math as _math
+    import numpy_financial as _npf
+
+    if not cash_flows or len(cash_flows) < 2:
+        _log_irr_debug("rejected: empty or single-element cash flow")
+        irr_computations_total.labels(caller=caller, result="null").inc()
+        return None
+
+    if len(cash_flows) > _MAX_CASH_FLOW_LENGTH:
+        _log_irr_debug("rejected: cash flow length {} exceeds max {}", len(cash_flows), _MAX_CASH_FLOW_LENGTH)
+        irr_computations_total.labels(caller=caller, result="null").inc()
+        return None
+
+    has_neg = any(cf < 0 for cf in cash_flows)
+    has_pos = any(cf > 0 for cf in cash_flows)
+    if not (has_neg and has_pos):
+        _log_irr_debug("rejected: no sign change in cash flows")
+        irr_computations_total.labels(caller=caller, result="null").inc()
+        return None
+
+    try:
+        monthly_rate = float(_npf.irr(cash_flows))
+    except Exception as exc:
+        _log_irr_debug("npf.irr raised: {}", exc)
+        irr_computations_total.labels(caller=caller, result="error").inc()
+        return None
+
+    if _math.isnan(monthly_rate):
+        _log_irr_debug("npf.irr returned NaN")
+        irr_computations_total.labels(caller=caller, result="null").inc()
+        return None
+
+    if monthly_rate <= -1.0:
+        _log_irr_debug("monthly rate {:.6f} <= -1.0 (total loss)", monthly_rate)
+        irr_computations_total.labels(caller=caller, result="null").inc()
+        return None
+
+    try:
+        npv = float(_npf.npv(monthly_rate, cash_flows))
+        if abs(npv) > _NPV_TOLERANCE:
+            _log_irr_debug("npv validation failed: npv={:.2f} at rate={:.6f}", npv, monthly_rate)
+            irr_computations_total.labels(caller=caller, result="null").inc()
+            return None
+    except Exception as exc:
+        _log_irr_debug("npf.npv raised: {}", exc)
+        irr_computations_total.labels(caller=caller, result="error").inc()
+        return None
+
+    annual_pct = ((1 + monthly_rate) ** 12 - 1) * 100
+    if _math.isinf(annual_pct) or _math.isnan(annual_pct):
+        _log_irr_debug("annualized pct overflow: {:.6f}", annual_pct)
+        irr_computations_total.labels(caller=caller, result="null").inc()
+        return None
+
+    irr_computations_total.labels(caller=caller, result="success").inc()
+    return round(annual_pct, 2)
+
+
+# ── Absorption Curve (T-1206 — Sprint 103) ────────────────────────────────────
+
+
+def _compute_absorption_curve(
+    total_units: int,
+    velocity: float,
+    price_per_unit: float,
+    months: int,
+) -> list[float]:
+    """Compute curved monthly revenue based on sales velocity absorption.
+
+    Revenue is front-loaded: sales occur at `velocity` units per month
+    until inventory is exhausted. Remaining months have zero revenue.
+    This produces a more realistic IRR than flat revenue for projects
+    where absorption data is available.
+
+    Args:
+        total_units: Total sellable units in the project. Must be > 0
+            for curved absorption to activate.
+        velocity: Units sold per month (sales velocity). Can be fractional
+            (e.g. 2.5 units/month). If velocity > total_units, all units
+            sell in month 1.
+        price_per_unit: Average price per unit in rupees.
+            Monthly revenue = velocity x price_per_unit, clamped to avoid
+            float overflow (> 1e15 rupees/month raises and returns flat).
+        months: Total project timeline in months. Output length.
+
+    Returns:
+        List of monthly revenue values, length = months.
+        Revenue is velocity * price_per_unit per month until total_units
+        exhausted, then zero for remaining months. All zeros when velocity
+        or total_units <= 0.
+
+    Raises:
+        ValueError: If months < 1.
+    """
+    if months < 1:
+        raise ValueError("months must be >= 1")
+
+    if velocity <= 0 or total_units <= 0:
+        return [0.0] * months
+
+    monthly_revenue = velocity * price_per_unit
+    if monthly_revenue > 1e15 or monthly_revenue < 0:
+        return [0.0] * months
+
+    full_months = int(min(total_units / velocity, months))
+    remainder = total_units - full_months * velocity
+
+    result = [monthly_revenue] * full_months
+    if remainder > 0 and full_months < months:
+        result.append(remainder * price_per_unit)
+        full_months += 1
+    while len(result) < months:
+        result.append(0.0)
+    return result[:months]
+
+
 # ── CashFlow Projection (Sprint 101 — T-1194) ──────────────────────────────────
 
 
@@ -686,9 +845,23 @@ class MonthlyCashFlowRow:
 
 @dataclass
 class CashFlowSummary:
+    """Aggregate metrics from a cash-flow projection.
+
+    Attributes:
+        peak_negative_cr: Maximum cumulative negative cash position in Cr
+            (the "valley" of the project — informs financing requirement).
+        breakeven_month: First month where cumulative cash >= 0, or None
+            if the project never breaks even within the projection horizon.
+        roi_annualized_pct: Simple annualized ROI — total profit / total
+            cost / years. Does NOT account for time value of money.
+        irr_npv_pct: True NPV-solving IRR (annualized percentage), or None
+            if the cash flow pattern cannot produce a valid IRR (no sign
+            change, non-convergent, or false root rejected by validation).
+    """
     peak_negative_cr: float
     breakeven_month: int | None
     roi_annualized_pct: float | None
+    irr_npv_pct: float | None = None
 
 
 @dataclass
@@ -706,62 +879,111 @@ def build_cash_flow(
     interest_rate: float = 0.12,
     cp_brokerage_pct: float = 0.013,
     months: int = 36,
+    sales_velocity_units_per_month: float = 0.0,
+    total_units: int = 0,
+    avg_unit_price: float = 0.0,
 ) -> CashFlowProjection:
-    lc = max(land_cost_cr or 0.0, 0.0) * 1e7
-    gdc = max(gdc_cr or 0.0, 0.0) * 1e7
-    const = max(construction_cost_cr or 0.0, 0.0) * 1e7
-    loan_pct = max(loan_pct or 0.0, 0.0)
-    interest_rate = max(interest_rate or 0.0, 0.0)
-    cp_brokerage_pct = max(cp_brokerage_pct or 0.0, 0.0)
-    months = max(months or 1, 1)
-    loan_amount = lc * loan_pct
-    monthly_interest = loan_amount * interest_rate / 12.0
-    monthly_const = const / months
-    brokerage = gdc * cp_brokerage_pct
-    monthly_revenue = gdc / months
-    cumulative = -lc
-    rows: list[MonthlyCashFlowRow] = []
-    breakeven_month: int | None = None
-    peak_negative = -lc
-    total_outflow = lc
-    total_inflow = 0.0
+    """Build monthly cash-flow projection for a real estate project.
 
-    for m in range(1, months + 1):
-        outflow = monthly_const
-        _interest = monthly_interest
-        _brokerage = brokerage if m == 6 else 0.0
-        _inflow = monthly_revenue
-        out = outflow + _interest + _brokerage
-        cumulative += _inflow - out
-        total_outflow += out
-        total_inflow += _inflow
+    Computes month-by-month cash position including construction spend,
+    debt service, brokerage, and sales revenue. Optionally uses curved
+    absorption (front-loaded revenue) when sales velocity data is provided.
 
-        rows.append(MonthlyCashFlowRow(
-            month=m,
-            construction_outflow_cr=round(outflow / 1e7, 4),
-            interest_payment_cr=round(_interest / 1e7, 4),
-            brokerage_charge_cr=round(_brokerage / 1e7, 4),
-            sales_inflow_cr=round(_inflow / 1e7, 4),
-            cumulative_cash_position_cr=round(cumulative / 1e7, 4),
-        ))
-        if cumulative / 1e7 < peak_negative / 1e7:
-            peak_negative = cumulative
-        if breakeven_month is None and cumulative >= 0:
-            breakeven_month = m
+    Args:
+        land_cost_cr: Land acquisition cost in Cr (₹ crores).
+        gdc_cr: Gross development cost (total GDV) in Cr.
+        construction_cost_cr: Total construction cost in Cr.
+        loan_pct: Loan-to-land-cost ratio (0.0–1.0). Default 0.5.
+        interest_rate: Annual interest rate on loan (e.g. 0.12 = 12%).
+            Default 0.12.
+        cp_brokerage_pct: Channel partner brokerage as fraction of GDV.
+            Charged as one-time at month 6. Default 0.013 (1.3%).
+        months: Project timeline in months (1–120). Default 36.
+        sales_velocity_units_per_month: Units sold per month. If > 0 and
+            total_units and avg_unit_price also provided, revenue follows
+            absorption curve; else revenue spreads flat across months.
+        total_units: Total sellable units (required for curved absorption).
+        avg_unit_price: Average price per unit in rupees (required for
+            curved absorption).
 
-    total_out = total_outflow / 1e7
-    total_in = total_inflow / 1e7
-    profit = total_in - total_out
-    roi = (profit / max(total_out, 1)) / (months / 12.0) * 100.0
+    Returns:
+        CashFlowProjection with monthly schedule and summary.
+        Summary includes roi_annualized_pct and irr_npv_pct (NPV-based).
+        irr_npv_pct is None when cash flows have no sign change.
 
-    return CashFlowProjection(
-        schedule=rows,
-        summary=CashFlowSummary(
-            peak_negative_cr=round(peak_negative / 1e7, 4),
-            breakeven_month=breakeven_month,
-            roi_annualized_pct=round(roi, 2),
-        ),
-    )
+    Raises:
+        ValueError: If months < 1.
+    """
+    with cashflow_build_duration_seconds.time():
+        lc = max(land_cost_cr or 0.0, 0.0) * 1e7
+        gdc = max(gdc_cr or 0.0, 0.0) * 1e7
+        const = max(construction_cost_cr or 0.0, 0.0) * 1e7
+        loan_pct = max(loan_pct or 0.0, 0.0)
+        interest_rate = max(interest_rate or 0.0, 0.0)
+        cp_brokerage_pct = max(cp_brokerage_pct or 0.0, 0.0)
+        months = max(months or 1, 1)
+        loan_amount = lc * loan_pct
+        monthly_interest = loan_amount * interest_rate / 12.0
+        monthly_const = const / months
+        brokerage = gdc * cp_brokerage_pct
+
+        if sales_velocity_units_per_month > 0 and total_units > 0 and avg_unit_price > 0:
+            absorption_curve_calls_total.labels(mode="curved").inc()
+            revenue_per_month_list = _compute_absorption_curve(
+                total_units, sales_velocity_units_per_month, avg_unit_price, months
+            )
+        else:
+            absorption_curve_calls_total.labels(mode="flat").inc()
+            flat_rev = gdc / months
+            revenue_per_month_list = [flat_rev] * months
+
+        cumulative = -lc
+        rows: list[MonthlyCashFlowRow] = []
+        breakeven_month: int | None = None
+        peak_negative = -lc
+        total_outflow = lc
+        total_inflow = 0.0
+
+        for m in range(1, months + 1):
+            outflow = monthly_const
+            _interest = monthly_interest
+            _brokerage = brokerage if m == 6 else 0.0
+            _inflow = revenue_per_month_list[m - 1]
+            out = outflow + _interest + _brokerage
+            cumulative += _inflow - out
+            total_outflow += out
+            total_inflow += _inflow
+
+            rows.append(MonthlyCashFlowRow(
+                month=m,
+                construction_outflow_cr=round(outflow / 1e7, 4),
+                interest_payment_cr=round(_interest / 1e7, 4),
+                brokerage_charge_cr=round(_brokerage / 1e7, 4),
+                sales_inflow_cr=round(_inflow / 1e7, 4),
+                cumulative_cash_position_cr=round(cumulative / 1e7, 4),
+            ))
+            if cumulative / 1e7 < peak_negative / 1e7:
+                peak_negative = cumulative
+            if breakeven_month is None and cumulative >= 0:
+                breakeven_month = m
+
+        total_out = total_outflow / 1e7
+        total_in = total_inflow / 1e7
+        profit = total_in - total_out
+        roi = (profit / max(total_out, 1)) / (months / 12.0) * 100.0
+
+        cash_flow_array = [-lc / 1e7] + [r.sales_inflow_cr - r.construction_outflow_cr - r.interest_payment_cr - r.brokerage_charge_cr for r in rows]
+        irr_npv = calc_irr_npv(cash_flow_array, caller="build_cash_flow")
+
+        return CashFlowProjection(
+            schedule=rows,
+            summary=CashFlowSummary(
+                peak_negative_cr=round(peak_negative / 1e7, 4),
+                breakeven_month=breakeven_month,
+                roi_annualized_pct=round(roi, 2),
+                irr_npv_pct=irr_npv,
+            ),
+        )
 
 
 if __name__ == "__main__":

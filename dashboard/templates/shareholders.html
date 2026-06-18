@@ -164,7 +164,7 @@ document.querySelectorAll('.tab').forEach(tab => {
 
 function loadSessions() {
   document.getElementById('sessions-spinner').classList.add('active');
-  fetch('/api/shareholders/sessions')
+  fetch('/api/v1/shareholders/sessions')
     .then(r => r.json())
     .then(data => {
       sessionsData = data.data || [];
@@ -234,7 +234,7 @@ function conveneBoard() {
   spinner.classList.add('active');
   result.innerHTML = '';
 
-  fetch('/api/shareholders/trigger', {
+  fetch('/api/v1/shareholders/trigger', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({quarter, trigger_reason: reason}),

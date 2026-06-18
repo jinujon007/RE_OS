@@ -28,6 +28,7 @@ Usage:
 
 import json
 import os
+from typing import Optional
 from datetime import date
 from loguru import logger
 
@@ -38,7 +39,7 @@ _BASE_DIR = os.path.join(
 
 
 class Checkpointer:
-    def __init__(self, base_dir: str = None):
+    def __init__(self, base_dir: Optional[str] = None):
         self.base_dir = base_dir or _BASE_DIR
 
     # ── Path helpers ───────────────────────────────────────────────────────────

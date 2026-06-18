@@ -179,7 +179,7 @@ def _read_checkpoint(checkpoint_path: str | None = None) -> list[dict[str, Any]]
             len(records),
             latest,
         )
-        return records
+        return records  # type: ignore[no-any-return]
     except (json.JSONDecodeError, Exception) as exc:
         logger.error(
             "[KaveriDeedsPlugin] Failed to read checkpoint {}: {}", latest, exc

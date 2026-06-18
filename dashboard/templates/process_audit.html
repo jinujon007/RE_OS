@@ -173,7 +173,7 @@ function showError(msg) {
 
 async function loadReport() {
   try {
-    var resp = await fetch('/api/process-audit/report');
+    var resp = await fetch('/api/v1/process-audit/report');
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     var data = await resp.json();
     var report = data.report || {};

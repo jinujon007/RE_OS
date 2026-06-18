@@ -51,6 +51,7 @@ def get_milestones(market: str) -> list[dict]:
         results = []
         for r in rows:
             deadline_val = r[1]
+            deadline: date | None
             if isinstance(deadline_val, date):
                 deadline = deadline_val
             elif hasattr(deadline_val, "date"):

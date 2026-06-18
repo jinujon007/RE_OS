@@ -141,7 +141,7 @@ async function loadProjects() {
   document.getElementById("kanban-board").innerHTML = '<div style="color:#8b949e;text-align:center;padding:40px">Loading...</div>';
   const market = document.getElementById("filter-market").value;
   const status = document.getElementById("filter-status").value;
-  let url = "/api/projects?per_page=200&";
+  let url = "/api/v1/projects?per_page=200&";
   if (market) url += "market=" + encodeURIComponent(market) + "&";
   if (status) url += "status=" + encodeURIComponent(status) + "&";
   const data = await apiFetch(url);
@@ -200,7 +200,7 @@ function renderStats(projects) {
 }
 
 async function showProjectDetail(id) {
-  const data = await apiFetch("/api/projects/" + id);
+  const data = await apiFetch("/api/v1/projects/" + id);
   const p = data.project || data;
   const tasks = data.tasks || [];
   const vel = data.velocity || {};
@@ -237,7 +237,7 @@ async function showProjectDetail(id) {
 
 async function updateStatus(id, status) {
   if (!confirm("Change project status to " + status.toUpperCase() + "?")) return;
-  await apiFetch("/api/projects/" + id + "/status", {
+  await apiFetch("/api/v1/projects/" + id + "/status", {
     method: "PATCH",
     body: JSON.stringify({status})
   });
@@ -248,7 +248,7 @@ async function updateStatus(id, status) {
 async function addTask(id) {
   const title = document.getElementById("new-task-title").value.trim();
   if (!title) return;
-  await apiFetch("/api/projects/" + id + "/tasks", {
+  await apiFetch("/api/v1/projects/" + id + "/tasks", {
     method: "POST",
     body: JSON.stringify({title, dept: "ops"})
   });
@@ -290,7 +290,7 @@ async function createProject() {
   const survey = document.getElementById("np-survey").value.trim();
   const dealType = document.getElementById("np-deal-type").value;
   const notes = document.getElementById("np-notes").value.trim();
-  await apiFetch("/api/projects", {
+  await apiFetch("/api/v1/projects", {
     method: "POST",
     body: JSON.stringify({name, market, survey_no: survey, deal_type: dealType, notes})
   });

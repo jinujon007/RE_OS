@@ -70,7 +70,7 @@ def get_source_status(market: str | None = None) -> list[dict]:
         and (now - _cache["timestamp"]) < _CACHE_TTL
         and _cache["data"] is not None
     ):
-        return _cache["data"]
+        return _cache["data"]  # type: ignore[no-any-return]
 
     plugin_ids = list(_PLUGIN_SOURCE_MAP.keys())
     params: dict = {"plugin_ids": tuple(plugin_ids)}

@@ -16,6 +16,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from geoalchemy2 import Geometry
 
 revision: str = "0062_corridor_boundaries"
 down_revision: Union[str, None] = "0061_parcel_ownership_chain"
@@ -32,7 +33,7 @@ def upgrade() -> None:
         sa.Column("corridor_id", sa.String(50), nullable=False, unique=True),
         sa.Column("corridor_name", sa.String(200), nullable=True),
         sa.Column("primary_market", sa.String(100), nullable=True),
-        sa.Column("geom", postgresql.GEOMETRY("POLYGON", 4326), nullable=True),
+        sa.Column("geom", Geometry("POLYGON", srid=4326, spatial_index=False), nullable=True),
         sa.Column("gcc_hubs", postgresql.ARRAY(sa.Text()), nullable=True),
         sa.Column("notes", sa.Text(), nullable=True),
         sa.Column(

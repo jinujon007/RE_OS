@@ -11,7 +11,7 @@ from fastapi import APIRouter, Request, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy import text as _sa_text
 
-from dashboard.state import limiter, _get_sa_engine, _normalize_market, _VALID_BOARD_MARKETS
+from dashboard.state import limiter, _get_sa_engine, _normalize_market, _VALID_BOARD_MARKETS, _err_resp
 
 logger = logging.getLogger("re_os.dashboard")
 
@@ -19,7 +19,7 @@ router = APIRouter(tags=["Board Room"])
 
 
 @router.post(
-    "/api/board/session",
+    "/board/session",
     summary="Create board session",
 )
 @limiter.limit("20/hour")
@@ -32,15 +32,9 @@ async def board_session_create(request: Request):
     pitch = str(payload.get("pitch") or "").strip()
     market = str(payload.get("market") or "").strip()
     if not pitch or len(pitch) > 2000:
-        return JSONResponse(
-            {"error": "pitch required and must be under 2000 characters"},
-            status_code=400,
-        )
+        return _err_resp("pitch required and must be under 2000 characters", request, 400, "Board Room")
     if market not in _VALID_BOARD_MARKETS:
-        return JSONResponse(
-            {"error": "invalid market - must be Yelahanka, Devanahalli, or Hebbal"},
-            status_code=400,
-        )
+        return _err_resp("invalid market - must be Yelahanka, Devanahalli, or Hebbal", request, 400, "Board Room")
     t0 = time.perf_counter()
     result = run_board_session(pitch, market)
     elapsed = time.perf_counter() - t0
@@ -49,7 +43,7 @@ async def board_session_create(request: Request):
 
 
 @router.get(
-    "/api/board/session/{session_id}",
+    "/board/session/{session_id}",
     summary="Get board session by ID",
 )
 @limiter.limit("120/minute")
@@ -57,12 +51,12 @@ async def board_session_get(request: Request, session_id: str):
     from crews.board_room import get_board_session
     session = get_board_session(session_id)
     if not session:
-        return JSONResponse({"error": "not found"}, status_code=404)
+        return _err_resp("not found", request, 404, "Board Room")
     return session
 
 
 @router.get(
-    "/api/board/sessions",
+    "/board/sessions",
     summary="List recent board sessions",
 )
 @limiter.limit("60/minute")
@@ -88,11 +82,11 @@ async def board_sessions(request: Request):
         return {"sessions": result}
     except Exception as e:
         logger.error("[board_sessions] %s", e)
-        return JSONResponse({"sessions": [], "error": "database query failed"})
+        return JSONResponse({"sessions": [], "error": "database query failed", "code": "INTERNAL_ERROR"})
 
 
 @router.get(
-    "/api/engineering/brief",
+    "/engineering/brief",
     summary="Latest Engineering Head response",
 )
 @limiter.limit("30/minute")
@@ -120,11 +114,11 @@ async def engineering_brief(request: Request):
         }
     except Exception as e:
         logger.error("[engineering_brief] %s", e)
-        return JSONResponse({"error": "database query failed"}, status_code=500)
+        return _err_resp("database query failed", request, 500, "Board Room")
 
 
 @router.get(
-    "/api/alerts",
+    "/alerts",
     summary="List recent alerts",
 )
 @limiter.limit("30/minute")
@@ -150,11 +144,11 @@ async def list_alerts(request: Request, channel: str = Query(None)):
         return {"alerts": result}
     except Exception as e:
         logger.error("[list_alerts] %s", e)
-        return JSONResponse({"error": "database query failed"}, status_code=500)
+        return _err_resp("database query failed", request, 500, "Board Room")
 
 
 @router.get(
-    "/api/finance/brief",
+    "/finance/brief",
     summary="Latest Finance Head response",
 )
 @limiter.limit("30/minute")
@@ -182,11 +176,11 @@ async def finance_brief(request: Request):
         }
     except Exception as e:
         logger.error("[finance_brief] %s", e)
-        return JSONResponse({"error": "database query failed"}, status_code=500)
+        return _err_resp("database query failed", request, 500, "Board Room")
 
 
 @router.get(
-    "/api/legal/brief",
+    "/legal/brief",
     summary="Latest Legal Head response",
 )
 @limiter.limit("30/minute")
@@ -220,4 +214,4 @@ async def legal_brief(request: Request, market: str = Query(None)):
         }
     except Exception as e:
         logger.error("[legal_brief] %s", e)
-        return JSONResponse({"error": "database query failed"}, status_code=500)
+        return _err_resp("database query failed", request, 500, "Board Room")

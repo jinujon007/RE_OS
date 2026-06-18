@@ -367,6 +367,20 @@ DEVELOPER_ALIASES: dict[str, list[str]] = {
     "Prestige": ["Prestige Estates", "Prestige Group", "Prestige Constructions",
                  "Prestige Properties"],
     "Sobha": ["Sobha Limited", "Sobha Developers", "Sobha Realty", "Sobha Ltd"],
+    "Godrej Properties": ["Godrej", "Godrej Realty", "GPDL"],
+    "Puravankara": ["Puravankara Projects", "Puravankara Limited",
+                    "Provident", "Provident Housing"],
+    "Mantri Developers": ["Mantri", "Mantri Corp", "Mantri Developers Pvt",
+                          "Mantri Infrastructure"],
+    "Total Environment": ["Total Env", "TotalEnvironment",
+                          "Total Environment Building Systems",
+                          "Total Environment Pvt"],
+    "Assetz": ["Assetz Property", "Assetz Homes", "Assetz India",
+               "Assetz Group"],
+    "Mahindra Lifespace": ["Mahindra", "MLDL", "Mahindra Lifespaces",
+                           "Mahindra Lifespace Developers"],
+    "Concorde": ["Concorde Group", "Concorde Developers", "Concorde Nirman",
+                 "Concorde Properties"],
 }
 
 # ── AGENT RUN STATUSES ────────────────────────────────────────────────────────

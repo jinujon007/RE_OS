@@ -61,7 +61,7 @@ const select = document.getElementById("villageSelect");
 const surveyInput = document.getElementById("surveyNoInput");
 
 // Load villages from API on page load
-fetch("/api/parcel/villages").then(r => r.json()).then(data => {
+fetch("/api/v1/parcel/villages").then(r => r.json()).then(data => {
   (data.villages || []).forEach(v => {
     const o = document.createElement("option"); o.value = v; o.textContent = v; select.appendChild(o);
   });
@@ -85,7 +85,7 @@ async function lookupParcel() {
   document.querySelectorAll(".card div[id$=Body]").forEach(el => el.innerHTML = '<span class="loading">Loading...</span>');
 
   try {
-    const resp = await fetch(`/api/parcel/${encodeURIComponent(village)}/${encodeURIComponent(surveyNo)}`);
+    const resp = await fetch(`/api/v1/parcel/${encodeURIComponent(village)}/${encodeURIComponent(surveyNo)}`);
     if (!resp.ok) {
       const err = await resp.json();
       document.getElementById("parcelCard").innerHTML = `<h3>Error</h3><div class="error">${err.error || resp.statusText}</div>`;

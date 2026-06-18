@@ -140,7 +140,7 @@ tr:hover td { background: #1a2540; }
 <script>
 async function loadNorthScore() {
   try {
-    const res = await fetch('/api/govt/north-score');
+    const res = await fetch('/api/v1/govt/north-score');
     const data = await res.json();
     const score = data.north_bengaluru_score || 0;
     document.getElementById('nb-score').textContent = score.toFixed(3);
@@ -181,7 +181,7 @@ async function loadNorthScore() {
 
 async function loadDigest() {
   try {
-    const res = await fetch('/api/govt/digest');
+    const res = await fetch('/api/v1/govt/digest');
     const data = await res.json();
     document.getElementById('weekly-digest').textContent = data.digest || 'No digest available';
   } catch (e) {
@@ -195,7 +195,7 @@ async function loadEvents() {
   const spinner = document.getElementById('events-spinner');
   spinner.classList.add('active');
   try {
-    let url = '/api/govt/events?limit=50';
+    let url = '/api/v1/govt/events?limit=50';
     if (cat) url += '&category=' + encodeURIComponent(cat);
     if (signal) url += '&signal=' + encodeURIComponent(signal);
     const res = await fetch(url);

@@ -19,7 +19,7 @@ from dashboard.state import (
     _market_go_no_go, _validate_registry_payload, _is_run_api_authorized,
     _agent_states, _lock, AGENT_ACTIONS,
     VALID_MARKETS, MARKET_CANONICAL, MARKET_SLUG, LOG_PATH,
-    _running, _diag_agents_contract_logged,
+    _running, _diag_agents_contract_logged, _err_resp,
 )
 
 logger = logging.getLogger("re_os.dashboard")
@@ -28,37 +28,37 @@ router = APIRouter(tags=["Pipeline"])
 
 
 @router.post(
-    "/api/run/{market}",
+    "/run/{market}",
     summary="Start pipeline for a market",
 )
 @limiter.limit("10/hour")
 async def run_pipeline(request: Request, market: str):
     canonical = _normalize_market(market)
     if not canonical:
-        return JSONResponse({"error": "invalid market"}, status_code=400)
+        return _err_resp("invalid market", request, 400, "Pipeline")
     payload, status_code = _start_pipeline_for_market(canonical)
     return JSONResponse(payload, status_code=status_code)
 
 
 @router.delete(
-    "/api/run/{market}",
+    "/run/{market}",
     summary="Stop running pipeline",
 )
 async def stop_pipeline(market: str):
     canonical = _normalize_market(market)
     if not canonical:
-        return JSONResponse({"error": "invalid market"}, status_code=400)
+        return _err_resp("invalid market", None, 400, "Pipeline")
     payload, status_code = _stop_pipeline_for_market(canonical)
     return JSONResponse(payload, status_code=status_code)
 
 
-@router.get("/api/status", summary="Pipeline running status snapshot")
+@router.get("/status", summary="Pipeline running status snapshot")
 def run_status():
     return _running_snapshot()
 
 
 @router.get(
-    "/api/agents",
+    "/agents",
     summary="Full agent state — DB agents + registry + running",
 )
 def agents_state():
@@ -134,7 +134,7 @@ def agents_state():
     if not _diag_agents_contract_logged:
         source_label = "DB" if db_agents else "in-memory"
         logger.info(
-            "[DIAG agents] /api/agents keys=%s nested_agents=%s (from %s)",
+            "[DIAG agents] /agents keys=%s nested_agents=%s (from %s)",
             sorted(response.keys()), sorted(states_copy.keys()), source_label,
         )
         _diag_agents_contract_logged = True
@@ -142,7 +142,7 @@ def agents_state():
 
 
 @router.post(
-    "/api/agents/{agent_id}/command",
+    "/agents/{agent_id}/command",
     summary="Send command to an agent (run/stop/status)",
 )
 @limiter.limit("30/hour")
@@ -200,17 +200,17 @@ async def agent_command(request: Request, agent_id: str):
 
 
 @router.get(
-    "/api/agents/{agent_id}/actions",
+    "/agents/{agent_id}/actions",
     summary="List available actions for an agent",
 )
 def agent_actions(agent_id: str):
     if agent_id not in _agent_states and agent_id not in AGENT_ACTIONS:
-        return JSONResponse({"error": f"Unknown agent '{agent_id}'"}, status_code=404)
+        return _err_resp(f"Unknown agent '{agent_id}'", None, 404, "Pipeline")
     return {"agent_id": agent_id, "actions": AGENT_ACTIONS.get(agent_id, [])}
 
 
 @router.get(
-    "/api/sentinel/status", summary="Current sentinel run status"
+    "/sentinel/status", summary="Current sentinel run status"
 )
 def sentinel_status():
     try:
@@ -238,7 +238,7 @@ def sentinel_status():
 
 
 @router.get(
-    "/api/logs/stream", tags=["Logs"], summary="SSE log stream for a market pipeline"
+    "/logs/stream", tags=["Logs"], summary="SSE log stream for a market pipeline"
 )
 def stream_logs(market: str = Query(None)):
     market_raw = (market or "").strip().lower()

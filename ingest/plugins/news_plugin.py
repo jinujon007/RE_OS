@@ -36,7 +36,7 @@ def _score_article(headline: str) -> ArticleScore:
     label = label_from_score(score)
     tones = score_tone(headline)
     if tones:
-        dominant = max(tones, key=tones.get)
+        dominant = max(tones, key=lambda x: float(tones.get(x, 0)))
         tone_score_val = round(tones[dominant], 4)
     else:
         dominant = None

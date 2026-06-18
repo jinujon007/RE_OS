@@ -99,7 +99,7 @@ class GovtPolicyIntel:
 
         cached = self._cache.get(_CACHE_NS, m)
         if cached is not None:
-            return cached
+            return cached  # type: ignore[no-any-return]
 
         result = GovtPolicyResult(
             computed_at=datetime.now(timezone.utc).isoformat(),

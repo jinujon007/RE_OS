@@ -209,3 +209,65 @@ def test_market_name_from_id_resolves():
         mock_conn.execute.return_value.fetchone.return_value = ("Yelahanka",)
         name = engine._market_name_from_id("some-uuid")
         assert name == "Yelahanka"
+
+
+# ── Ledger Verdict Digest (GATE-111, T-1243) ──
+
+
+def test_ledger_verdict_digest_job_registered():
+    """scheduler has ledger_verdict_digest job registered."""
+    import config.scheduler
+
+    assert callable(config.scheduler.run_ledger_verdict_digest)
+
+    with patch("config.scheduler.digest_jobs.BlockingScheduler") as MockSched:
+        from config.scheduler.digest_jobs import register_jobs
+
+        sched = MockSched()
+        register_jobs(sched, lambda fn, name: fn())
+        found = any(
+            call[1].get("id") == "ledger_verdict_digest"
+            for call in sched.add_job.call_args_list
+        )
+        assert found, "ledger_verdict_digest job not registered in digest_jobs.register_jobs"
+
+
+def test_ledger_verdict_digest_message_under_500_chars():
+    """Digest message fits Discord char limit."""
+    from config.scheduler.digest_jobs import run_ledger_verdict_digest
+
+    mock_rows = {
+        "total": 50,
+        "hit": 20,
+        "miss": 5,
+        "psf_hit": 10,
+        "psf_total": 12,
+        "opp_hit": 5,
+        "opp_total": 8,
+    }
+    mock_best = ("PSF forecast for Yelahanka reached target within MAE band",)
+    mock_worst = ("Assembly alert for Brigade Group in Venkatala failed to materialize",)
+
+    mock_conn = MagicMock()
+    mock_conn.execute.side_effect = [
+        MagicMock(scalar=lambda: mock_rows["total"]),
+        MagicMock(scalar=lambda: mock_rows["hit"]),
+        MagicMock(scalar=lambda: mock_rows["miss"]),
+        MagicMock(scalar=lambda: mock_rows["psf_hit"]),
+        MagicMock(scalar=lambda: mock_rows["psf_total"]),
+        MagicMock(scalar=lambda: mock_rows["opp_hit"]),
+        MagicMock(scalar=lambda: mock_rows["opp_total"]),
+        MagicMock(fetchone=lambda: mock_best),
+        MagicMock(fetchone=lambda: mock_worst),
+    ]
+    mock_engine = MagicMock()
+    mock_engine.connect.return_value.__enter__.return_value = mock_conn
+
+    with (
+        patch("utils.db.get_engine", return_value=mock_engine),
+        patch("utils.discord_notifier.send") as mock_send,
+    ):
+        run_ledger_verdict_digest()
+        assert mock_send.called
+        msg = mock_send.call_args[0][2] if len(mock_send.call_args[0]) > 2 else ""
+        assert len(msg) <= 500, f"Digest message too long: {len(msg)} chars"

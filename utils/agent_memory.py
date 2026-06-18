@@ -213,7 +213,7 @@ def decay_memories(days: int = 30, decay_amount: float = 0.1) -> int:
                 """),
                 {"decay": decay_amount, "cutoff": cutoff},
             )
-            return result.rowcount
+            return result.rowcount  # type: ignore[no-any-return]
     except Exception as exc:
         logger.warning(f"agent_memory.decay_memories failed: {exc}")
         return -1

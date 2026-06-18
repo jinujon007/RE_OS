@@ -1,5 +1,5 @@
 # Corridor Scorer v1 — Backtest Report
-**Generated:** 2026-06-17T08:40:27.477431+00:00
+**Generated:** 2026-06-17T14:29:06.678580+00:00
 **Train window:** 2024-01-01 → 2024-06-30
 **Test window:** 2024-07-01 → 2024-12-31
 

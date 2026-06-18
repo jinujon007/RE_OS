@@ -254,7 +254,7 @@ class IntelRegistry:
         if not force_refresh:
             cached = self._cache.get(key)
             if cached is not None:
-                return cached
+                return cached  # type: ignore[no-any-return]
 
         mi = validate_market(m)
         pkg = IntelPackage(

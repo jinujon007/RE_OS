@@ -488,6 +488,58 @@ def run_kill_criteria_check():
     send_ops_alert("KILL_CRITERIA_AUDIT", msg)
 
 
+def run_chromadb_maintenance():
+    """Quarterly ChromaDB maintenance — purge stale embeddings >90 days (T-1247).
+
+    Runs every 90 days. Alerts Discord if deleted >5000 (abnormal churn).
+    """
+    from utils.discord_notifier import send_ops_alert
+    from utils.embedder import purge_stale_embeddings
+
+    try:
+        deleted = purge_stale_embeddings(days=90)
+        logger.info("[ChromaDB Maintenance] Purged {} stale embeddings", deleted)
+        if deleted > 5000:
+            send_ops_alert(
+                "CHROMADB_HIGH_PURGE",
+                f"ChromaDB maintenance purged {deleted} embeddings (>5000 threshold) — "
+                f"possible abnormal churn or misconfiguration.",
+            )
+    except Exception as exc:
+        logger.warning("[ChromaDB Maintenance] Failed: {}", exc)
+        send_ops_alert("CHROMADB_MAINTENANCE_FAILED", str(exc))
+
+
+def run_failed_record_retry():
+    """Re-attempt dead letter queue records — daily job (GATE-108, T-1231).
+
+    Increments retry_count. Max 3 retries per record.
+    Fires Discord alert if queue depth exceeds threshold.
+    """
+    try:
+        from utils.dead_letter_queue import (
+            retry_failed_records,
+            check_queue_depth_and_alert,
+        )
+
+        result = retry_failed_records()
+        logger.info(
+            "[Scheduler] Dead letter retry: {} attempted, {} succeeded, {} failed",
+            result["attempted"],
+            result["succeeded"],
+            result["failed"],
+        )
+        if result["failed"] > 0 and result.get("errors"):
+            for err in result["errors"][:3]:
+                logger.warning("[Scheduler] Dead letter retry error: {}", err)
+
+        depth = check_queue_depth_and_alert()
+        if depth > 0:
+            logger.info("[Scheduler] Dead letter queue depth: {} unprocessed", depth)
+    except Exception as exc:
+        logger.warning("[Scheduler] Dead letter retry failed: {}", exc)
+
+
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
     """Register maintenance-related scheduler jobs."""
     from apscheduler.triggers.cron import CronTrigger
@@ -619,4 +671,22 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         name="Kill Criteria Audit (deed throughput, corridor accuracy, decision journal)",
         misfire_grace_time=604800,
         replace_existing=True,
+    )
+    # Dead letter queue retry — daily 04:00 UTC (GATE-108, T-1231)
+    scheduler.add_job(
+        lambda: safe_job(run_failed_record_retry, "failed_record_retry"),
+        CronTrigger(hour=4, minute=0, timezone="UTC"),
+        id="failed_record_retry",
+        name="Daily Dead Letter Queue Retry (re-attempt failed upserts)",
+        misfire_grace_time=3600,
+    )
+    # Quarterly ChromaDB maintenance — every 90 days at 01:00 UTC (T-1247)
+    # Grace period = 7 days: if scheduler is down for up to a week, the
+    # maintenance still fires. A quarterly job missing one window is acceptable.
+    scheduler.add_job(
+        lambda: safe_job(run_chromadb_maintenance, "chromadb_maintenance"),
+        CronTrigger(day="1", month="3,6,9,12", hour=1, minute=0, timezone="UTC"),
+        id="chromadb_maintenance",
+        name="Quarterly ChromaDB Maintenance (purge stale embeddings >90d)",
+        misfire_grace_time=604800,
     )

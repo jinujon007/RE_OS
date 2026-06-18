@@ -70,7 +70,7 @@ class RunLogger:
         """Add a free-text note to this run (e.g. 'RERA portal blocked, used fallback')."""
         self._record.setdefault("notes", []).append(note)
 
-    def finish(self, status: str, report_path: str = None, error: str = None):
+    def finish(self, status: str, report_path: str | None = None, error: str | None = None):
         end = datetime.now()
         duration = (
             round((end - self.start_time).total_seconds(), 1)
@@ -104,7 +104,7 @@ class RunLogger:
 
     # ── Error classification ───────────────────────────────────────────────
 
-    def _classify_error(self, error: str) -> str:
+    def _classify_error(self, error: str | None) -> str:
         if not error:
             return "unknown"
         e = error.lower()

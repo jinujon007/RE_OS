@@ -62,10 +62,6 @@ def upgrade() -> None:
             nullable=True,
             comment="0.0–1.0: fraction of expected fields successfully extracted",
         ),
-        sa.UniqueConstraint(
-            "survey_no", "market", sa.text("fetched_at::date"),
-            name="uq_parcel_ownership_chain_daily",
-        ),
     )
     op.create_index(
         "idx_parcel_ownership_survey_market",

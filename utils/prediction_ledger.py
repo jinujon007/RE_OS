@@ -113,7 +113,9 @@ def resolve_verdicts() -> dict:
     for claim in claims:
         ctype = claim.get("claim_type", "")
         cid = claim.get("id")
-        market = claim.get("market", "")
+        if not cid:
+            continue
+        market = str(claim.get("market", ""))
         try:
             if ctype == "psf_forecast" and market:
                 actual_psf = _get_market_median_psf(market)

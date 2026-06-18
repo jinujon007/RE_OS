@@ -139,7 +139,7 @@ tr:hover td { background: #1a2540; }
     <div class="checklist-item"><input type="checkbox" id="j4"><label for="j4" class="label">J-4: Evaluate returns board_session + deal_memo + investor_brief</label></div>
     <div class="checklist-item"><input type="checkbox" id="j5"><label for="j5" class="label">J-5: Backup status=ok, dump ≥1MB</label></div>
     <div class="checklist-item"><input type="checkbox" id="j6"><label for="j6" class="label">J-6: 48h unattended — no P0 errors, scheduler fires</label></div>
-    <div class="checklist-item"><input type="checkbox" id="j7"><label for="j7" class="label">J-7: /api/ops/v2-readiness returns v2_ready=true</label></div>
+    <div class="checklist-item"><input type="checkbox" id="j7"><label for="j7" class="label">J-7: /api/v1/ops/v2-readiness returns v2_ready=true</label></div>
   </div>
 </div>
 
@@ -178,7 +178,7 @@ document.querySelectorAll('#jlist input[type="checkbox"]').forEach(cb => {
 
 async function loadReadiness() {
   try {
-    const resp = await fetch('/api/ops/v2-readiness');
+    const resp = await fetch('/api/v1/ops/v2-readiness');
     const data = await resp.json();
     renderMetrics(data);
   } catch (e) {
@@ -233,7 +233,7 @@ async function declareV2() {
   btn.disabled = true;
   btn.textContent = 'DECLARING...';
   try {
-    const resp = await fetch('/api/ops/v2-declare', { method: 'POST' });
+    const resp = await fetch('/api/v1/ops/v2-declare', { method: 'POST' });
     const data = await resp.json();
     if (resp.ok) {
       resultEl.className = 'declare-result success';

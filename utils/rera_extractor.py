@@ -167,13 +167,13 @@ class RERAExtractor:
             text = re.sub(r"^```(?:json)?\s*", "", text)
             text = re.sub(r"\s*```$", "", text)
         try:
-            return json.loads(text)
+            return json.loads(text)  # type: ignore[no-any-return]
         except json.JSONDecodeError:
             pass
         brace_match = re.search(r"\{[^{}]*\}", text, re.DOTALL)
         if brace_match:
             try:
-                return json.loads(brace_match.group(0))
+                return json.loads(brace_match.group(0))  # type: ignore[no-any-return]
             except json.JSONDecodeError:
                 pass
         return None

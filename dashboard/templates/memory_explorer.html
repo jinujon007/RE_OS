@@ -327,13 +327,13 @@ async function loadMemories() {
   if (agent) params.set('agent_id', agent);
 
   // Fetch global conflict count in parallel
-  const conflictPromise = fetch('/api/memory/conflict-count')
+  const conflictPromise = fetch('/api/v1/memory/conflict-count')
     .then(r => r.json())
     .then(d => d.unresolved_conflicts || 0)
     .catch(() => 0);
 
   try {
-    const resp = await fetch('/api/memory/explorer?' + params.toString());
+    const resp = await fetch('/api/v1/memory/explorer?' + params.toString());
     spinner.classList.remove('active');
     if (!resp.ok) {
       const status = resp.status;

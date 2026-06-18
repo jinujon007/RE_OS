@@ -72,22 +72,9 @@ jobs:
         env:
           DB_PASSWORD: test_password_for_ci
         run: |
-          pytest tests/ -v -m "not integration" --tb=short \
+          pytest tests/ -v -m "not integration and not slow" --tb=short \
             --cov=agents --cov=config --cov=crews --cov=scrapers --cov=utils --cov=dashboard \
-            --cov-report=term-missing --cov-report=xml --cov-fail-under=50 \
-            --ignore=tests/test_eval_florence2.py \
-            --ignore=tests/test_gate60.py \
-            --ignore=tests/test_rera_benchmark.py \
-            --ignore=tests/test_rera_extractor.py \
-            --ignore=tests/test_rera_export.py \
-            --ignore=tests/test_rera_label.py \
-            --ignore=tests/test_gate84.py \
-            --ignore=tests/test_distressed_developer.py \
-            --ignore=tests/test_dashboard.py \
-            --ignore=tests/test_dashboard_routes.py \
-            --ignore=tests/test_mat_view.py \
-            --ignore=tests/test_gate86.py \
-            --ignore=tests/test_competitive_endpoint.py
+            --cov-report=term-missing --cov-report=xml --cov-fail-under=50
 
       - name: Sprint 50 — HF Intelligence CI gate (finbert-tone + LegalDocQA)
         run: |
@@ -164,15 +151,18 @@ jobs:
           cache: "pip"
 
       - name: Install mypy + stubs
+        # types-* stubs improve type-checking for popular stdlib/third-party modules
+        # that have mypy stubs available. When a new untyped dependency is added,
+        # either pip install types-<pkg> or add [mypy-<pkg>.*] ignore to mypy.ini.
         run: pip install mypy types-requests types-redis types-beautifulsoup4
 
       - name: Run mypy (core modules)
+        # CI uses --config-file mypy.ini which sets strict_optional + per-module ignores.
+        # Do NOT add --no-strict-optional or --ignore-missing-imports (the two
+        # flags removed in GATE-110) — they bypass mypy.ini config and undermine this gate.
         run: |
           mypy agents/ config/ crews/ utils/ intelligence/ ingest/ \
-            --ignore-missing-imports \
-            --no-strict-optional \
-            --follow-imports=skip \
-            --exclude "tests/"
+            --config-file mypy.ini
 
   sast:
     name: Static Security Analysis (Bandit)
@@ -331,6 +321,63 @@ jobs:
             exit 1
           fi
           echo "Single alembic head confirmed"
+
+  integration-tests:
+    name: Integration Tests (live Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: lint
+
+    services:
+      postgres:
+        image: postgis/postgis:15-3.3
+        env:
+          POSTGRES_DB: re_os_test
+          POSTGRES_USER: re_os_user
+          POSTGRES_PASSWORD: re_os_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U re_os_user -d re_os_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get install -y postgresql-client
+          pip install pytest>=7.0 pytest-mock>=3.0 coverage \
+            loguru python-dotenv \
+            psycopg2-binary sqlalchemy alembic \
+            geoalchemy2 prometheus-client redis requests \
+            fastapi "slowapi>=0.1.9,<0.2.0" starlette httpx pandas \
+            shapely jinja2 tenacity pdfplumber
+
+      - name: Apply schema + run migrations
+        env:
+          PGPASSWORD: re_os_test
+          DB_PASSWORD: re_os_test
+          DATABASE_URL: postgresql://re_os_user:re_os_test@localhost:5432/re_os_test
+        run: |
+          psql -h localhost -U re_os_user -d re_os_test -f database/schema.sql
+          alembic stamp head
+
+      - name: Run integration tests
+        env:
+          DB_PASSWORD: re_os_test
+          TEST_DATABASE_URL: postgresql://re_os_user:re_os_test@localhost:5432/re_os_test
+        run: |
+          pytest tests/ -m integration -v --tb=short
 
   integrity-tests:
     name: DB Integrity Checks

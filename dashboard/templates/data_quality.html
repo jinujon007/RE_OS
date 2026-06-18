@@ -217,7 +217,7 @@ async function loadProvenance() {
   const tbody = document.getElementById('provenance-body');
   const guidanceEl = document.getElementById('provenance-guidance');
   try {
-    const data = await fetchWithRetry('/api/data/provenance', 3);
+    const data = await fetchWithRetry('/api/v1/data/provenance', 3);
     const entries = Object.entries(data);
     tbody.innerHTML = '';
     for (const [market, info] of entries) {
@@ -243,7 +243,7 @@ async function loadProvenance() {
 async function loadReliability() {
   const tbody = document.getElementById('reliability-body');
   try {
-    const data = await fetchWithRetry('/api/scraper/reliability', 3);
+    const data = await fetchWithRetry('/api/v1/scraper/reliability', 3);
     const entries = Object.entries(data);
     tbody.innerHTML = '';
     for (const [scraper, info] of entries) {
@@ -271,7 +271,7 @@ async function loadReliability() {
 async function loadFloorStatus() {
   const tbody = document.getElementById('floor-body');
   try {
-    const data = await fetchWithRetry('/api/data/provenance', 3);
+    const data = await fetchWithRetry('/api/v1/data/provenance', 3);
     const entries = Object.entries(data);
     tbody.innerHTML = '';
     const FLOORS = { Yelahanka: 50, Devanahalli: 100, Hebbal: 200 };

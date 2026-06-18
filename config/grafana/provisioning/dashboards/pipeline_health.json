@@ -1,0 +1,64 @@
+{
+  "title": "Pipeline Health",
+  "uid": "pipeline_health",
+  "description": "Pipeline stage durations, scraper success rates, and scheduler job health — RE_OS observability",
+  "version": 1,
+  "timezone": "utc",
+  "editable": true,
+  "refresh": "30s",
+  "tags": ["re_os", "pipeline", "scraper", "scheduler"],
+  "panels": [
+    {
+      "title": "Pipeline Stage Duration",
+      "type": "histogram",
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "pipeline_stage_duration_seconds_bucket",
+          "legendFormat": "{{stage}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+    },
+    {
+      "title": "Scraper Success Rate per Market",
+      "type": "stat",
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(scraper_runs_total{status=\"success\"}[24h])) by (market) / sum(rate(scraper_runs_total[24h])) by (market) * 100",
+          "legendFormat": "{{market}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 } },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 }
+    },
+    {
+      "title": "Pipeline Runs Over Time",
+      "type": "timeseries",
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(pipeline_runs_total[1h])",
+          "legendFormat": "{{market}}"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 8 }
+    },
+    {
+      "title": "Last Pipeline Run (hours ago)",
+      "type": "stat",
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "time() - max(pipeline_runs_total_created)",
+          "legendFormat": "Hours since last run"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 8 }
+    }
+  ],
+  "schemaVersion": 38
+}

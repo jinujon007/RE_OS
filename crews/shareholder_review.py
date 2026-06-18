@@ -8,7 +8,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 from loguru import logger
 from sqlalchemy import text
@@ -18,18 +18,15 @@ from utils.performance_digest import PerformanceDigest
 from utils.decision_auditor import DecisionAuditor
 
 try:
-    from agents.shareholder_agent import (
-        load_shareholder_specs,
-        create_shareholder_agent,
-    )
+    from agents.shareholder_agent import load_shareholder_specs, create_shareholder_agent
 except ImportError:
-    load_shareholder_specs = None
-    create_shareholder_agent = None
+    load_shareholder_specs = None  # type: ignore[assignment]
+    create_shareholder_agent = None  # type: ignore[assignment]
 
 try:
     from config.llm_router import get_heavy_llm
 except ImportError:
-    get_heavy_llm = None
+    get_heavy_llm = None  # type: ignore[assignment]
 
 _SHAREHOLDER_TIMEOUT_S = 90
 
@@ -87,7 +84,7 @@ def _parse_json_response(response_text: str) -> dict:
     match = re.search(r"\{.*\}", response_text.strip(), re.DOTALL)
     if match:
         try:
-            return json.loads(match.group(0))
+            return json.loads(match.group(0))  # type: ignore[no-any-return]
         except json.JSONDecodeError:
             pass
     return {}
@@ -211,7 +208,7 @@ def _generate_ceo_synthesis(
     )
 
     try:
-        if get_heavy_llm:
+        if get_heavy_llm:  # type: ignore[truthy-function]
             from crewai import Agent
 
             ceo_agent = Agent(
@@ -252,7 +249,7 @@ def _fallback_ceo_synthesis(
     concern_lines = ""
     for r in responses:
         if r.get("top_concern"):
-            concern_lines += f"- {r.get('name')}: {r.get('top_concern')[:150]}\n"
+            concern_lines += f"- {r.get('name')}: {(r.get('top_concern') or '')[:150]}\n"
 
     debate_note = (
         "A debate was triggered as multiple shareholders raised "
@@ -331,7 +328,7 @@ class ShareholderBoardCrew:
             f"Over-budget token runs: {digest.get('token_efficiency', {}).get('over_budget_count', 0)}"
         )
 
-        specs = load_shareholder_specs() if load_shareholder_specs else []
+        specs = load_shareholder_specs() if callable(load_shareholder_specs) else []
         if not specs:
             logger.warning(
                 "[ShareholderBoard] No shareholder specs found — using placeholders"

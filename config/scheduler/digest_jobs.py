@@ -378,6 +378,74 @@ def run_compliance_check():
         logger.warning("[Scheduler] Compliance check failed (non-fatal): {}", exc)
 
 
+def run_ledger_verdict_digest():
+    """Monthly prediction ledger verdict digest — 1st of month 08:00 UTC.
+    Queries ledger for verdict breakdown, identifies best/worst claims,
+    posts summary to #intel-reports. 47h dedup guard matches monthly_intel_digest."""
+    try:
+        from utils.db import get_engine as _ledger_engine
+        from utils.discord_notifier import send as _digest_send
+        from datetime import datetime, timezone
+
+        if _digest_already_sent("ledger_verdict", cooldown_hours=47):
+            logger.info("[LedgerDigest] Dedup: already sent within 47h — skipping")
+            return
+
+        engine = _ledger_engine()
+        with engine.connect() as conn:
+            total = conn.execute(
+                text("SELECT COUNT(*) FROM prediction_ledger")
+            ).scalar() or 0
+            hit = conn.execute(
+                text("SELECT COUNT(*) FROM prediction_ledger WHERE verdict = 'hit'")
+            ).scalar() or 0
+            miss = conn.execute(
+                text("SELECT COUNT(*) FROM prediction_ledger WHERE verdict = 'miss'")
+            ).scalar() or 0
+            psf_hit = conn.execute(
+                text("SELECT COUNT(*) FROM prediction_ledger WHERE source_module = 'psf_forecaster' AND verdict = 'hit'")
+            ).scalar() or 0
+            psf_total = conn.execute(
+                text("SELECT COUNT(*) FROM prediction_ledger WHERE source_module = 'psf_forecaster' AND verdict IS NOT NULL")
+            ).scalar() or 0
+            opp_hit = conn.execute(
+                text("SELECT COUNT(*) FROM prediction_ledger WHERE source_module = 'opportunity_engine' AND verdict = 'hit'")
+            ).scalar() or 0
+            opp_total = conn.execute(
+                text("SELECT COUNT(*) FROM prediction_ledger WHERE source_module = 'opportunity_engine' AND verdict IS NOT NULL")
+            ).scalar() or 0
+            best_row = conn.execute(
+                text("""
+                    SELECT claim_text FROM prediction_ledger
+                    WHERE verdict = 'hit' ORDER BY confidence DESC NULLS LAST LIMIT 1
+                """)
+            ).fetchone()
+            worst_row = conn.execute(
+                text("""
+                    SELECT claim_text FROM prediction_ledger
+                    WHERE verdict = 'miss' ORDER BY confidence DESC NULLS LAST LIMIT 1
+                """)
+            ).fetchone()
+
+        month = datetime.now(timezone.utc).strftime("%B %Y")
+        hit_rate = hit / max(hit + miss, 1)
+        best_text = (best_row[0][:120] + "...") if best_row and len(best_row[0]) > 120 else (best_row[0] if best_row else "N/A")
+        worst_text = (worst_row[0][:120] + "...") if worst_row and len(worst_row[0]) > 120 else (worst_row[0] if worst_row else "N/A")
+
+        msg = (
+            f"📊 PREDICTION LEDGER — {month}\n"
+            f"Total: {total} claims | Hit rate: {hit_rate:.0%}\n"
+            f"PSF: {psf_hit}/{psf_total} | Opportunities: {opp_hit}/{opp_total}\n"
+            f"Best call: {best_text} ✅\n"
+            f"Worst miss: {worst_text} ❌"
+        )
+        _digest_send("intel_reports", f"📊 Prediction Ledger — {month}", msg)
+        _mark_digest_sent("ledger_verdict")
+        logger.info("[LedgerDigest] Sent verdict digest: {} claims, {:.0%} hit rate", total, hit_rate)
+    except Exception as exc:
+        logger.warning("[LedgerDigest] Failed (non-fatal): {}", exc)
+
+
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
     """Register digest-related scheduler jobs."""
     from apscheduler.triggers.cron import CronTrigger
@@ -442,3 +510,11 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
             name="Monthly CEO Letter (PerformanceDigest + agent_runs summary)",
             misfire_grace_time=7200,
         )
+    # Monthly prediction ledger verdict digest — 1st of month 08:00 UTC (GATE-111, T-1243)
+    scheduler.add_job(
+        lambda: safe_job(run_ledger_verdict_digest, "ledger_verdict_digest"),
+        CronTrigger(day=1, hour=8, minute=0, timezone="UTC"),
+        id="ledger_verdict_digest",
+        name="Monthly Prediction Ledger Verdict Digest → #intel-reports",
+        misfire_grace_time=7200,
+    )

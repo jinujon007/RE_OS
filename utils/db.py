@@ -3,12 +3,68 @@
 import threading
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 
 from config.settings import DATABASE_URL
 
 _engine = None
 _lock = threading.Lock()
+
+# ── DB connection pool Prometheus gauges (T-1248) ────────────────────────────
+# Metrics updated via pool event listeners — no polling, no health endpoint
+# dual-write. The gauge imports are lazy to avoid circular imports with
+# config.metrics when this module is loaded during app startup.
+# Pool wait time histogram added per industry standard for scalability monitoring.
+
+
+def _wire_pool_metrics(engine_ref):
+    """Attach pool event listeners for Prometheus gauges.
+
+    Pool wait time is tracked by wrapping pool._do_get via monkey-patch
+    (see _patch_pool_wait_time). Gauges update on connect/checkout/checkin.
+    """
+    try:
+        from config.metrics import db_pool_size, db_pool_checkedout, db_pool_overflow
+
+        @event.listens_for(engine_ref.pool, "connect")
+        def _pool_connect(dbapi_con, con_record):
+            db_pool_size.set(engine_ref.pool.size())
+            db_pool_overflow.set(engine_ref.pool.overflow())
+
+        @event.listens_for(engine_ref.pool, "checkout")
+        def _pool_checkout(dbapi_con, con_record, con_proxy):
+            db_pool_checkedout.set(engine_ref.pool.checkedout())
+            db_pool_overflow.set(engine_ref.pool.overflow())
+
+        @event.listens_for(engine_ref.pool, "checkin")
+        def _pool_checkin(dbapi_con, con_record):
+            db_pool_checkedout.set(engine_ref.pool.checkedout())
+    except Exception:
+        pass
+
+
+def _patch_pool_wait_time(pool):
+    """Monkey-patch pool._do_get to record pool_wait_seconds histogram.
+
+    Industry-standard practice for connection pool saturation monitoring.
+    Wraps the original _do_get with a timing decorator.
+    """
+    try:
+        from config.metrics import db_pool_wait_seconds
+        import time as _time_mod
+
+        original_do_get = pool._do_get
+
+        def _timed_do_get():
+            t0 = _time_mod.perf_counter()
+            try:
+                return original_do_get()
+            finally:
+                db_pool_wait_seconds.observe(_time_mod.perf_counter() - t0)
+
+        pool._do_get = _timed_do_get
+    except Exception:
+        pass
 
 
 def get_engine(pool_size: int = 10, max_overflow: int = 5):
@@ -23,6 +79,8 @@ def get_engine(pool_size: int = 10, max_overflow: int = 5):
                     pool_size=pool_size,
                     max_overflow=max_overflow,
                 )
+                _wire_pool_metrics(_engine)
+                _patch_pool_wait_time(_engine.pool)
     return _engine
 
 

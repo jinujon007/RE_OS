@@ -5,8 +5,11 @@ All routers import from this module — never from dashboard.app_fastapi.
 app_fastapi.py imports from here for middleware and startup.
 """
 
+from __future__ import annotations
+
 import copy
 import glob
+import json
 import logging
 import os
 import re
@@ -17,6 +20,7 @@ from collections import OrderedDict
 from datetime import datetime
 
 from fastapi import Request
+from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from slowapi import Limiter
@@ -26,6 +30,37 @@ from sqlalchemy import text as _sa_text
 
 class ErrorResponse(BaseModel):
     error: str
+    code: str = "INTERNAL_ERROR"
+    request_id: str = ""
+    docs_url: str = ""
+
+
+_ERROR_CODES: dict[int, str] = {
+    400: "VALIDATION_ERROR",
+    401: "UNAUTHORIZED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    409: "CONFLICT",
+    422: "VALIDATION_ERROR",
+    429: "RATE_LIMITED",
+    500: "INTERNAL_ERROR",
+}
+
+
+def _error_json(error: str, status_code: int = 400, request_id: str = "", tag: str = "") -> dict:
+    code = _ERROR_CODES.get(status_code, "INTERNAL_ERROR")
+    docs_url = f"/docs#tag/{tag}" if tag else ""
+    return ErrorResponse(
+        error=error,
+        code=code,
+        request_id=request_id,
+        docs_url=docs_url,
+    ).model_dump()
+
+
+def _err_resp(error: str, request: "Request | None" = None, status_code: int = 400, tag: str = "") -> JSONResponse:
+    rid = request.state.request_id if request and hasattr(request.state, "request_id") else ""
+    return JSONResponse(content=_error_json(error, status_code=status_code, request_id=rid, tag=tag), status_code=status_code)
 
 
 class HealthServiceStatus(BaseModel):
@@ -39,12 +74,35 @@ logger = logging.getLogger("re_os.dashboard")
 
 from utils.db import get_engine as _get_sa_engine
 
+# ── Redis password enforcement (lazy — fires at first access, not module import) ──
+
+_REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
+_REDIS_URL = os.environ.get("REDIS_URL", "")
+
+
+def _validate_redis_config() -> str:
+    """Validate Redis config and return storage URI.
+
+    Raises RuntimeError if Redis is configured without a password (non-memory://).
+    Called lazily by limiter init to avoid crashing module imports
+    (mypy, pytest collection, docs generation).
+    """
+    url = _REDIS_URL
+    if not url:
+        url = f"redis://:{_REDIS_PASSWORD}@localhost:6379" if _REDIS_PASSWORD else "memory://"
+    if not _REDIS_PASSWORD and not url.startswith("memory://"):
+        raise RuntimeError(
+            "REDIS_PASSWORD must be set when using Redis. "
+            "Set REDIS_PASSWORD in .env or use REDIS_URL=memory:// for development."
+        )
+    return url
+
+
 # ── Rate Limiter ─────────────────────────────────────────────────────────────
 
-_REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 limiter = Limiter(
     key_func=get_remote_address,
-    storage_uri=_REDIS_URL,
+    storage_uri=_validate_redis_config(),
     strategy="fixed-window",
 )
 
@@ -53,6 +111,140 @@ templates = Jinja2Templates(
 )
 
 # ── Logger ───────────────────────────────────────────────────────────────────
+
+# ── Redis-backed running store (T-1246) ──────────────────────────────────────
+# Stores pipeline running state in Redis so uvicorn --workers N can share state.
+# Falls back to in-memory dict if Redis unavailable.
+
+_REDIS_HASH_KEY = "re_os:pipeline_running"
+_REDIS_TTL_SECONDS = 3600  # 1h — prevents stale entries on pod crash
+_REDIS_CLIENT_INSTANCE = None
+_REDIS_CLIENT_LOCK = threading.Lock()
+
+
+def _get_redis_client():
+    """Module-level lazy singleton Redis client with connection pool.
+
+    Returns None if Redis is unavailable (triggers in-memory fallback).
+    Connection reused across all calls — safe for --workers N.
+    """
+    global _REDIS_CLIENT_INSTANCE
+    if _REDIS_CLIENT_INSTANCE is None:
+        with _REDIS_CLIENT_LOCK:
+            if _REDIS_CLIENT_INSTANCE is None:
+                try:
+                    import redis as _redis_mod
+                    from config.settings import REDIS_URL as _redis_url
+
+                    _REDIS_CLIENT_INSTANCE = _redis_mod.from_url(
+                        _redis_url,
+                        decode_responses=True,
+                        socket_connect_timeout=2,
+                        socket_keepalive=True,
+                        health_check_interval=30,
+                    )
+                except Exception as exc:
+                    logger.debug("[Redis running] Client init failed: %s — using in-memory fallback", exc)
+                    _REDIS_CLIENT_INSTANCE = False
+    return _REDIS_CLIENT_INSTANCE if _REDIS_CLIENT_INSTANCE is not False else None
+
+
+def _redis_expiry(r):
+    """Set TTL on the running hash after each write to prevent stale accumulation."""
+    try:
+        r.expire(_REDIS_HASH_KEY, _REDIS_TTL_SECONDS)
+    except Exception:
+        pass
+
+
+def _set_running(market: str, state: str = "running", pid: int = 0, started: str = "") -> None:
+    """Store running state — tries Redis first, falls back to in-memory.
+
+    Args:
+        market: Market name (Yelahanka, Devanahalli, Hebbal).
+        state: One of 'running', 'done', 'failed'.
+        pid: OS process ID of the pipeline subprocess.
+        started: ISO-8601 timestamp of when the pipeline started.
+    """
+    payload = {"state": state, "pid": pid, "started": started}
+    r = _get_redis_client()
+    if r is not None:
+        try:
+            r.hset(_REDIS_HASH_KEY, market, json.dumps(payload))
+            _redis_expiry(r)
+            return
+        except Exception as exc:
+            logger.debug("[Redis running] hset failed: %s — falling back to in-memory", exc)
+    with _lock:
+        _running[market] = payload
+
+
+def _get_running(market: str) -> dict | None:
+    """Get running state for a market."""
+    r = _get_redis_client()
+    if r is not None:
+        try:
+            raw = r.hget(_REDIS_HASH_KEY, market)
+            if raw is not None:
+                result: dict = json.loads(raw)
+                return result
+        except Exception:
+            pass
+    with _lock:
+        val = _running.get(market)
+        return val if isinstance(val, dict) else None
+
+
+def _clear_running(market: str) -> None:
+    """Remove running state for a market."""
+    r = _get_redis_client()
+    if r is not None:
+        try:
+            r.hdel(_REDIS_HASH_KEY, market)
+            return
+        except Exception:
+            pass
+    with _lock:
+        _running.pop(market, None)
+
+
+def _get_all_running() -> dict:
+    """Get all running states.
+
+    Returns Redis state if available, falling back to in-memory.
+    Filters out stale Redis entries (older than TTL with 'done'/'failed' state)
+    to prevent phantom-pipeline artifacts across worker restarts.
+    """
+    r = _get_redis_client()
+    if r is not None:
+        try:
+            raw = r.hgetall(_REDIS_HASH_KEY)
+            if raw:
+                parsed = {}
+                for k, v in raw.items():
+                    try:
+                        parsed[k] = json.loads(v)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                now_ts = time.time()
+                for market, entry in list(parsed.items()):
+                    if entry.get("state") in ("done", "failed"):
+                        started = entry.get("started")
+                        if started:
+                            try:
+                                age = now_ts - datetime.fromisoformat(started).timestamp()
+                                if age > _REDIS_TTL_SECONDS:
+                                    r.hdel(_REDIS_HASH_KEY, market)
+                                    del parsed[market]
+                            except (ValueError, TypeError):
+                                pass
+                if parsed:
+                    return parsed
+        except Exception:
+            pass
+    with _lock:
+        return dict(_running)
+
 
 # ── State ────────────────────────────────────────────────────────────────────
 
@@ -151,17 +343,32 @@ AGENT_ACTIONS: dict[str, list[dict]] = {
     "sentinel": [],
 }
 
-# ── API Key check (eval at first use, not import time) ──────────────────────
+# ── API Key check (cached globals for speed, patchable for tests) ──────────
 
+_API_KEY_WARNED: bool = False
 _API_KEY: str | None = None
+_API_KEY_READ: str | None = None
+_API_KEY_ADMIN: str | None = None
 
 
-def _ensure_api_key():
-    global _API_KEY
+def _reset_api_keys():
+    global _API_KEY, _API_KEY_READ, _API_KEY_ADMIN, _API_KEY_WARNED
+    _API_KEY = None
+    _API_KEY_READ = None
+    _API_KEY_ADMIN = None
+    _API_KEY_WARNED = False
+
+
+def _ensure_api_keys():
+    global _API_KEY, _API_KEY_READ, _API_KEY_ADMIN, _API_KEY_WARNED
     if _API_KEY is not None:
         return
-    _API_KEY = os.environ.get("DASHBOARD_API_KEY", "")
+    _API_KEY = os.environ.get("DASHBOARD_API_KEY", "") or None
+    _API_KEY_READ = os.environ.get("DASHBOARD_API_KEY_READ", "") or None
+    _API_KEY_ADMIN = os.environ.get("DASHBOARD_API_KEY_ADMIN", "") or None
     if not _API_KEY:
+        if _API_KEY_WARNED:
+            return
         _allow_empty = os.environ.get("DASHBOARD_API_KEY_ALLOW_EMPTY", "").lower() in (
             "1", "true", "yes",
         )
@@ -170,12 +377,52 @@ def _ensure_api_key():
                 "[RE_OS] DASHBOARD_API_KEY is not set — DASHBOARD_API_KEY_ALLOW_EMPTY=true "
                 "overrides the hard error. Port 8050 is publicly accessible."
             )
+            _API_KEY_WARNED = True
         else:
             raise RuntimeError(
                 "DASHBOARD_API_KEY is not set. All /api endpoints would be publicly accessible. "
                 "Set DASHBOARD_API_KEY in .env, or set DASHBOARD_API_KEY_ALLOW_EMPTY=true to "
                 "explicitly permit unauthenticated access (e.g. local dev only)."
             )
+
+
+_ROLE_HIERARCHY = {"read": 1, "write": 2, "admin": 3}
+
+
+def _get_request_role(request: Request) -> str | None:
+    try:
+        _ensure_api_keys()
+    except RuntimeError:
+        return "admin"
+    provided = request.headers.get("X-API-Key", "")
+    if provided and _API_KEY_ADMIN and provided == _API_KEY_ADMIN:
+        return "admin"
+    if provided and _API_KEY and provided == _API_KEY:
+        return "write"
+    if provided and _API_KEY_READ and provided == _API_KEY_READ:
+        return "read"
+    if not provided and not _API_KEY:
+        return "admin"
+    return None
+
+
+def _has_role(role: str | None, required: str) -> bool:
+    if role is None:
+        return False
+    return _ROLE_HIERARCHY.get(role, 0) >= _ROLE_HIERARCHY.get(required, 0)
+
+
+_ADMIN_PATHS = frozenset({
+    "/api/v1/ops/kill-criteria",
+    "/api/v1/ops/failed-records",
+    "/api/v1/audit/log",
+})
+
+_WRITE_PATHS = frozenset({
+    "/api/v1/evaluate",
+    "/api/v1/board/session",
+    "/api/v1/ops/v2-declare",
+})
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -192,25 +439,55 @@ _READ_ONLY_PATHS = frozenset(
         "/api/pr/mentions", "/api/optimizer/report", "/api/digest/weekly",
         "/api/digest/monthly", "/api/llm/quota", "/optimizer",
         "/api/ops/v2-readiness",
-        "/api/ops/kill-criteria",
+        "/api/v1/ops/slo",
         "/api/corridor/score",
+        # v1 prefix aliases — every /api/ path must have a /api/v1/ twin
+        "/api/v1/health", "/api/v1/health/live", "/api/v1/health/llm", "/api/v1/health/backup",
+        "/api/v1/status", "/api/v1/agents", "/api/v1/intel/cards",
+        "/api/v1/intel/download", "/api/v1/intel/search", "/api/v1/db/state",
+        "/api/v1/sentinel/status", "/api/v1/board/sessions", "/api/v1/db/tables",
+        "/api/v1/tasks", "/api/v1/engineering/brief", "/api/v1/finance/brief",
+        "/api/v1/legal/brief", "/api/v1/alerts", "/api/v1/registry",
+        "/api/v1/opportunity/queue", "/api/v1/scheduler/health",
+        "/api/v1/competitive/pulse", "/api/v1/portfolio", "/api/v1/portfolio/summary",
+        "/api/v1/pr/mentions", "/api/v1/optimizer/report", "/api/v1/digest/weekly",
+        "/api/v1/digest/monthly", "/api/v1/llm/quota",
+        "/api/v1/ops/v2-readiness",
+        "/api/v1/ops/kill-criteria",
+        "/api/v1/ops/ledger",
+        # ops/slo is only in v1 form (no legacy /api/ops/slo existed)
+        "/api/v1/ops/slo",
     }
 )
 _READ_ONLY_PREFIXES = (
     "/api/reports/", "/api/logs/", "/api/market/", "/api/evaluate/",
     "/api/data/", "/api/memory/", "/api/demand/", "/api/distress/",
     "/api/scraper/", "/api/parcel/", "/api/finance/",
+    "/api/content/", "/api/process-audit/", "/api/shareholders/",
+    "/api/govt/", "/api/competitive/", "/api/portfolio/",
+    "/api/pr/", "/api/optimizer/", "/api/llm/",
+    # v1 prefix aliases
+    "/api/v1/reports/", "/api/v1/logs/", "/api/v1/market/", "/api/v1/evaluate/",
+    "/api/v1/data/", "/api/v1/memory/", "/api/v1/demand/", "/api/v1/distress/",
+    "/api/v1/scraper/", "/api/v1/parcel/", "/api/v1/finance/",
+    "/api/v1/content/", "/api/v1/process-audit/", "/api/v1/shareholders/",
+    "/api/v1/govt/", "/api/v1/competitive/", "/api/v1/portfolio/",
+    "/api/v1/pr/", "/api/v1/optimizer/", "/api/v1/llm/",
 )
 
 
 def _is_run_api_authorized(req: Request) -> bool:
-    _ensure_api_key()
+    try:
+        _ensure_api_keys()
+    except RuntimeError:
+        return True
     if not _API_KEY:
         return True
-    provided = req.headers.get("X-API-Key", "")
-    if provided == _API_KEY:
+    role = _get_request_role(req)
+    if role is not None:
         return True
     api_key_prev = os.environ.get("DASHBOARD_API_KEY_PREV", "")
+    provided = req.headers.get("X-API-Key", "")
     return bool(api_key_prev and provided == api_key_prev)
 
 
@@ -263,6 +540,7 @@ def _prune_finished_running_entries_locked():
     ]
     for market in finished:
         entry = _running.pop(market, None)
+        _clear_running(market)
         if entry and "proc" in entry:
             try:
                 entry["proc"].wait(timeout=0)
@@ -293,7 +571,9 @@ def _start_pipeline_for_market(market: str) -> tuple[dict, int]:
                 cmd, cwd="/app", shell=False, stdout=_log_fh, stderr=_log_fh,
             )
         started = datetime.now().isoformat()
-        _running[market] = {"proc": proc, "started": started}
+        entry = {"proc": proc, "started": started}
+        _running[market] = entry
+        _set_running(market, state="running", pid=proc.pid, started=started)
         logger.info(
             "[DIAG running] started market=%s pid=%s started=%s",
             market, proc.pid, started,
@@ -316,15 +596,33 @@ def _stop_pipeline_for_market(market: str) -> tuple[dict, int]:
                 "[DIAG running] terminate requested market=%s pid=%s",
                 market, entry["proc"].pid,
             )
+            _clear_running(market)
             return {"status": "stopped", "market": market}, 200
+    _clear_running(market)
     return {"status": "not_running"}, 200
 
 
 def _running_snapshot() -> dict:
+    snapshot = {}
+    all_running = _get_all_running()
+    for market, entry_data in all_running.items():
+        if not isinstance(entry_data, dict):
+            continue
+        snapshot[market] = {
+            "started": entry_data.get("started"),
+            "state": entry_data.get("state", "unknown"),
+            "pid": entry_data.get("pid"),
+        }
+        with _lock:
+            local = _running.get(market)
+            if local and "proc" in local:
+                rc = local["proc"].poll()
+                snapshot[market]["returncode"] = rc
+                if rc is not None:
+                    snapshot[market]["state"] = "done" if rc == 0 else "failed"
     with _lock:
-        snapshot = {}
         for market, entry in _running.items():
-            if "proc" in entry:
+            if market not in snapshot and "proc" in entry:
                 rc = entry["proc"].poll()
                 snapshot[market] = {
                     "started": entry.get("started"),
@@ -332,7 +630,7 @@ def _running_snapshot() -> dict:
                     "returncode": rc,
                     "pid": entry["proc"].pid,
                 }
-        return snapshot
+    return snapshot
 
 
 def _market_go_no_go(active_projects: int, avg_psf: int | None, estimated: bool) -> str:

@@ -45,3 +45,42 @@ class TestDeveloperAliasResolver:
         from utils.developer_alias import DeveloperAliasResolver
         for v in ["Prestige Estates", "Prestige Group", "Prestige Constructions", "Prestige Properties"]:
             assert DeveloperAliasResolver.canonical(v) == "Prestige"
+
+
+# ── T-1234: Expanded developer aliases ───────────────────────────────────────
+
+
+def test_developer_aliases_has_10_entries():
+    from config.settings import DEVELOPER_ALIASES
+    assert len(DEVELOPER_ALIASES) >= 10
+    expected_keys = {"Brigade", "Prestige", "Sobha", "Godrej Properties",
+                     "Puravankara", "Mantri Developers", "Total Environment",
+                     "Assetz", "Mahindra Lifespace", "Concorde"}
+    assert expected_keys.issubset(DEVELOPER_ALIASES.keys())
+
+
+def test_godrej_canonical_resolution():
+    from utils.developer_alias import DeveloperAliasResolver
+    DeveloperAliasResolver.reset()
+    for v in ["Godrej", "Godrej Realty", "GPDL"]:
+        result = DeveloperAliasResolver.canonical(v)
+        assert result == "Godrej Properties", f"Expected 'Godrej Properties', got '{result}' for '{v}'"
+
+
+def test_puravankara_provident_variant_resolves():
+    from utils.developer_alias import DeveloperAliasResolver
+    DeveloperAliasResolver.reset()
+    for v in ["Puravankara Projects", "Puravankara Limited", "Provident", "Provident Housing"]:
+        result = DeveloperAliasResolver.canonical(v)
+        assert result == "Puravankara", f"Expected 'Puravankara', got '{result}' for '{v}'"
+
+
+def test_alias_resolver_reload_picks_up_new_settings():
+    from utils.developer_alias import DeveloperAliasResolver
+    DeveloperAliasResolver.reset()
+    result = DeveloperAliasResolver.canonical("Total Env")
+    assert result == "Total Environment", f"Expected 'Total Environment', got '{result}'"
+    result = DeveloperAliasResolver.canonical("Mantri Corp")
+    assert result == "Mantri Developers", f"Expected 'Mantri Developers', got '{result}'"
+    result = DeveloperAliasResolver.canonical("Assetz Property")
+    assert result == "Assetz", f"Expected 'Assetz', got '{result}'"

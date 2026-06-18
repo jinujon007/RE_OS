@@ -45,6 +45,7 @@ class DeveloperAliasResolver:
         raw = (raw_name or "").strip()
         if not raw:
             return raw
+        assert cls._aliases is not None
         for canonical, patterns in cls._aliases.items():
             for pattern in patterns:
                 if pattern.search(raw):

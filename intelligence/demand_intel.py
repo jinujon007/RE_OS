@@ -208,7 +208,7 @@ class DemandIntel:
 
         cached = self._cache.get(_CACHE_NS, m)
         if cached is not None:
-            return cached
+            return cached  # type: ignore[no-any-return]
 
         mi = validate_market(m)
         if mi is None:
@@ -833,53 +833,76 @@ class DemandIntel:
             return False
 
     def _compute_nri_demand_score(self, ds: DemandSignals, mi: dict):
-        """NRI demand proxy: news mentions + NRI buyer listings.
+        """NRI demand proxy: registered_transactions buyer_type (primary) + news fallback.
 
-        Proxy signals:
-        (1) news_articles with NRI mention + market name in last 90d — each article adds 0.5, max 5.0
-        (2) listings with buyer_type='nri' in market in last 90d — each adds 1.0, max 5.0
-        Returns sum of (1) and (2), capped at 10. Gracefully degrades if columns/tables missing.
+        (1) registered_transactions WHERE buyer_type='nri' in market villages in last 90d
+            — each deed adds 1.0, max 5.0.
+        (2) If registered_transactions has <5 rows in last 365d for market,
+            fall back to news_articles ILIKE '%NRI%' with [LOW_CONFIDENCE] label.
+        Returns score [0.0, 10.0]. Single DB connection; graceful degradation.
         """
         try:
             from utils.db import get_engine
             from sqlalchemy import text
 
-            with get_engine().connect() as conn:
+            engine = get_engine()
+            with engine.connect() as conn:
                 mkt_name = mi["name"]
-                news_count = conn.execute(
+                mkt_pat = f"%{mkt_name}%"
+
+                deed_count = conn.execute(
                     text("""
-                        SELECT COUNT(*) FROM news_articles na
-                        JOIN micro_markets mm ON mm.id = na.micro_market_id
-                        WHERE mm.slug = :slug
-                          AND na.content ILIKE '%NRI%'
-                          AND na.published_at > NOW() - INTERVAL '90 days'
+                        SELECT COUNT(*) FROM registered_transactions rt
+                        WHERE rt.buyer_type = 'nri'
+                          AND rt.reg_date > NOW() - INTERVAL '90 days'
+                          AND rt.village ILIKE :pat
                     """),
-                    {"slug": mi["slug"]},
+                    {"pat": mkt_pat},
                 ).scalar() or 0
 
-                listing_count = 0
-                if self._table_has_column(conn, "listings", "buyer_type"):
-                    listing_count = conn.execute(
+                row_count = conn.execute(
+                    text("""
+                        SELECT COUNT(*) FROM registered_transactions rt
+                        WHERE rt.reg_date > NOW() - INTERVAL '365 days'
+                          AND rt.village ILIKE :pat
+                    """),
+                    {"pat": mkt_pat},
+                ).scalar() or 0
+
+            if deed_count > 0:
+                deed_score = min(deed_count * 1.0, 5.0)
+                ds.nri_score = round(deed_score, 4)
+                ds.signals.append(
+                    f"NRI demand signal: {ds.nri_score:.2f}"
+                    f" (deeds with nri buyer_type={deed_count})"
+                )
+                return
+
+            if row_count < 5:
+                with get_engine().connect() as conn:
+                    news_count = conn.execute(
                         text("""
-                            SELECT COUNT(*) FROM listings l
-                            JOIN micro_markets mm ON mm.id = l.micro_market_id
+                            SELECT COUNT(*) FROM news_articles na
+                            JOIN micro_markets mm ON mm.id = na.micro_market_id
                             WHERE mm.slug = :slug
-                              AND l.buyer_type ILIKE '%nri%'
-                              AND l.last_seen_at > NOW() - INTERVAL '90 days'
+                              AND na.content ILIKE '%NRI%'
+                              AND na.published_at > NOW() - INTERVAL '90 days'
                         """),
                         {"slug": mi["slug"]},
                     ).scalar() or 0
 
-            news_score = min(news_count * 0.5, 5.0)
-            listing_score = min(listing_count * 1.0, 5.0)
-            total = news_score + listing_score
-            ds.nri_score = round(min(total, 10.0), 4)
+                if news_count > 0:
+                    fallback_score = min(news_count * 0.5, 5.0)
+                    ds.nri_score = round(fallback_score, 4)
+                    ds.signals.append(
+                        f"NRI demand signal: {ds.nri_score:.2f}"
+                        f" (news_fallback={news_count}) [LOW_CONFIDENCE]"
+                    )
+                else:
+                    ds.nri_score = 0.0
+            else:
+                ds.nri_score = 0.0
 
-            if ds.nri_score and ds.nri_score > 0:
-                ds.signals.append(
-                    f"NRI demand signal: {ds.nri_score:.2f}"
-                    f" (news={news_count}, nri_listings={listing_count})"
-                )
         except Exception as exc:
             logger.debug(
                 "[DemandIntel] NRI signal failed for {}: {}", mi["name"], exc

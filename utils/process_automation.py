@@ -158,7 +158,7 @@ def safe_extract_json(
     if not raw or len(raw) > _LLM_RESPONSE_MAX_BYTES:
         return None
     try:
-        return json.loads(raw)
+        return json.loads(raw)  # type: ignore[no-any-return]
     except (json.JSONDecodeError, TypeError):
         pass
     truncated = raw[:max_chars]
@@ -167,6 +167,6 @@ def safe_extract_json(
         end = truncated.rindex("}") + 1
         if end - start > max_chars:
             return None
-        return json.loads(truncated[start:end])
+        return json.loads(truncated[start:end])  # type: ignore[no-any-return]
     except (ValueError, json.JSONDecodeError):
         return None

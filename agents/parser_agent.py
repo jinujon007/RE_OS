@@ -6,6 +6,7 @@ Uses Ollama locally — this is the heavy text processing work that would
 burn Claude tokens if done here. Let the free model do it.
 """
 
+from typing import Any
 from crewai import Agent
 from crewai.tools import BaseTool
 from bs4 import BeautifulSoup
@@ -40,7 +41,7 @@ class RERAParserTool(BaseTool):
 
     def _normalize_rera_record(self, data: dict) -> dict:
         """Normalize field names and types from RERA raw data."""
-        normalized: dict[str, int | str] = {}
+        normalized: dict[str, Any] = {}
         rera_num = (
             data.get("reraNo")
             or data.get("rera_number")
@@ -87,9 +88,9 @@ class RERAParserTool(BaseTool):
         )
 
         # If unsold not given, calculate
-        if normalized["unsold_units"] == 0 and normalized["total_units"] > 0:  # type: ignore[operator]
-            normalized["unsold_units"] = (  # type: ignore[operator]
-                normalized["total_units"] - normalized["sold_units"]  # type: ignore[operator]
+        if normalized["unsold_units"] == 0 and normalized["total_units"] > 0:
+            normalized["unsold_units"] = (
+                normalized["total_units"] - normalized["sold_units"]
             )
 
         # Location
@@ -127,7 +128,7 @@ class RERAParserTool(BaseTool):
         ).strip()
 
         # Preserve raw
-        normalized["raw_data"] = data  # type: ignore[assignment]
+        normalized["raw_data"] = data
 
         return normalized
 

@@ -26,12 +26,17 @@ from dashboard.state import (
     _estimated_cache, _ESTIMATED_CACHE_TTL,
     MARKET_SLUG, MARKET_CANONICAL,
     _pulse_cache, _pulse_cache_lock, _PULSE_CACHE_TTL, _PULSE_CACHE_MAX,
+    _err_resp,
 )
 from config.metrics import db_query_duration_seconds, digest_runs_total
+from utils.etag import compute_etag, check_etag, add_etag
 
 logger = logging.getLogger("re_os.dashboard")
 
 router = APIRouter(tags=["Data"])
+
+# Separate router for /metrics (excluded from /api/v1 prefix — Prometheus scrapes this directly)
+metrics_router = APIRouter(tags=["Metrics"])
 
 
 # ── Response Models ─────────────────────────────────────────────────────
@@ -55,7 +60,7 @@ class OwnershipChainResponse(BaseModel):
 # ── Metrics ─────────────────────────────────────────────────────────────
 
 
-@router.get(
+@metrics_router.get(
     "/metrics",
     summary="Prometheus metrics endpoint",
     include_in_schema=False,
@@ -72,7 +77,7 @@ def metrics():
 
 
 @router.get(
-    "/api/db/state",
+    "/db/state",
     summary="Database record counts and market summary",
 )
 @limiter.limit("60/minute")
@@ -123,13 +128,17 @@ async def db_state(request: Request):
                 }
                 for r in recent
             ]
-        return state
+        etag = compute_etag(state)
+        resp = check_etag(request, etag)
+        if resp:
+            return resp
+        return JSONResponse(content=state, headers={"ETag": f'"{etag}"'})
     except Exception as e:
         logger.error("[db_state] %s", e)
-        return JSONResponse({"error": "database query failed"}, status_code=500)
+        return _err_resp("database query failed", request, 500, "Data")
 
 
-@router.get("/api/db/tables", summary="View contents of key DB views")
+@router.get("/db/tables", summary="View contents of key DB views")
 @limiter.limit("30/minute")
 async def db_tables(request: Request):
     try:
@@ -167,24 +176,24 @@ async def db_tables(request: Request):
         }
     except Exception as e:
         logger.error("[db_tables] %s", e)
-        return JSONResponse({"error": "database query failed"}, status_code=500)
+        return _err_resp("database query failed", request, 500, "Data")
 
 
 # ── Reports ─────────────────────────────────────────────────────────────
 
 
 @router.get(
-    "/api/reports/{market}",
+    "/reports/{market}",
     summary="Latest intel report text for a market",
 )
 @limiter.limit("30/minute")
 async def get_report(request: Request, market: str):
     canonical = _normalize_market(market)
     if not canonical or canonical == "all":
-        return JSONResponse({"error": "invalid market"}, status_code=400)
+        return _err_resp("invalid market", request, 400, "Data")
     slug = MARKET_SLUG.get(canonical)
     if not slug:
-        return JSONResponse({"error": "invalid market"}, status_code=400)
+        return _err_resp("invalid market", request, 400, "Data")
     pattern = f"/app/outputs/{slug}/intel_report_*.txt"
     files = sorted(glob.glob(pattern))
     if not files:
@@ -196,7 +205,7 @@ async def get_report(request: Request, market: str):
 
 
 @router.get(
-    "/api/intel/cards",
+    "/intel/cards",
     summary="Market summary cards for dashboard UI",
 )
 @limiter.limit("60/minute")
@@ -243,17 +252,22 @@ async def intel_cards(request: Request):
                 "go_no_go": _market_go_no_go(
                     int(row[1] or 0), int(row[2]) if row[2] else None, is_estimated
                 ),
-                "download_url": f"/api/intel/download?market={slug}" if slug else None,
+                "download_url": f"/intel/download?market={slug}" if slug else None,
                 "estimated": is_estimated,
             })
-        return {"cards": cards}
+        data = {"cards": cards}
+        etag = compute_etag(data)
+        resp = check_etag(request, etag)
+        if resp:
+            return resp
+        return JSONResponse(content=data, headers={"ETag": f'"{etag}"'})
     except Exception as e:
         logger.error("[intel_cards] %s", e)
-        return JSONResponse({"error": "failed to load market cards"}, status_code=500)
+        return _err_resp("failed to load market cards", request, 500, "Data")
 
 
 @router.get(
-    "/api/intel/search",
+    "/intel/search",
     summary="Semantic search over past intel reports",
 )
 @limiter.limit("20/minute")
@@ -289,7 +303,7 @@ async def intel_search(request: Request, q: str = Query(""), market: str = Query
 
 
 @router.get(
-    "/api/intel/download",
+    "/intel/download",
     summary="Download intel report as txt or csv",
 )
 def download_intel(market: str = Query(""), format: str = Query("txt")):
@@ -298,12 +312,12 @@ def download_intel(market: str = Query(""), format: str = Query("txt")):
     if fmt == "csv":
         return _download_intel_csv(canonical)
     if not canonical or canonical == "all":
-        return JSONResponse({"error": "invalid market"}, status_code=400)
+        return _err_resp("invalid market", None, 400, "Data")
     slug = MARKET_SLUG.get(canonical)
     pattern = f"/app/outputs/{slug}/intel_report_*.txt"
     files = sorted(glob.glob(pattern))
     if not files:
-        return JSONResponse({"error": "no report found"}, status_code=404)
+        return _err_resp("no report found", None, 404, "Data")
     with open(files[-1], encoding="utf-8") as f:
         content = f.read()
     return Response(content=content, media_type="text/plain")
@@ -311,7 +325,7 @@ def download_intel(market: str = Query(""), format: str = Query("txt")):
 
 def _download_intel_csv(canonical: str | None):
     if not canonical:
-        return JSONResponse({"error": "invalid market"}, status_code=400)
+        return _err_resp("invalid market", None, 400, "Data")
     try:
         with _get_sa_engine().connect() as conn:
             params = {}
@@ -364,14 +378,14 @@ def _download_intel_csv(canonical: str | None):
         )
     except Exception as e:
         logger.error("[download_intel_csv] %s", e)
-        return JSONResponse({"error": "failed to export intel csv"}, status_code=500)
+        return _err_resp("failed to export intel csv", None, 500, "Data")
 
 
 # ── Market Map ──────────────────────────────────────────────────────────
 
 
 @router.get(
-    "/api/market/map/{market}",
+    "/market/map/{market}",
     summary="Folium map HTML with project markers and PSF color gradient",
 )
 async def market_map(market: str):
@@ -382,14 +396,14 @@ async def market_map(market: str):
         from sqlalchemy import text
         canonical = _normalize_market(market)
         if not canonical:
-            return JSONResponse({"error": "invalid market"}, status_code=400)
+            return _err_resp("invalid market", None, 400, "Data")
         with get_engine().connect() as conn:
             center = conn.execute(
                 text("SELECT ST_X(centroid), ST_Y(centroid) FROM micro_markets WHERE name ILIKE :m LIMIT 1"),
                 {"m": f"%{canonical}%"},
             ).fetchone()
         if not center:
-            return JSONResponse({"error": "market not found"}, status_code=404)
+            return _err_resp("market not found", None, 404, "Data")
         m = folium.Map(location=[center[1], center[0]], zoom_start=13, tiles="CartoDB dark_matter")
         with get_engine().connect() as conn:
             projects = conn.execute(
@@ -435,14 +449,14 @@ async def market_map(market: str):
         return HTMLResponse(content=m._repr_html_())
     except ImportError as exc:
         logger.warning("[market_map] folium not installed: %s", exc)
-        return JSONResponse({"error": "folium not installed"}, status_code=500)
+        return _err_resp("folium not installed", None, 500, "Data")
     except Exception as exc:
         logger.warning("[market_map] Failed for %s: %s", market, exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), None, 500, "Data")
 
 
 @router.get(
-    "/api/market/psf-trend/{market}",
+    "/market/psf-trend/{market}",
     summary="Monthly PSF trend data for Chart.js line chart",
 )
 async def psf_trend(market: str):
@@ -451,7 +465,7 @@ async def psf_trend(market: str):
         from sqlalchemy import text
         canonical = _normalize_market(market)
         if not canonical:
-            return JSONResponse({"error": "invalid market"}, status_code=400)
+            return _err_resp("invalid market", None, 400, "Data")
         with get_engine().connect() as conn:
             rows = conn.execute(
                 text("""
@@ -475,11 +489,11 @@ async def psf_trend(market: str):
         return {"market": canonical, "trend": data}
     except Exception as exc:
         logger.warning("[psf_trend] Failed: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), None, 500, "Data")
 
 
 @router.get(
-    "/api/market/kepler-data/{market}",
+    "/market/kepler-data/{market}",
     summary="GeoJSON FeatureCollection for Kepler.gl density map",
 )
 async def kepler_data(market: str):
@@ -488,7 +502,7 @@ async def kepler_data(market: str):
         from sqlalchemy import text
         canonical = _normalize_market(market)
         if not canonical:
-            return JSONResponse({"error": "invalid market"}, status_code=400)
+            return _err_resp("invalid market", None, 400, "Data")
         with get_engine().connect() as conn:
             rows = conn.execute(
                 text("""
@@ -519,11 +533,11 @@ async def kepler_data(market: str):
         return {"type": "FeatureCollection", "features": features}
     except Exception as exc:
         logger.warning("[kepler_data] Failed: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), None, 500, "Data")
 
 
 @router.get(
-    "/api/market/accessibility",
+    "/market/accessibility",
     summary="Travel-time accessibility scores for a market",
 )
 async def market_accessibility(
@@ -534,7 +548,7 @@ async def market_accessibility(
         from sqlalchemy import text as sa_text
         canonical = _normalize_market(market)
         if not canonical:
-            return JSONResponse({"error": "invalid market"}, status_code=400)
+            return _err_resp("invalid market", None, 400, "Data")
         with get_engine().connect() as conn:
             rows = conn.execute(
                 sa_text("""
@@ -547,7 +561,7 @@ async def market_accessibility(
                 {"market": canonical},
             ).fetchall()
         if not rows:
-            return JSONResponse({"error": "no accessibility data for market"}, status_code=404)
+            return _err_resp("no accessibility data for market", None, 404, "Data")
         latest = {}
         latest_dt = {}
         for r in rows:
@@ -573,14 +587,14 @@ async def market_accessibility(
         }
     except Exception as exc:
         logger.warning("[market_accessibility] Failed: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), None, 500, "Data")
 
 
 # ── Data Freshness ──────────────────────────────────────────────────────
 
 
 @router.get(
-    "/api/data/freshness",
+    "/data/freshness",
     summary="Data freshness per source per market",
 )
 @limiter.limit("30/minute")
@@ -595,7 +609,7 @@ async def data_freshness(request: Request, market: str = Query(None)):
 
 
 @router.get(
-    "/api/memory/explorer",
+    "/memory/explorer",
     summary="Paginated agent memory explorer with filters",
 )
 @limiter.limit("60/hour")
@@ -659,11 +673,11 @@ async def memory_explorer(
         return {"total": total, "page": page, "per_page": SAFE_PER_PAGE, "memories": memories}
     except Exception as e:
         logger.error("[memory_explorer] page=%s market=%s agent=%s err=%s", page, market_filter, agent_id, e)
-        return JSONResponse({"error": "failed to query agent memories", "detail": "database query error"}, status_code=500)
+        return _err_resp("failed to query agent memories", request, 500, "Memory")
 
 
 @router.get(
-    "/api/memory/conflict-count",
+    "/memory/conflict-count",
     summary="Unresolved conflict count for nav badge",
 )
 @limiter.limit("60/hour")
@@ -686,7 +700,7 @@ async def memory_conflict_count(request: Request):
 
 
 @router.get(
-    "/api/health/llm",
+    "/health/llm",
     summary="LLM provider health — circuit breaker states + provider availability",
 )
 @limiter.limit("30/minute")
@@ -717,7 +731,7 @@ async def health_llm(request: Request):
 
 
 @router.get(
-    "/api/health/backup",
+    "/health/backup",
     summary="Last DB backup timestamp",
 )
 @limiter.limit("30/minute")
@@ -743,7 +757,7 @@ async def health_backup(request: Request):
 
 
 @router.get(
-    "/api/scheduler/health",
+    "/scheduler/health",
     summary="Scheduler job health — last run status per job ID (7d window)",
 )
 @limiter.limit("30/minute")
@@ -782,14 +796,14 @@ async def scheduler_health(request: Request):
         }
     except Exception as e:
         logger.error("[scheduler_health] %s", e)
-        return JSONResponse({"error": "database query failed"}, status_code=500)
+        return _err_resp("database query failed", request, 500, "Data")
 
 
 # ── Data Provenance ─────────────────────────────────────────────────────
 
 
 @router.get(
-    "/api/data/provenance",
+    "/data/provenance",
     summary="Data provenance breakdown per market (live vs seed)",
 )
 @limiter.limit("60/hour")
@@ -842,17 +856,21 @@ async def data_provenance(
                 data["guidance"] = "Healthy — live data above 70%"
         if market and not markets:
             return {market: {"total": 0, "live": 0, "seed": 0, "manual": 0, "live_pct": 0.0, "guidance": "No data for this market"}}
-        return markets
+        etag = compute_etag(markets)
+        resp = check_etag(request, etag)
+        if resp:
+            return resp
+        return JSONResponse(content=markets, headers={"ETag": f'"{etag}"'})
     except Exception as e:
         logger.error("[data_provenance] err=%s", e)
-        return JSONResponse({"error": "failed to query data provenance"}, status_code=500)
+        return _err_resp("failed to query data provenance", request, 500, "Data")
 
 
 # ── Scraper Reliability ─────────────────────────────────────────────────
 
 
 @router.get(
-    "/api/scraper/reliability",
+    "/scraper/reliability",
     summary="Scraper reliability scores for all scouts",
 )
 @limiter.limit("60/hour")
@@ -873,14 +891,14 @@ async def scraper_reliability(
         return {r["scraper"]: r for r in results}
     except Exception as e:
         logger.error("[scraper_reliability] err=%s", e)
-        return JSONResponse({"error": "failed to query scraper reliability"}, status_code=500)
+        return _err_resp("failed to query scraper reliability", request, 500, "Data")
 
 
 # ── Demand Intelligence ─────────────────────────────────────────────────
 
 
 @router.get(
-    "/api/demand/{market}",
+    "/demand/{market}",
     summary="Demand signals for a market",
 )
 async def demand_api(market: str, request: Request):
@@ -928,7 +946,7 @@ def data_quality_panel(request: Request):
 
 
 @router.get(
-    "/api/market/forecast/{market}",
+    "/market/forecast/{market}",
     summary="PSF forecast for a market (3/6/12-month horizons)",
 )
 @limiter.limit("30/hour")
@@ -937,10 +955,10 @@ async def market_forecast(market: str, request: Request = None):
     from config.settings import TARGET_MARKETS as _VALID_MARKETS
     market = (market or "").strip()
     if not market:
-        return JSONResponse({"error": "market is required"}, status_code=400)
+        return _err_resp("market is required", request, 400, "Data")
     valid = [m.strip().lower() for m in _VALID_MARKETS]
     if market.lower() not in valid:
-        return JSONResponse({"error": f"Unknown market '{market}'. Valid: {sorted(set(m.strip() for m in _VALID_MARKETS))}"}, status_code=400)
+        return _err_resp(f"Unknown market '{market}'. Valid: {sorted(set(m.strip() for m in _VALID_MARKETS))}", request, 400, "Data")
     try:
         with _get_sa_engine().connect() as conn:
             rows = conn.execute(
@@ -971,9 +989,13 @@ async def market_forecast(market: str, request: Request = None):
                 resp[f"forecast_{h}m"] = float(r.forecast_psf) if r.forecast_psf else 0
                 resp[f"conf_low_{h}m"] = float(r.conf_low) if r.conf_low else 0
                 resp[f"conf_high_{h}m"] = float(r.conf_high) if r.conf_high else 0
-            return resp
+            etag = compute_etag(resp)
+            _check = check_etag(request, etag)
+            if _check:
+                return _check
+            return JSONResponse(content=resp, headers={"ETag": f'"{etag}"'})
         fallback = PSFForecaster().forecast(market)
-        return {
+        fallback_data = {
             "market": fallback.market, "as_of": fallback.as_of,
             "trend_direction": fallback.trend_direction, "current_psf": fallback.current_psf,
             "forecast_3m": fallback.forecast_3m, "forecast_6m": fallback.forecast_6m,
@@ -984,13 +1006,18 @@ async def market_forecast(market: str, request: Request = None):
             "mae_pct": fallback.mae_pct, "data_points": fallback.data_points,
             "model_version": fallback.model_version,
         }
+        etag = compute_etag(fallback_data)
+        _check = check_etag(request, etag)
+        if _check:
+            return _check
+        return JSONResponse(content=fallback_data, headers={"ETag": f'"{etag}"'})
     except Exception as exc:
-        logger.warning("[API] /api/market/forecast/{} failed: {}", market, exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        logger.warning("[API] /market/forecast/%s failed: %s", market, exc)
+        return _err_resp(str(exc), request, 500, "Data")
 
 
 @router.get(
-    "/api/market/spread/{market}",
+    "/market/spread/{market}",
     summary="Registered-vs-ask PSF spread for a market",
 )
 @limiter.limit("60/hour")
@@ -999,30 +1026,35 @@ async def market_spread(market: str, request: Request = None, window_days: int =
     from config.settings import TARGET_MARKETS as _VALID_MARKETS
     market = (market or "").strip()
     if not market:
-        return JSONResponse({"error": "market is required"}, status_code=400)
+        return _err_resp("market is required", request, 400, "Data")
     valid = [m.strip().lower() for m in _VALID_MARKETS]
     if market.lower() not in valid:
-        return JSONResponse({"error": f"Unknown market '{market}'. Valid: {sorted(set(m.strip() for m in _VALID_MARKETS))}"}, status_code=400)
+        return _err_resp(f"Unknown market '{market}'. Valid: {sorted(set(m.strip() for m in _VALID_MARKETS))}", request, 400, "Data")
     try:
         window_days = max(30, min(window_days, 365))
         result = compute_psf_spread(market, window_days=window_days)
-        return result.to_dict() if hasattr(result, "to_dict") else result
+        spread_data = result.to_dict() if hasattr(result, "to_dict") else result
+        etag = compute_etag(spread_data)
+        _check = check_etag(request, etag)
+        if _check:
+            return _check
+        return JSONResponse(content=spread_data, headers={"ETag": f'"{etag}"'})
     except Exception as exc:
-        logger.warning("[API] /api/market/spread/{} failed: {}", market, exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        logger.warning("[API] /market/spread/{} failed: {}", market, exc)
+        return _err_resp(str(exc), request, 500, "Data")
 
 
 # ── Market Supply (pipeline) ────────────────────────────────────────────
 
 
-@router.get("/api/market/supply", summary="Pipeline supply for a market")
+@router.get("/market/supply", summary="Pipeline supply for a market")
 async def market_supply(
     request: Request,
     market: str = Query("Yelahanka", description="Market name"),
 ):
     market = (market or "").strip()
     if not market:
-        return JSONResponse({"error": "market is required"}, status_code=400)
+        return _err_resp("market is required", request, 400, "Data")
     try:
         with _get_sa_engine().connect() as conn:
             rows = conn.execute(
@@ -1054,14 +1086,14 @@ async def market_supply(
             })
         return {"market": market, "total_pipeline_units": int(total), "count": len(records), "records": records}
     except Exception as exc:
-        logger.warning("[API] /api/market/supply failed: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        logger.warning("[API] /market/supply failed: %s", exc)
+        return _err_resp(str(exc), request, 500, "Data")
 
 
 # ── Distress Signals ────────────────────────────────────────────────────
 
 
-@router.get("/api/distress/signals")
+@router.get("/distress/signals")
 async def distress_signals(
     request: Request,
     market: str = Query("Yelahanka", description="Market name"),
@@ -1069,7 +1101,7 @@ async def distress_signals(
 ):
     market = (market or "").strip()
     if not market:
-        return JSONResponse({"error": "market is required"}, status_code=400)
+        return _err_resp("market is required", request, 400, "Data")
     try:
         with _get_sa_engine().connect() as conn:
             rows = conn.execute(
@@ -1097,15 +1129,15 @@ async def distress_signals(
             ],
         }
     except Exception as exc:
-        logger.warning("[API] /api/distress/signals failed: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        logger.warning("[API] /distress/signals failed: %s", exc)
+        return _err_resp(str(exc), request, 500, "Data")
 
 
 # ── Parcel Dossier ──────────────────────────────────────────────────────
 
 
 @router.get(
-    "/api/parcel/{village}/{survey_no}",
+    "/parcel/{village}/{survey_no}",
     summary="Full parcel dossier with deed history, RERA projects, comps",
 )
 @limiter.limit("60/hour")
@@ -1115,7 +1147,7 @@ async def parcel_dossier(village: str, survey_no: str, request: Request = None):
     village = unquote(village)
     survey_no = unquote(survey_no)
     if not village or not survey_no:
-        return JSONResponse({"error": "village and survey_no are required"}, status_code=400)
+        return _err_resp("village and survey_no are required", request, 400, "Data")
     try:
         with _get_sa_engine().connect() as conn:
             parcel = conn.execute(
@@ -1126,7 +1158,7 @@ async def parcel_dossier(village: str, survey_no: str, request: Request = None):
                 {"v": village, "s": survey_no},
             ).fetchone()
             if not parcel:
-                return JSONResponse({"error": "Parcel not found"}, status_code=404)
+                return _err_resp("Parcel not found", request, 404, "Data")
             parcel_dict = dict(parcel._mapping)
             parcel_id = parcel_dict["id"]
             deed_rows = conn.execute(
@@ -1224,8 +1256,8 @@ async def parcel_dossier(village: str, survey_no: str, request: Request = None):
         }
         return JSONResponse(result)
     except Exception as exc:
-        logger.error("[API] /api/parcel/%s/%s failed: %s", village, survey_no, exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        logger.error("[API] /parcel/%s/%s failed: %s", village, survey_no, exc)
+        return _err_resp(str(exc), None, 500, "Data")
 
 
 _OWNERSHIP_CACHE: dict[str, tuple[float, dict]] = {}
@@ -1236,7 +1268,7 @@ _SURVEY_NO_PATTERN = re.compile(r"^[\w]+/[\w\-]+$")
 
 
 @router.get(
-    "/api/parcel/ownership",
+    "/parcel/ownership",
     response_model=OwnershipChainResponse,
     summary="Ownership chain for a survey number (RTC/Bhoomi)",
 )
@@ -1249,10 +1281,7 @@ async def parcel_ownership(
                         description="Market name"),
 ):
     if not _SURVEY_NO_PATTERN.match(survey_no):
-        return JSONResponse(
-            {"error": "Invalid survey_no format — expected format like '45/2' or '101/1A'"},
-            status_code=422,
-        )
+        return _err_resp("Invalid survey_no format — expected format like '45/2' or '101/1A'", request, 422, "Data")
     cache_key = f"{market}:{survey_no}"
     cached = _OWNERSHIP_CACHE.get(cache_key)
     if cached is not None:
@@ -1273,10 +1302,7 @@ async def parcel_ownership(
                 {"sno": survey_no, "mkt": market},
             ).fetchone()
         if not row:
-            return JSONResponse(
-                {"error": "No ownership chain found for this survey_no/market"},
-                status_code=404,
-            )
+            return _err_resp("No ownership chain found for this survey_no/market", request, 404, "Data")
         result = {
             "survey_no": row.survey_no,
             "market": row.market,
@@ -1297,14 +1323,11 @@ async def parcel_ownership(
         _OWNERSHIP_CACHE[cache_key] = (time.time() + _OWNERSHIP_CACHE_TTL, result)
         return result
     except Exception as exc:
-        logger.error("[API] /api/parcel/ownership failed: %s", exc)
-        return JSONResponse(
-            {"error": "Failed to query ownership chain — please try again later"},
-            status_code=500,
-        )
+        logger.error("[API] /parcel/ownership failed: %s", exc)
+        return _err_resp("Failed to query ownership chain — please try again later", request, 500, "Data")
 
 
-@router.get("/api/parcel/villages", summary="Distinct villages with parcel data")
+@router.get("/parcel/villages", summary="Distinct villages with parcel data")
 @limiter.limit("120/minute")
 async def parcel_villages(request: Request = None):
     try:
@@ -1313,7 +1336,7 @@ async def parcel_villages(request: Request = None):
             villages = [r[0] for r in rows if r[0]]
             return {"villages": villages if villages else []}
     except Exception as exc:
-        logger.error("[API] /api/parcel/villages failed: %s", exc)
+        logger.error("[API] /parcel/villages failed: %s", exc)
         return JSONResponse({"villages": []})
 
 
@@ -1355,7 +1378,7 @@ class CorridorScoreListResponse(BaseModel):
 
 
 @router.get(
-    "/api/corridor/score",
+    "/corridor/score",
     response_model=CorridorScoreListResponse,
     response_model_exclude_none=True,
     summary="Corridor scores using PostGIS spatial join (v2). "
@@ -1408,7 +1431,7 @@ async def corridor_score(
             },
         )
     except Exception as exc:
-        logger.error("[API] /api/corridor/score trace=%s failed: %s", _trace_id, exc)
+        logger.error("[API] /corridor/score trace=%s failed: %s", _trace_id, exc)
         return JSONResponse(
             {"error": "Corridor scoring engine unavailable", "detail": str(exc), "trace_id": _trace_id},
             status_code=500,
@@ -1419,7 +1442,7 @@ async def corridor_score(
 
 
 @router.get(
-    "/api/competitive/pulse",
+    "/competitive/pulse",
     summary="Competitive pulse — new launches, PSF movers, absorption leaders",
 )
 @limiter.limit("20/hour")
@@ -1450,13 +1473,13 @@ async def competitive_pulse(
         return result
     except Exception as exc:
         logger.error("[competitive_pulse] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Data")
 
 
 # ── Govt/Policy routes ──────────────────────────────────────────────────
 
 
-@router.get("/api/govt/events", tags=["Govt/Policy"], summary="List government/infrastructure/policy events")
+@router.get("/govt/events", tags=["Govt/Policy"], summary="List government/infrastructure/policy events")
 @limiter.limit("30/minute")
 async def govt_events(
     request: Request,
@@ -1509,11 +1532,11 @@ async def govt_events(
             })
         return JSONResponse({"events": events, "total": len(events), "north_bengaluru_count": nb_count})
     except Exception as exc:
-        logger.warning("[API] /api/govt/events failed: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        logger.warning("[API] /govt/events failed: %s", exc)
+        return _err_resp(str(exc), request, 500, "Data")
 
 
-@router.get("/api/govt/north-score", tags=["Govt/Policy"], summary="North Bengaluru govt/infra/policy pipeline score")
+@router.get("/govt/north-score", tags=["Govt/Policy"], summary="North Bengaluru govt/infra/policy pipeline score")
 @limiter.limit("30/minute")
 async def govt_north_score(request: Request):
     try:
@@ -1529,11 +1552,11 @@ async def govt_north_score(request: Request):
             "computed_at": result.computed_at,
         })
     except Exception as exc:
-        logger.warning("[API] /api/govt/north-score failed: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        logger.warning("[API] /govt/north-score failed: %s", exc)
+        return _err_resp(str(exc), request, 500, "Data")
 
 
-@router.get("/api/govt/digest", tags=["Govt/Policy"], summary="Weekly govt/policy digest for North Bengaluru")
+@router.get("/govt/digest", tags=["Govt/Policy"], summary="Weekly govt/policy digest for North Bengaluru")
 @limiter.limit("30/minute")
 async def govt_digest(request: Request):
     try:
@@ -1542,24 +1565,24 @@ async def govt_digest(request: Request):
         result = intel.compute("north_bengaluru_aggregate")
         return JSONResponse({"digest": result.weekly_digest, "computed_at": result.computed_at})
     except Exception as exc:
-        logger.warning("[API] /api/govt/digest failed: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        logger.warning("[API] /govt/digest failed: %s", exc)
+        return _err_resp(str(exc), request, 500, "Data")
 
 
-@router.get("/api/govt", tags=["Govt/Policy"], summary="Govt/Policy dashboard page")
+@router.get("/govt", tags=["Govt/Policy"], summary="Govt/Policy dashboard page")
 @limiter.limit("20/minute")
 async def govt_policy_panel(request: Request):
     try:
         return templates.TemplateResponse(request, "govt_policy.html")
     except Exception as exc:
         logger.error("[govt_policy_panel] %s", exc)
-        return JSONResponse({"error": "template not found"}, status_code=500)
+        return _err_resp("template not found", request, 500, "Data")
 
 
 # ── GCC routes ──────────────────────────────────────────────────────────
 
 
-@router.get("/api/gcc/events")
+@router.get("/gcc/events")
 async def gcc_events(
     request: Request,
     market: str | None = Query(None, description="Filter by market"),
@@ -1576,7 +1599,7 @@ async def gcc_events(
             try:
                 maturity_levels = [int(x.strip()) for x in maturity.split(",") if x.strip()]
             except ValueError:
-                return JSONResponse({"error": "maturity must be comma-separated integers"}, status_code=400)
+                return _err_resp("maturity must be comma-separated integers", request, 400, "Data")
         corridors = None
         if corridor:
             corridors = [c.strip() for c in corridor.split(",") if c.strip()]
@@ -1619,11 +1642,11 @@ async def gcc_events(
             "gcc_north_norm": north_scores,
         })
     except Exception as exc:
-        logger.warning("[API] /api/gcc/events failed: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        logger.warning("[API] /gcc/events failed: %s", exc)
+        return _err_resp(str(exc), request, 500, "Data")
 
 
-@router.get("/api/gcc/north-score")
+@router.get("/gcc/north-score")
 async def gcc_north_score(request: Request):
     try:
         from intelligence.gcc_intel import GCCIntel
@@ -1644,18 +1667,18 @@ async def gcc_north_score(request: Request):
             }
         return JSONResponse(result)
     except Exception as exc:
-        logger.warning("[API] /api/gcc/north-score failed: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        logger.warning("[API] /gcc/north-score failed: %s", exc)
+        return _err_resp(str(exc), request, 500, "Data")
 
 
-@router.post("/api/gcc/events")
+@router.post("/gcc/events")
 async def gcc_create_event(request: Request):
     try:
         body = await request.json()
     except Exception:
         body = {}
     if not body.get("company") or not body.get("bengaluru_location"):
-        return JSONResponse({"error": "company and bengaluru_location are required"}, status_code=400)
+        return _err_resp("company and bengaluru_location are required", request, 400, "Data")
     try:
         from ingest.plugins.gcc_plugin import _make_canonical_id, _resolve_corridor, _compute_gcc_score
         from utils.db import get_engine
@@ -1729,8 +1752,8 @@ async def gcc_create_event(request: Request):
             GCCIntel().invalidate_cache(mkt)
         return JSONResponse({"canonical_id": cid, "gcc_signal_score": gcc_score}, status_code=201)
     except Exception as exc:
-        logger.warning("[API] POST /api/gcc/events failed: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        logger.warning("[API] POST /gcc/events failed: %s", exc)
+        return _err_resp(str(exc), request, 500, "Data")
 
 
 # ── Finance CashFlow ────────────────────────────────────────────────────
@@ -1749,6 +1772,7 @@ class CashFlowSummaryResponse(BaseModel):
     peak_negative_cr: float
     breakeven_month: int | None = None
     roi_annualized_pct: float | None = None
+    irr_npv_pct: float | None = None
 
 
 class CashFlowResponse(BaseModel):
@@ -1757,7 +1781,7 @@ class CashFlowResponse(BaseModel):
 
 
 @router.get(
-    "/api/finance/cashflow",
+    "/finance/cashflow",
     summary="Monthly cash-flow projection with debt service and brokerage",
     response_model=CashFlowResponse,
 )
@@ -1793,14 +1817,14 @@ async def finance_cashflow(
         )
     except Exception as exc:
         logger.error("[finance_cashflow] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Data")
 
 
 # ── Demand Config Split ─────────────────────────────────────────────────
 
 
 @router.get(
-    "/api/demand/config-split",
+    "/demand/config-split",
     summary="Demand absorption split by bedroom configuration",
 )
 @limiter.limit("30/hour")
@@ -1819,7 +1843,7 @@ async def demand_config_split(
         )
     except Exception as exc:
         logger.error("[demand_config_split] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Data")
 
 
 # ── Misc panel pages ────────────────────────────────────────────────────
@@ -1831,7 +1855,7 @@ async def digest_panel(request: Request):
         return templates.TemplateResponse(request, "digest.html")
     except Exception as exc:
         logger.error("[digest_panel] %s", exc)
-        return JSONResponse({"error": "template not found"}, status_code=500)
+        return _err_resp("template not found", request, 500, "Data")
 
 
 @router.get("/projects", summary="Operations Projects dashboard panel")

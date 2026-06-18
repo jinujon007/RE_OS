@@ -35,6 +35,7 @@ apscheduler==3.11.2
 # Data processing
 pandas==3.0.3
 numpy==2.4.6
+numpy-financial>=1.0.0,<2.0.0
 
 # Geo utilities
 shapely==2.1.2

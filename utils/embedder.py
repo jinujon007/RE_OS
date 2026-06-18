@@ -135,7 +135,7 @@ def embed_text(
             timeout=_EMBED_TIMEOUT,
         )
         resp.raise_for_status()
-        return resp.json().get("embedding", [])
+        return resp.json().get("embedding", [])  # type: ignore[no-any-return]
     except Exception as exc:
         _metrics["embed_text_failures"] += 1
         logger.warning(f"[Embedder] embed_text failed: {exc}")
@@ -291,7 +291,7 @@ class _BaseChromaStore:
     def count(self) -> int:
         try:
             self._ensure_initialized()
-            return self._collection.count()  # type: ignore[attr-defined]
+            return self._collection.count()  # type: ignore[attr-defined,no-any-return]
         except Exception:
             return 0
 
@@ -543,7 +543,7 @@ class IntelEmbedder(_BaseChromaStore):
                         reranked = r.rerank(query=query, hits=hits, top_n=n)
                         if reranked:
                             _metrics["rerank_applied"] += 1
-                            return reranked
+                            return reranked  # type: ignore[no-any-return]
                 except Exception as exc:
                     _metrics["rerank_unavailable"] += 1
                     logger.debug(
@@ -643,6 +643,80 @@ class MemoryEmbedder(_BaseChromaStore):
         except Exception as exc:
             logger.warning(f"[Embedder] search_memories failed: {exc}")
             return []
+
+
+# ── ChromaDB maintenance ─────────────────────────────────────────────────────
+
+
+def purge_stale_embeddings(days: int = 90) -> int:
+    """Purge ChromaDB documents with metadata.created_at older than `days`.
+
+    Scans both primary and fallback collections (re_os_intel, re_os_intel_st,
+    re_os_memories, re_os_memories_st) to catch embeddings created when Ollama
+    was down (sentence-transformers suffix).
+
+    Deletes in-page batches of 100 to bound memory usage on large collections.
+    Returns total deleted count. Safe to run quarterly.
+    Alerts expected via scheduler job if deleted count is abnormally high.
+    """
+    total_deleted = 0
+    now_ts = datetime.now().timestamp()
+    cutoff_ms = (now_ts - days * 86400) * 1000
+    try:
+        client = _get_chroma_client()
+        base_names = (_INTEL_COLLECTION, _MEMORY_COLLECTION)
+        suffixes = ("", "_st")
+        for base_name in base_names:
+            for suffix in suffixes:
+                name = f"{base_name}{suffix}"
+                try:
+                    collection = client.get_collection(name=name)
+                except ValueError:
+                    continue
+                logger.debug("[Embedder Maintenance] Scanning collection '{}'", name)
+                offset = 0
+                batch_size = 100
+                while True:
+                    batch = collection.get(limit=batch_size, offset=offset, include=["metadatas"])
+                    if not batch["ids"]:
+                        break
+                    stale_ids = []
+                    for doc_id, meta in zip(batch["ids"], batch["metadatas"]):
+                        created_str = (
+                            (meta or {}).get("indexed_at")
+                            or (meta or {}).get("updated_at")
+                        )
+                        if not created_str:
+                            continue
+                        try:
+                            parsed = datetime.fromisoformat(
+                                created_str.replace("Z", "+00:00")
+                            )
+                            if parsed.tzinfo is not None:
+                                ms = parsed.timestamp() * 1000
+                            else:
+                                ms = parsed.timestamp() * 1000
+                            if ms < cutoff_ms:
+                                stale_ids.append(doc_id)
+                        except (ValueError, TypeError):
+                            continue
+                    if stale_ids:
+                        try:
+                            collection.delete(ids=stale_ids)
+                            total_deleted += len(stale_ids)
+                        except Exception as exc:
+                            logger.warning(
+                                "[Embedder Maintenance] Batch delete failed for {} ids in '{}': {}",
+                                len(stale_ids), name, exc,
+                            )
+                    offset += batch_size
+                logger.info(
+                    "[Embedder Maintenance] Scan complete for '{}'",
+                    name,
+                )
+    except Exception as exc:
+        logger.warning("[Embedder Maintenance] purge_stale_embeddings failed: {}", exc)
+    return total_deleted
 
 
 if __name__ == "__main__":

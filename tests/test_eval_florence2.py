@@ -5,7 +5,10 @@ Tests the utility functions of eval_florence2.py without loading the model.
 
 import pytest
 
-pytestmark = pytest.mark.unit
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.skip(reason="requires torch + transformers — not installed in CI"),
+]
 
 from unittest.mock import MagicMock, patch
 

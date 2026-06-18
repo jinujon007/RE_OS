@@ -142,7 +142,7 @@ async function loadDemandData() {
   spinner.classList.remove('active');
 
   try {
-    const resp = await fetch('/api/demand/' + encodeURIComponent(market));
+    const resp = await fetch('/api/v1/demand/' + encodeURIComponent(market));
     if (!resp.ok) {
       const errBody = await resp.text().catch(() => '');
       throw new Error('HTTP ' + resp.status + (errBody ? ': ' + errBody.slice(0, 200) : ''));

@@ -1,0 +1,140 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "RE_OS Dashboard",
+    "version": "2.0.0",
+    "description": "API for the RE_OS real-estate intelligence platform. All routes under `/api/v1/`. Legacy `/api/` routes redirect to `/api/v1/`.",
+    "contact": {
+      "name": "RE_OS Team",
+      "url": "https://github.com/your-org/re_os"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8050",
+      "description": "Local development"
+    }
+  ],
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Full health check",
+        "responses": {
+          "200": {
+            "description": "Health status with all service states"
+          }
+        }
+      }
+    },
+    "/api/v1/health/live": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Lightweight liveness probe",
+        "responses": {
+          "200": {
+            "description": "Minimal health response"
+          }
+        }
+      }
+    },
+    "/api/v1/intel/cards": {
+      "get": {
+        "tags": ["Data"],
+        "summary": "Market summary cards",
+        "responses": {
+          "200": {
+            "description": "Market cards with PSF, project counts",
+            "headers": {
+              "ETag": {"schema": {"type": "string"}}
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/market/forecast/{market}": {
+      "get": {
+        "tags": ["Data"],
+        "summary": "PSF forecast for a market",
+        "parameters": [
+          {
+            "name": "market",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "string"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Forecast with 3/6/12-month horizons"
+          },
+          "400": {
+            "description": "Validation error — unknown market",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/data/provenance": {
+      "get": {
+        "tags": ["Data"],
+        "summary": "Data provenance per market",
+        "responses": {
+          "200": {
+            "description": "Live vs seed breakdown"
+          }
+        }
+      }
+    },
+    "/api/v1/ops/slo": {
+      "get": {
+        "tags": ["Ops"],
+        "summary": "SLO status: scheduler + board room",
+        "responses": {
+          "200": {
+            "description": "SLO compliance metrics"
+          }
+        }
+      }
+    },
+    "/api/v1/db/state": {
+      "get": {
+        "tags": ["Data"],
+        "summary": "Database record counts",
+        "responses": {
+          "200": {
+            "description": "Counts and market summary"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error", "code"],
+        "properties": {
+          "error": {"type": "string", "description": "Human-readable error message"},
+          "code": {"type": "string", "description": "Machine-readable error code"},
+          "request_id": {"type": "string", "description": "Correlation ID for the request"},
+          "docs_url": {"type": "string", "description": "Link to relevant API documentation"}
+        }
+      },
+      "ETagResponse": {
+        "type": "object",
+        "description": "Response with ETag caching support. Send `If-None-Match` header with the ETag value to receive 304 Not Modified if content unchanged.",
+        "headers": {
+          "ETag": {"schema": {"type": "string"}},
+          "Cache-Control": {"schema": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

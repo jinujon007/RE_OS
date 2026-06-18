@@ -22,11 +22,13 @@ Usage:
 """
 
 import json
+import traceback
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from loguru import logger
 from sqlalchemy import create_engine, text
 
+from config.metrics import dead_letter_queue_depth
 from config.settings import (
     DATABASE_URL,
     GRADE_A_DEVELOPERS,
@@ -59,7 +61,7 @@ def _get_dev_embedding(name: str) -> list[float]:
         if resp.status_code == 200:
             vec = resp.json().get("embedding", [])
             _DEV_EMBED_CACHE[key] = vec
-            return vec
+            return vec  # type: ignore[no-any-return]
     except Exception:
         pass
     return []
@@ -128,6 +130,36 @@ def _get_organizer_engine():
                     DATABASE_URL, pool_pre_ping=True, pool_size=5, max_overflow=2
                 )
     return _SHARED_ENGINE
+
+
+# ── Dead letter queue ────────────────────────────────────────────────────────
+
+_DEAD_LETTER_INSERT = """
+    INSERT INTO ingest_failed_records (entity_type, source_id, raw_data, error_text, plugin_id, failed_at, retry_count)
+    VALUES (:entity_type, :source_id, :raw_data::jsonb, :error_text, :plugin_id, :failed_at, 0)
+"""
+
+
+def _write_dead_letter(conn, record: dict, error: Exception, plugin_id: str = "db_organizer") -> None:
+    """Write a failed record to the ingest_failed_records dead letter queue."""
+    entity_type = str(record.get("entity_type", record.get("__entity_type", "unknown")))
+    source_id = str(record.get("source_id", record.get("rera_number", record.get("id", "?"))))
+    try:
+        raw_data = json.dumps(record, default=str)
+    except Exception:
+        raw_data = json.dumps({"error": "serialization_failed", "original": str(record)[:500]})
+    conn.execute(
+        text(_DEAD_LETTER_INSERT),
+        {
+            "entity_type": entity_type[:100],
+            "source_id": source_id[:200],
+            "raw_data": raw_data,
+            "error_text": f"{type(error).__name__}: {error}"[:500],
+            "plugin_id": plugin_id[:100],
+            "failed_at": datetime.now(timezone.utc),
+        },
+    )
+    dead_letter_queue_depth.labels(entity_type=entity_type[:50]).inc()
 
 
 class DBOrganizer:
@@ -208,6 +240,12 @@ class DBOrganizer:
                         f"[DBOrganizer] Upsert failed for "
                         f"'{project.get('rera_number', '?')}': {exc}"
                     )
+                    try:
+                        _write_dead_letter(conn, project, exc)
+                    except Exception as dl_exc:
+                        logger.error(
+                            f"[DBOrganizer] Dead letter write also failed: {dl_exc}"
+                        )
                     failed += 1
 
             # Single batch UPDATE for all developer grades — replaces N per-record calls.
@@ -282,7 +320,7 @@ class DBOrganizer:
 
             qc = run_data_quality_checkpoint(market_name)
             if qc["success"]:
-                return qc
+                return qc  # type: ignore[no-any-return]
 
             logger.error(
                 f"[DBOrganizer] Data quality FAILED for {market_name}: "
@@ -329,7 +367,7 @@ class DBOrganizer:
                     qc.get("warnings", []),
                 )
 
-            return qc
+            return qc  # type: ignore[no-any-return]
 
         except Exception as qc_exc:
             logger.warning(
@@ -1252,7 +1290,7 @@ def _write_stage_event(
     event_name: str,
     status: str,
     stage: int = 0,
-    metadata: dict = None,
+    metadata: dict | None = None,
     **fields,
 ):
     """Insert structured stage event into agent_runs (non-fatal)."""

@@ -522,7 +522,7 @@ class FeasibilityAnalystTool(BaseTool):
                         sell_psf = gdv_r.sell_psf
                         igr_info = {
                             "igr_source": gdv_r.igr_source,
-                            "igr_record_count": int(gdv_r.igr_record_count),  # type: ignore[arg-type]
+                            "igr_record_count": int(gdv_r.igr_record_count),
                         }
                         log_igr_lookup(
                             market_safe,

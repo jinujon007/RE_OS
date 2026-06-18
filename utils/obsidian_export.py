@@ -60,7 +60,7 @@ def _write_digest(results: list, digest_type: str, date_str: str | None = None) 
     for r in results:
         if not isinstance(r, expected_type):
             logger.warning(
-                f"[ObsidianExport] Expected {expected_type.__name__}, got {type(r).__name__} — skipping"  # type: ignore[attr-defined]
+                f"[ObsidianExport] Expected {expected_type.__name__}, got {type(r).__name__} — skipping"
             )
             return ""
 

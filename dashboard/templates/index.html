@@ -1588,7 +1588,7 @@ setInterval(tick, 1000);
 // ── Health Polling ──
 async function pollHealth() {
   try {
-    const data = await fetch('/api/health').then(r => r.json());
+    const data = await fetch('/api/v1/health').then(r => r.json());
     document.getElementById('health-db').className = 'health-dot ' + (data.postgres || 'error');
     document.getElementById('health-redis').className = 'health-dot ' + (data.redis || 'error');
     document.getElementById('health-ollama').className = 'health-dot ' + (data.ollama || 'warn');
@@ -1611,7 +1611,7 @@ setInterval(pollHealth, 5000);
 // ── DB State Polling ──
 async function pollDbState() {
   try {
-    const data = await fetch('/api/db/state').then(r => r.json());
+    const data = await fetch('/api/v1/db/state').then(r => r.json());
     if (data.error) return;
 
     document.getElementById('db-rera').textContent = data.rera_projects ?? '—';
@@ -1649,7 +1649,7 @@ setInterval(pollDbState, 30000);
 // ── Sentinel Polling ──
 async function pollSentinel() {
   try {
-    const data = await fetch('/api/sentinel/status').then(r => r.json());
+    const data = await fetch('/api/v1/sentinel/status').then(r => r.json());
     const nxt = data.next_run || {};
     const lst = data.last_run;
     const nextEl = document.getElementById('sentinel-next');
@@ -1671,7 +1671,7 @@ setInterval(pollSentinel, 30000);
 // ── Agent State Polling ──
 async function pollAgents() {
   try {
-    const data = await fetch('/api/agents').then(r => r.json());
+    const data = await fetch('/api/v1/agents').then(r => r.json());
     const agents = data.agents || data; // support both nested and top-level contracts
     renderOrgChart(agents);
 
@@ -1734,7 +1734,7 @@ async function runIntelSearch() {
   spinner.style.display = 'block';
   resultEl.innerHTML = '';
   try {
-    const url = `/api/intel/search?q=${encodeURIComponent(q)}${market ? '&market='+encodeURIComponent(market) : ''}`;
+    const url = `/api/v1/intel/search?q=${encodeURIComponent(q)}${market ? '&market='+encodeURIComponent(market) : ''}`;
     const data = await fetch(url).then(r => r.json());
     spinner.style.display = 'none';
     if (data.error) {
@@ -1782,7 +1782,7 @@ async function loadMarketMap() {
     const status = document.getElementById('market-map-status');
     status.textContent = 'Loading map for ' + market + '…';
     try {
-        const resp = await fetch('/api/market/map/' + encodeURIComponent(market));
+        const resp = await fetch('/api/v1/market/map/' + encodeURIComponent(market));
         if (!resp.ok) { status.textContent = 'Map unavailable'; return; }
         const html = await resp.text();
         container.innerHTML = html;
@@ -1978,7 +1978,7 @@ async function sendCommand(agent) {
   input.value = '';
 
   try {
-    const res = await fetch(`/api/agents/${agent}/command`, {
+    const res = await fetch(`/api/v1/agents/${agent}/command`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt })
@@ -2038,7 +2038,7 @@ async function loadReport() {
   const contentEl = document.getElementById('report-content');
   contentEl.innerHTML = '<span class="empty-msg">Loading...</span>';
   try {
-    const data = await fetch('/api/reports/' + market).then(r => r.json());
+    const data = await fetch('/api/v1/reports/' + market).then(r => r.json());
     if (data.content) {
       contentEl.textContent = data.content;
     } else {
@@ -2055,7 +2055,7 @@ async function pollIntel() {
   const wrap = document.getElementById('intel-cards');
   if (!wrap) return;
   try {
-    const cardsData = await fetch('/api/intel/cards').then(r => r.json());
+    const cardsData = await fetch('/api/v1/intel/cards').then(r => r.json());
     if (!cardsData.cards || !cardsData.cards.length) {
       wrap.innerHTML = '<div class="empty-msg">No intel yet</div>';
       return;
@@ -2079,8 +2079,8 @@ async function pollIntel() {
           <div class="intel-meta">Avg PSF: ${psf}</div>
           <div class="intel-actions">
             <span class="intel-signal ${signal}">${escapeHtml(c.go_no_go || 'WATCH')}</span>
-            <a class="intel-link" href="/api/intel/download?market=${slug}" download>TXT</a>
-            <a class="intel-link" href="/api/intel/download?format=csv&market=${slug}" download>CSV</a>
+            <a class="intel-link" href="/api/v1/intel/download?market=${slug}" download>TXT</a>
+            <a class="intel-link" href="/api/v1/intel/download?format=csv&market=${slug}" download>CSV</a>
           </div>
         </div>
       `;
@@ -2106,7 +2106,7 @@ async function pollEngineeringBrief() {
   const firstLoad = !contentEl.textContent;
   if (firstLoad) contentEl.textContent = 'Loading…';
   try {
-    const data = await fetch('/api/engineering/brief').then(r => r.json());
+    const data = await fetch('/api/v1/engineering/brief').then(r => r.json());
     if (data.brief) {
       marketEl.textContent = data.brief.market || '';
       const raw = data.brief.response || '';
@@ -2147,7 +2147,7 @@ async function pollFinanceBrief() {
   const firstLoad = !contentEl.textContent;
   if (firstLoad) contentEl.textContent = 'Loading…';
   try {
-    const data = await fetch('/api/finance/brief').then(r => r.json());
+    const data = await fetch('/api/v1/finance/brief').then(r => r.json());
     if (data.brief) {
       marketEl.textContent = data.brief.market || '';
       const raw = data.brief.response || '';
@@ -2190,7 +2190,7 @@ async function pollLegalBrief() {
   const firstLoad = !contentEl.textContent;
   if (firstLoad) { contentEl.textContent = ''; spinnerEl.style.display = 'block'; }
   try {
-    const data = await fetch('/api/legal/brief').then(r => r.json());
+    const data = await fetch('/api/v1/legal/brief').then(r => r.json());
     spinnerEl.style.display = 'none';
     if (data.brief) {
       marketEl.textContent = data.brief.market || '';
@@ -2247,7 +2247,7 @@ const _ALERT_CHANNEL_COLORS = {
 };
 async function pollAlerts() {
   try {
-    const data = await fetch('/api/alerts').then(r => r.json());
+    const data = await fetch('/api/v1/alerts').then(r => r.json());
     const list = document.getElementById('alerts-list');
     const statusEl = document.getElementById('alerts-status');
     if (data.error) {
@@ -2281,7 +2281,7 @@ async function pollFreshness() {
   const tbody = document.getElementById('freshness-tbody');
   const statusEl = document.getElementById('freshness-status');
   try {
-    const data = await fetch('/api/data/freshness').then(r => r.json());
+    const data = await fetch('/api/v1/data/freshness').then(r => r.json());
     if (data.error) {
       tbody.innerHTML = '<tr><td colspan="5" style="color:#f85149;text-align:center;padding:12px;">Error: ' + escapeHtml(data.error) + '</td></tr>';
       return;
@@ -2319,7 +2319,7 @@ async function pollRegistry() {
   const list = document.getElementById('registry-list');
   const statusEl = document.getElementById('registry-status');
   try {
-    const data = await fetch('/api/registry').then(r => r.json());
+    const data = await fetch('/api/v1/registry').then(r => r.json());
     if (data.error) {
       list.innerHTML = '<div style="color:#f85149;font-size:8px;">Error: ' + escapeHtml(data.error) + '</div>';
       return;
@@ -2418,7 +2418,7 @@ async function runMarket(slug) {
   if (key) headers['X-API-Key'] = key;
   _syncLogMarket(slug);
   try {
-    const res = await fetch(`/api/run/${slug}`, { method: 'POST', headers });
+    const res = await fetch(`/api/v1/run/${slug}`, { method: 'POST', headers });
     const data = await res.json();
     _setPipelineBadge(slug, res.ok ? 'STARTED' : (data.error || 'ERR'), 'pipeline-badge' + (res.ok ? ' running' : ' failed'));
     // Immediately refresh status
@@ -2434,14 +2434,14 @@ async function stopMarket(slug) {
   if (key) headers['X-API-Key'] = key;
   _syncLogMarket(slug);
   try {
-    await fetch(`/api/run/${slug}`, { method: 'DELETE', headers });
+    await fetch(`/api/v1/run/${slug}`, { method: 'DELETE', headers });
     pollPipelineStatus();
   } catch (e) { /* ignore */ }
 }
 
 async function pollPipelineStatus() {
   try {
-    const data = await fetch('/api/status').then(r => r.json());
+    const data = await fetch('/api/v1/status').then(r => r.json());
     // Build a slug-to-canonical map: API returns canonical "Yelahanka" etc.
     const bySlug = {};
     for (const [market, info] of Object.entries(data || {})) {
@@ -2494,7 +2494,7 @@ function appendLog(line) {
 }
 
 function _buildSseUrl(market) {
-  return market ? `/api/logs/stream?market=${encodeURIComponent(market)}` : '/api/logs/stream';
+  return market ? `/api/v1/logs/stream?market=${encodeURIComponent(market)}` : '/api/v1/logs/stream';
 }
 
 function connectSse(market) {
@@ -2547,7 +2547,7 @@ async function pollSentinelFooter() {
   const nextEl = document.getElementById('footer-sentinel-next');
   if (!badge) return;
   try {
-    const data = await fetch('/api/sentinel/status').then(r => r.json());
+    const data = await fetch('/api/v1/sentinel/status').then(r => r.json());
     const last = data.last_run || {};
     const next = data.next_run || {};
     if (last.error) {
@@ -2592,7 +2592,7 @@ async function submitBoardSession() {
   statusEl.textContent = 'Convening board… (est. 90s)';
   resultEl.style.display = 'none';
   try {
-    const r = await fetch('/api/board/session', {
+    const r = await fetch('/api/v1/board/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pitch, market }),
@@ -2615,7 +2615,7 @@ function _pollBoardSession(sessionId) {
   if (_boardPollTimer) clearInterval(_boardPollTimer);
   _boardPollTimer = setInterval(async () => {
     try {
-      const r = await fetch(`/api/board/session/${sessionId}`);
+      const r = await fetch(`/api/v1/board/session/${sessionId}`);
       const data = await r.json();
       const statusEl = document.getElementById('board-status');
       const resultEl = document.getElementById('board-result');
@@ -2641,7 +2641,7 @@ let _boardSessionsCache = null;
 
 async function loadBoardSessions() {
   try {
-    const data = await fetch('/api/board/sessions').then(r => r.json());
+    const data = await fetch('/api/v1/board/sessions').then(r => r.json());
     _boardSessionsCache = data.sessions || [];
     _renderBoardSessionsVisible();
   } catch {
@@ -2697,7 +2697,7 @@ async function loadBoardSession(sessionId) {
   statusEl.textContent = 'Loading session…';
   resultEl.style.display = 'none';
   try {
-    const r = await fetch(`/api/board/session/${sessionId}`);
+    const r = await fetch(`/api/v1/board/session/${sessionId}`);
     const data = await r.json();
     const statusEl = document.getElementById('board-status');
     const resultEl = document.getElementById('board-result');
@@ -2763,7 +2763,7 @@ function _isNumericCol(val) {
 async function pollDbTables() {
   const statusEl = document.getElementById('db-explorer-status');
   try {
-    const data = await fetch('/api/db/tables').then(r => r.json());
+    const data = await fetch('/api/v1/db/tables').then(r => r.json());
     if (data.error) { statusEl.textContent = 'Error: ' + data.error; return; }
     _dbTablesCache = data;
     statusEl.textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { hour12: false });
@@ -3001,7 +3001,7 @@ let _tasksCache = [];
 async function pollTasks() {
   const statusEl = document.getElementById('task-board-status');
   try {
-    const data = await fetch('/api/tasks').then(r => r.json());
+    const data = await fetch('/api/v1/tasks').then(r => r.json());
     if (data.error) { statusEl.textContent = 'Error: ' + data.error; return; }
     _tasksCache = data.tasks || [];
     _renderTaskBoard();
@@ -3048,7 +3048,7 @@ async function approveAction(idx) {
   if (btn) { btn.disabled = true; btn.textContent = '\u2026'; }
   try {
     const apiKey = _getApiKey();
-    const r = await fetch('/api/tasks', {
+    const r = await fetch('/api/v1/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
       body: JSON.stringify({
@@ -3135,7 +3135,7 @@ async function pollMemoryExplorer() {
     if (marketFilter) params.set('market', marketFilter);
     if (confFilter) params.set('min_confidence', confFilter);
     
-    const data = await fetch('/api/memory/explorer?' + params.toString()).then(r => r.json());
+    const data = await fetch('/api/v1/memory/explorer?' + params.toString()).then(r => r.json());
     spinner.style.display = 'none';
     if (data.error) {
       tbody.innerHTML = '<tr><td colspan="5" style="color:#f85149;text-align:center;padding:12px;">Error: ' + escapeHtml(data.error) + '</td></tr>';
@@ -3184,7 +3184,7 @@ async function pollConflictBadge() {
   if (!badge) return;
   
   try {
-    const data = await fetch('/api/memory/conflict-count').then(r => r.json()).catch(() => ({unresolved_conflicts: 0}));
+    const data = await fetch('/api/v1/memory/conflict-count').then(r => r.json()).catch(() => ({unresolved_conflicts: 0}));
     const count = (data && data.unresolved_conflicts != null ? data.unresolved_conflicts : 0);
     countEl.textContent = count;
     badge.className = count > 0 ? 'conflict-badge has-conflicts' : 'conflict-badge no-conflicts';

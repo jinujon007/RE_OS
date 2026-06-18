@@ -71,4 +71,4 @@ USER re_os
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "crews/market_intel_crew.py"]
+CMD ["uvicorn", "dashboard.app_fastapi:app", "--host", "0.0.0.0", "--port", "8050", "--workers", "2"]

@@ -281,7 +281,7 @@ def run_ingest_engine():
             return False
         sched_minutes = schedule.get("hour", 2) * 60 + schedule.get("minute", 0)
         delta = current_time_minutes - sched_minutes
-        return delta >= -5
+        return delta >= -5  # type: ignore[no-any-return]
 
     engine = IngestEngine(max_workers=3, global_rate=3.0)
     all_plugins = [

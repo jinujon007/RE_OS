@@ -6,7 +6,9 @@ from utils.irr_model import (
     calc_land_cost,
     calc_gdv,
     calc_irr,
+    calc_irr_npv,
     compare_scenarios,
+    _compute_absorption_curve,
     TARGET_IRR_GO,
     TARGET_IRR_MARGINAL,
     CONSTRUCTION_COST_PSF,
@@ -579,3 +581,133 @@ class TestCashFlow:
         proj = CashFlowProjection(schedule=sched, summary=summary)
         assert isinstance(proj, CashFlowProjection)
         assert proj.schedule[0].month == 1
+
+
+    def test_cashflow_summary_has_irr_npv_field(self):
+        from utils.irr_model import build_cash_flow
+        result = build_cash_flow(land_cost_cr=10.0, gdc_cr=50.0, construction_cost_cr=15.0,
+                                  loan_pct=0.5, months=36)
+        assert hasattr(result.summary, 'irr_npv_pct')
+
+    def test_irr_npv_populated_for_positive_project(self):
+        from utils.irr_model import build_cash_flow
+        result = build_cash_flow(land_cost_cr=10.0, gdc_cr=50.0, construction_cost_cr=15.0,
+                                  loan_pct=0.5, months=36)
+        assert result.summary.irr_npv_pct is not None
+        assert result.summary.irr_npv_pct > 0
+
+    def test_roi_annualized_pct_field_present(self):
+        from utils.irr_model import CashFlowSummary
+        assert hasattr(CashFlowSummary(peak_negative_cr=0.0, breakeven_month=None, roi_annualized_pct=0.0), 'roi_annualized_pct')
+
+    def test_irr_estimate_pct_field_absent(self):
+        from utils.irr_model import CashFlowSummary
+        assert not hasattr(CashFlowSummary(peak_negative_cr=0.0, breakeven_month=None, roi_annualized_pct=0.0), 'irr_estimate_pct')
+
+    def test_absorption_curve_completes_before_horizon(self):
+        revs = _compute_absorption_curve(total_units=60, velocity=5, price_per_unit=1000000, months=36)
+        assert len(revs) == 36
+        assert revs[0] == 5000000
+        non_zero = [r for r in revs if r > 0]
+        assert len(non_zero) == 12
+
+    def test_absorption_curve_flat_when_velocity_zero(self):
+        revs = _compute_absorption_curve(total_units=60, velocity=0, price_per_unit=1000000, months=36)
+        assert all(r == 0.0 for r in revs)
+
+    def test_absorption_curve_clips_at_horizon(self):
+        revs = _compute_absorption_curve(total_units=500, velocity=50, price_per_unit=1000000, months=6)
+        assert len(revs) == 6
+        assert all(r > 0 for r in revs)
+
+    def test_absorption_curve_sells_out_in_one_month_when_velocity_exceeds_units(self):
+        revs = _compute_absorption_curve(total_units=5, velocity=50, price_per_unit=1000000, months=12)
+        assert len(revs) == 12
+        assert revs[0] == 5000000  # 5 * 1M
+        assert all(r == 0.0 for r in revs[1:])
+
+    def test_absorption_curve_overflow_returns_flat(self):
+        revs = _compute_absorption_curve(total_units=1, velocity=1e10, price_per_unit=1e10, months=6)
+        assert all(r == 0.0 for r in revs)
+
+    def test_absorption_curve_raises_on_invalid_months(self):
+        import pytest
+        with pytest.raises(ValueError):
+            _compute_absorption_curve(total_units=10, velocity=2, price_per_unit=1000000, months=0)
+
+    def test_cashflow_uses_curved_absorption_when_velocity_set(self):
+        from utils.irr_model import build_cash_flow
+        flat = build_cash_flow(land_cost_cr=10.0, gdc_cr=50.0, construction_cost_cr=15.0, months=36)
+        curved = build_cash_flow(land_cost_cr=10.0, gdc_cr=50.0, construction_cost_cr=15.0, months=36,
+                                  sales_velocity_units_per_month=5, total_units=60, avg_unit_price=8333333)
+        assert flat.summary.irr_npv_pct != curved.summary.irr_npv_pct
+
+
+class TestCalcIrrNpv:
+    """T-1203: NPV-solving IRR using numpy-financial."""
+
+    def _irr(self, cf):
+        """Helper: calc_irr_npv with caller='fixture'."""
+        from utils.irr_model import calc_irr_npv
+        return calc_irr_npv(cf, caller="fixture")
+
+    def test_irr_positive_project(self):
+        cf = [-1000000] + [200000] * 12
+        irr = self._irr(cf)
+        assert irr is not None
+        assert irr > 0
+
+    def test_irr_negative_project(self):
+        cf = [-1000000] + [50000] * 12
+        irr = self._irr(cf)
+        assert irr is not None
+        assert irr < 0
+
+    def test_irr_matches_annualized_roi_for_single_period(self):
+        cf = [-100000, 120000]
+        irr = self._irr(cf)
+        assert irr is not None
+        monthly_irr = 120000 / 100000 - 1
+        expected_annual = ((1 + monthly_irr) ** 12 - 1) * 100
+        assert irr == pytest.approx(expected_annual, abs=1.0)
+
+    def test_irr_none_on_no_sign_change(self):
+        assert self._irr([1000, 2000]) is None
+        assert self._irr([-1000, -2000]) is None
+
+    def test_irr_none_on_empty(self):
+        assert self._irr([]) is None
+        assert self._irr([-1000]) is None
+
+    def test_irr_4acre_jd_fixture_in_range(self):
+        cf = [-80000000] + [0] * 12 + [3400000] * 36
+        irr = self._irr(cf)
+        assert irr is not None
+        assert 18.0 <= irr <= 28.0
+
+    def test_irr_handles_nan(self):
+        cf = [100, -50, 30]
+        irr = self._irr(cf)
+        assert irr is None or isinstance(irr, float)
+
+    def test_irr_monthly_to_annual_conversion(self):
+        cf = [-10000, 12000]
+        irr = self._irr(cf)
+        assert irr is not None
+        expected_annual = ((1.2) ** 12 - 1) * 100
+        assert irr == pytest.approx(expected_annual, abs=1.0)
+
+    def test_irr_none_on_excessive_length(self):
+        cf = [-1] + [1] * 1201
+        irr = self._irr(cf)
+        assert irr is None
+
+    def test_irr_none_on_monthly_rate_below_minus_one(self):
+        cf = [-1000, 0, 0, 0]
+        irr = self._irr(cf)
+        assert irr is None
+
+    def test_irr_none_on_false_root(self):
+        cf = [-1000, 500, 400, 300, 200, -100]
+        irr = self._irr(cf)
+        assert irr is None or irr >= -100

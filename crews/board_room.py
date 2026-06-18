@@ -30,7 +30,7 @@ from utils.db import get_engine
 from utils.fsi_calculator import calculate_fsi, recommend_unit_mix
 from utils.board_room_eval import BoardRoomEvaluator
 from utils.green_coverage import calculate_green_coverage
-from utils.irr_model import compare_scenarios, GDVEstimator, log_igr_lookup
+from utils.irr_model import compare_scenarios, GDVEstimator, log_igr_lookup, calc_irr_npv
 from utils.distressed_developer import DistressedDeveloperScanner
 
 # Shared regex patterns for pitch parsing (used by engineering + finance auto-calc)
@@ -366,7 +366,7 @@ def _run_dept_heads(
     pitch: str,
     market: str,
     decomposition: Optional[dict] = None,
-    _session_excluded: set = None,
+    _session_excluded: Optional[set] = None,
 ) -> dict:
     """Run five department-head agents (BD, Finance, Engineering, Ops, Legal) concurrently.
     Returns a dict with keys 'bd', 'finance', 'engineering', 'ops', 'legal'.
@@ -598,12 +598,31 @@ def _run_dept_heads(
                     worst_irr = scenarios.bear.simple_irr_pct
                     drawdown = scenarios.base.max_drawdown_pct
                     sharpe = scenarios.base.sharpe_ratio
+
+                    # NPV-solving IRR using the actual 54-month schedule:
+                    # Months 1-18: construction spend (no revenue)
+                    # Months 19-54: construction + revenue
+                    const_monthly = scenarios.base.construction_cost / 54.0
+                    rev_monthly = scenarios.base.gdv / 36.0
+                    cash_flow_arr = [-(scenarios.base.land_cost + const_monthly)]
+                    for _ in range(17):
+                        cash_flow_arr.append(-const_monthly)
+                    for _ in range(36):
+                        cash_flow_arr.append(rev_monthly - const_monthly)
+
+                    irr_npv_val = calc_irr_npv(cash_flow_arr, caller="board_room")
+                    irr_npv_line = (
+                        f"IRR (NPV-solving, monthly cash flows): {irr_npv_val:.1f}% | ROI (annualized simple): {base_irr:.1f}% | Horizon: 54mo\n"
+                        if irr_npv_val is not None
+                        else "IRR: INSUFFICIENT_DATA (cash flow sign-change required)\n"
+                    )
+
                     irr_context = (
                         f"\n\n[AUTO IRR CALC — {sqft:,.0f} sqft site, ₹{sell_psf:,.0f} PSF{psf_source_note}]\n"
-                        f"Base IRR: {base_irr:.1f}% ({scenarios.base.verdict}) | "
-                        f"Bull: {best_irr:.1f}% | "
-                        f"Bear: {worst_irr:.1f}% ({scenarios.bear.verdict})\n"
-                        f"Risk bands: best {best_irr:.1f}% / base {base_irr:.1f}% / worst {worst_irr:.1f}%"
+                        f"{irr_npv_line}"
+                        f"Bull ROI: {best_irr:.1f}% | "
+                        f"Bear ROI: {worst_irr:.1f}% ({scenarios.bear.verdict})\n"
+                        f"ROI scenario range: best {best_irr:.1f}% / base {base_irr:.1f}% / worst {worst_irr:.1f}%"
                         f", max drawdown {drawdown:.1f}%, Sharpe {sharpe:.2f}\n"
                         f"Land cost est.: ₹{scenarios.base.land_cost / 1e7:.1f}Cr | "
                         f"GDV est.: ₹{scenarios.base.gdv / 1e7:.1f}Cr\n"

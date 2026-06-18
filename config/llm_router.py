@@ -35,6 +35,7 @@ Cerebras caveat: 8,192 token context cap. Fine for Light + Analysis, NOT CEO.
 """
 
 import threading
+from typing import Optional
 from datetime import datetime, UTC
 from loguru import logger
 
@@ -348,7 +349,7 @@ DAILY_LIMITS = {
 
 # In-process daily token counters — reset automatically at UTC midnight
 _daily_counts: dict[str, int] = {}
-_last_counts_date: str = None
+_last_counts_date: str | None = None
 _counts_lock = threading.Lock()
 
 
@@ -410,7 +411,7 @@ def is_near_quota(provider: str) -> bool:
         return used >= limit * 0.9 if limit > 0 else False
 
 
-def get_heavy_llm(temperature: float = 0.1, excluded: set = None) -> LLM:
+def get_heavy_llm(temperature: float = 0.1, excluded: Optional[set] = None) -> LLM:
     """
     CEO Agent — orchestration and final synthesis.
     Groq Scout (30k TPM) primary. Gemini fallback for long-context synthesis.

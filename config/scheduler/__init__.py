@@ -62,6 +62,7 @@ from config.scheduler.digest_jobs import (
     weekly_pr_brief,
     weekly_process_audit,
     run_compliance_check,
+    run_ledger_verdict_digest,
 )
 
 from config.scheduler.maintenance_jobs import (
@@ -75,6 +76,8 @@ from config.scheduler.maintenance_jobs import (
     run_scheduler_heartbeat,
     check_heartbeat_staleness,
     recover_stuck_board_sessions,
+    run_failed_record_retry,
+    run_chromadb_maintenance,
     _ops_already_alerted,
     _bd_already_alerted,
 )
@@ -113,6 +116,7 @@ __all__ = [
     "weekly_pr_brief",
     "weekly_process_audit",
     "run_compliance_check",
+    "run_ledger_verdict_digest",
     "run_memory_decay",
     "run_seed_staleness_check",
     "run_bertscore_evaluation",
@@ -123,6 +127,8 @@ __all__ = [
     "run_scheduler_heartbeat",
     "check_heartbeat_staleness",
     "recover_stuck_board_sessions",
+    "run_failed_record_retry",
+    "run_chromadb_maintenance",
     "start_scheduler",
 ]
 

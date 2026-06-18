@@ -27,7 +27,7 @@ def _retry_delay(attempt: int) -> float:
 
     base = _HF_RETRY_BASE_DELAY * (2**attempt)
     jitter = base * random.uniform(-0.25, 0.25)
-    return round(base + jitter, 2)
+    return round(base + jitter, 2)  # type: ignore[no-any-return]
 
 
 class LegalDocQATool:

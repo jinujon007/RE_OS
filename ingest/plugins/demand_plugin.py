@@ -54,7 +54,7 @@ def _fetch_with_backoff(url: str, headers: dict, timeout: int = 15) -> str | Non
         try:
             req = urllib.request.Request(url, headers=headers, method="GET")
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read().decode("utf-8", errors="replace")
+                return resp.read().decode("utf-8", errors="replace")  # type: ignore[no-any-return]
         except Exception as exc:
             last_error = exc
             if attempt < _MAX_RETRIES:

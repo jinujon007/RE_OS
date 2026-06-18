@@ -67,7 +67,7 @@ def _retry_delay(attempt: int) -> float:
 
     base = _RETRY_BASE_DELAY * (2**attempt)
     jitter = base * random.uniform(-0.25, 0.25)
-    return base + jitter
+    return base + jitter  # type: ignore[no-any-return]
 
 
 def _call_hf_api(headline: str, model_id: str, api_key: str) -> list | None:
@@ -143,11 +143,11 @@ def score_headline(
         return None
 
     try:
-        best = max(candidates, key=lambda x: x.get("score", 0))
+        best = max(candidates, key=lambda x: float(x.get("score", 0)))
         label = best.get("label", "").lower()
         confidence = best.get("score", 0.5)
         base_score = _LABEL_TO_SCORE.get(label, 0.0)
-        return round(base_score * confidence, 4)
+        return round(base_score * confidence, 4)  # type: ignore[no-any-return]
     except Exception as exc:
         logger.debug(f"[Sentiment] score_headline parse error: {exc}")
         return None
@@ -361,7 +361,7 @@ def dominant_tone(text: str, api_key: str | object = _SENTINEL) -> str | None:
     tones = score_tone(text, api_key=api_key)
     if not tones:
         return None
-    return max(tones, key=tones.get)
+    return max(tones, key=lambda k: float(tones.get(k, 0.0)))
 
 
 if __name__ == "__main__":

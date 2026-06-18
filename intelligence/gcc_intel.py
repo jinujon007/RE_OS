@@ -185,7 +185,7 @@ class GCCIntel:
         if not force_refresh:
             cached = self._cache.get(_CACHE_NS, m)
             if cached is not None:
-                return cached
+                return cached  # type: ignore[no-any-return]
 
         corridor = _MARKET_TO_CORRIDOR.get(m.lower())
         result = GCCIntelResult(

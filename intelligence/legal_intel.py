@@ -318,7 +318,7 @@ class LegalIntel:
             pic.guidance_value_psf = fval(row[0])
             # Compute market gap in Python from transaction_amount/area vs guidance_value
             market_psf = fval(row[1])
-            if market_psf and market_psf > 0:
+            if market_psf and market_psf > 0 and pic.guidance_value_psf is not None:
                 gap = round(
                     (market_psf - pic.guidance_value_psf)
                     / pic.guidance_value_psf

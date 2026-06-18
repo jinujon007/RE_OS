@@ -58,7 +58,7 @@ def _format_dt(dt_val: Any) -> str:
     if isinstance(dt_val, str):
         return dt_val
     if hasattr(dt_val, "isoformat"):
-        return dt_val.isoformat()
+        return dt_val.isoformat()  # type: ignore[no-any-return]
     return str(dt_val)
 
 

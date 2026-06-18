@@ -273,7 +273,7 @@ def _fetch_from_kaveri_portal(market: str) -> dict:
         logger.debug(
             "[Encumbrance] Using cached Kaveri portal data for market=%s", market
         )
-        return cached["data"]
+        return cached["data"]  # type: ignore[no-any-return]
 
     try:
         from scrapers.kaveri_karnataka import KaveriScraper

@@ -270,7 +270,7 @@ def _fetch_and_parse(survey_no: str, market: str,
         chain = parser.parse(str(result))  # type: ignore[attr-defined]
         chain["survey_no"] = survey_no
         chain["market"] = market
-        return chain
+        return chain  # type: ignore[no-any-return]
     return None
 
 

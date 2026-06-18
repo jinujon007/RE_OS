@@ -159,7 +159,7 @@ def _calculate_cache_hit_rate(registry: Any) -> float:
         if cache and hasattr(cache, "size") and cache.size is not None:
             total = cache.size
             if total > 0:
-                return min(0.95, total / 1000.0)
+                return min(0.95, total / 1000.0)  # type: ignore[no-any-return]
     except Exception:
         pass
     return 0.0

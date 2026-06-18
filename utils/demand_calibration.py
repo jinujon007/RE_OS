@@ -1,13 +1,16 @@
 """
-RE_OS — Demand Coefficient Calibration v0 (GATE-94, T-1154)
+RE_OS — Demand Coefficient Calibration (GATE-94 T-1154 + GATE-109 T-1233)
 
 Derives the hires→housing-units coefficient using the Manyata Tech Park backcast
 method: compare employment ramp (public estimates by year) against registered
-transaction PSF and velocity in surrounding villages.
+transaction velocity in Yelahanka hobli villages.
+
+Two methods:
+  - DemandCalibration.run()            — legacy median-ratio approach (GATE-94)
+  - run_manyata_backcast(engine)       — OLS linear regression with R²≥0.6 gate (GATE-109)
 
 Outputs a CalibrationResult with coefficient, confidence band, and verdict.
-Until calibration passes (confidence < 30%), DemandIntel outputs carry
-[UNCALIBRATED] label.
+Until calibration passes (R² ≥ 0.6), DemandIntel outputs carry [UNCALIBRATED].
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from datetime import date
 from typing import Any
 
 from loguru import logger
+from sqlalchemy.engine import Engine
 
 
 # ── Manyata employment ramp — public estimates by year ──────────────────────
@@ -62,6 +66,11 @@ class CalibrationResult:
     verdict: str = "UNCALIBRATED"
     detail: str = "Insufficient registered_transactions data for Manyata backcast"
     last_checked: str = ""
+
+    @property
+    def status(self) -> str:
+        """Alias for verdict — used in GATE-109 assertions."""
+        return self.verdict
 
 
 class DemandCalibration:
@@ -203,6 +212,134 @@ class DemandCalibration:
                 logger.warning(
                     "[DemandCalibration] target object has no calibration_status field"
                 )
+
+
+# ── T-1233: Manyata Backcast — Rigorous Linear Regression ────────────────────
+# Employment ramp (public estimates):
+#   Infosys Manyata:    50K (2019) → 90K (2023)  (Infosys annual report)
+#   Overall Manyata:  120K (2019) → 180K (2023)  (JLL India, CREDAI)
+# Only overall Manyata employment is used in the OLS fit (broader signal).
+# Infosys-specific ramp is retained below as a cross-check constant.
+_MANYATA_INFOSYS_EMPLOYMENT: dict[int, int] = {
+    2019: 50000, 2020: 60000, 2021: 72000, 2022: 82000, 2023: 90000,
+}
+_MANYATA_OVERALL_EMPLOYMENT: dict[int, int] = {
+    2019: 120000, 2020: 135000, 2021: 150000, 2022: 165000, 2023: 180000,
+}
+_YELAHANKA_HOBLI_VILLAGES: list[str] = [
+    "Venkatala", "Yelahanka", "Shampura", "Shettihalli", "Nesagodu",
+    "Kodaseegenahalli", "Geddalahalli", "Jakkuru", "Vidyaranyapura",
+    "Kogilu", "Hunasamaranahalli", "Atturu", "Dodda Nekkundi",
+    "Agrahara Palya", "Chokkanahalli", "Kothanur", "Singanayakanahalli",
+    "Thambuchetty Palya", "Allalasandra", "Rachenahalli",
+]
+
+
+def run_manyata_backcast(engine: Engine) -> CalibrationResult:
+    """Run Manyata backcast regression against Yelahanka hobli deed data.
+
+    Queries registered_transactions for Yelahanka hobli villages 2019–2023,
+    computes annual deed velocity as absorption proxy, and fits a linear
+    model: units_absorbed = coefficient × employment_growth.
+
+    Returns:
+        CalibrationResult with coefficient (units/1k jobs), R², verdict.
+    """
+    result = CalibrationResult(last_checked=date.today().isoformat())
+
+    from sqlalchemy import text
+
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT EXTRACT(YEAR FROM reg_date)::int AS yr,
+                           COUNT(*)::int AS txn_count,
+                           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY psf) AS median_psf
+                    FROM registered_transactions
+                    WHERE village = ANY(:villages)
+                      AND reg_date BETWEEN '2019-01-01' AND '2023-12-31'
+                      AND deed_type IN ('Sale', 'Sale Deed', 'Absolute Sale')
+                      AND consideration_inr >= 100000
+                    GROUP BY yr
+                    ORDER BY yr
+                """),
+                {"villages": _YELAHANKA_HOBLI_VILLAGES},
+            ).fetchall()
+    except Exception as exc:
+        result.detail = f"Manyata backcast query failed: {exc}"
+        return result
+
+    if not rows:
+        result.detail = (
+            "No registered_transactions found for Yelahanka hobli villages 2019–2023"
+        )
+        return result
+
+    import numpy as np
+
+    txn_by_year: dict[int, int] = {int(r[0]): int(r[1]) for r in rows}
+    result.data_points = len(txn_by_year)
+
+    if len(txn_by_year) < 3:
+        result.detail = (
+            f"Only {len(txn_by_year)} years with deed data — need ≥3 for regression"
+        )
+        return result
+
+    years_sorted = sorted(txn_by_year.keys())
+    X = []
+    y = []
+    for yr in years_sorted:
+        txns = txn_by_year[yr]
+        units_absorbed = txns * 0.60  # ~60% are apartment-sized
+        if yr in _MANYATA_OVERALL_EMPLOYMENT:
+            base = _MANYATA_OVERALL_EMPLOYMENT.get(yr - 1, _MANYATA_OVERALL_EMPLOYMENT[yr] - 10000)
+            growth = _MANYATA_OVERALL_EMPLOYMENT[yr] - base
+            if growth > 0:
+                X.append(growth / 1000.0)  # thousands
+                y.append(units_absorbed)
+
+    if len(X) < 3:
+        result.detail = f"Only {len(X)} years with positive employment growth — need ≥3"
+        return result
+
+    X_arr = np.array(X, dtype=float)
+    y_arr = np.array(y, dtype=float)
+
+    coeff = np.polyfit(X_arr, y_arr, deg=1)
+    slope = coeff[0]
+    intercept = coeff[1]
+    y_pred = slope * X_arr + intercept
+    ss_res: float = float(np.sum((y_arr - y_pred) ** 2))
+    ss_tot: float = float(np.sum((y_arr - np.mean(y_arr)) ** 2))
+    r_squared = max(0.0, 1.0 - float(ss_res / max(ss_tot, 1e-10))) if ss_tot > 0 else 0.0
+
+    result.coefficient = round(slope, 1)
+    r_squared = min(r_squared, 1.0)
+    confidence_pct = round((1.0 - r_squared) * 100, 1)
+    result.confidence_pct = confidence_pct
+
+    if r_squared >= 0.6:
+        result.verdict = "CALIBRATED"
+        result.detail = (
+            f"Manyata backcast CALIBRATED: {result.coefficient} units/1k jobs "
+            f"(R²={r_squared:.3f}, ±{confidence_pct}%, "
+            f"{result.data_points} data points). "
+            f"Sources: Manyata park 120K→180K 2019–2023 (JLL India, CREDAI); "
+            f"Infosys 50K→90K (Infosys annual report)."
+        )
+    else:
+        result.verdict = "INSUFFICIENT_FIT"
+        result.detail = (
+            f"Manyata backcast INSUFFICIENT_FIT: {result.coefficient} units/1k jobs "
+            f"(R²={r_squared:.3f}, need ≥0.6, ±{confidence_pct}%). "
+            f"Sources: Manyata park 120K→180K 2019–2023 (JLL India, CREDAI); "
+            f"Infosys 50K→90K (Infosys annual report). "
+            f"Keeping [UNCALIBRATED] label."
+        )
+
+    return result
 
 
 # ── Convenience ─────────────────────────────────────────────────────────────

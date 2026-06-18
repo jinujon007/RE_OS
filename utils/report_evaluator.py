@@ -215,7 +215,7 @@ class ReportEvaluator:
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(_load_and_score)
-                return future.result(timeout=120)
+                return future.result(timeout=120)  # type: ignore[no-any-return]
         except concurrent.futures.TimeoutError:
             logger.warning("[ReportEvaluator] BERTScore model load timed out (>120s)")
         except Exception as exc:

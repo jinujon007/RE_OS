@@ -112,22 +112,23 @@ def send(channel: str, title: str, message: str = "", color: int = COLOR_BLUE) -
         return False
 
     # Health/system channels require a webhook — raise if missing so tests + alerts catch it
+    webhook_url: str | None
     require_webhook = channel in ("system", "health")
     if require_webhook:
         try:
-            url = _get_required_webhook_url(channel)
+            webhook_url = _get_required_webhook_url(channel)
         except ConfigurationError as exc:
             logger.error(f"[Discord] {exc}")
             _log_alert(channel, title, message, color, "skipped")
             raise
     else:
-        url = _get_webhook_url(channel)
-        if not url:
-            logger.debug(
-                f"[Discord] Channel '{channel}' not configured — skipping alert: {title}"
-            )
-            _log_alert(channel, title, message, color, "skipped")
-            return False
+        webhook_url = _get_webhook_url(channel)
+    if not webhook_url:
+        logger.debug(
+            f"[Discord] Channel '{channel}' not configured — skipping alert: {title}"
+        )
+        _log_alert(channel, title, message, color, "skipped")
+        return False
 
     # Discord embed description limit is 4096 chars; truncate at word boundary
     if message and len(message) > 4080:
@@ -152,7 +153,7 @@ def send(channel: str, title: str, message: str = "", color: int = COLOR_BLUE) -
 
     try:
         req = urllib.request.Request(
-            url,
+            webhook_url,
             data=payload,
             headers={
                 "Content-Type": "application/json",
@@ -243,48 +244,31 @@ def send_system_alert(job_name: str, error: str) -> bool:
 
 
 def send_scraper_alert(
-    market: str, scraper_name: str, alert_type: str, cooldown_hours: int = 1, **kwargs
+    market: str, scraper_name: str, alert_type: str, cooldown_hours: int = 12, **kwargs
 ) -> bool:
     """Send a scraper-level alert to the system channel.
 
-    Uses SQL cooldown dedup: same (title, channel) within cooldown_hours is skipped.
+    Uses AlertSuppressor for cooldown dedup (default 12h).
+    Falls back to in-memory if DB unavailable.
     Total message truncated at 300 chars to fit Discord embed limits.
-    First kwargs are most important — ordering matters for truncation.
 
     Args:
         market: Market name (e.g. 'Yelahanka')
         scraper_name: Scraper identifier (e.g. 'kaveri_gv', 'rera_karnataka')
         alert_type: Alert type code (e.g. 'STALE_GV', 'FALLBACK_SEED')
-        cooldown_hours: Suppress duplicate alerts within this window (default 1h).
+        cooldown_hours: Suppress duplicate alerts within this window (default 12h).
         **kwargs: Extra detail fields for the message. Truncated at 300 chars total.
     """
-    title = f"{alert_type} — {scraper_name} / {market}"
-    try:
-        from utils.db import get_engine
-        from sqlalchemy import text as _sa_text
-
-        with get_engine().connect() as _conn:
-            _row = _conn.execute(
-                _sa_text("""
-                    SELECT id FROM alerts
-                    WHERE channel = 'system' AND title = :title
-                      AND created_at > NOW() - (:hrs || ' hours')::interval
-                    LIMIT 1
-                """),
-                {"title": title, "hrs": cooldown_hours},
-            ).fetchone()
-        if _row:
-            logger.debug(
-                "[Discord] Scraper alert dedup: '{}' already sent within {}h — skip",
-                title,
-                cooldown_hours,
-            )
-            return False
-    except Exception as _exc:
+    dedup_key = f"scraper_{alert_type}_{scraper_name}_{market}"
+    if AlertSuppressor.suppress(dedup_key, cooldown_hours=cooldown_hours):
         logger.debug(
-            "[Discord] Scraper alert dedup check failed (allowing send): {}", _exc
+            "[Discord] Scraper alert '{}' suppressed by AlertSuppressor ({}h cooldown)",
+            dedup_key,
+            cooldown_hours,
         )
+        return False
 
+    title = f"{alert_type} — {scraper_name} / {market}"
     details = " | ".join(f"{k}={v}" for k, v in kwargs.items() if v is not None)
     message = f"⚠ **[{scraper_name}] {market}**: {alert_type}.\n{details}\nCheck portal connectivity."
     if len(message) > 300:
@@ -806,6 +790,69 @@ def send_monthly_digest(results: list) -> None:
         _log.warning("[Discord] send_monthly_digest failed: {}", exc)
 
 
+# ── Alert Suppressor (GATE-105) ──────────────────────────────────────────────
+
+
+class AlertSuppressor:
+    """Prevents alert fatigue by suppressing duplicate alerts within a cooldown window.
+
+    Thread-safe (uses threading.Lock for in-memory dict). Primary check is DB-backed
+    via the `alerts` table; falls back to in-memory dict if DB is unavailable.
+
+    Usage:
+        if not AlertSuppressor.suppress("MY_ALERT", cooldown_hours=4):
+            send_alert(...)
+    """
+
+    _IN_MEMORY: dict[str, float] = {}
+    _LOCK = __import__("threading").Lock()
+
+    @classmethod
+    def suppress(cls, alert_type: str, cooldown_hours: int = 24) -> bool:
+        """Check if an alert should be suppressed.
+
+        Returns True if a matching alert was sent within cooldown_hours.
+        Returns False if the alert should fire (first occurrence or past cooldown).
+
+        Args:
+            alert_type: Unique alert identifier (used as title match in DB).
+            cooldown_hours: Hours to suppress duplicates. Clamped to [1, 720] (30 days).
+
+        Raises:
+            ValueError: If alert_type is empty or cooldown_hours < 0.
+        """
+        if not alert_type or not isinstance(alert_type, str):
+            return False
+        cooldown_hours = min(max(cooldown_hours, 1), 720)
+
+        try:
+            from utils.db import get_engine as _get_engine
+            from sqlalchemy import text as _text
+
+            with _get_engine().connect() as _conn:
+                _row = _conn.execute(
+                    _text("""
+                        SELECT id FROM alerts
+                        WHERE title = :alert_type
+                          AND created_at > NOW() - (:hrs || ' hours')::interval
+                        LIMIT 1
+                    """),
+                    {"alert_type": alert_type[:200], "hrs": cooldown_hours},
+                ).fetchone()
+                if _row:
+                    return True
+        except Exception:
+            now = _time.time()
+            with cls._LOCK:
+                last = cls._IN_MEMORY.get(alert_type, 0.0)
+                if last > 0 and now - last < cooldown_hours * 3600:
+                    return True
+                cls._IN_MEMORY[alert_type] = now
+            return False
+
+        return False
+
+
 _OPS_ALERT_COOLDOWN: dict[str, float] = {}
 _OPS_ALERT_COOLDOWN_S = 300
 
@@ -813,7 +860,8 @@ _OPS_ALERT_COOLDOWN_S = 300
 def send_ops_alert(alert_type: str, detail: str) -> bool:
     """Send an OPS alert to the system Discord channel.
 
-    Uses a 5-minute cooldown per alert_type to prevent alert storms.
+    Uses AlertSuppressor (DB-backed, falls back to in-memory) to prevent
+    alert storms. Cooldown: 4 hours.
     Returns True if sent, False if throttled or failed.
 
     Args:
@@ -823,16 +871,12 @@ def send_ops_alert(alert_type: str, detail: str) -> bool:
     from loguru import logger as _log
     from datetime import datetime, timezone
 
-    now = _time.time()
-    last = _OPS_ALERT_COOLDOWN.get(alert_type, 0.0)
-    if now - last < _OPS_ALERT_COOLDOWN_S:
+    if AlertSuppressor.suppress(alert_type, cooldown_hours=4):
         _log.debug(
-            "[Discord] OPS alert '{}' throttled ({}s cooldown)",
+            "[Discord] OPS alert '{}' suppressed by AlertSuppressor (4h cooldown)",
             alert_type,
-            _OPS_ALERT_COOLDOWN_S,
         )
         return False
-    _OPS_ALERT_COOLDOWN[alert_type] = now
 
     try:
         msg = f"{alert_type}: {detail[:200]}\nTime: {datetime.now(timezone.utc).isoformat()}"

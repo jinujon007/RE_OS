@@ -195,3 +195,82 @@ parcel_parser_completeness = _counter(
     "Bhoomi RTCParser completeness score buckets by threshold",
     ["threshold"],
 )
+
+# ── Sprint 103 — IRR metrics ────────────────────────────────────────────────
+
+irr_computations_total = _counter(
+    "irr_computations_total",
+    "NPV-solving IRR computations by caller and result (success/null/error)",
+    ["caller", "result"],
+)
+
+cashflow_build_duration_seconds = _histogram(
+    "cashflow_build_duration_seconds",
+    "Cash flow projection build duration in seconds",
+    [],
+    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0),
+)
+
+absorption_curve_calls_total = _counter(
+    "absorption_curve_calls_total",
+    "Absorption curve computation calls by trigger (curved/flat)",
+    ["mode"],
+)
+
+# ── Sprint 112 — DB connection pool metrics ──────────────────────────────────
+
+
+def _gauge(name: str, doc: str, labels: Sequence[str] = ()):
+    """Idempotent Gauge factory — returns existing metric if already registered."""
+    from prometheus_client import Gauge as _GaugeClass
+    existing = _R._names_to_collectors.get(name)
+    if existing is not None:
+        return existing
+    try:
+        return _GaugeClass(name, doc, labels)
+    except ValueError:
+        return _R._names_to_collectors.get(name)
+
+
+db_pool_size = _gauge(
+    "db_pool_size",
+    "Current SQLAlchemy connection pool size (all connections)",
+)
+
+db_pool_checkedout = _gauge(
+    "db_pool_checkedout",
+    "Current SQLAlchemy connections checked out from pool",
+)
+
+db_pool_overflow = _gauge(
+    "db_pool_overflow",
+    "Current SQLAlchemy pool overflow connections",
+)
+
+db_pool_wait_seconds = _histogram(
+    "db_pool_wait_seconds",
+    "Time spent waiting for a connection from the pool (critical scalability metric)",
+    [],
+    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0),
+)
+
+
+audit_log_writes_total = _counter(
+    "audit_log_writes_total",
+    "API audit log write attempts by role and outcome",
+    ["role", "outcome"],
+)
+
+# ── Sprint 108 — Dead letter queue metrics ───────────────────────────────────
+
+dead_letter_queue_depth = _counter(
+    "dead_letter_queue_depth_total",
+    "Dead letter queue records written by entity_type",
+    ["entity_type"],
+)
+
+dead_letter_retry_total = _counter(
+    "dead_letter_retry_total",
+    "Dead letter queue retry attempts by entity_type and result",
+    ["entity_type", "result"],
+)

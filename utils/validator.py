@@ -127,7 +127,7 @@ def _check_record(r: dict) -> list:
     # ── Units ─────────────────────────────────────────────────────
     total = r.get("total_units", None)
     try:
-        total_int = int(total)
+        total_int = int(total) if total is not None else -1
         if total_int < 0:
             errors.append(f"negative total_units: {total_int}")
     except (TypeError, ValueError):

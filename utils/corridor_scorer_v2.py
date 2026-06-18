@@ -118,7 +118,7 @@ class CorridorScorerV2(CorridorScorer):
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def score_all(
+    def score_all(  # type: ignore[override]
         self,
         window_months: int = 3,
         as_of: date | None = None,

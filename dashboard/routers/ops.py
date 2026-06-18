@@ -21,8 +21,10 @@ from dashboard.state import (
     _validate_registry_payload, _is_run_api_authorized,
     _registry_cache, _REGISTRY_CACHE_TTL,
     _resolve_market, _all_markets, VALID_MARKETS_DIGEST,
+    _err_resp,
 )
 from config.metrics import db_query_duration_seconds, digest_runs_total
+from utils.etag import compute_etag, check_etag, add_etag
 
 logger = logging.getLogger("re_os.dashboard")
 
@@ -32,7 +34,7 @@ router = APIRouter(tags=["Ops"])
 # ── Tasks ────────────────────────────────────────────────────────────────────
 
 
-@router.get("/api/tasks", summary="List tasks with optional status/owner filter")
+@router.get("/tasks", summary="List tasks with optional status/owner filter")
 @limiter.limit("60/minute")
 async def list_tasks(request: Request, status: str = Query(None), owner: str = Query(None)):
     try:
@@ -65,10 +67,10 @@ async def list_tasks(request: Request, status: str = Query(None), owner: str = Q
         }
     except Exception as e:
         logger.error("[list_tasks] %s", e)
-        return JSONResponse({"error": "database query failed"}, status_code=500)
+        return _err_resp("database query failed", request, 500, "Ops")
 
 
-@router.post("/api/tasks", summary="Create a new task", status_code=201)
+@router.post("/tasks", summary="Create a new task", status_code=201)
 @limiter.limit("30/minute")
 async def create_task(request: Request):
     try:
@@ -81,7 +83,7 @@ async def create_task(request: Request):
     source_type = str(payload.get("source_type") or "").strip()[:30]
     source_id_raw = payload.get("source_id")
     if not title:
-        return JSONResponse({"error": "title required"}, status_code=400)
+        return _err_resp("title required", request, 400, "Ops")
     if priority not in ("high", "medium", "low"):
         priority = "medium"
     source_id = None
@@ -101,10 +103,10 @@ async def create_task(request: Request):
         return JSONResponse({"task_id": task_id, "status": "queued"}, status_code=201)
     except Exception as e:
         logger.error("[create_task] %s", e)
-        return JSONResponse({"error": "database query failed"}, status_code=500)
+        return _err_resp("database query failed", request, 500, "Ops")
 
 
-@router.patch("/api/tasks/{task_id}", summary="Update task status")
+@router.patch("/tasks/{task_id}", summary="Update task status")
 @limiter.limit("60/minute")
 async def update_task(request: Request, task_id: str):
     try:
@@ -113,11 +115,11 @@ async def update_task(request: Request, task_id: str):
         payload = {}
     new_status = str(payload.get("status") or "").strip()
     if new_status not in ("queued", "active", "done", "failed", "rejected"):
-        return JSONResponse({"error": "invalid status"}, status_code=400)
+        return _err_resp("invalid status", request, 400, "Ops")
     try:
         tid = str(uuid.UUID(task_id))
     except ValueError:
-        return JSONResponse({"error": "invalid task_id"}, status_code=400)
+        return _err_resp("invalid task_id", request, 400, "Ops")
     try:
         with _get_sa_engine().begin() as conn:
             result = conn.execute(
@@ -125,17 +127,17 @@ async def update_task(request: Request, task_id: str):
                 {"s": new_status, "tid": tid},
             )
             if result.fetchone() is None:
-                return JSONResponse({"error": "not found"}, status_code=404)
+                return _err_resp("not found", request, 404, "Ops")
         return {"status": new_status}
     except Exception as e:
         logger.error("[update_task] %s", e)
-        return JSONResponse({"error": "database query failed"}, status_code=500)
+        return _err_resp("database query failed", request, 500, "Ops")
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────
 
 
-@router.get("/api/registry", summary="List registered agents")
+@router.get("/registry", summary="List registered agents")
 @limiter.limit("30/minute")
 async def list_registry(request: Request):
     now = time.time()
@@ -164,10 +166,10 @@ async def list_registry(request: Request):
         logger.warning("[list_registry] DB query failed: %s", e)
         if cached:
             return {"agents": cached[0], "cached": True, "stale": True}
-        return JSONResponse({"error": "database query failed"}, status_code=500)
+        return _err_resp("database query failed", request, 500, "Ops")
 
 
-@router.post("/api/registry", summary="Hire a new agent from JSON spec", status_code=201)
+@router.post("/registry", summary="Hire a new agent from JSON spec", status_code=201)
 async def hire_agent(request: Request):
     try:
         payload = await request.json()
@@ -175,20 +177,20 @@ async def hire_agent(request: Request):
         payload = {}
     validated, err = _validate_registry_payload(payload)
     if err:
-        return JSONResponse({"error": err}, status_code=400)
+        return _err_resp(err, request, 400, "Ops")
     import yaml
     spec_id = str(validated["id"]).strip()
     from agents.agent_factory import _REGISTRY_DIR
     spec_path = str(_REGISTRY_DIR / f"{spec_id}.yaml")
     if os.path.exists(spec_path):
-        return JSONResponse({"error": f"agent '{spec_id}' already exists"}, status_code=409)
+        return _err_resp(f"agent '{spec_id}' already exists", request, 409, "Ops")
     try:
         os.makedirs(os.path.dirname(spec_path), exist_ok=True)
         with open(spec_path, "w", encoding="utf-8") as f:
             yaml.dump(validated, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
     except Exception as e:
         logger.error("[hire_agent] write failed: %s", e)
-        return JSONResponse({"error": "failed to write spec file"}, status_code=500)
+        return _err_resp("failed to write spec file", request, 500, "Ops")
     try:
         from agents.agent_factory import sync_registry_to_db
         synced = sync_registry_to_db()
@@ -212,7 +214,7 @@ class SurveyCreate(BaseModel):
     is_aggregated: bool = False
 
 
-@router.post("/api/surveys", summary="Add a new survey for opportunity scoring", status_code=201)
+@router.post("/surveys", summary="Add a new survey for opportunity scoring", status_code=201)
 async def create_survey(body: SurveyCreate, request: Request):
     try:
         with _get_sa_engine().begin() as conn:
@@ -221,7 +223,7 @@ async def create_survey(body: SurveyCreate, request: Request):
                 {"m": f"%{body.market}%"},
             ).fetchone()
             if not market_row:
-                return JSONResponse({"error": f"market '{body.market}' not found"}, status_code=404)
+                return _err_resp(f"market '{body.market}' not found", request, 404, "Ops")
             market_id = market_row[0]
             total_sqft = body.total_area_acres * 43560.0
             result = conn.execute(
@@ -243,7 +245,7 @@ async def create_survey(body: SurveyCreate, request: Request):
         }
     except Exception as exc:
         logger.error("[create_survey] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
 # ── Evaluate API ──────────────────────────────────────────────────────────────
@@ -276,7 +278,7 @@ class EvaluateStartResponse(BaseModel):
     message: str | None = None
 
 
-@router.post("/api/evaluate", response_model=EvaluateStartResponse, summary="Start async deal evaluation pipeline")
+@router.post("/evaluate", response_model=EvaluateStartResponse, summary="Start async deal evaluation pipeline")
 @limiter.limit("10/minute")
 async def evaluate_start(request: Request):
     try:
@@ -287,26 +289,26 @@ async def evaluate_start(request: Request):
     try:
         survey_no = _validate_survey_no(survey_no_raw)
     except ValueError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=400)
+        return _err_resp(str(exc), request, 400, "Ops")
     market_raw = payload.get("market", "")
     market = _normalize_market(market_raw)
     if not market:
-        return JSONResponse({"error": "valid market required (Yelahanka/Devanahalli/Hebbal)"}, status_code=400)
+        return _err_resp("valid market required (Yelahanka/Devanahalli/Hebbal)", request, 400, "Ops")
     raw_area = payload.get("land_area_sqft", 43560)
     try:
         land_area_sqft = float(raw_area)
     except (ValueError, TypeError):
-        return JSONResponse({"error": "land_area_sqft must be a number"}, status_code=400)
+        return _err_resp("land_area_sqft must be a number", request, 400, "Ops")
     sell_psf = payload.get("sell_psf")
     if sell_psf is not None:
         try:
             sell_psf = float(sell_psf)
         except (ValueError, TypeError):
-            return JSONResponse({"error": "sell_psf must be a number"}, status_code=400)
+            return _err_resp("sell_psf must be a number", request, 400, "Ops")
     valid_deal_types = {"purchase", "jd", "jv", "compare"}
     deal_type = str(payload.get("deal_type", "compare")).strip().lower()
     if deal_type not in valid_deal_types:
-        return JSONResponse({"error": f"deal_type must be one of: {', '.join(sorted(valid_deal_types))}"}, status_code=400)
+        return _err_resp(f"deal_type must be one of: {', '.join(sorted(valid_deal_types))}", request, 400, "Ops")
     pitch = str(payload.get("pitch", "")).strip()[:5000]
     from crews.evaluate_pipeline import start_evaluate
     result = start_evaluate(
@@ -336,13 +338,13 @@ class EvaluateJobResponse(BaseModel):
     error: str | None = None
 
 
-@router.get("/api/evaluate/{job_id}", response_model=EvaluateJobResponse, summary="Poll async evaluation job status")
+@router.get("/evaluate/{job_id}", response_model=EvaluateJobResponse, summary="Poll async evaluation job status")
 @limiter.limit("30/minute")
 async def evaluate_status(request: Request, job_id: str):
     from crews.evaluate_pipeline import get_evaluate_job
     job = get_evaluate_job(job_id)
     if job is None:
-        return JSONResponse({"error": "job not found"}, status_code=404)
+        return _err_resp("job not found", request, 404, "Ops")
     return job
 
 
@@ -370,7 +372,7 @@ class OpportunityQueueResponse(BaseModel):
     count: int
 
 
-@router.get("/api/opportunity/queue", response_model=OpportunityQueueResponse, summary="Ranked opportunity queue")
+@router.get("/opportunity/queue", response_model=OpportunityQueueResponse, summary="Ranked opportunity queue")
 @limiter.limit("30/minute")
 async def opportunity_queue(
     request: Request, market: str = Query(None), min_score: float = Query(None), limit: int = Query(default=50),
@@ -437,13 +439,13 @@ async def opportunity_queue(
         }
     except Exception as e:
         logger.error("[opportunity_queue] %s", e)
-        return JSONResponse({"error": "database query failed"}, status_code=500)
+        return _err_resp("database query failed", request, 500, "Ops")
 
 
 # ── LLM Quota ──────────────────────────────────────────────────────────────
 
 
-@router.get("/api/llm/quota", summary="LLM daily token usage per provider")
+@router.get("/llm/quota", summary="LLM daily token usage per provider")
 @limiter.limit("30/minute")
 async def llm_quota(request: Request):
     today = date.today().isoformat()
@@ -487,10 +489,10 @@ class DealUpdate(BaseModel):
 _VALID_DEAL_STAGES = {"prospecting", "diligence", "negotiation", "loi", "signed", "dropped"}
 
 
-@router.post("/api/deals", status_code=201, summary="Promote an opportunity to the deal pipeline")
+@router.post("/deals", status_code=201, summary="Promote an opportunity to the deal pipeline")
 async def create_deal(body: DealCreate, request: Request):
     if body.stage is not None and body.stage not in _VALID_DEAL_STAGES:
-        return JSONResponse({"error": f"invalid stage: {body.stage}"}, status_code=400)
+        return _err_resp(f"invalid stage: {body.stage}", request, 400, "Ops")
     try:
         with _get_sa_engine().begin() as conn:
             market_row = conn.execute(
@@ -498,7 +500,7 @@ async def create_deal(body: DealCreate, request: Request):
                 {"m": f"%{body.market}%"},
             ).fetchone()
             if not market_row:
-                return JSONResponse({"error": f"market '{body.market}' not found"}, status_code=404)
+                return _err_resp(f"market '{body.market}' not found", request, 404, "Ops")
             market_id = market_row[0]
             result = conn.execute(
                 _sa_text("""INSERT INTO deal_pipeline (survey_no, micro_market_id, stage, opportunity_score, notes)
@@ -527,10 +529,10 @@ async def create_deal(body: DealCreate, request: Request):
         }
     except Exception as exc:
         logger.error("[create_deal] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.get("/api/deals", summary="List all deals in pipeline")
+@router.get("/deals", summary="List all deals in pipeline")
 async def list_deals(request: Request, stage: str = Query(None), market: str = Query(None)):
     try:
         with _get_sa_engine().connect() as conn:
@@ -566,15 +568,15 @@ async def list_deals(request: Request, stage: str = Query(None), market: str = Q
         ]
     except Exception as exc:
         logger.error("[list_deals] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.patch("/api/deals/{deal_id}", summary="Update deal stage or notes")
+@router.patch("/deals/{deal_id}", summary="Update deal stage or notes")
 async def update_deal(deal_id: str, body: DealUpdate, request: Request):
     try:
         tid = str(uuid.UUID(deal_id))
     except ValueError:
-        return JSONResponse({"error": "invalid deal_id"}, status_code=400)
+        return _err_resp("invalid deal_id", request, 400, "Ops")
     try:
         with _get_sa_engine().begin() as conn:
             existing = conn.execute(
@@ -582,11 +584,11 @@ async def update_deal(deal_id: str, body: DealUpdate, request: Request):
                 {"tid": tid},
             ).fetchone()
             if not existing:
-                return JSONResponse({"error": "deal not found"}, status_code=404)
+                return _err_resp("deal not found", request, 404, "Ops")
             updates, params = [], {}
             if body.stage is not None:
                 if body.stage not in _VALID_DEAL_STAGES:
-                    return JSONResponse({"error": f"invalid stage: {body.stage}"}, status_code=400)
+                    return _err_resp(f"invalid stage: {body.stage}", request, 400, "Ops")
                 updates.append("stage = :st")
                 params["st"] = body.stage
             if body.next_step is not None:
@@ -602,7 +604,7 @@ async def update_deal(deal_id: str, body: DealUpdate, request: Request):
                 updates.append("assigned_to = :at")
                 params["at"] = body.assigned_to
             if not updates:
-                return JSONResponse({"error": "no fields to update"}, status_code=400)
+                return _err_resp("no fields to update", request, 400, "Ops")
             updates.append("updated_at = NOW()")
             set_clause = ", ".join(updates)
             params["tid"] = tid
@@ -629,7 +631,7 @@ async def update_deal(deal_id: str, body: DealUpdate, request: Request):
         }
     except Exception as exc:
         logger.error("[update_deal] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
 # ── Projects & Tasks (Operations) ──────────────────────────────────────────
@@ -647,7 +649,7 @@ _VALID_TRANSITIONS["paused"] = set(_PROJECT_STAGE_ORDER)
 DEAL_PIPELINE_COLS = "id, survey_no, micro_market_id, stage, opportunity_score, assigned_to, next_step, next_step_due, notes, created_at, updated_at"
 
 
-@router.post("/api/projects", status_code=201, summary="Create a new project")
+@router.post("/projects", status_code=201, summary="Create a new project")
 @limiter.limit("30/hour")
 async def create_project(request: Request):
     try:
@@ -656,12 +658,12 @@ async def create_project(request: Request):
         payload = {}
     name = str(payload.get("name") or "").strip()
     if not name:
-        return JSONResponse({"error": "name is required"}, status_code=400)
+        return _err_resp("name is required", request, 400, "Ops")
     if len(name) > 200:
-        return JSONResponse({"error": "name too long (max 200 chars)"}, status_code=400)
+        return _err_resp("name too long (max 200 chars)", request, 400, "Ops")
     st = str(payload.get("status") or "lead").lower()
     if st not in _VALID_PROJECT_STATUSES:
-        return JSONResponse({"error": f"invalid status: {st}"}, status_code=400)
+        return _err_resp(f"invalid status: {st}", request, 400, "Ops")
     try:
         with _get_sa_engine().begin() as conn:
             row = conn.execute(
@@ -694,10 +696,10 @@ async def create_project(request: Request):
         }
     except Exception as exc:
         logger.error("[create_project] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.get("/api/projects", summary="List projects with optional filters and pagination")
+@router.get("/projects", summary="List projects with optional filters and pagination")
 @limiter.limit("60/minute")
 async def list_projects(
     request: Request, status: str = Query(None), market: str = Query(None),
@@ -746,16 +748,16 @@ async def list_projects(
         }
     except Exception as exc:
         logger.error("[list_projects] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.get("/api/projects/{project_id}", summary="Get project detail with tasks and velocity")
+@router.get("/projects/{project_id}", summary="Get project detail with tasks and velocity")
 @limiter.limit("60/minute")
 async def get_project(project_id: str, request: Request):
     try:
         pid = str(uuid.UUID(project_id))
     except ValueError:
-        return JSONResponse({"error": "invalid project_id"}, status_code=400)
+        return _err_resp("invalid project_id", request, 400, "Ops")
     try:
         with _get_sa_engine().connect() as conn:
             proj = conn.execute(
@@ -769,7 +771,7 @@ async def get_project(project_id: str, request: Request):
                 {"pid": pid},
             ).fetchone()
             if not proj:
-                return JSONResponse({"error": "project not found"}, status_code=404)
+                return _err_resp("project not found", request, 404, "Ops")
             tasks = conn.execute(
                 _sa_text("""
                     SELECT id, title, owner_agent_id, dept, status, due_date,
@@ -822,16 +824,16 @@ async def get_project(project_id: str, request: Request):
         }
     except Exception as exc:
         logger.error("[get_project] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.patch("/api/projects/{project_id}", summary="Update project metadata")
+@router.patch("/projects/{project_id}", summary="Update project metadata")
 @limiter.limit("30/hour")
 async def update_project(project_id: str, request: Request):
     try:
         pid = str(uuid.UUID(project_id))
     except ValueError:
-        return JSONResponse({"error": "invalid project_id"}, status_code=400)
+        return _err_resp("invalid project_id", request, 400, "Ops")
     try:
         payload = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -844,7 +846,7 @@ async def update_project(project_id: str, request: Request):
                 updates.append(f"{col} = :{field}")
                 params[field] = val
         if not updates:
-            return JSONResponse({"error": "no fields to update"}, status_code=400)
+            return _err_resp("no fields to update", request, 400, "Ops")
         updates.append("updated_at = NOW()")
         set_clause = ", ".join(updates)
         with _get_sa_engine().begin() as conn:
@@ -853,7 +855,7 @@ async def update_project(project_id: str, request: Request):
                 params,
             ).fetchone()
         if not row:
-            return JSONResponse({"error": "project not found"}, status_code=404)
+            return _err_resp("project not found", request, 404, "Ops")
         return {
             "id": str(row[0]), "name": row[1], "market": row[2], "survey_no": row[3],
             "deal_type": row[4], "status": row[5], "notes": row[6],
@@ -864,23 +866,23 @@ async def update_project(project_id: str, request: Request):
         }
     except Exception as exc:
         logger.error("[update_project] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.patch("/api/projects/{project_id}/status", summary="Update project status with deal_velocity tracking")
+@router.patch("/projects/{project_id}/status", summary="Update project status with deal_velocity tracking")
 @limiter.limit("30/hour")
 async def update_project_status(project_id: str, request: Request):
     try:
         pid = str(uuid.UUID(project_id))
     except ValueError:
-        return JSONResponse({"error": "invalid project_id"}, status_code=400)
+        return _err_resp("invalid project_id", request, 400, "Ops")
     try:
         payload = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+        return _err_resp("invalid JSON", request, 400, "Ops")
     new_status = str(payload.get("status") or "").strip().lower()
     if new_status not in _VALID_PROJECT_STATUSES:
-        return JSONResponse({"error": f"invalid status: {new_status}"}, status_code=400)
+        return _err_resp(f"invalid status: {new_status}", request, 400, "Ops")
     try:
         with _get_sa_engine().begin() as conn:
             current = conn.execute(
@@ -888,14 +890,14 @@ async def update_project_status(project_id: str, request: Request):
                 {"pid": pid},
             ).fetchone()
             if not current:
-                return JSONResponse({"error": "project not found"}, status_code=404)
+                return _err_resp("project not found", request, 404, "Ops")
             old_status = str(current[1] or "lead")
             market_str = str(current[3] or "")
             survey_str = str(current[4] or "")
             if old_status != new_status and old_status != "paused":
                 allowed = _VALID_TRANSITIONS.get(old_status, set())
                 if new_status not in allowed:
-                    return JSONResponse({"error": f"cannot transition from '{old_status}' to '{new_status}'"}, status_code=400)
+                    return _err_resp(f"cannot transition from '{old_status}' to '{new_status}'", request, 400, "Ops")
             created = current[5]
             days_elapsed = (datetime.now(timezone.utc) - created).days if created else 0
             if old_status != new_status:
@@ -924,20 +926,20 @@ async def update_project_status(project_id: str, request: Request):
         }
     except Exception as exc:
         logger.error("[update_project_status] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.get("/api/projects/{project_id}/velocity", summary="Get deal velocity timeline for a project")
+@router.get("/projects/{project_id}/velocity", summary="Get deal velocity timeline for a project")
 async def get_velocity(project_id: str, request: Request):
     try:
         pid = str(uuid.UUID(project_id))
     except ValueError:
-        return JSONResponse({"error": "invalid project_id"}, status_code=400)
+        return _err_resp("invalid project_id", request, 400, "Ops")
     try:
         with _get_sa_engine().connect() as conn:
             proj = conn.execute(_sa_text("SELECT id, status, created_at FROM projects WHERE id = :pid"), {"pid": pid}).fetchone()
             if not proj:
-                return JSONResponse({"error": "project not found"}, status_code=404)
+                return _err_resp("project not found", request, 404, "Ops")
             rows = conn.execute(
                 _sa_text("SELECT from_status, to_status, days_elapsed, transitioned_at FROM deal_velocity WHERE project_id = :pid ORDER BY transitioned_at ASC"),
                 {"pid": pid},
@@ -956,30 +958,30 @@ async def get_velocity(project_id: str, request: Request):
         }
     except Exception as exc:
         logger.error("[get_velocity] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.get("/api/projects/{project_id}/tasks", status_code=201, summary="Add a task to a project")
+@router.get("/projects/{project_id}/tasks", status_code=201, summary="Add a task to a project")
 @limiter.limit("60/hour")
 async def create_project_task(project_id: str, request: Request):
     try:
         pid = str(uuid.UUID(project_id))
     except ValueError:
-        return JSONResponse({"error": "invalid project_id"}, status_code=400)
+        return _err_resp("invalid project_id", request, 400, "Ops")
     try:
         payload = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
         payload = {}
     title = str(payload.get("title") or "").strip()
     if not title:
-        return JSONResponse({"error": "title is required"}, status_code=400)
+        return _err_resp("title is required", request, 400, "Ops")
     if len(title) > 500:
-        return JSONResponse({"error": "title too long (max 500 chars)"}, status_code=400)
+        return _err_resp("title too long (max 500 chars)", request, 400, "Ops")
     try:
         with _get_sa_engine().begin() as conn:
             exists = conn.execute(_sa_text("SELECT id FROM projects WHERE id = :pid"), {"pid": pid}).fetchone()
             if not exists:
-                return JSONResponse({"error": "project not found"}, status_code=404)
+                return _err_resp("project not found", request, 404, "Ops")
             row = conn.execute(
                 _sa_text("""
                     INSERT INTO project_tasks (project_id, title, owner_agent_id, dept, due_date, notes)
@@ -996,17 +998,17 @@ async def create_project_task(project_id: str, request: Request):
         }
     except Exception as exc:
         logger.error("[create_task] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.patch("/api/projects/{project_id}/tasks/{task_id}", summary="Update task status/notes")
+@router.patch("/projects/{project_id}/tasks/{task_id}", summary="Update task status/notes")
 @limiter.limit("60/hour")
 async def update_project_task(project_id: str, task_id: str, request: Request):
     try:
         pid = str(uuid.UUID(project_id))
         tid = str(uuid.UUID(task_id))
     except ValueError:
-        return JSONResponse({"error": "invalid id"}, status_code=400)
+        return _err_resp("invalid id", request, 400, "Ops")
     try:
         payload = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -1015,7 +1017,7 @@ async def update_project_task(project_id: str, task_id: str, request: Request):
     new_status = payload.get("status")
     if new_status is not None:
         if new_status not in ("todo", "in_progress", "done", "blocked"):
-            return JSONResponse({"error": f"invalid status: {new_status}"}, status_code=400)
+            return _err_resp(f"invalid status: {new_status}", request, 400, "Ops")
         updates.append("status = :st")
         params["st"] = new_status
         if new_status == "done":
@@ -1025,7 +1027,7 @@ async def update_project_task(project_id: str, task_id: str, request: Request):
         updates.append("notes = :nt")
         params["nt"] = notes
     if not updates:
-        return JSONResponse({"error": "no fields to update"}, status_code=400)
+        return _err_resp("no fields to update", request, 400, "Ops")
     set_clause = ", ".join(updates)
     try:
         with _get_sa_engine().begin() as conn:
@@ -1034,30 +1036,30 @@ async def update_project_task(project_id: str, task_id: str, request: Request):
                 params,
             ).fetchone()
         if not row:
-            return JSONResponse({"error": "task not found"}, status_code=404)
+            return _err_resp("task not found", request, 404, "Ops")
         return {"id": str(row[0]), "title": row[1], "status": row[2], "completed_at": row[3].isoformat() if row[3] else None, "notes": row[4]}
     except Exception as exc:
         logger.error("[update_task] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.delete("/api/projects/{project_id}/tasks/{task_id}", summary="Delete a task")
+@router.delete("/projects/{project_id}/tasks/{task_id}", summary="Delete a task")
 @limiter.limit("30/hour")
 async def delete_task(project_id: str, task_id: str, request: Request):
     try:
         pid = str(uuid.UUID(project_id))
         tid = str(uuid.UUID(task_id))
     except ValueError:
-        return JSONResponse({"error": "invalid id"}, status_code=400)
+        return _err_resp("invalid id", request, 400, "Ops")
     try:
         with _get_sa_engine().begin() as conn:
             result = conn.execute(_sa_text("DELETE FROM project_tasks WHERE id = :tid AND project_id = :pid"), {"pid": pid, "tid": tid})
             if result.rowcount == 0:
-                return JSONResponse({"error": "task not found"}, status_code=404)
+                return _err_resp("task not found", request, 404, "Ops")
         return {"status": "deleted", "id": task_id}
     except Exception as exc:
         logger.error("[delete_task] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
 # ── Landowner CRM ────────────────────────────────────────────────────────
@@ -1085,7 +1087,7 @@ def _fire_landowner_discord(status, survey_no, market, owner_name, ask_psf, note
     send_landowner_alert(status, survey_no, market, owner_name, ask_psf, notes)
 
 
-@router.post("/api/landowners", status_code=201, summary="Create a new landowner contact")
+@router.post("/landowners", status_code=201, summary="Create a new landowner contact")
 @limiter.limit("30/minute")
 async def create_landowner(request: Request):
     try:
@@ -1094,10 +1096,10 @@ async def create_landowner(request: Request):
         payload = {}
     contact_type = payload.get("contact_type")
     if contact_type and contact_type not in _VALID_CONTACT_TYPES:
-        return JSONResponse({"error": f"invalid contact_type: {contact_type}"}, status_code=400)
+        return _err_resp(f"invalid contact_type: {contact_type}", request, 400, "Ops")
     status = payload.get("approach_status") or "cold"
     if status not in _VALID_APPROACH_STATUSES:
-        return JSONResponse({"error": f"invalid approach_status: {status}"}, status_code=400)
+        return _err_resp(f"invalid approach_status: {status}", request, 400, "Ops")
     try:
         with _get_sa_engine().begin() as conn:
             result = conn.execute(
@@ -1114,10 +1116,10 @@ async def create_landowner(request: Request):
         return _row_to_landowner_dict(row)
     except Exception as exc:
         logger.error("[create_landowner] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.get("/api/landowners", summary="List landowner contacts with filters")
+@router.get("/landowners", summary="List landowner contacts with filters")
 @limiter.limit("60/minute")
 async def list_landowners(
     request: Request, market: str = Query(None), status: str = Query(None),
@@ -1142,10 +1144,10 @@ async def list_landowners(
         return {"data": [_row_to_landowner_dict(r) for r in rows], "pagination": {"page": page, "per_page": per_page, "total": total, "total_pages": max(1, (total + per_page - 1) // per_page)}}
     except Exception as exc:
         logger.error("[list_landowners] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.get("/api/landowners/pipeline", summary="Pipeline summary: counts by status + avg ask_psf per market")
+@router.get("/landowners/pipeline", summary="Pipeline summary: counts by status + avg ask_psf per market")
 @limiter.limit("30/minute")
 async def landowner_pipeline(request: Request):
     try:
@@ -1158,34 +1160,34 @@ async def landowner_pipeline(request: Request):
         }
     except Exception as exc:
         logger.error("[landowner_pipeline] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.get("/api/landowners/{landowner_id}", summary="Get a single landowner contact")
+@router.get("/landowners/{landowner_id}", summary="Get a single landowner contact")
 @limiter.limit("60/minute")
 async def get_landowner(landowner_id: str, request: Request):
     try:
         tid = str(uuid.UUID(landowner_id))
     except ValueError:
-        return JSONResponse({"error": "invalid landowner_id"}, status_code=400)
+        return _err_resp("invalid landowner_id", request, 400, "Ops")
     try:
         with _get_sa_engine().connect() as conn:
             row = conn.execute(_sa_text(f"SELECT {_LANDOWNER_COLS} FROM landowner_contacts WHERE id = :tid"), {"tid": tid}).fetchone()
         if not row:
-            return JSONResponse({"error": "landowner not found"}, status_code=404)
+            return _err_resp("landowner not found", request, 404, "Ops")
         return _row_to_landowner_dict(row)
     except Exception as exc:
         logger.error("[get_landowner] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.patch("/api/landowners/{landowner_id}", summary="Update landowner contact fields")
+@router.patch("/landowners/{landowner_id}", summary="Update landowner contact fields")
 @limiter.limit("30/minute")
 async def update_landowner(landowner_id: str, request: Request):
     try:
-        tid = str(uuid.UUID(landowner_id))
+        pid = str(uuid.UUID(landowner_id))
     except ValueError:
-        return JSONResponse({"error": "invalid landowner_id"}, status_code=400)
+        return _err_resp("invalid project_id", request, 400, "Ops")
     try:
         payload = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -1194,33 +1196,33 @@ async def update_landowner(landowner_id: str, request: Request):
         with _get_sa_engine().begin() as conn:
             existing = conn.execute(
                 _sa_text("SELECT id, survey_no, market, owner_name, approach_status, ask_psf FROM landowner_contacts WHERE id = :tid"),
-                {"tid": tid},
+                {"tid": pid},
             ).fetchone()
             if not existing:
-                return JSONResponse({"error": "landowner not found"}, status_code=404)
+                return _err_resp("landowner not found", request, 404, "Ops")
             updates, params = {}, {}
             for field, col, valid_set in [("owner_name","owner_name",None),("contact_phone","contact_phone",None),("contact_type","contact_type",_VALID_CONTACT_TYPES),("approach_status","approach_status",_VALID_APPROACH_STATUSES),("ask_psf","ask_psf",None),("notes","notes",None)]:
                 val = payload.get(field)
                 if val is not None:
                     if valid_set and val not in valid_set:
-                        return JSONResponse({"error": f"invalid {field}: {val}"}, status_code=400)
+                        return _err_resp(f"invalid {field}: {val}", request, 400, "Ops")
                     updates[col] = val
                     params[col] = val
             if not updates:
-                return JSONResponse({"error": "no fields to update"}, status_code=400)
+                return _err_resp("no fields to update", request, 400, "Ops")
             set_clause = ", ".join(f"{k} = :{k}" for k in updates)
             updates["updated_at"] = "NOW()"
-            params["tid"] = tid
+            params["tid"] = pid
             row = conn.execute(
                 _sa_text(f"UPDATE landowner_contacts SET {set_clause}, updated_at = NOW() WHERE id = :tid RETURNING {_LANDOWNER_COLS}"),
-                {**{k: v for k, v in params.items()}, "tid": tid},
+                {**{k: v for k, v in params.items()}, "tid": pid},
             ).fetchone()
         new_status = payload.get("approach_status") or existing[4]
         _fire_landowner_discord(new_status, existing[1], existing[2], existing[3], payload.get("ask_psf") or float(existing[5]) if existing[5] else None, payload.get("notes"))
         return _row_to_landowner_dict(row)
     except Exception as exc:
         logger.error("[update_landowner] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
 # ── Portfolio ──────────────────────────────────────────────────────────────
@@ -1244,7 +1246,7 @@ def _row_to_portfolio_dict(r):
     }
 
 
-@router.get("/api/portfolio", summary="List LLS portfolio")
+@router.get("/portfolio", summary="List LLS portfolio")
 @limiter.limit("60/minute")
 async def list_portfolio(request: Request):
     try:
@@ -1253,10 +1255,10 @@ async def list_portfolio(request: Request):
         return {"data": [_row_to_portfolio_dict(r) for r in rows]}
     except Exception as exc:
         logger.error("[list_portfolio] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.get("/api/portfolio/summary", summary="LLS portfolio summary stats")
+@router.get("/portfolio/summary", summary="LLS portfolio summary stats")
 @limiter.limit("60/minute")
 async def portfolio_summary(request: Request):
     try:
@@ -1279,13 +1281,13 @@ async def portfolio_summary(request: Request):
         }
     except Exception as exc:
         logger.error("[portfolio_summary] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
 # ── Content / PR / Brand ──────────────────────────────────────────────────
 
 
-@router.post("/api/content/generate", summary="Generate brand content from IntelPackage")
+@router.post("/content/generate", summary="Generate brand content from IntelPackage")
 @limiter.limit("5/hour")
 async def content_generate(request: Request):
     import asyncio
@@ -1298,14 +1300,14 @@ async def content_generate(request: Request):
     deal_type = str(payload.get("deal_type", "compare")).strip().lower()
     job_id = payload.get("job_id")
     if not market or not survey_no:
-        return JSONResponse({"error": "market and survey_no are required"}, status_code=400)
+        return _err_resp("market and survey_no are required", request, 400, "Ops")
     from utils.content_pipeline import ContentPipeline
     pipeline = ContentPipeline()
     result = await asyncio.to_thread(pipeline.run, market=market, survey_no=survey_no, deal_type=deal_type, job_id=job_id)
     return result
 
 
-@router.get("/api/pr/mentions", summary="Brand mentions + competitor launches for PR Studio")
+@router.get("/pr/mentions", summary="Brand mentions + competitor launches for PR Studio")
 @limiter.limit("30/minute")
 async def pr_mentions(days: int = Query(default=7), request: Request = None):
     from utils.brand_monitor import BrandMentionMonitor
@@ -1346,13 +1348,17 @@ def _send_telegram_message(chat_id: int | str, text: str) -> None:
         logger.error("[Telegram] sendMessage failed: %s", exc)
 
 
-@router.post("/api/telegram/webhook", summary="Telegram bot webhook")
+@router.post("/telegram/webhook", summary="Telegram bot webhook")
 async def telegram_webhook(request: Request):
     import asyncio
+    import hmac
     from config.settings import TELEGRAM_WEBHOOK_SECRET as _tg_secret
     secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-    if _tg_secret and secret != _tg_secret:
-        return JSONResponse({"error": "unauthorized"}, status_code=403)
+    if _tg_secret:
+        if not secret or not hmac.compare_digest(secret, _tg_secret):
+            return _err_resp("unauthorized", request, 403, "Ops")
+    else:
+        logger.warning("Telegram webhook running without secret verification — set TELEGRAM_WEBHOOK_SECRET in .env")
     try:
         body = await request.json()
     except Exception:
@@ -1384,7 +1390,7 @@ def process_audit_panel(request: Request):
     return templates.TemplateResponse(request, "process_audit.html", {"process_audit_dir": _Path(__file__).resolve().parent.parent / "templates"})
 
 
-@router.get("/api/process-audit/report", summary="Latest BottleneckReport + ImprovementProposal")
+@router.get("/process-audit/report", summary="Latest BottleneckReport + ImprovementProposal")
 @limiter.limit("30/minute")
 async def process_audit_report(request: Request):
     from agents.log_analyst_agent import LogAnalystAgent
@@ -1408,18 +1414,18 @@ async def process_audit_report(request: Request):
 # ── Shareholder Board ─────────────────────────────────────────────────────
 
 
-@router.post("/api/shareholders/trigger", summary="Trigger quarterly board review")
+@router.post("/shareholders/trigger", summary="Trigger quarterly board review")
 @limiter.limit("5/hour")
 async def trigger_shareholder_review(request: Request):
     from crews.shareholder_review import ShareholderBoardCrew
     try:
         payload = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        return _err_resp("invalid JSON body", request, 400, "Ops")
     quarter = str(payload.get("quarter") or "").strip()
     trigger_reason = str(payload.get("trigger_reason") or "Manual trigger").strip()
     if not quarter:
-        return JSONResponse({"error": "quarter required (e.g. Q2-2026)"}, status_code=400)
+        return _err_resp("quarter required (e.g. Q2-2026)", request, 400, "Ops")
     session_id = str(uuid.uuid4())
     try:
         with _get_sa_engine().connect() as conn:
@@ -1428,7 +1434,7 @@ async def trigger_shareholder_review(request: Request):
                 {"q": quarter},
             ).scalar() or 0
             if active > 0:
-                return JSONResponse({"error": f"A review for {quarter} is already in progress. Wait for it to complete before triggering another."}, status_code=429)
+                return _err_resp(f"A review for {quarter} is already in progress. Wait for it to complete before triggering another.", request, 429, "Ops")
     except Exception:
         pass
     try:
@@ -1438,8 +1444,8 @@ async def trigger_shareholder_review(request: Request):
                 {"id": session_id, "quarter": quarter, "reason": trigger_reason},
             )
     except Exception as exc:
-        logger.warning("[API] POST /api/shareholders/trigger session create failed: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        logger.warning("[API] POST /shareholders/trigger session create failed: %s", exc)
+        return _err_resp(str(exc), request, 500, "Ops")
 
     def _run_and_update():
         try:
@@ -1478,7 +1484,7 @@ async def trigger_shareholder_review(request: Request):
     return JSONResponse({"session_id": session_id, "status": "in_progress", "quarter": quarter, "message": "Quarterly board review triggered. Check /shareholders for results."}, status_code=202)
 
 
-@router.get("/api/shareholders/sessions", summary="List all shareholder sessions")
+@router.get("/shareholders/sessions", summary="List all shareholder sessions")
 @limiter.limit("30/minute")
 async def list_shareholder_sessions(request: Request, session_type: str | None = None, status: str | None = None, quarter: str | None = None):
     try:
@@ -1502,8 +1508,8 @@ async def list_shareholder_sessions(request: Request, session_type: str | None =
             ).fetchall()
         return {"data": [{"id": str(r[0]), "session_type": r[1], "quarter": r[2], "trigger_reason": r[3], "status": r[4], "verdict": r[5], "created_at": r[6].isoformat() if r[6] else None, "completed_at": r[7].isoformat() if r[7] else None} for r in rows]}
     except Exception as exc:
-        logger.warning("[API] GET /api/shareholders/sessions failed: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        logger.warning("[API] GET /shareholders/sessions failed: %s", exc)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
 @router.get("/shareholders", summary="Dashboard Shareholder Room Panel")
@@ -1513,7 +1519,7 @@ async def shareholders_panel(request: Request):
         return templates.TemplateResponse(request, "shareholders.html")
     except Exception as exc:
         logger.error("[shareholders_panel] %s", exc)
-        return JSONResponse({"error": "template not found"}, status_code=500)
+        return _err_resp("template not found", request, 500, "Ops")
 
 
 # ── Optimizer ─────────────────────────────────────────────────────────────
@@ -1526,10 +1532,10 @@ async def optimizer_panel(request: Request):
         return templates.TemplateResponse(request, "optimizer.html")
     except Exception as exc:
         logger.error("[optimizer_panel] %s", exc)
-        return JSONResponse({"error": "template not found"}, status_code=500)
+        return _err_resp("template not found", request, 500, "Ops")
 
 
-@router.get("/api/optimizer/report", summary="Latest optimizer report JSON")
+@router.get("/optimizer/report", summary="Latest optimizer report JSON")
 @limiter.limit("20/hour")
 async def optimizer_report(request: Request):
     try:
@@ -1544,14 +1550,14 @@ async def optimizer_report(request: Request):
 # ── Digest Routes ─────────────────────────────────────────────────────────
 
 
-@router.get("/api/digest/weekly", tags=["Digest"], summary="Weekly intelligence digest")
+@router.get("/digest/weekly", tags=["Digest"], summary="Weekly intelligence digest")
 @limiter.limit("20/hour")
 async def digest_weekly(request: Request, market: str = Query(None)):
     from utils.weekly_digest import WeeklyIntelDigest
     resolved = _resolve_market(market) if market else None
     if market and not resolved:
         digest_runs_total.labels(type="weekly", status="invalid_market").inc()
-        return JSONResponse({"error": f"Unknown market '{market}'. Valid: {sorted(VALID_MARKETS_DIGEST)}"}, status_code=404)
+        return _err_resp(f"Unknown market '{market}'. Valid: {sorted(VALID_MARKETS_DIGEST)}", request, 404, "Ops")
     digest = WeeklyIntelDigest()
     if resolved:
         result = digest.build(resolved)
@@ -1562,14 +1568,14 @@ async def digest_weekly(request: Request, market: str = Query(None)):
     return {"results": [{k: v for k, v in r.__dict__.items()} for r in results]}
 
 
-@router.get("/api/digest/monthly", tags=["Digest"], summary="Monthly intelligence digest")
+@router.get("/digest/monthly", tags=["Digest"], summary="Monthly intelligence digest")
 @limiter.limit("20/hour")
 async def digest_monthly(request: Request, market: str = Query(None)):
     from utils.monthly_digest import MonthlyIntelDigest
     resolved = _resolve_market(market) if market else None
     if market and not resolved:
         digest_runs_total.labels(type="monthly", status="invalid_market").inc()
-        return JSONResponse({"error": f"Unknown market '{market}'. Valid: {sorted(VALID_MARKETS_DIGEST)}"}, status_code=404)
+        return _err_resp(f"Unknown market '{market}'. Valid: {sorted(VALID_MARKETS_DIGEST)}", request, 404, "Ops")
     digest = MonthlyIntelDigest()
     if resolved:
         result = digest.build(resolved)
@@ -1580,11 +1586,11 @@ async def digest_monthly(request: Request, market: str = Query(None)):
     return {"results": [{k: v for k, v in r.__dict__.items()} for r in results]}
 
 
-@router.post("/api/digest/weekly/send", tags=["Digest"], summary="Send weekly digest to Discord now")
+@router.post("/digest/weekly/send", tags=["Digest"], summary="Send weekly digest to Discord now")
 @limiter.limit("1/hour")
 async def digest_weekly_send(request: Request):
     if not _is_run_api_authorized(request):
-        return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return _err_resp("unauthorized", request, 401, "Ops")
     from utils.weekly_digest import WeeklyIntelDigest
     from utils.discord_notifier import send_weekly_digest
     digest = WeeklyIntelDigest()
@@ -1594,11 +1600,11 @@ async def digest_weekly_send(request: Request):
     return {"status": "sent", "markets": len(results)}
 
 
-@router.post("/api/digest/monthly/send", tags=["Digest"], summary="Send monthly digest to Discord now")
+@router.post("/digest/monthly/send", tags=["Digest"], summary="Send monthly digest to Discord now")
 @limiter.limit("1/hour")
 async def digest_monthly_send(request: Request):
     if not _is_run_api_authorized(request):
-        return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return _err_resp("unauthorized", request, 401, "Ops")
     from utils.monthly_digest import MonthlyIntelDigest
     from utils.discord_notifier import send_monthly_digest
     digest = MonthlyIntelDigest()
@@ -1693,7 +1699,7 @@ def _compute_v2_readiness(conn) -> V2ReadinessResponse:
     )
 
 
-@router.get("/api/ops/v2-readiness", response_model=V2ReadinessResponse, summary="V2.0 readiness check")
+@router.get("/ops/v2-readiness", response_model=V2ReadinessResponse, summary="V2.0 readiness check")
 @limiter.limit("60/hour")
 async def v2_readiness(request: Request):
     try:
@@ -1701,14 +1707,14 @@ async def v2_readiness(request: Request):
             return _compute_v2_readiness(conn)
     except Exception as exc:
         logger.error("[v2_readiness] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
-@router.post("/api/ops/v2-declare", response_model=V2DeclareResponse, summary="Declare V2.0")
+@router.post("/ops/v2-declare", response_model=V2DeclareResponse, summary="Declare V2.0")
 @limiter.limit("10/hour")
 async def v2_declare(request: Request):
     if not _is_run_api_authorized(request):
-        return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return _err_resp("unauthorized", request, 401, "Ops")
     try:
         with _get_sa_engine().begin() as conn:
             existing = conn.execute(
@@ -1719,7 +1725,7 @@ async def v2_declare(request: Request):
                 return V2DeclareResponse(declared=True, date=existing[0].isoformat() if existing[0] else None)
             readiness = _compute_v2_readiness(conn)
             if not readiness.v2_ready:
-                return JSONResponse({"error": "V2 criteria not yet met", "readiness": readiness.model_dump()}, status_code=400)
+                return JSONResponse({"error": "V2 criteria not yet met", "code": "PRECONDITION_FAILED", "readiness": readiness.model_dump()}, status_code=400)
             now_iso = datetime.now(timezone.utc).isoformat()
             conn.execute(
                 _sa_text("INSERT INTO agent_memories (agent_id, market, fact, confidence, created_at) VALUES ('system', 'system', :fact, 1.0, NOW()) ON CONFLICT (agent_id, market, fact) DO NOTHING"),
@@ -1730,7 +1736,7 @@ async def v2_declare(request: Request):
             return V2DeclareResponse(declared=True, date=now_iso)
     except Exception as exc:
         logger.error("[v2_declare] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
 
 
 @router.get("/ops/v2", response_class=HTMLResponse, summary="V2.0 Operations Readiness panel")
@@ -1739,7 +1745,133 @@ async def v2_panel(request: Request):
         return templates.TemplateResponse(request, "v2_readiness.html")
     except Exception as exc:
         logger.error("[v2_panel] %s", exc)
-        return JSONResponse({"error": "template not found"}, status_code=500)
+        return _err_resp("template not found", request, 500, "Ops")
+
+
+# ── SLO Endpoint (GATE-105) ────────────────────────────────────────────────
+
+
+class SLOResponse(BaseModel):
+    scheduler_slo: dict
+    board_room_slo: dict
+    as_of: str
+
+
+@router.get("/ops/slo", summary="SLO status: scheduler + board room")
+@limiter.limit("30/minute")
+async def slo(request: Request):
+    try:
+        with _get_sa_engine().connect() as conn:
+            # Scheduler SLO: success_rate >= 0.95 over 7d rolling
+            rate_row = conn.execute(
+                _sa_text("""
+                    SELECT COUNT(*) AS total,
+                           SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successes
+                    FROM agent_runs WHERE created_at > NOW() - INTERVAL '7 days'
+                """)
+            ).fetchone()
+            total_runs = rate_row[0] if rate_row else 0
+            successes = rate_row[1] if rate_row else 0
+            current_rate = round(successes / total_runs, 4) if total_runs > 0 else 0.0
+            scheduler_slo = {
+                "target": 0.95,
+                "current": current_rate,
+                "status": "MET" if current_rate >= 0.95 else "BREACHED",
+            }
+            # Board Room SLO: p95 response < 90s over 7d rolling
+            p95_row = conn.execute(
+                _sa_text("""
+                    SELECT response_time_s FROM board_sessions
+                    WHERE completed_at IS NOT NULL AND created_at > NOW() - INTERVAL '7 days'
+                    ORDER BY response_time_s ASC
+                """)
+            ).fetchall()
+            p95_values = [float(r[0]) for r in p95_row if r[0] is not None]
+            p95_val = None
+            if p95_values:
+                n = len(p95_values)
+                idx = max(0, min(int(n * 0.95), n - 1))
+                p95_val = round(p95_values[idx], 2)
+            board_room_slo = {
+                "target_s": 90,
+                "p95_s": p95_val,
+                "status": "MET" if p95_val is not None and p95_val < 90 else ("BREACHED" if p95_val is not None else "NO_DATA"),
+            }
+        slo_data = {"scheduler_slo": scheduler_slo, "board_room_slo": board_room_slo, "as_of": datetime.now(timezone.utc).isoformat()}
+        etag = compute_etag(slo_data)
+        _check = check_etag(request, etag)
+        if _check:
+            return _check
+        return JSONResponse(content=slo_data, headers={"ETag": f'"{etag}"'})
+    except Exception as exc:
+        logger.error("[slo] %s", exc)
+        return _err_resp(str(exc), request, 500, "Ops")
+
+
+# ── Failed Records (GATE-108 dead letter queue) ─────────────────────────────
+
+
+@router.get("/ops/failed-records", summary="Dead letter queue for failed ingest records")
+@limiter.limit("30/minute")
+async def failed_records(request: Request, limit: int = Query(default=50, ge=1, le=200)):
+    try:
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text("""
+                    SELECT id, entity_type, source_id, error_text, plugin_id, retry_count, failed_at
+                    FROM ingest_failed_records
+                    ORDER BY failed_at DESC
+                    LIMIT :lim
+                """),
+                {"lim": limit},
+            ).fetchall()
+        return {
+            "records": [
+                {
+                    "id": str(r[0]), "entity_type": r[1], "source_id": r[2],
+                    "error": (r[3][:500] + "...") if r[3] and len(r[3]) > 500 else r[3],
+                    "plugin_id": r[4], "retry_count": r[5],
+                    "failed_at": r[6].isoformat() if r[6] else None,
+                }
+                for r in rows
+            ],
+            "count": len(rows),
+        }
+    except Exception:
+        return {"records": [], "count": 0}
+
+
+# ── API Audit Log (GATE-107) ────────────────────────────────────────────────
+
+
+@router.get("/audit/log", summary="API audit log (admin only)")
+@limiter.limit("30/minute")
+async def audit_log(request: Request, limit: int = Query(default=50, ge=1, le=200)):
+    try:
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text("""
+                    SELECT id, request_id, path, method, role, status_code, duration_ms, created_at
+                    FROM api_audit_log
+                    ORDER BY created_at DESC
+                    LIMIT :lim
+                """),
+                {"lim": limit},
+            ).fetchall()
+        return {
+            "entries": [
+                {
+                    "id": str(r[0]), "request_id": r[1], "path": r[2],
+                    "method": r[3], "role": r[4], "status_code": r[5],
+                    "duration_ms": r[6],
+                    "created_at": r[7].isoformat() if r[7] else None,
+                }
+                for r in rows
+            ],
+            "count": len(rows),
+        }
+    except Exception:
+        return {"entries": [], "count": 0}
 
 
 # ── Kill Criteria Checkpoint (GATE-102) ─────────────────────────────────────
@@ -1775,7 +1907,7 @@ class KillCriteriaResponse(BaseModel):
 
 
 @router.get(
-    "/api/ops/kill-criteria",
+    "/ops/kill-criteria",
     response_model=KillCriteriaResponse,
     summary="Automated kill-criteria audit (deed throughput, corridor accuracy, decision journal)",
 )
@@ -1810,7 +1942,100 @@ async def kill_criteria(
             as_of=datetime.now(timezone.utc).isoformat(),
         )
     except ValueError as exc:
-        return JSONResponse({"error": f"Invalid as_of format (use YYYY-MM-DD): {exc}"}, status_code=400)
+        return _err_resp(f"Invalid as_of format (use YYYY-MM-DD): {exc}", request, 400, "Ops")
     except Exception as exc:
         logger.error("[kill_criteria] %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
+        return _err_resp(str(exc), request, 500, "Ops")
+
+
+# ── Prediction Ledger (GATE-111, T-1242) ─────────────────────────────────────
+
+
+class ModuleBreakdownEntry(BaseModel):
+    hit: int = 0
+    miss: int = 0
+
+
+class LedgerResponse(BaseModel):
+    total_claims: int
+    pending: int
+    hit: int
+    miss: int
+    partial: int
+    unverifiable: int
+    hit_rate: float
+    markets: list[str]
+    module_breakdown: dict[str, ModuleBreakdownEntry]
+    as_of: str
+
+
+@router.get(
+    "/ops/ledger",
+    response_model=LedgerResponse,
+    summary="Prediction ledger verdict breakdown across all modules and markets",
+    description="Returns aggregated hit/miss/pending counts by verdict and by source module. "
+    "hit_rate = hits / (hits + misses). Read-only, readable by any authenticated role.",
+)
+@limiter.limit("60/minute")
+async def ops_ledger(request: Request):
+    try:
+        with _get_sa_engine().connect() as conn:
+            verdict_counts = conn.execute(
+                _sa_text("""
+                    SELECT COALESCE(verdict, 'pending') AS v, COUNT(*) AS cnt
+                    FROM prediction_ledger
+                    GROUP BY v
+                """)
+            ).fetchall()
+            markets = conn.execute(
+                _sa_text("""
+                    SELECT DISTINCT market FROM prediction_ledger
+                    WHERE market IS NOT NULL ORDER BY market
+                """)
+            ).fetchall()
+            module_rows = conn.execute(
+                _sa_text("""
+                    SELECT source_module, verdict, COUNT(*) AS cnt
+                    FROM prediction_ledger
+                    GROUP BY source_module, verdict
+                """)
+            ).fetchall()
+
+        counts: dict[str, int] = {"pending": 0, "hit": 0, "miss": 0, "partial": 0, "unverifiable": 0}
+        for r in verdict_counts:
+            key = str(r[0])
+            if key in counts:
+                counts[key] = int(r[1])
+
+        total = sum(counts.values())
+        hit_rate = counts["hit"] / max(counts["hit"] + counts["miss"], 1)
+
+        module_bd: dict[str, dict[str, int]] = {}
+        for r in module_rows:
+            mod = str(r[0])
+            v = str(r[1]) if r[1] else "pending"
+            if mod not in module_bd:
+                module_bd[mod] = {"hit": 0, "miss": 0}
+            if v in ("hit", "miss"):
+                module_bd[mod][v] += int(r[2])
+
+        data = LedgerResponse(
+            total_claims=total,
+            pending=counts["pending"],
+            hit=counts["hit"],
+            miss=counts["miss"],
+            partial=counts["partial"],
+            unverifiable=counts["unverifiable"],
+            hit_rate=round(hit_rate, 4),
+            markets=[str(r[0]) for r in markets],
+            module_breakdown={k: ModuleBreakdownEntry(**v) for k, v in module_bd.items()},
+            as_of=datetime.now(timezone.utc).isoformat(),
+        )
+        etag = compute_etag(data.model_dump())
+        _check = check_etag(request, etag)
+        if _check:
+            return _check
+        return JSONResponse(content=data.model_dump(), headers={"ETag": f'"{etag}"'})
+    except Exception as exc:
+        logger.error("[ops_ledger] %s", exc)
+        return _err_resp(str(exc), request, 500, "Ops")

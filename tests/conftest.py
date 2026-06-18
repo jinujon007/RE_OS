@@ -198,3 +198,140 @@ except ImportError:
     sys.modules["slowapi"] = _slowapi
     sys.modules["slowapi.util"] = _slowapi_util
     sys.modules["slowapi.errors"] = _slowapi_errors
+
+# ── Integration test fixture: ephemeral PostGIS ───────────────────────────
+import os as _os
+import socket as _socket
+import subprocess as _subprocess
+import time as _time
+from urllib.parse import urlparse as _urlparse
+from uuid import uuid4 as _uuid4
+
+import pytest
+from loguru import logger as _logger
+from sqlalchemy import create_engine as _create_engine
+
+
+def _docker_available() -> bool:
+    """Return True if the docker CLI is reachable."""
+    try:
+        r = _subprocess.run(["docker", "info"], capture_output=True, timeout=10)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _port_open(host: str, port: int, timeout: float = 2.0) -> bool:
+    """Check whether a TCP port is accepting connections."""
+    try:
+        with _socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _pg_ready_socket(host: str, port: int) -> bool:
+    """Check PostgreSQL readiness via socket (works without pg_isready CLI)."""
+    return _port_open(host, port)
+
+
+@pytest.fixture(scope="session")
+def live_engine():
+    """Spin up ephemeral PostGIS for integration tests.
+
+    If ``TEST_DATABASE_URL`` is set (CI mode), use the pre-existing DB.
+    Otherwise, start a throw-away postgis/postgis:15-3.3 Docker container,
+    run Alembic migrations, yield a connected Engine, then tear down.
+
+    **Side effects** (intentional):
+    - Sets ``os.environ["DATABASE_URL"]`` and ``config.settings.DATABASE_URL``
+    - Clears engine singletons in ``utils.db``, ``utils.db_organizer``,
+      and ``utils.agent_memory`` so all ``get_engine()`` callers use the
+      test DB.
+
+    **Container lifecycle safety:**
+    - Randomized suffix prevents name collisions in parallel CI runners.
+    - Socket-level readiness check (no ``pg_isready`` CLI dependency).
+    - Alembic stderr captured on failure for debugging.
+    - Docker teardown runs even if migrations fail (try/finally via yield).
+    - ``docker_available`` guard skips gracefully when Docker is absent.
+    """
+    url = _os.environ.get("TEST_DATABASE_URL")
+    _own_container = False
+    container_name = f"re_os_test_db_{_uuid4().hex[:8]}"
+    host = "localhost"
+    port = 5433
+
+    if not url:
+        if not _docker_available():
+            pytest.skip("Docker not available — cannot start ephemeral PostGIS")
+
+        _logger.info("Starting ephemeral PostGIS container: {}", container_name)
+        _subprocess.run(
+            [
+                "docker", "run", "-d", "--name", container_name,
+                "-e", "POSTGRES_PASSWORD=testpass",
+                "-p", f"{port}:5432",
+                "postgis/postgis:15-3.3",
+            ],
+            check=True, capture_output=True,
+        )
+
+        for attempt in range(30):
+            if _pg_ready_socket(host, port):
+                break
+            _time.sleep(1)
+        else:
+            # Last-ditch: try pg_isready in case socket check was wrong
+            r = _subprocess.run(
+                ["pg_isready", "-h", host, "-p", str(port), "-U", "postgres"],
+                capture_output=True, text=True,
+            )
+            if r.returncode != 0:
+                _subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+                raise RuntimeError(
+                    f"Postgres container {container_name} did not become ready in 30s. "
+                    f"pg_isready: {r.stderr.strip()}"
+                )
+
+        url = f"postgresql://postgres:testpass@{host}:{port}/postgres"
+        _own_container = True
+
+    # ── Force all DB consumers to use the test URL ────────────────────────
+    _os.environ["DATABASE_URL"] = url
+    import config.settings as _settings
+    _settings.DATABASE_URL = url
+
+    _logger.debug("Integration test DB URL: {}", url)
+
+    # Clear ALL known engine singletons
+    import utils.db as _udb
+    _udb._engine = None
+    import utils.db_organizer as _udbo
+    _udbo._SHARED_ENGINE = None
+    import utils.agent_memory as _uam
+    _uam._engine = None
+
+    engine = _create_engine(url)
+
+    if _own_container:
+        _logger.info("Running Alembic migrations on test DB")
+        result = _subprocess.run(
+            ["alembic", "upgrade", "head"],
+            capture_output=True, text=True,
+            env={**_os.environ, "DATABASE_URL": url, "DB_PASSWORD": "testpass"},
+        )
+        if result.returncode != 0:
+            _subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+            raise RuntimeError(
+                f"Alembic upgrade failed:\n"
+                f"stdout: {result.stdout[-2000:]}\n"
+                f"stderr: {result.stderr[-2000:]}"
+            )
+
+    yield engine
+
+    engine.dispose()
+    if _own_container:
+        _subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+        _logger.info("Ephemeral PostGIS container removed: {}", container_name)

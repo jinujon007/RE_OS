@@ -3,9 +3,9 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from starlette.testclient import TestClient
-from dashboard.app_fastapi import app, _pulse_cache, _pulse_cache_lock
+from dashboard.app_fastapi import app
+from dashboard.state import _pulse_cache, _pulse_cache_lock, _PULSE_CACHE_TTL
 
-pytestmark = pytest.mark.unit
 
 client = TestClient(app)
 
@@ -72,7 +72,8 @@ class TestCompetitivePulseEndpoint:
         assert data["days_window"] == 30
 
     def test_competitive_pulse_cache_hit_returns_cached(self):
-        from dashboard.app_fastapi import _PULSE_CACHE_TTL
+        test_data = {"new_launches": [], "psf_movers": [], "absorption_leaders": [], "generated_at": "2026-06-06T12:00:00", "market_filter": "Yelahanka", "days_window": 7}
+
         import time as _time
 
         test_data = {

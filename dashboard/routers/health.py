@@ -18,7 +18,7 @@ router = APIRouter(tags=["Health"])
 
 
 @router.get(
-    "/api/health",
+    "/health",
     summary="Full health check",
 )
 @limiter.limit("60/minute")
@@ -204,18 +204,28 @@ async def health(request: Request):
         services["llm"] = {
             "configured": False, "heavy_providers": 0, "circuit_states": {},
         }
+    try:
+        engine = _get_sa_engine()
+        pool = engine.pool
+        services["db_pool"] = {
+            "size": pool.size(),
+            "checked_out": pool.checkedout(),
+            "overflow": pool.overflow(),
+        }
+    except Exception:
+        services["db_pool"] = {"size": 0, "checked_out": 0, "overflow": 0}
     return services
 
 
 @router.get(
-    "/api/health/live",
+    "/health/live",
     summary="Lightweight liveness probe (no deps)",
 )
 def health_liveness():
     return {"agents": "ok", "postgres": "ok", "redis": "ok", "ollama": "warn", "chroma": "error"}
 
 
-@router.get("/api/alert/test", summary="Send test alert")
+@router.get("/alert/test", summary="Send test alert")
 @limiter.limit("5/hour")
 async def test_alert(request: Request):
     from utils.notifier import send_alert

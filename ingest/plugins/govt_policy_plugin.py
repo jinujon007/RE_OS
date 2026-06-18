@@ -430,7 +430,7 @@ class GovtPolicyPlugin(DataPlugin):
                     "[GovtPolicyPlugin] LLM extract failed for {}: {}", headline, exc
                 )
                 # Fallback: basic classification
-                evt = self._basic_classify(headline, str(published_at), source_url)
+                evt = self._basic_classify(headline, str(published_at), source_url)  # type: ignore[assignment]
                 if evt:
                     records.append(self._event_to_record(evt))
 
@@ -471,7 +471,7 @@ class GovtPolicyPlugin(DataPlugin):
                 raw = raw.split("\n", 1)[-1]
                 raw = raw.rsplit("```", 1)[0]
             result = json.loads(raw)
-            return result
+            return result  # type: ignore[no-any-return]
         except Exception:
             return None
 

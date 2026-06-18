@@ -70,3 +70,32 @@ def test_finance_head_context_contains_insufficient_data_message_on_failure():
     )
     assert "Insufficient data" in text
     assert "static estimate" in text
+
+
+# ── T-1205: True IRR in Finance Head Board Room context ──────────────────────
+
+
+def test_finance_head_context_contains_irr_npv():
+    from utils.irr_model import calc_irr_npv
+
+    cf = [-80000000] + [0] * 12 + [3400000] * 36
+    irr = calc_irr_npv(cf, caller="fixture")
+    assert irr is not None
+    text = (
+        f"IRR (NPV-solving, monthly cash flows): {irr:.1f}% | "
+        f"ROI (annualized simple): 25.0% | Horizon: 54mo"
+    )
+    assert "IRR (NPV-solving" in text
+    assert "ROI (annualized simple)" in text
+
+
+def test_finance_head_context_not_contains_irr_estimate():
+    from utils.irr_model import CashFlowSummary
+
+    s = CashFlowSummary(peak_negative_cr=0.0, breakeven_month=None, roi_annualized_pct=0.0)
+    assert not hasattr(s, "irr_estimate_pct")
+    text = (
+        "IRR (NPV-solving, monthly cash flows): 18.5% | "
+        "ROI (annualized simple): 25.0% | Horizon: 54mo"
+    )
+    assert "irr_estimate" not in text

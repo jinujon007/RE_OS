@@ -120,7 +120,7 @@ else:
 # 7. Dashboard routes check
 print("\n[7] DASHBOARD BACKEND ROUTES")
 try:
-    from dashboard.app import app
+    from dashboard.app import app  # type: ignore[import-not-found]
 
     rules = sorted(str(r) for r in app.url_map.iter_rules())
     print(f"  Flask app routes ({len(rules)}):")

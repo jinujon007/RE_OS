@@ -1,0 +1,78 @@
+{
+  "title": "Intelligence Quality",
+  "uid": "intelligence_quality",
+  "description": "Prediction ledger hit rate, Board Room latency, PSF forecast MAE — intelligence quality monitoring",
+  "version": 1,
+  "timezone": "utc",
+  "editable": true,
+  "refresh": "60s",
+  "tags": ["re_os", "intelligence", "quality", "board-room"],
+  "panels": [
+    {
+      "title": "Board Room Response Time (p50/p95/p99)",
+      "type": "timeseries",
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(board_session_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(board_session_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(board_session_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+    },
+    {
+      "title": "Board Room Latency Heat (p95 over time)",
+      "type": "stat",
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(board_session_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{"value": null, "color": "green"}, {"value": 60, "color": "orange"}, {"value": 90, "color": "red"}] } }
+      },
+      "gridPos": { "h": 8, "w": 4, "x": 12, "y": 0 }
+    },
+    {
+      "title": "DB Query p50/p99",
+      "type": "timeseries",
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(db_query_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(db_query_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+    },
+    {
+      "title": "Scraper Total Runs (24h)",
+      "type": "stat",
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(scraper_runs_total[24h]))",
+          "legendFormat": "Runs/24h"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 4, "x": 12, "y": 8 }
+    }
+  ],
+  "schemaVersion": 38
+}

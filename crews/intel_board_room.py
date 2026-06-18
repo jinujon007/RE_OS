@@ -312,7 +312,7 @@ def _get_competitive_context(market: str) -> str:
         with ThreadPoolExecutor(max_workers=1) as pool:
             fut = pool.submit(_fetch)
             try:
-                return fut.result(timeout=3.0)
+                return fut.result(timeout=3.0)  # type: ignore[no-any-return]
             except _PoolTimeout:
                 logger.warning(
                     "[BoardRoomV2] competitive context timed out for {}", market

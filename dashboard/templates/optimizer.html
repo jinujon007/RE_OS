@@ -99,7 +99,7 @@ tr:hover td { background: #1a2540; }
 async function loadReport() {
   try {
     document.getElementById('loading-summary').classList.add('active');
-    const resp = await fetch('/api/optimizer/report');
+    const resp = await fetch('/api/v1/optimizer/report');
     const data = await resp.json();
 
     document.getElementById('loading-summary').classList.remove('active');

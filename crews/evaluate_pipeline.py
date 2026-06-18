@@ -558,7 +558,7 @@ def _run_pipeline(
                 job.investor_brief = brief
                 job.shareholder_round = shareholder_round
                 job.deal_id = deal_id
-            _db_update_job(job)
+                _db_update_job(job)
 
         elapsed = _time_mod.time() - t0
         logger.info(
@@ -589,7 +589,8 @@ def _update_job(
                 job.error = error
             if status in ("complete", "failed"):
                 job.completed_at = datetime.now(timezone.utc).isoformat()
-        _db_update_job(job)
+        if job:
+            _db_update_job(job)
 
 
 def _elapsed_since(job_id: str) -> float:

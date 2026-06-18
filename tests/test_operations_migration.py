@@ -1,4 +1,4 @@
-"""Unit tests for Sprint 58 migration 0029_operations (T-993)."""
+"""Unit tests for Sprint 58 migration 0029b_operations (T-993)."""
 
 import pytest
 
@@ -11,7 +11,7 @@ def _load_migration():
 
     _spec = importlib.util.spec_from_file_location(
         "migration_0029",
-        "alembic/versions/0029_operations.py",
+        "alembic/versions/0029b_operations.py",
     )
     _mod = importlib.util.module_from_spec(_spec)
     _sys.modules["migration_0029"] = _mod
@@ -30,7 +30,7 @@ def test_projects_table_created():
 
 
 def test_deal_velocity_table_created():
-    upgrade_src = open("alembic/versions/0029_operations.py").read()
+    upgrade_src = open("alembic/versions/0029b_operations.py", encoding="utf-8").read()
     assert "deal_velocity" in upgrade_src
     assert "project_tasks" in upgrade_src
     assert "projects" in upgrade_src

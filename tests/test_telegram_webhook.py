@@ -29,7 +29,7 @@ def test_telegram_webhook_rejects_invalid_secret():
     client = _client()
     with patch.object(_cfg, "TELEGRAM_WEBHOOK_SECRET", "test_secret_123"):
         resp = client.post(
-            "/api/telegram/webhook",
+            "/api/v1/telegram/webhook",
             json=_make_update(),
             headers={"X-Telegram-Bot-Api-Secret-Token": "wrong_secret"},
         )
@@ -42,10 +42,10 @@ def test_telegram_webhook_validates_secret():
     client = _client()
     with (
         patch.object(_cfg, "TELEGRAM_WEBHOOK_SECRET", "test_secret_123"),
-        patch("dashboard.app_fastapi._send_telegram_message"),
+        patch("dashboard.routers.ops._send_telegram_message"),
     ):
         resp = client.post(
-            "/api/telegram/webhook",
+            "/api/v1/telegram/webhook",
             json=_make_update(),
             headers={"X-Telegram-Bot-Api-Secret-Token": "test_secret_123"},
         )
@@ -68,10 +68,10 @@ def test_telegram_webhook_parses_message():
         patch(
             "interface.telegram_bot.parse_message", return_value=low_conf
         ) as mock_parse,
-        patch("dashboard.app_fastapi._send_telegram_message"),
+        patch("dashboard.routers.ops._send_telegram_message"),
     ):
         resp = client.post(
-            "/api/telegram/webhook",
+            "/api/v1/telegram/webhook",
             json=_make_update("hello"),
             headers={"X-Telegram-Bot-Api-Secret-Token": "test_secret_123"},
         )
@@ -96,10 +96,10 @@ def test_telegram_webhook_dispatches_on_high_confidence():
             "interface.telegram_bot.dispatch_evaluation",
             return_value={"status": "running", "job_id": "job-abc"},
         ) as mock_dispatch,
-        patch("dashboard.app_fastapi._send_telegram_message") as mock_send,
+        patch("dashboard.routers.ops._send_telegram_message") as mock_send,
     ):
         resp = client.post(
-            "/api/telegram/webhook",
+            "/api/v1/telegram/webhook",
             json=_make_update("Yelahanka 2 acres 4500 PSF JD"),
             headers={"X-Telegram-Bot-Api-Secret-Token": "test_secret_123"},
         )
@@ -108,3 +108,20 @@ def test_telegram_webhook_dispatches_on_high_confidence():
     mock_send.assert_called_once()
     reply_text = mock_send.call_args[0][1]
     assert "Yelahanka" in reply_text
+
+
+def test_telegram_webhook_warns_when_secret_not_set():
+    """No secret configured → 200 + logger warning."""
+    client = _client()
+    with (
+        patch.object(_cfg, "TELEGRAM_WEBHOOK_SECRET", ""),
+        patch("dashboard.routers.ops._send_telegram_message"),
+        patch("dashboard.routers.ops.logger.warning") as mock_warn,
+    ):
+        resp = client.post(
+            "/api/v1/telegram/webhook",
+            json=_make_update("Yelahanka 2 acres 4500 PSF JD"),
+        )
+    assert resp.status_code == 200
+    mock_warn.assert_called_once()
+    assert "without secret verification" in mock_warn.call_args[0][0]

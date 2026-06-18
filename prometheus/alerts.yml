@@ -1,0 +1,77 @@
+# RE_OS — Prometheus Alerting Rules
+# All expressions use ONLY metrics registered in config/metrics.py.
+# See docs/operations.md for SLO definitions and runbook references.
+groups:
+  - name: re_os_alerts
+    interval: 30s
+    rules:
+      - alert: SchedulerJobHighFailureRate
+        expr: |
+          (1 - (sum(rate(scraper_runs_total{status="success"}[24h])) / max(sum(rate(scraper_runs_total[24h])), 1)))
+          > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: engineering
+        annotations:
+          summary: "Scheduler job failure rate above 5%"
+          description: "Scraper job failure rate is {{ $value | humanizePercentage }} over the last 24 hours."
+          runbook_url: "https://github.com/jinujon007/RE_OS/wiki/Runbooks#scheduler-failure"
+          action: "Check scheduler container: `docker compose logs scheduler --tail 100`. Review agent_runs table for failed jobs."
+
+      - alert: BoardRoomHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(board_session_duration_seconds_bucket[5m])) by (le)
+          ) > 90
+        for: 2m
+        labels:
+          severity: warning
+          team: engineering
+        annotations:
+          summary: "Board Room p95 response time above 90s"
+          description: "Board Room p95 response time is {{ $value }}s over last 5 minutes. SLO target: < 90s."
+          runbook_url: "https://github.com/jinujon007/RE_OS/wiki/Runbooks#board-room-latency"
+          action: "Check LLM provider health at /api/health/llm. Review circuit breaker state."
+
+      - alert: PipelineStalled
+        expr: |
+          absent(pipeline_runs_total) or rate(pipeline_runs_total[26h]) == 0
+        for: 1h
+        labels:
+          severity: critical
+          team: engineering
+        annotations:
+          summary: "No pipeline runs in 26+ hours"
+          description: "pipeline_runs_total has not increased in the last 26 hours. The pipeline may be stalled."
+          runbook_url: "https://github.com/jinujon007/RE_OS/wiki/Runbooks#pipeline-stall"
+          action: "Check scheduler container: `docker compose ps scheduler`. Restart if unhealthy. Review scheduler logs."
+
+      - alert: SlowDatabaseQueries
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(db_query_duration_seconds_bucket[5m])) by (le)
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+          team: engineering
+        annotations:
+          summary: "Database p99 query latency above 5s"
+          description: "Database query p99 latency is {{ $value }}s over last 5 minutes. SLO target: < 5s."
+          runbook_url: "https://github.com/jinujon007/RE_OS/wiki/Runbooks#slow-queries"
+          action: "Check DB connections. Consider index tuning or pool sizing."
+
+      - alert: ScraperSuccessRateBelowThreshold
+        expr: |
+          (sum(rate(scraper_runs_total{status="success"}[24h])) / max(sum(rate(scraper_runs_total[24h])), 1))
+          < 0.7
+        for: 10m
+        labels:
+          severity: warning
+          team: data
+        annotations:
+          summary: "Scraper success rate below 70% over 24h"
+          description: "Scraper success rate is {{ $value | humanizePercentage }}. SLO target: >= 70%."
+          runbook_url: "https://github.com/jinujon007/RE_OS/wiki/Runbooks#scraper-degradation"
+          action: "Check scraper health at /api/scraper/reliability. Review individual scraper logs."

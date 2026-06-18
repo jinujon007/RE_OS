@@ -16,7 +16,8 @@ __all__ = ["TokenUsageTracker", "record", "get_budget_summary", "compute_task_ha
 
 def _get_budget_for_agent(agent_name: str) -> int:
     """Get token budget for an agent, defaulting to 2000 if unknown."""
-    return TOKEN_BUDGETS.get(agent_name, 2000)
+    val = TOKEN_BUDGETS.get(agent_name, 2000)
+    return int(val)
 
 
 def record(agent_name: str, tokens_used: int, model: str, run_id: str) -> str:

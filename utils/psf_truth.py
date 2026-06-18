@@ -60,7 +60,7 @@ class SpreadResult:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return SpreadResponse(
+        return SpreadResponse(  # type: ignore[no-any-return]
             registered_median_psf=self.registered_median_psf,
             ask_median_psf=self.ask_median_psf,
             spread_pct=self.spread_pct,
