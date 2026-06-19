@@ -21,12 +21,14 @@ from config.scheduler.rera_jobs import run_single_market_rera
 
 from config.scheduler.kaveri_jobs import (
     run_kaveri_deeds_weekly,
+    run_kaveri_weekly_orchestration,
     run_bhoomi_auto_survey,
     _bhoomi_already_ran,
     _mark_bhoomi_ran,
     run_la_notification_scan,
     run_tender_daily_scan,
     run_ledger_check_weekly,
+    run_accuracy_degradation_check,
 )
 
 from config.scheduler.intel_jobs import (
@@ -90,10 +92,12 @@ from config.scheduler.maintenance_jobs import (
 __all__ = [
     "run_single_market_rera",
     "run_kaveri_deeds_weekly",
+    "run_kaveri_weekly_orchestration",
     "run_bhoomi_auto_survey",
     "run_la_notification_scan",
     "run_tender_daily_scan",
     "run_ledger_check_weekly",
+    "run_accuracy_degradation_check",
     "run_intel_embedding_index",
     "run_news_sentiment_scoring",
     "run_market_snapshot",

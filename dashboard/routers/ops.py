@@ -25,6 +25,7 @@ from dashboard.state import (
 )
 from config.metrics import db_query_duration_seconds, digest_runs_total
 from utils.etag import compute_etag, check_etag, add_etag
+from utils.prediction_ledger import compute_accuracy_summary
 
 logger = logging.getLogger("re_os.dashboard")
 
@@ -1888,6 +1889,32 @@ async def slo(request: Request):
         return JSONResponse(content=slo_data, headers={"ETag": f'"{etag}"'})
     except Exception as exc:
         logger.error("[slo] %s", exc)
+        return _err_resp(str(exc), request, 500, "Ops")
+
+
+# ── Prediction Ledger Accuracy (GATE-126) ────────────────────────────────────
+
+
+@router.get("/ops/ledger/accuracy", summary="Prediction accuracy by module over last N weeks")
+@limiter.limit("60/hour")
+async def ledger_accuracy(
+    request: Request,
+    weeks: int = Query(default=12, ge=1, le=52, description="Look-back window in weeks"),
+):
+    try:
+        t0 = time.perf_counter()
+        data = compute_accuracy_summary(weeks=weeks)
+        try:
+            db_query_duration_seconds.labels(query_name="ledger_accuracy").observe(time.perf_counter() - t0)
+        except Exception:
+            pass
+        etag = compute_etag(data)
+        _check = check_etag(request, etag)
+        if _check:
+            return _check
+        return JSONResponse(content=data, headers={"ETag": f'"{etag}"'})
+    except Exception as exc:
+        logger.error("[ledger_accuracy] %s", exc)
         return _err_resp(str(exc), request, 500, "Ops")
 
 

@@ -1,4 +1,11 @@
-"""T-1130 + T-1131 + T-1132: Tests for V2 readiness API + panel."""
+"""T-1130 + T-1131 + T-1132: Tests for V2 readiness API + panel.
+
+Post GATE-124 R1 fixes:
+  - V2R-1: test_v2_panel_returns_200 path fixed → /api/v1/ops/v2
+  - V2R-2: declare tests use empty header (ALLOW_EMPTY=true)
+  - V2R-3: idempotency asserts date1 == date2
+  - SEC-1: per-function TestClient avoids env leakage
+"""
 
 import datetime
 from unittest.mock import MagicMock, patch
@@ -10,7 +17,7 @@ pytestmark = pytest.mark.unit
 from starlette.testclient import TestClient
 from dashboard.app_fastapi import app
 
-client = TestClient(app)
+_module_client = TestClient(app)
 
 
 def _make_mock_fetchone(results):
@@ -46,19 +53,19 @@ def mock_empty_db():
     )
     engine = _make_mock_engine(conn)
 
-    with patch("dashboard.app_fastapi._get_sa_engine", return_value=engine):
+    with patch("dashboard.routers.ops._get_sa_engine", return_value=engine):
         yield
 
 
 def test_v2_readiness_returns_200(mock_empty_db):
     """Endpoint returns 200 with JSON body."""
-    resp = client.get("/api/ops/v2-readiness")
+    resp = _module_client.get("/api/ops/v2-readiness")
     assert resp.status_code == 200
 
 
 def test_v2_readiness_has_v2_ready_key(mock_empty_db):
     """Response contains the v2_ready boolean key."""
-    resp = client.get("/api/ops/v2-readiness")
+    resp = _module_client.get("/api/ops/v2-readiness")
     data = resp.json()
     assert "v2_ready" in data
     assert isinstance(data["v2_ready"], bool)
@@ -76,9 +83,9 @@ def test_v2_readiness_false_when_success_rate_zero():
         ]
     )
     with patch(
-        "dashboard.app_fastapi._get_sa_engine", return_value=_make_mock_engine(conn)
+        "dashboard.routers.ops._get_sa_engine", return_value=_make_mock_engine(conn)
     ):
-        resp = client.get("/api/ops/v2-readiness")
+        resp = _module_client.get("/api/ops/v2-readiness")
         data = resp.json()
         assert data["v2_ready"] is False
         assert data["scheduler_success_rate"] == 0.0
@@ -97,9 +104,9 @@ def test_v2_readiness_true_when_all_conditions_met():
         ]
     )
     with patch(
-        "dashboard.app_fastapi._get_sa_engine", return_value=_make_mock_engine(conn)
+        "dashboard.routers.ops._get_sa_engine", return_value=_make_mock_engine(conn)
     ):
-        resp = client.get("/api/ops/v2-readiness")
+        resp = _module_client.get("/api/ops/v2-readiness")
         data = resp.json()
         assert data["v2_ready"] is True
         assert data["scheduler_days_running"] == 7
@@ -119,9 +126,9 @@ def test_v2_readiness_live_rera_growth_false():
         ]
     )
     with patch(
-        "dashboard.app_fastapi._get_sa_engine", return_value=_make_mock_engine(conn)
+        "dashboard.routers.ops._get_sa_engine", return_value=_make_mock_engine(conn)
     ):
-        resp = client.get("/api/ops/v2-readiness")
+        resp = _module_client.get("/api/ops/v2-readiness")
         data = resp.json()
         assert data["live_rera_growth"] is False
         # v2_ready still True because growth is informational, not a hard gate
@@ -129,19 +136,37 @@ def test_v2_readiness_live_rera_growth_false():
 
 
 def test_v2_panel_returns_200():
-    """GET /ops/v2 returns 200 with HTML."""
-    resp = client.get("/ops/v2")
+    """GET /api/v1/ops/v2 returns 200 with HTML panel.
+
+    CONF-1 (R1): was using /ops/v2 which bypasses the /api/* legacy redirect.
+    The panel route is registered at @router.get("/ops/v2") under the
+    /api/v1 prefix, making the full path /api/v1/ops/v2.
+    """
+    resp = _module_client.get("/api/v1/ops/v2")
     assert resp.status_code == 200
     assert "V2.0" in resp.text
 
 
 # ── POST /api/ops/v2-declare — T-1132 ──
 
-_AUTH = {"X-API-Key": "test-key"}
+# These tests rely on DASHBOARD_API_KEY_ALLOW_EMPTY=true (set in conftest).
+# With ALLOW_EMPTY, sending a key that doesn't match DASHBOARD_API_KEY results
+# in 401. These tests use a fresh TestClient so env changes don't leak.
 
 
-def test_v2_declare_400_when_not_ready():
-    """POST /api/ops/v2-declare returns 400 when readiness criteria not met."""
+@pytest.fixture
+def _no_key_client():
+    """TestClient with no auth headers — relies on ALLOW_EMPTY=true."""
+    with TestClient(app, raise_server_exceptions=False) as c:
+        yield c
+
+
+def test_v2_declare_400_when_not_ready(_no_key_client):
+    """POST /api/v1/ops/v2-declare returns 400 when readiness criteria not met.
+
+    Uses the v1-prefixed path directly (not /api/ops/v2-declare) to avoid
+    a 301 redirect that would convert POST→GET and miss the endpoint.
+    """
     conn = _make_mock_conn(
         [
             None,  # existing declaration check → None
@@ -153,18 +178,18 @@ def test_v2_declare_400_when_not_ready():
         ]
     )
     with patch(
-        "dashboard.app_fastapi._get_sa_engine", return_value=_make_mock_engine(conn)
+        "dashboard.routers.ops._get_sa_engine", return_value=_make_mock_engine(conn)
     ):
         with patch("utils.discord_notifier.send_ops_alert"):
-            resp = client.post("/api/ops/v2-declare", headers=_AUTH)
+            resp = _no_key_client.post("/api/v1/ops/v2-declare")
     assert resp.status_code == 400
     data = resp.json()
     assert data["error"] == "V2 criteria not yet met"
     assert "readiness" in data
 
 
-def test_v2_declare_200_when_ready():
-    """POST /api/ops/v2-declare returns 200 when v2_ready=True."""
+def test_v2_declare_200_when_ready(_no_key_client):
+    """POST /api/v1/ops/v2-declare returns 200 when v2_ready=True."""
     conn = _make_mock_conn(
         [
             None,  # existing declaration check → None
@@ -176,10 +201,10 @@ def test_v2_declare_200_when_ready():
         ]
     )
     with patch(
-        "dashboard.app_fastapi._get_sa_engine", return_value=_make_mock_engine(conn)
+        "dashboard.routers.ops._get_sa_engine", return_value=_make_mock_engine(conn)
     ):
         with patch("utils.discord_notifier.send_ops_alert") as mock_alert:
-            resp = client.post("/api/ops/v2-declare", headers=_AUTH)
+            resp = _no_key_client.post("/api/v1/ops/v2-declare")
     assert resp.status_code == 200
     data = resp.json()
     assert data["declared"] is True
@@ -187,11 +212,19 @@ def test_v2_declare_200_when_ready():
     assert mock_alert.called
 
 
-def test_v2_declare_idempotent():
-    """Second call to POST /api/ops/v2-declare returns same date as first."""
+def test_v2_declare_idempotent(_no_key_client):
+    """Second call to POST /api/v1/ops/v2-declare returns same date as first.
+
+    V2R-3 (R1): was checking both dates are non-None but never asserting
+    they are equal. Now asserts date1 == date2.
+
+    Uses the date returned by the first call as the mock return value for
+    the second call's existing-record check, so the mock chain is consistent
+    with the logical database state.
+    """
     conn = _make_mock_conn(
         [
-            None,  # existing → None
+            None,  # existing → None (first call — fresh declare)
             (7,),
             (10, 9),
             (2,),
@@ -200,25 +233,30 @@ def test_v2_declare_idempotent():
         ]
     )
     with patch(
-        "dashboard.app_fastapi._get_sa_engine", return_value=_make_mock_engine(conn)
+        "dashboard.routers.ops._get_sa_engine", return_value=_make_mock_engine(conn)
     ):
         with patch("utils.discord_notifier.send_ops_alert"):
-            resp1 = client.post("/api/ops/v2-declare", headers=_AUTH)
-    assert resp1.status_code == 200
+            resp1 = _no_key_client.post("/api/v1/ops/v2-declare")
+    assert resp1.status_code == 200, f"First call failed: {resp1.json()}"
     date1 = resp1.json()["date"]
     assert date1 is not None
 
+    # Second call: existing record found — return the same date as the first call
+    date_dt = datetime.datetime.fromisoformat(date1)
     conn2 = _make_mock_conn(
         [
-            (datetime.datetime(2026, 6, 12, 10, 0, 0),),
+            (date_dt,),  # existing = date from first call
         ]
     )
     with patch(
-        "dashboard.app_fastapi._get_sa_engine", return_value=_make_mock_engine(conn2)
+        "dashboard.routers.ops._get_sa_engine", return_value=_make_mock_engine(conn2)
     ):
         with patch("utils.discord_notifier.send_ops_alert"):
-            resp2 = client.post("/api/ops/v2-declare", headers=_AUTH)
+            resp2 = _no_key_client.post("/api/v1/ops/v2-declare")
     assert resp2.status_code == 200
     data2 = resp2.json()
     assert data2["declared"] is True
-    assert data2["date"] is not None
+    assert data2["date"] == date1, (
+        f"Idempotency violation: first call returned {date1}, "
+        f"second call returned {data2['date']}"
+    )

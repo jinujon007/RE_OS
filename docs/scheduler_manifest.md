@@ -10,6 +10,8 @@
 | `la_notification_scan` | Sunday 06:00 | Weekly | Gazette LA notification parser scan |
 | `tender_daily_scan` | 07:00 | Daily | Karnataka eProcurement tender scrape |
 | `ledger_check_weekly` | Monday 06:00 | Weekly | Resolve prediction_ledger pending claims + Discord digest |
+| `kaveri_weekly_orchestration` | Monday 05:00 | Weekly | Kaveri pipeline: Form17 scan → ingest → assembly detection → throughput check → Discord KAVERI_WEEKLY summary (GATE-125) |
+| `accuracy_degradation_check` | Thursday 09:30 | Weekly | Prediction ledger accuracy degradation check — Discord LEDGER_ACCURACY_DEGRADED if hit_rate <40% for 3 weeks (GATE-126) |
 
 ## Intel Jobs (config/scheduler/intel_jobs.py)
 

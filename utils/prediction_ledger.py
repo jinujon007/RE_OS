@@ -6,9 +6,12 @@ and assembly alert writes a row here with a check_date. Weekly job resolves
 verdicts by querying actual data.
 
 Public API:
-    write_prediction_ledger  — insert a claim
-    get_pending_claims       — list claims where verdict IS NULL and check_date <= today
-    resolve_verdicts         — compute actuals & set verdict for all pending claims
+    write_prediction_ledger     — insert a claim
+    get_pending_claims          — list claims where verdict IS NULL and check_date <= today
+    resolve_verdicts            — compute actuals & set verdict for all pending claims
+    compute_accuracy_summary    — per-module hit/miss/partial/unverifiable rates over N weeks
+    build_weekly_digest_discord_message   — weekly summary for Discord
+    build_monthly_digest_discord_message  — monthly module-level breakdown for Discord
 """
 
 from datetime import date
@@ -391,6 +394,110 @@ def _get_market_median_psf(market: str) -> float | None:
         return None
 
 
+def compute_accuracy_summary(weeks: int = 12) -> dict:
+    """Compute prediction accuracy rates by module over the last N weeks.
+
+    Filter uses `date_made` as the time dimension (column exists on all rows).
+    The `resolved_at` column is preferred when available (set by _set_verdict
+    on migration 0068+ databases), but `date_made` is the universal fallback.
+
+    Returns:
+        {
+            "window_weeks": weeks,
+            "overall": {
+                "hit_rate": float, "partial_rate": float,
+                "miss_rate": float, "unverifiable_rate": float,
+                "total_resolved": int, "total_unverifiable": int
+            },
+            "by_module": {
+                module_name: {
+                    "hit_rate": float, "partial_rate": float,
+                    "miss_rate": float, "unverifiable_rate": float,
+                    "total": int, "hits": int, "misses": int,
+                    "partials": int, "unverifiables": int
+                }
+            }
+        }
+
+    Returns zeros/empty if no data (never raises).
+    """
+    weeks = max(weeks, 1)
+    try:
+        with get_engine().connect() as conn:
+            # Prefer resolved_at if column exists; fall back to date_made.
+            # Information_schema check is 1x per call — negligible.
+            has_resolved = conn.execute(
+                text("""
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'prediction_ledger'
+                      AND column_name = 'resolved_at'
+                """),
+            ).fetchone() is not None
+            time_col = "resolved_at" if has_resolved else "date_made"
+
+            rows = conn.execute(
+                text(f"""
+                    SELECT source_module, verdict, COUNT(*) AS cnt
+                    FROM prediction_ledger
+                    WHERE {time_col} >= CURRENT_DATE - (:weeks * INTERVAL '1 week')
+                      AND verdict IS NOT NULL
+                    GROUP BY source_module, verdict
+                    ORDER BY source_module
+                """),
+                {"weeks": weeks},
+            ).fetchall()
+    except Exception as exc:
+        logger.warning("[compute_accuracy_summary] query failed: {}", exc)
+        rows = []
+
+    module_data: dict[str, dict[str, int]] = {}
+    for r in rows:
+        mod = str(r[0])
+        v = str(r[1])
+        if mod not in module_data:
+            module_data[mod] = {"hit": 0, "miss": 0, "partial": 0, "unverifiable": 0}
+        if v in module_data[mod]:
+            module_data[mod][v] += int(r[2])
+
+    total_hit = sum(m["hit"] for m in module_data.values())
+    total_miss = sum(m["miss"] for m in module_data.values())
+    total_partial = sum(m["partial"] for m in module_data.values())
+    total_unverifiable = sum(m["unverifiable"] for m in module_data.values())
+    total_resolved = total_hit + total_miss + total_partial
+
+    def _rate(numerator: int, denominator: int) -> float:
+        return round(numerator / denominator, 4) if denominator > 0 else 0.0
+
+    overall = {
+        "hit_rate": _rate(total_hit, total_resolved),
+        "partial_rate": _rate(total_partial, total_resolved),
+        "miss_rate": _rate(total_miss, total_resolved),
+        "unverifiable_rate": _rate(total_unverifiable, total_resolved + total_unverifiable),
+        "total_resolved": total_resolved,
+        "total_unverifiable": total_unverifiable,
+    }
+
+    by_module = {}
+    for mod, counts in sorted(module_data.items()):
+        m_resolved = counts["hit"] + counts["miss"] + counts["partial"]
+        by_module[mod] = {
+            "hit_rate": _rate(counts["hit"], m_resolved),
+            "partial_rate": _rate(counts["partial"], m_resolved),
+            "miss_rate": _rate(counts["miss"], m_resolved),
+            "unverifiable_rate": _rate(
+                counts["unverifiable"],
+                m_resolved + counts["unverifiable"],
+            ),
+            "total": m_resolved + counts["unverifiable"],
+            "hits": counts["hit"],
+            "misses": counts["miss"],
+            "partials": counts["partial"],
+            "unverifiables": counts["unverifiable"],
+        }
+
+    return {"window_weeks": weeks, "overall": overall, "by_module": by_module}
+
+
 _VALID_VERDICTS = frozenset({"hit", "miss", "partial", "unverifiable"})
 
 
@@ -426,7 +533,11 @@ def _set_verdict(
             if isinstance(claim_id, str) and len(claim_id) == 36
             else claim_id
         )
-        params: dict = {"verdict": verdict, "actual_value": actual_value, "id": str(cid_uuid)}
+        params: dict = {
+            "verdict": verdict,
+            "actual_value": actual_value,
+            "id": str(cid_uuid),
+        }
         if notes:
             params["notes"] = notes[:500]
         with get_engine().begin() as conn:
@@ -434,16 +545,39 @@ def _set_verdict(
                 text("""
                     UPDATE prediction_ledger
                     SET verdict = :verdict,
-                        actual_value = :actual_value
+                        actual_value = :actual_value,
+                        resolved_at = NOW()
                     WHERE id = :id::uuid
                 """),
                 params,
             )
         if notes:
-            logger.info("[PredictionLedger] verdict='{}', claim={}, notes={}", verdict, claim_id, notes[:200])
+            logger.info(
+                "[PredictionLedger] verdict='{}', claim={}, notes={}",
+                verdict, claim_id, notes[:200],
+            )
         return True
     except Exception as exc:
-        logger.warning(
-            "[PredictionLedger] _set_verdict failed for {}: {}", claim_id, exc
-        )
+        # Column resolved_at may not exist yet (pre-migration-0068). Fallback without it.
+        if "resolved_at" in str(exc):
+            try:
+                params_fallback: dict = {"verdict": verdict, "actual_value": actual_value, "id": str(cid_uuid)}
+                if notes:
+                    params_fallback["notes"] = notes[:500]
+                with get_engine().begin() as conn:
+                    conn.execute(
+                        text("""
+                            UPDATE prediction_ledger
+                            SET verdict = :verdict,
+                                actual_value = :actual_value
+                            WHERE id = :id::uuid
+                        """),
+                        params_fallback,
+                    )
+                logger.info("[PredictionLedger] verdict='{}' (no resolved_at), claim={}", verdict, claim_id)
+                return True
+            except Exception as fallback_exc:
+                logger.warning("[PredictionLedger] _set_verdict fallback failed for {}: {}", claim_id, fallback_exc)
+                return False
+        logger.warning("[PredictionLedger] _set_verdict failed for {}: {}", claim_id, exc)
         return False

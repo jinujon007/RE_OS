@@ -5,11 +5,15 @@ Kaveri deed extraction, Bhoomi auto-survey, LA notification and
 tender scan functions extracted from monolithic scheduler.py.
 """
 
+import json
+import threading
 from collections.abc import Callable
 from apscheduler.schedulers.blocking import BlockingScheduler
 from loguru import logger
 from sqlalchemy import text
 from utils.db import get_engine
+from utils.prediction_ledger import compute_accuracy_summary as _compute_accuracy_summary
+from utils.discord_notifier import send_ops_alert as _send_ops_alert_accuracy
 
 _BHOOMI_DEDUP_PREFIX = "bhoomi_auto_survey:"
 
@@ -298,6 +302,192 @@ def run_ledger_check_weekly():
         logger.warning("[LedgerCheck] Failed: {}", exc)
 
 
+def run_kaveri_weekly_orchestration():
+    """Weekly Kaveri pipeline: Form17 scan → deed ingestion → assembly detection → throughput check.
+
+    Each step runs in an isolated try/except so one failure doesn't kill the rest.
+    Fires Discord summary to #re-os-health after each run.
+    Logs to agent_runs for observability.
+    """
+    import time
+    t0 = time.monotonic()
+
+    results = {
+        "form17_scanned": 0,
+        "deeds_upserted": 0,
+        "assembly_signals_checked": 0,
+        "deed_weekly_avg": 0.0,
+        "errors": [],
+    }
+
+    # Step 1 + 2: Form17 inbox scan and ingest (uses watermark dedup)
+    try:
+        from config.scheduler.maintenance_jobs import run_form17_inbox_scan
+        scan_result = run_form17_inbox_scan()
+        results["form17_scanned"] = scan_result.get("new_pdfs", 0)
+        results["deeds_upserted"] = scan_result.get("records_written", 0)
+    except Exception as exc:
+        results["errors"].append(f"Form17 scan: {exc}")
+        logger.warning("[KaveriWeekly] Form17 scan failed: {}", exc)
+
+    # Step 3: Assembly detection (runs on current DB state regardless of step 1/2)
+    try:
+        from utils.assembly_detector import run_assembly_detection
+        run_assembly_detection()
+        results["assembly_signals_checked"] = 1
+    except Exception as exc:
+        results["errors"].append(f"Assembly detect: {exc}")
+        logger.warning("[KaveriWeekly] Assembly detection failed: {}", exc)
+
+    # Step 4: Throughput summary from DB
+    try:
+        results["deed_weekly_avg"] = _compute_deed_weekly_avg()
+    except Exception as exc:
+        results["errors"].append(f"Throughput check: {exc}")
+
+    elapsed = time.monotonic() - t0
+
+    # Discord summary
+    err_str = f" — Errors: {results['errors']}" if results["errors"] else ""
+    msg = (
+        f"Kaveri Weekly Run\n"
+        f"• Form17 PDFs scanned: {results['form17_scanned']}\n"
+        f"• Deeds upserted: {results['deeds_upserted']}\n"
+        f"• Assembly detection: {'ran' if results['assembly_signals_checked'] else 'skipped'}\n"
+        f"• Deed throughput (4-week avg): {results['deed_weekly_avg']:.1f}/week{err_str}"
+    )
+    try:
+        from utils.discord_notifier import send_ops_alert
+        send_ops_alert("KAVERI_WEEKLY", msg)
+    except Exception as exc:
+        logger.warning("[KaveriWeekly] Discord alert failed: {}", exc)
+
+    # Log to agent_runs for dashboard observability
+    try:
+        status = "success" if not results["errors"] else "partial_success"
+        total_deeds = results["deeds_upserted"]
+        notes = (
+            f"KAVERI_WEEKLY: {results['form17_scanned']} PDFs, "
+            f"{total_deeds} deeds upserted, "
+            f"{results['deed_weekly_avg']:.1f}/wk avg, "
+            f"{elapsed:.0f}s"
+        )
+        with get_engine().begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO agent_runs
+                        (agent_name, micro_market, event_type, status, notes)
+                    VALUES ('kaveri_weekly_orchestration', 'system',
+                            'kaveri_weekly_orchestration', :status, :notes)
+                """),
+                {"status": status, "notes": notes},
+            )
+    except Exception as exc:
+        logger.warning("[KaveriWeekly] agent_runs logging failed: {}", exc)
+
+    logger.info("[KaveriWeekly] Complete in {:.0f}s — {} errors", elapsed, len(results["errors"]))
+    return results
+
+
+# ── Accuracy Degradation Check (GATE-126, T-1318) ────────────────────────────
+
+_ACCURACY_MISS_STREAK: dict[str, int] = {}
+_ACCURACY_STREAK_LOCK = threading.Lock()
+_ACCURACY_THRESHOLD = 0.40
+_ACCURACY_STREAK_LIMIT = 3
+
+
+def _log_accuracy_agent_run(success: bool, modules_fired: int = 0, error: str | None = None) -> None:
+    """Write agent_runs row for accuracy check execution."""
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO agent_runs (agent_id, market, event_type, status, output_data, started_at)
+                    VALUES ('accuracy_degradation_check', 'system', 'accuracy_check', :status, :output, NOW())
+                """),
+                {
+                    "status": "success" if success else "error",
+                    "output": json.dumps({"modules_fired": modules_fired, "error": error}),
+                },
+            )
+    except Exception as log_exc:
+        logger.debug("[AccuracyCheck] agent_runs log failed: {}", log_exc)
+
+
+def run_accuracy_degradation_check():
+    """Weekly accuracy degradation check — Thursday 04:00 UTC / 09:30 IST.
+
+    If any module's hit_rate < 40% for 3 consecutive weeks → Discord alert.
+    In-memory streak resets on container restart (intentional — soft signal).
+    Skips modules with fewer than 5 total verdicts (insufficient data).
+
+    Fires Discord OPS alert on its own failure (F2 fix — no silent degradation).
+    Logs to agent_runs for dashboard visibility (F3 fix).
+    """
+    try:
+        summary = _compute_accuracy_summary(weeks=4)
+        modules_fired = 0
+        with _ACCURACY_STREAK_LOCK:
+            for module, stats in summary.get("by_module", {}).items():
+                hr = stats.get("hit_rate", 1.0)
+                total = stats.get("total", 0)
+                if total < 5:
+                    _ACCURACY_MISS_STREAK[module] = 0
+                    continue
+                if hr < _ACCURACY_THRESHOLD:
+                    _ACCURACY_MISS_STREAK[module] = _ACCURACY_MISS_STREAK.get(module, 0) + 1
+                else:
+                    _ACCURACY_MISS_STREAK[module] = 0
+
+                if _ACCURACY_MISS_STREAK.get(module, 0) >= _ACCURACY_STREAK_LIMIT:
+                    modules_fired += 1
+                    _ACCURACY_MISS_STREAK[module] = 0
+
+        # Send alerts OUTSIDE the lock — Discord HTTP call is ~500ms+
+        if modules_fired > 0:
+            _send_ops_alert_accuracy(
+                "LEDGER_ACCURACY_DEGRADED",
+                f"Prediction accuracy degraded for {modules_fired} module(s). "
+                f"Hit rate below {_ACCURACY_THRESHOLD:.0%} "
+                f"for {_ACCURACY_STREAK_LIMIT} consecutive weeks. "
+                f"Recalibrate thresholds or review claim logic.",
+            )
+
+        _log_accuracy_agent_run(success=True, modules_fired=modules_fired)
+    except Exception as exc:
+        logger.error("[AccuracyCheck] Failed: {}", exc)
+        _send_ops_alert_accuracy(
+            "ACCURACY_CHECK_FAILED",
+            f"Prediction accuracy degradation check failed: {exc}. "
+            f"Accuracy gate is blind until this is resolved.",
+        )
+        _log_accuracy_agent_run(success=False, error=str(exc)[:500])
+
+
+def _compute_deed_weekly_avg(engine=None, weeks: int = 4) -> float:
+    """Return rolling average of Sale deeds registered per week over the last N weeks.
+
+    Uses INTERVAL '1 day' * :weeks for fully parameterized query (no f-string).
+    Guards against weeks=0 (division by zero). Returns 0.0 if data is empty or zero.
+    """
+    weeks = max(weeks, 1)
+    if engine is None:
+        from utils.db import get_engine
+        engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("""
+                SELECT COUNT(*) / CAST(:weeks AS float)
+                FROM registered_transactions
+                WHERE reg_date >= NOW() - INTERVAL '1 day' * :weeks
+                  AND deed_type ILIKE '%sale%'
+            """),
+            {"weeks": weeks},
+        ).scalar()
+    return float(row or 0.0)
+
+
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
     """Register Kaveri-related scheduler jobs."""
     from apscheduler.triggers.cron import CronTrigger
@@ -340,5 +530,21 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         CronTrigger(day_of_week="mon", hour=6, minute=0),
         id="ledger_check_weekly",
         name="Weekly Prediction Ledger Check (resolve + Discord summary)",
+        misfire_grace_time=3600,
+    )
+    # Weekly Kaveri orchestration — Sunday 23:30 UTC = Monday 05:00 IST (GATE-125, T-1312)
+    scheduler.add_job(
+        lambda: safe_job(run_kaveri_weekly_orchestration, "kaveri_weekly_orchestration"),
+        CronTrigger(day_of_week="sun", hour=23, minute=30, timezone="UTC"),
+        id="kaveri_weekly_orchestration",
+        name="Weekly Kaveri Orchestration: Form17→ingest→assembly→throughput (Mon 05:00 IST)",
+        misfire_grace_time=7200,
+    )
+    # Weekly accuracy degradation check — Thursday 04:00 UTC = 09:30 IST (GATE-126, T-1318)
+    scheduler.add_job(
+        lambda: safe_job(run_accuracy_degradation_check, "accuracy_degradation_check"),
+        CronTrigger(day_of_week="thu", hour=4, minute=0, timezone="UTC"),
+        id="accuracy_degradation_check",
+        name="Weekly Prediction Ledger Accuracy Degradation Check (Thu 09:30 IST)",
         misfire_grace_time=3600,
     )

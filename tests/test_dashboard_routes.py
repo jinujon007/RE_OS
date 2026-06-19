@@ -1,8 +1,5 @@
 import os
 
-# Must be set before importing app — rate-limiter uses REDIS_URL at import time
-os.environ.setdefault("REDIS_URL", "memory://")
-
 import pytest
 
 pytestmark = [pytest.mark.unit, pytest.mark.slow]
@@ -296,14 +293,19 @@ def test_v1_health_returns_200(dashboard_client):
 
 def test_legacy_api_redirects_to_v1(dashboard_client):
     """GET /api/health redirects (301) to /api/v1/health."""
-    r = dashboard_client.get("/api/health", follow_redirects=False)
+    r = dashboard_client.get(
+        "/api/health", follow_redirects=False
+    )
     assert r.status_code == 301
     assert r.headers.get("location") == "/api/v1/health"
 
 
 def test_v1_evaluate_route_registered(dashboard_client):
-    """GET /api/v1/evaluate/{job_id} returns 404 (expected for unknown job) not 405 or 500."""
-    r = dashboard_client.get("/api/v1/evaluate/00000000-0000-0000-0000-000000000000", follow_redirects=False)
+    """GET /api/v1/evaluate/{job_id} returns 404/422 (registered route, not 405/500)."""
+    r = dashboard_client.get(
+        "/api/v1/evaluate/00000000-0000-0000-0000-000000000000",
+        follow_redirects=False,
+    )
     # 200 (with error body), 404, or 422 are all valid responses from a registered route
     assert r.status_code in (200, 404, 422), f"Unexpected status: {r.status_code}"
 
@@ -364,7 +366,9 @@ def test_read_only_key_cannot_write(monkeypatch):
         headers={"X-API-Key": "read-key"},
         follow_redirects=False,
     )
-    assert r.status_code == 403, f"Expected 403 for read key on write, got {r.status_code}"
+    assert r.status_code == 403, (
+        f"Expected 403 for read key on write, got {r.status_code}"
+    )
 
 
 # Note: 401 test must run LAST because _ensure_api_keys caches the first key
@@ -431,7 +435,11 @@ def test_etag_returns_304_on_match(monkeypatch):
     if r.status_code != 200:
         pytest.skip(f"intel/cards returned {r.status_code}, need DB")
     etag = r.headers.get("etag", "").strip('" ')
-    r2 = _client.get("/api/v1/intel/cards", headers={"If-None-Match": etag}, follow_redirects=False)
+    r2 = _client.get(
+        "/api/v1/intel/cards",
+        headers={"If-None-Match": etag},
+        follow_redirects=False,
+    )
     assert r2.status_code == 304
 
 
@@ -441,7 +449,10 @@ def test_etag_returns_200_on_mismatch(monkeypatch):
     monkeypatch.delenv("DASHBOARD_API_KEY", raising=False)
     from dashboard.state import _reset_api_keys
     _reset_api_keys()
-    r = _client.get("/api/v1/market/forecast/NonexistentMarket", follow_redirects=False)
+    r = _client.get(
+        "/api/v1/market/forecast/NonexistentMarket",
+        follow_redirects=False,
+    )
     assert r.status_code == 400
     body = r.json()
     assert "code" in body

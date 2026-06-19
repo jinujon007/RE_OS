@@ -508,6 +508,8 @@ _READ_ONLY_PATHS = frozenset(
         "/api/ops/decision-journal",
         "/api/v1/ops/conditional-gates",
         "/api/ops/conditional-gates",
+        "/api/v1/ops/ledger/accuracy",
+        "/api/ops/ledger/accuracy",
     }
 )
 _READ_ONLY_PREFIXES = (
