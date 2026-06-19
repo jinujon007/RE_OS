@@ -263,6 +263,7 @@ def run_ingest_engine():
         DistressedPlugin,
         BBMPPlugin,
         KaveriDeedsPlugin,
+        KaveriForm17Plugin,
     )
     from config.settings import PLUGIN_SCHEDULES, TARGET_MARKETS
 
@@ -294,6 +295,7 @@ def run_ingest_engine():
         DistressedPlugin(),
         BBMPPlugin(),
         KaveriDeedsPlugin(),
+        KaveriForm17Plugin(),
     ]
 
     for p in all_plugins:

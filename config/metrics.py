@@ -8,7 +8,7 @@ is imported via multiple paths.
 
 from typing import Sequence
 
-from prometheus_client import Counter, Histogram, REGISTRY as _R
+from prometheus_client import Counter, Gauge, Histogram, REGISTRY as _R
 
 
 def _counter(name: str, doc: str, labels: Sequence[str] = ()) -> Counter:
@@ -263,9 +263,9 @@ audit_log_writes_total = _counter(
 
 # ── Sprint 108 — Dead letter queue metrics ───────────────────────────────────
 
-dead_letter_queue_depth = _counter(
-    "dead_letter_queue_depth_total",
-    "Dead letter queue records written by entity_type",
+dead_letter_queue_depth_gauge = _gauge(
+    "dead_letter_queue_depth_gauge",
+    "Current dead letter queue depth by entity_type",
     ["entity_type"],
 )
 

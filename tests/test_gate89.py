@@ -13,13 +13,15 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-from starlette.testclient import TestClient
-from dashboard.app_fastapi import app
 
-client = TestClient(app)
+@pytest.fixture(scope="module")
+def test_client():
+    from starlette.testclient import TestClient
+    from dashboard.app_fastapi import app
+    return TestClient(app)
 
 
-def test_gate89_provenance_endpoint():
+def test_gate89_provenance_endpoint(test_client):
     """Assert 1: /api/data/provenance returns 200 with Yelahanka key."""
     from unittest.mock import MagicMock, patch
 
@@ -32,14 +34,14 @@ def test_gate89_provenance_endpoint():
     mock_engine = MagicMock()
     mock_engine.connect.return_value.__enter__.return_value = mock_conn
     with patch("dashboard.app_fastapi._get_sa_engine", return_value=mock_engine):
-        r = client.get("/api/data/provenance")
+        r = test_client.get("/api/data/provenance")
     assert r.status_code == 200
     body = r.json()
     assert "Yelahanka" in body
     assert "guidance" in body["Yelahanka"]
 
 
-def test_gate89_reliability_endpoint():
+def test_gate89_reliability_endpoint(test_client):
     """Assert 2: /api/scraper/reliability returns 200 with >=1 scraper key."""
     from unittest.mock import MagicMock, patch
 
@@ -50,7 +52,7 @@ def test_gate89_reliability_endpoint():
     mock_engine = MagicMock()
     mock_engine.connect.return_value.__enter__.return_value = mock_conn
     with patch("utils.scraper_reliability.get_engine", return_value=mock_engine):
-        r = client.get("/api/scraper/reliability")
+        r = test_client.get("/api/scraper/reliability")
     assert r.status_code == 200
     body = r.json()
     assert len(body) >= 1

@@ -9,31 +9,32 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-from starlette.testclient import TestClient
-from dashboard.app_fastapi import app
+@pytest.fixture(scope="module")
+def test_client():
+    from starlette.testclient import TestClient
+    from dashboard.app_fastapi import app
+    return TestClient(app)
 
-client = TestClient(app)
 
-
-def test_gate106_v1_health_live_returns_200():
+def test_gate106_v1_health_live_returns_200(test_client):
     """Assertion 1: /api/v1/health/live returns 200."""
-    r = client.get("/api/v1/health/live", follow_redirects=False)
+    r = test_client.get("/api/v1/health/live", follow_redirects=False)
     assert r.status_code == 200, f"Got {r.status_code}: {r.text[:100]}"
     body = r.json()
     assert "agents" in body
 
 
-def test_gate106_legacy_health_redirects():
+def test_gate106_legacy_health_redirects(test_client):
     """Assertion 2: /api/health/live returns 301 redirect."""
-    r = client.get("/api/health/live", follow_redirects=False)
+    r = test_client.get("/api/health/live", follow_redirects=False)
     assert r.status_code == 301, f"Got {r.status_code}: {r.text[:100]}"
     loc = r.headers.get("location", "")
     assert loc.startswith("/api/v1/"), f"location={loc}"
 
 
-def test_gate106_404_has_code_field():
+def test_gate106_404_has_code_field(test_client):
     """Assertion 3: 404 response has 'code' field."""
-    r = client.get("/api/v1/market/forecast/NonexistentMarket", follow_redirects=False)
+    r = test_client.get("/api/v1/market/forecast/NonexistentMarket", follow_redirects=False)
     assert r.status_code == 400, f"Got {r.status_code}: {r.text[:100]}"
     body = r.json()
     assert "code" in body

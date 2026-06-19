@@ -14,7 +14,7 @@ from sqlalchemy import text as _sa_text
 
 from dashboard.state import (
     limiter, _get_sa_engine, _normalize_market, _detect_market_from_prompt,
-    _latest_report_path, _log_running_lifecycle_locked, _prune_finished_running_entries_locked,
+    _latest_report_path, _log_running_lifecycle_MUST_HOLD_LOCK, _prune_finished_running_entries_locked,
     _start_pipeline_for_market, _stop_pipeline_for_market, _running_snapshot,
     _market_go_no_go, _validate_registry_payload, _is_run_api_authorized,
     _agent_states, _lock, AGENT_ACTIONS,

@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from loguru import logger
 from sqlalchemy import create_engine, text
 
-from config.metrics import dead_letter_queue_depth
+from config.metrics import dead_letter_queue_depth_gauge
 from config.settings import (
     DATABASE_URL,
     GRADE_A_DEVELOPERS,
@@ -159,7 +159,7 @@ def _write_dead_letter(conn, record: dict, error: Exception, plugin_id: str = "d
             "failed_at": datetime.now(timezone.utc),
         },
     )
-    dead_letter_queue_depth.labels(entity_type=entity_type[:50]).inc()
+    dead_letter_queue_depth_gauge.labels(entity_type=entity_type[:50]).inc()
 
 
 class DBOrganizer:

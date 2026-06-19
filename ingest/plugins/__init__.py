@@ -20,6 +20,7 @@ from ingest.plugins.land_supply_plugin import LandSupplyPlugin
 from ingest.plugins.govt_policy_plugin import GovtPolicyPlugin
 from ingest.plugins.kaveri_deeds_plugin import KaveriDeedsPlugin
 from ingest.plugins.tender_plugin import TenderPlugin
+from ingest.plugins.kaveri_form17_plugin import KaveriForm17Plugin
 
 __all__ = [
     "RERAPlugin",
@@ -36,4 +37,5 @@ __all__ = [
     "GovtPolicyPlugin",
     "KaveriDeedsPlugin",
     "TenderPlugin",
+    "KaveriForm17Plugin",
 ]

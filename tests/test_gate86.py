@@ -16,11 +16,6 @@ pytestmark = [
     pytest.mark.skip(reason="gate-declaration tests coupled to VISION.md/TASK_QUEUE.md — skipped in batch CI"),  # TRACK: gate-declaration tests coupled to VISION.md/TASK_QUEUE.md — skipped in batch CI
 ]
 
-from starlette.testclient import TestClient
-from dashboard.app_fastapi import app
-
-client = TestClient(app)
-
 _GATE86_PASSED = "✅ PASSED (2026-06-11) — 5/5 assertions in test_gate86.py"
 _GATE86_TABLE_ROW = "| GATE-86 | Sprint 86 | Memory Explorer panel renders"
 _PHASE4_COMPLETE = "**Status:** ✅ COMPLETE"
@@ -102,7 +97,9 @@ def test_templates_exist():
 
 def test_openapi_schema_registered():
     """Verify both new endpoints appear in generated OpenAPI schema."""
-    r = client.get("/openapi.json")
+    from starlette.testclient import TestClient
+    from dashboard.app_fastapi import app
+    r = TestClient(app).get("/openapi.json")
     assert r.status_code == 200
     schema = r.json()
     paths = schema.get("paths", {})

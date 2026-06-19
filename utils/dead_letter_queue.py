@@ -14,12 +14,28 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from utils.db import get_engine
-from config.metrics import dead_letter_retry_total
+from config.metrics import dead_letter_retry_total, dead_letter_queue_depth_gauge
 
 logger = logging.getLogger("re_os.dead_letter_queue")
 
 _RETRY_BATCH_SIZE = 20
 _DLQ_ALERT_THRESHOLD = 50  # Discord alert when >50 records in queue
+
+
+def _sync_dlq_gauge(engine: Engine | None = None) -> None:
+    """Synchronise DLQ depth gauge with actual DB count.
+
+    Corrects any drift between the gauge and the real queue depth.
+    Called after retry batches and purge operations. Also called on
+    every check_queue_depth_and_alert() invocation.
+
+    Uses the 'unknown' entity_type label bucket for aggregate depth.
+    If get_queue_depth() fails (DB down), the prior gauge value is
+    preserved (no-op on Prometheus side since .set() is not called).
+    Falls back to 0 on empty queue.
+    """
+    depth = get_queue_depth(engine)
+    dead_letter_queue_depth_gauge.labels(entity_type="unknown").set(depth)
 
 # Mapping from DLQ entity_type to the DB table used by _replay_record.
 # Used for schema validation: we check that incoming record keys exist
@@ -188,12 +204,18 @@ def purge_old_records(
             except Exception as exc:
                 logger.warning("[DLQ] Failed to send high-purge alert: %s", exc)
         logger.info("[DLQ] Purged %d old failed records (>%d days)", deleted, max_age_days)
-        return deleted
+    if deleted > 0:
+        _sync_dlq_gauge(engine)
+    return deleted
 
 
 def check_queue_depth_and_alert(engine: Engine | None = None) -> int:
-    """Check DLQ depth and send Discord alert if above threshold."""
+    """Check DLQ depth and send Discord alert if above threshold.
+    
+    Synchronises the gauge on every call to correct drift.
+    """
     depth = get_queue_depth(engine)
+    dead_letter_queue_depth_gauge.labels(entity_type="unknown").set(depth)
     if depth > _DLQ_ALERT_THRESHOLD:
         try:
             from utils.discord_notifier import send_ops_alert
@@ -287,6 +309,8 @@ def retry_failed_records(
                 failed += 1
                 errors.append(f"{entity_type}/{row_id}: {exc}")
 
+    if attempted > 0:
+        _sync_dlq_gauge(engine)
     return {
         "attempted": attempted,
         "succeeded": succeeded,

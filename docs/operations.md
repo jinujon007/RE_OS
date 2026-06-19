@@ -212,3 +212,85 @@ without a `# TRACK:` comment will fail the build.
 
 Every authenticated request is logged to the `api_audit_log` table (migration 0063).
 Admin users can query via `GET /api/v1/audit/log?limit=50` (rate limited, admin only).
+
+---
+
+## Conditional Gate Closure Runbook (GATE-122)
+
+### Pre-flight
+Confirm all 5 containers are healthy before starting:
+```
+docker compose ps
+```
+Expected: `re_os_db`, `re_os_agents`, `re_os_scheduler`, `re_os_redis`, `re_os_ollama` all `Up (healthy)`.
+
+**Timing estimate:** 15–30 min total if PDFs are already in the inbox.
+
+### J-20 — Start stack
+```
+docker compose up -d
+```
+Expected: all 5 containers `Up (healthy)`.
+**Wait for:** `docker compose exec agents python -c "from utils.db import get_engine; get_engine().connect()"` succeeds (≤30s after DB is up).
+
+### J-21 — Ingest deed PDFs
+```bash
+docker compose exec agents python scripts/process_deed_inbox.py --form17 --ec
+```
+Expected: summary line shows `≥10 records ingested`. If 0: check `data/kaveri_deeds/inbox/form17/` contains PDFs.
+**On partial failure:** script exits 1 and prints `[ERROR]` lines per failed file. Inspect logs, fix the failing PDF, re-run.
+
+### J-22 — Evaluate conditional gates
+```bash
+docker compose exec agents python scripts/check_conditional_gates.py
+```
+Interpret output. `GATE-93` requires ≥10 prediction_ledger rows AND ≥20 tenders — both must pass. If `GATE-91` fails (needs ≥200 `registered_transactions` rows), run market intel crew (J-23) first.
+
+### J-23 — Run market intelligence pipeline
+```bash
+docker compose exec agents python crews/market_intel_crew.py --market Yelahanka
+```
+Expected: pipeline logs show Stage 1 → 2 → 3 complete; `prediction_ledger` populated.
+**Timing:** 3–8 min depending on LLM availability.
+
+### J-24 — Log a decision journal entry
+```bash
+curl -X POST http://localhost:8050/api/v1/ops/decision-journal \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $DASHBOARD_API_KEY" \
+  -d '{"decision": "<LLS decision context>", "intel_cited": ["Yelahanka PSF trend"], "outcome": "pending"}'
+```
+Expected: 201 response. Entry persisted; `decision_journal_entries` key in kill-criteria shows ≥1.
+
+### Verification
+```bash
+docker compose exec agents python scripts/check_conditional_gates.py
+```
+All 5 gates ✅ PASS → run `pytest tests/test_gate_integration.py -k conditional` to declare them closed.
+
+### Rollback
+If a step fails mid-run:
+
+| Step | What broke | Rollback action |
+|------|-----------|-----------------|
+| J-21 | Partial deed ingestion (some PDFs errored) | Fix the error source, re-run. Already-ingested records are deduplicated via `ON CONFLICT (sro, doc_no, reg_date)` — no data loss. |
+| J-21 | Form17 parser crash | Check `data/kaveri_deeds/inbox/form17/*.pdf` for corrupted files. Remove the bad PDF, re-run. |
+| J-23 | Pipeline crash mid-way | Run `docker compose exec agents python crews/market_intel_crew.py --market Yelahanka --stage 2` to resume. If unrecoverable: `docker compose restart agents` and start from J-21. |
+| J-24 | Wrong decision text | `DELETE FROM decision_journal WHERE id = '<id>'` via psql. Re-run J-24 with corrected text. |
+
+### If blocked
+- **Kaveri portal blocking:** use `--ec` with manually downloaded PDFs.
+- **RERA timeout:** check Playwright session cookie (T-207 notes in CLAUDE.md).
+- **Low deed count:** check `registered_transactions` for `data_source` distribution:
+  ```sql
+  SELECT data_source, COUNT(*) FROM registered_transactions GROUP BY 1;
+  ```
+- **`check_conditional_gates.py` itself fails:** run with `--format json` for structured output that isolates which gate sub-check failed.
+
+### Kill criteria clocks
+| Criteria | Deadline | Check endpoint |
+|----------|----------|----------------|
+| Deed throughput ≥50/week | 2026-08-15 | `GET /api/v1/ops/kill-criteria` → `deed_throughput.weekly_avg_deeds` |
+| Decision journal ≥1 entry | 2026-12-31 | `GET /api/v1/ops/kill-criteria` → `decision_journal_entries` |
+
+Check current status: `GET /api/v1/ops/kill-criteria`

@@ -16,7 +16,7 @@ Three layers, built in order:
 
 1. **Truth layer** — registered transactions (Kaveri EC/deed pipeline), parcels as first-class entities, guidance values, RERA filings. *Status: in build — Sprints 91–92.*
 2. **Leading-indicator layer** — eProcurement tenders, gazette LA notifications, DC conversions, GCC hiring snapshots, assembly detection. Alert at "tender published" while the market reacts at "construction visible." *Status: Sprints 93–94.*
-3. **Prediction layer** — deterministic corridor scorer (no LLM in the scoring path), backtested against realized appreciation, every forecast logged to the prediction ledger with a check date and a public hit-rate. *Status: Sprint 95+, gated on truth-layer depth.*
+3. **Land Intelligence Moat** — assembly detection (same buyer, same village, <180 days), corridor scoring accuracy (backtested rank correlation), Form17 parcel graph at village depth (not ward-level aggregates). Deterministic scoring — no LLM in the scoring path. Every forecast logged to the prediction ledger with a check date and a public hit-rate. **Competitive differentiation:** Zapkey/CRE Matrix/Propstack have deed lookup at locality level; nobody joins deeds to parcels, tracks assembly, or backtests corridor accuracy. The wedge is the intelligence layer above the raw data. *Status: Sprint 95+, gated on truth-layer depth.*
 
 First customer: LLS. First proof: one land deal sourced or killed correctly, recorded in the decision journal (`docs/decision_journal.md`). Commercialization (corridor reports → retainers → platform) only after a backtested track record exists — per audit §9/§10.
 

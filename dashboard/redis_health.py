@@ -68,7 +68,7 @@ def _run_health_check():
             client.ping()
         except Exception:
             _logger.debug("[Redis health] ping failed — resetting client")
-            _state._REDIS_CLIENT_INSTANCE = False
+            _state._reset_redis_client()
             _set_redis_gauge(False)
         else:
             _set_redis_gauge(True)

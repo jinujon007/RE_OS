@@ -1976,10 +1976,15 @@ class KillCriteriaLedger(BaseModel):
 class KillCriteriaCorridorItem(BaseModel):
     name: str
     verdict: str = "INSUFFICIENT_DATA"
+    rank_correlation: float | None = None
+    projects_evaluated: int | None = None
+    run_date: str | None = None
+    status: str = "data_present"
 
 
 class KillCriteriaCorridor(BaseModel):
     corridors: list[KillCriteriaCorridorItem] = []
+    status: str = "data_present"
 
 
 class KillCriteriaDeadlines(BaseModel):
@@ -2022,20 +2027,45 @@ async def kill_criteria(request: Request):
             hit_rate = round(hit / max(total_verdicts, 1), 4)
 
             corridor_rows = conn.execute(_sa_text("""
-                SELECT DISTINCT ON (corridor_name) corridor_name, verdict
+                SELECT DISTINCT ON (corridor_name)
+                    corridor_name, verdict, rank_correlation,
+                    projects_evaluated, run_date
                 FROM corridor_backtest_verdicts
                 ORDER BY corridor_name, created_at DESC
             """)).fetchall()
-            corridor_map = {str(r[0]): str(r[1]) for r in corridor_rows}
+            corridor_map: dict[str, dict] = {}
+            for r in corridor_rows:
+                name = str(r[0])
+                corridor_map[name] = {
+                    "verdict": str(r[1]) if r[1] else "INSUFFICIENT_DATA",
+                    "rank_correlation": float(r[2]) if r[2] is not None else None,
+                    "projects_evaluated": int(r[3]) if r[3] is not None else None,
+                    "run_date": str(r[4]) if r[4] else None,
+                }
             from utils.corridor_scorer_v2 import _CORRIDOR_SEEDS
             _KNOWN_CORRIDOR_NAMES = [s.corridor_id for s in _CORRIDOR_SEEDS]
-            _corridor_verdicts = [
-                KillCriteriaCorridorItem(
-                    name=name,
-                    verdict=corridor_map.get(name, "INSUFFICIENT_DATA"),
-                )
-                for name in _KNOWN_CORRIDOR_NAMES
-            ]
+            has_data = len(corridor_rows) > 0
+            _corridor_verdicts = []
+            for name in _KNOWN_CORRIDOR_NAMES:
+                entry = corridor_map.get(name, {})
+                if not entry:
+                    _corridor_verdicts.append(KillCriteriaCorridorItem(
+                        name=name,
+                        verdict="INSUFFICIENT_DATA",
+                        rank_correlation=None,
+                        projects_evaluated=None,
+                        run_date=None,
+                        status="no_data",
+                    ))
+                else:
+                    _corridor_verdicts.append(KillCriteriaCorridorItem(
+                        name=name,
+                        verdict=entry.get("verdict", "INSUFFICIENT_DATA"),
+                        rank_correlation=entry.get("rank_correlation"),
+                        projects_evaluated=entry.get("projects_evaluated"),
+                        run_date=entry.get("run_date"),
+                        status="data_present",
+                    ))
 
             try:
                 dj_count = conn.execute(_sa_text("SELECT COUNT(*) FROM decision_journal")).scalar() or 0
@@ -2062,7 +2092,7 @@ async def kill_criteria(request: Request):
                 total_verdicts=total_verdicts,
                 target_hit_rate=0.6,
             ),
-            corridor=KillCriteriaCorridor(corridors=_corridor_verdicts),
+            corridor=KillCriteriaCorridor(corridors=_corridor_verdicts, status="no_data" if not has_data else "data_present"),
             deadlines=KillCriteriaDeadlines(
                 deed_throughput="2026-08-15",
                 days_remaining=(deed_deadline - today).days,
@@ -2078,6 +2108,100 @@ async def kill_criteria(request: Request):
         return JSONResponse(content=data.model_dump(), headers={"ETag": f'"{etag}"'})
     except Exception as exc:
         logger.error("[kill_criteria] %s", exc)
+        return _err_resp(str(exc), request, 500, "Ops")
+
+
+# ── Conditional Gates (GATE-122, T-1298) ─────────────────────────────────────
+
+
+class ConditionalGateSubCheck(BaseModel):
+    description: str
+    actual: int = 0
+    required: int = 0
+    passed: bool = False
+
+
+class ConditionalGateItem(BaseModel):
+    gate: str
+    label: str
+    actual: int = 0
+    required: int = 0
+    checks: list[ConditionalGateSubCheck] = []
+    status: str = "FAIL"
+
+
+class ConditionalGatesResponse(BaseModel):
+    gates: list[ConditionalGateItem]
+
+
+# For consistent handling with kill_criteria — registered in _READ_ONLY_PATHS via module init
+_CONDITIONAL_GATE_CHECKS: list[dict] = [
+    {"gate": "GATE-91", "label": "registered_transactions (Yelahanka hobli)", "checks": [
+        ("registered_transactions (Yelahanka hobli)", "SELECT COUNT(*) FROM registered_transactions WHERE hobli ILIKE '%Yalahanka%'", 200),
+    ]},
+    {"gate": "GATE-92", "label": "parcels", "checks": [
+        ("parcels", "SELECT COUNT(*) FROM parcels", 100),
+    ]},
+    {"gate": "GATE-93", "label": "prediction_ledger + tenders", "checks": [
+        ("prediction_ledger", "SELECT COUNT(*) FROM prediction_ledger", 10),
+        ("tenders", "SELECT COUNT(*) FROM tenders", 20),
+    ]},
+    {"gate": "GATE-94", "label": "gcc_hiring_snapshots + dc_conversions", "checks": [
+        ("gcc_hiring_snapshots", "SELECT COUNT(*) FROM gcc_hiring_snapshots", 10),
+        ("dc_conversions", "SELECT COUNT(*) FROM dc_conversions", 10),
+    ]},
+    {"gate": "GATE-95", "label": "registered_transactions (form17_inbox)", "checks": [
+        ("registered_transactions (kaveri_form17)", "SELECT COUNT(*) FROM registered_transactions WHERE data_source = 'kaveri_form17'", 10),
+    ]},
+]
+
+
+@router.get(
+    "/ops/conditional-gates",
+    response_model=ConditionalGatesResponse,
+    summary="Evaluate conditional gate integration criteria against live DB",
+)
+@limiter.limit("30/hour")
+async def conditional_gates(request: Request):
+    try:
+        with _get_sa_engine().connect() as conn:
+            gates: list[ConditionalGateItem] = []
+            for gd in _CONDITIONAL_GATE_CHECKS:
+                sub_results: list[ConditionalGateSubCheck] = []
+                for desc, query, required in gd["checks"]:
+                    try:
+                        row = conn.execute(_sa_text(query)).fetchone()
+                        actual = int(row[0]) if row else 0
+                        passed = actual >= required
+                    except Exception:
+                        actual = 0
+                        passed = False
+                    sub_results.append(ConditionalGateSubCheck(
+                        description=desc, actual=actual, required=required, passed=passed,
+                    ))
+                all_pass = all(sr.passed for sr in sub_results)
+                total_actual = sum(sr.actual for sr in sub_results)
+                total_required = sum(sr.required for sr in sub_results)
+                gates.append(ConditionalGateItem(
+                    gate=gd["gate"], label=gd["label"],
+                    actual=total_actual, required=total_required,
+                    checks=sub_results,
+                    status="PASS" if all_pass else "FAIL",
+                ))
+        data = ConditionalGatesResponse(gates=gates)
+        etag = compute_etag(data.model_dump())
+        _check = check_etag(request, etag)
+        if _check:
+            return _check
+        return JSONResponse(
+            content=data.model_dump(),
+            headers={
+                "ETag": f'"{etag}"',
+                "Cache-Control": "private, max-age=30, must-revalidate",
+            },
+        )
+    except Exception as exc:
+        logger.error("[conditional_gates] %s", exc)
         return _err_resp(str(exc), request, 500, "Ops")
 
 

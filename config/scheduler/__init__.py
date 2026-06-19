@@ -81,6 +81,8 @@ from config.scheduler.maintenance_jobs import (
     run_failed_record_retry,
     run_dlq_purge,
     run_chromadb_maintenance,
+    run_corridor_backtest_monthly,
+    run_kill_criteria_reminder,
     _ops_already_alerted,
     _bd_already_alerted,
 )
@@ -135,6 +137,8 @@ __all__ = [
     "run_failed_record_retry",
     "run_dlq_purge",
     "run_chromadb_maintenance",
+    "run_corridor_backtest_monthly",
+    "run_kill_criteria_reminder",
     "start_scheduler",
 ]
 

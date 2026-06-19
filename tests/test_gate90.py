@@ -14,10 +14,12 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-from starlette.testclient import TestClient
-from dashboard.app_fastapi import app
 
-client = TestClient(app)
+@pytest.fixture(scope="module")
+def test_client():
+    from starlette.testclient import TestClient
+    from dashboard.app_fastapi import app
+    return TestClient(app)
 
 
 def _make_mock_fetchone(results):
@@ -34,7 +36,7 @@ def _test_client(rows):
     return engine
 
 
-def test_gate90_assertion_1_endpoint_exists():
+def test_gate90_assertion_1_endpoint_exists(test_client):
     """A1: /api/ops/v2-readiness returns 200 with v2_ready key."""
     engine = _test_client(
         [
@@ -46,13 +48,13 @@ def test_gate90_assertion_1_endpoint_exists():
         ]
     )
     with patch("dashboard.routers.ops._get_sa_engine", return_value=engine):
-        resp = client.get("/api/ops/v2-readiness")
+        resp = test_client.get("/api/ops/v2-readiness")
     assert resp.status_code == 200
     data = resp.json()
     assert "v2_ready" in data
 
 
-def test_gate90_assertion_2_not_ready():
+def test_gate90_assertion_2_not_ready(test_client):
     """A2: v2_ready=False when scheduler_days_running=0 (mock)."""
     engine = _test_client(
         [
@@ -64,13 +66,13 @@ def test_gate90_assertion_2_not_ready():
         ]
     )
     with patch("dashboard.routers.ops._get_sa_engine", return_value=engine):
-        resp = client.get("/api/ops/v2-readiness")
+        resp = test_client.get("/api/ops/v2-readiness")
     data = resp.json()
     assert data["v2_ready"] is False
     assert data["scheduler_days_running"] == 0
 
 
-def test_gate90_assertion_3_ready():
+def test_gate90_assertion_3_ready(test_client):
     """A3: v2_ready=True when all thresholds met (mock)."""
     engine = _test_client(
         [
@@ -82,7 +84,7 @@ def test_gate90_assertion_3_ready():
         ]
     )
     with patch("dashboard.routers.ops._get_sa_engine", return_value=engine):
-        resp = client.get("/api/ops/v2-readiness")
+        resp = test_client.get("/api/ops/v2-readiness")
     data = resp.json()
     assert data["v2_ready"] is True
     assert data["scheduler_days_running"] >= 7

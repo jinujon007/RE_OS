@@ -17,11 +17,14 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-from starlette.testclient import TestClient
-from dashboard.app_fastapi import app
 from utils.psf_truth import SpreadResponse
 
-client = TestClient(app)
+
+@pytest.fixture(scope="module")
+def test_client():
+    from starlette.testclient import TestClient
+    from dashboard.app_fastapi import app
+    return TestClient(app)
 
 SCHEDULER_PATH = Path("config/scheduler.py")
 FIXTURES_DIR = Path("tests/fixtures/kaveri_deeds")
@@ -119,7 +122,7 @@ def test_a2_kaveri_deed_scout_parses_fixtures():
     assert records[1]["doc_no"] == "YEL-2-67890-2026-02"
 
 
-def test_a3_spread_endpoint_with_pydantic():
+def test_a3_spread_endpoint_with_pydantic(test_client):
     """A3: /api/market/spread returns 200 + JSON matches SpreadResponse shape."""
     conn = MagicMock()
     conn.__enter__.return_value = conn
@@ -130,7 +133,7 @@ def test_a3_spread_endpoint_with_pydantic():
     engine.connect.return_value.__enter__.return_value = conn
 
     with patch("dashboard.app_fastapi._get_sa_engine", return_value=engine):
-        resp = client.get("/api/market/spread/Yelahanka")
+        resp = test_client.get("/api/market/spread/Yelahanka")
 
     assert resp.status_code == 200
     data = resp.json()

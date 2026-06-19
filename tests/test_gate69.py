@@ -7,12 +7,16 @@ from utils.log_analyzer import PipelineRunAnalyzer
 from agents.log_analyst_agent import LogAnalystAgent
 from agents.efficiency_optimizer_agent import EfficiencyOptimizerAgent
 from agents.runbook_documenter_agent import RunbookDocumenterAgent
-from starlette.testclient import TestClient
-from dashboard.app_fastapi import app
 
 pytestmark = pytest.mark.unit
-client = TestClient(app)
 _TEST_KEY = "test-api-key"
+
+
+@pytest.fixture(scope="module")
+def test_client():
+    from starlette.testclient import TestClient
+    from dashboard.app_fastapi import app
+    return TestClient(app)
 
 
 def _write_runs(path: Path, runs: list[dict]):
@@ -106,7 +110,7 @@ def test_runbook_documenter_creates_file(tmp_path, monkeypatch):
     assert path.exists(), f"Runbook file should exist: {path}"
 
 
-def test_process_audit_panel_returns_200():
+def test_process_audit_panel_returns_200(test_client):
     """(5) GET /process-audit returns 200."""
-    resp = client.get("/process-audit", headers={"X-API-Key": _TEST_KEY})
+    resp = test_client.get("/process-audit", headers={"X-API-Key": _TEST_KEY})
     assert resp.status_code == 200

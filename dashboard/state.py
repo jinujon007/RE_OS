@@ -147,6 +147,28 @@ def _attempt_redis_connect():
         _REDIS_CLIENT_INSTANCE = False
 
 
+def _reset_redis_client() -> None:
+    """Reset Redis connection state under lock, forcing reconnect on next call.
+
+    Thread-safe: acquires _REDIS_CLIENT_LOCK before mutating
+    _REDIS_CLIENT_INSTANCE and _last_redis_attempt.
+
+    Clearing _last_redis_attempt to 0.0 bypasses the cooldown timer so the
+    next _get_redis_client() call immediately attempts reconnection rather
+    than waiting _REDIS_RECONNECT_COOLDOWN seconds.
+
+    Called by redis_health.py on ping failure — the health check loop
+    is the sole external caller. All mutations of _REDIS_CLIENT_INSTANCE
+    must go through this function or _attempt_redis_connect() (both lock-
+    protected). No code outside state.py should assign to
+    _REDIS_CLIENT_INSTANCE directly.
+    """
+    global _REDIS_CLIENT_INSTANCE, _last_redis_attempt
+    with _REDIS_CLIENT_LOCK:
+        _REDIS_CLIENT_INSTANCE = False
+        _last_redis_attempt = 0.0
+
+
 def _get_redis_client():
     """Module-level lazy singleton Redis client with connection pool.
 
@@ -484,6 +506,8 @@ _READ_ONLY_PATHS = frozenset(
         "/api/v1/ops/corridor-backtest",
         "/api/v1/ops/decision-journal",
         "/api/ops/decision-journal",
+        "/api/v1/ops/conditional-gates",
+        "/api/ops/conditional-gates",
     }
 )
 _READ_ONLY_PREFIXES = (
@@ -549,7 +573,11 @@ def _latest_report_path(market: str | None = None) -> str | None:
     return latest_file
 
 
-def _log_running_lifecycle_locked(context: str):
+# Lock-invariant convention: functions with _MUST_HOLD_LOCK suffix require the
+# caller to hold _lock before calling. This is a naming convention for
+# threading.Lock (which lacks _is_owned()) — greppable and self-documenting.
+
+def _log_running_lifecycle_MUST_HOLD_LOCK(context: str):
     global _diag_running_last_signature
     signature = []
     for market, entry in sorted(_running.items()):

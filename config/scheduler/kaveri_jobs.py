@@ -262,28 +262,38 @@ def run_tender_daily_scan():
 
 def run_ledger_check_weekly():
     """Weekly prediction ledger check — Monday 06:00 IST.
-    Resolves pending claims, posts hit-rate summary to Discord."""
+    Resolves pending claims, posts hit-rate summary to Discord.
+    First Monday of month also sends module-level breakdown."""
+    from datetime import date
     try:
-        from utils.prediction_ledger import get_pending_claims, resolve_verdicts
+        from utils.prediction_ledger import get_pending_claims, resolve_verdicts, build_weekly_digest_discord_message, build_monthly_digest_discord_message
         from utils.discord_notifier import send
 
         pending = get_pending_claims()
-        if not pending:
+        if pending:
+            summary = resolve_verdicts()
+            logger.info("[LedgerCheck] {} pending, {} resolved, {} partial, {} unverifiable",
+                        summary["total"], summary["resolved"], summary["partial"], summary["unverifiable"])
+        else:
             logger.info("[LedgerCheck] No pending claims to resolve")
-            return
 
-        summary = resolve_verdicts()
-        msg = (
-            f"Prediction Ledger Check — {summary['total']} pending\n"
-            f"Resolved: {summary['resolved']} | "
-            f"Partial: {summary['partial']} | "
-            f"Unverifiable: {summary['unverifiable']}"
-        )
-        logger.info("[LedgerCheck] {}", msg)
-        try:
-            send("intel_reports", "Prediction Ledger Weekly Check", msg)
-        except Exception as discord_exc:
-            logger.debug("[LedgerCheck] Discord send skipped: {}", discord_exc)
+        weekly_msg = build_weekly_digest_discord_message()
+        if weekly_msg:
+            try:
+                send("intel_reports", "Prediction Ledger Weekly Check", weekly_msg)
+                logger.info("[LedgerCheck] Weekly summary sent to Discord")
+            except Exception as discord_exc:
+                logger.debug("[LedgerCheck] Discord weekly send skipped: {}", discord_exc)
+
+        today = date.today()
+        if today.weekday() == 0 and today.day <= 7:
+            monthly_msg = build_monthly_digest_discord_message()
+            if monthly_msg:
+                try:
+                    send("intel_reports", "Prediction Ledger Monthly Breakdown", monthly_msg)
+                    logger.info("[LedgerCheck] Monthly breakdown sent to Discord")
+                except Exception as discord_exc:
+                    logger.debug("[LedgerCheck] Discord monthly send skipped: {}", discord_exc)
     except Exception as exc:
         logger.warning("[LedgerCheck] Failed: {}", exc)
 

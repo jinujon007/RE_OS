@@ -5,6 +5,7 @@ Memory decay, backup, heartbeat, staleness checks, and board session recovery.
 """
 
 from collections.abc import Callable
+from datetime import date
 from apscheduler.schedulers.blocking import BlockingScheduler
 from loguru import logger
 from sqlalchemy import text
@@ -698,6 +699,316 @@ def run_corridor_backtest_weekly():
             logger.warning("[CorridorBacktest] Failed to send Discord alert: {}", exc)
 
 
+def run_corridor_backtest_monthly():
+    """Monthly corridor accuracy backtest — 1st of month 08:30 UTC.
+
+    Skips backtest re-run if a verdict already exists within the last
+    25 days (avoids duplicating the weekly run), then checks for 3+
+    consecutive MONTHLY intervals with rank_correlation < 0.4 before
+    firing a Discord kill-threshold alert.
+
+    Monthly intervals are detected via DATE_TRUNC of created_at, not row
+    count — this correctly handles both weekly and monthly backtest runs.
+    """
+    from scripts.run_corridor_backtest import run_backtest
+    from utils.discord_notifier import send, send_ops_alert
+    from sqlalchemy import text
+
+    engine = get_engine()
+
+    try:
+        with engine.connect() as conn:
+            recent = conn.execute(text("""
+                SELECT 1 FROM corridor_backtest_verdicts
+                WHERE created_at > NOW() - INTERVAL '25 days'
+                LIMIT 1
+            """)).fetchone()
+        has_recent_verdict = recent is not None
+    except Exception:
+        has_recent_verdict = False
+
+    if not has_recent_verdict:
+        try:
+            run_backtest()
+        except Exception as exc:
+            logger.error("[CorridorBacktestMonthly] run_backtest failed: {}", exc)
+            try:
+                send_ops_alert("CORRIDOR_BACKTEST_FAILURE", f"run_backtest failed: {exc}")
+            except Exception:
+                pass
+            return
+    else:
+        logger.info("[CorridorBacktestMonthly] recent verdict exists — skipping re-run")
+
+    try:
+        with engine.connect() as conn:
+            latest = conn.execute(text("""
+                SELECT rank_correlation
+                FROM corridor_backtest_verdicts
+                ORDER BY created_at DESC
+                LIMIT 1
+            """)).fetchone()
+    except Exception as exc:
+        logger.warning("[CorridorBacktestMonthly] latest query failed: {}", exc)
+        return
+
+    if not latest or latest[0] is None:
+        logger.info("[CorridorBacktestMonthly] no verdict data yet")
+        return
+
+    latest_corr = float(latest[0])
+    if latest_corr >= 0.4:
+        logger.info("[CorridorBacktestMonthly] rank_correlation={} >= 0.4 — OK", latest_corr)
+        return
+
+    try:
+        with engine.connect() as conn:
+            monthly_corrs = conn.execute(text("""
+                SELECT DISTINCT ON (DATE_TRUNC('month', created_at))
+                    rank_correlation
+                FROM corridor_backtest_verdicts
+                WHERE rank_correlation IS NOT NULL
+                ORDER BY DATE_TRUNC('month', created_at) DESC
+                LIMIT 3
+            """)).fetchall()
+    except Exception as exc:
+        logger.warning("[CorridorBacktestMonthly] monthly corrs query failed: {}", exc)
+        return
+
+    consecutive_miss_months = 0
+    for r in monthly_corrs:
+        val = float(r[0]) if r[0] is not None else 1.0
+        if val < 0.4:
+            consecutive_miss_months += 1
+        else:
+            break
+
+    if consecutive_miss_months >= 3:
+        msg = (
+            f"\u26a0\ufe0f CORRIDOR ACCURACY BELOW KILL THRESHOLD — "
+            f"rank_correlation < 0.4 for {consecutive_miss_months} consecutive monthly periods. "
+            f"Latest: {latest_corr}. Review corridor scoring model."
+        )
+        try:
+            send("ops", "\u26a0\ufe0f Corridor Accuracy Kill Threshold", msg)
+            logger.info("[CorridorBacktestMonthly] Discord alert sent: {}", msg)
+        except Exception as exc:
+            logger.warning("[CorridorBacktestMonthly] Discord send failed: {}", exc)
+    else:
+        logger.info(
+            "[CorridorBacktestMonthly] rank_correlation={} < 0.4 but only {} consecutive monthly period(s) — not alerting yet",
+            latest_corr, consecutive_miss_months,
+        )
+
+
+def run_form17_inbox_scan() -> dict:
+    """Scan data/kaveri_deeds/inbox/form17/ and ingest new PDFs into registered_transactions.
+
+    Tracks already-processed files via a watermark file (~/.form17_watermark).
+    If no new PDFs since last scan, returns early without DB writes.
+    """
+    from pathlib import Path
+    from scrapers.kaveri_form17 import parse_form17_inbox, Form17Parser
+    from ingest.plugins.kaveri_form17_plugin import KaveriForm17Plugin
+    from ingest.writer import IngestWriter, WriteResult
+
+    _INBOX_DIR = Path("data/kaveri_deeds/inbox/form17")
+    _WATERMARK_FILE = Path("~/.form17_watermark").expanduser()
+
+    if not _INBOX_DIR.exists():
+        logger.info("[Form17Scan] inbox/form17 directory not found")
+        return {"records_written": 0, "status": "empty", "reason": "no_directory"}
+
+    # Read watermark: store newest modification timestamp from last scan
+    last_scan_mtime = 0.0
+    if _WATERMARK_FILE.exists():
+        try:
+            last_scan_mtime = float(_WATERMARK_FILE.read_text().strip())
+        except (ValueError, OSError):
+            last_scan_mtime = 0.0
+
+    pdf_files = sorted(_INBOX_DIR.glob("*.pdf"))
+    new_pdfs = [p for p in pdf_files if p.stat().st_mtime > last_scan_mtime]
+    if not new_pdfs:
+        logger.info("[Form17Scan] no new PDFs since last scan (watermark: {})", last_scan_mtime)
+        return {"records_written": 0, "status": "uptodate", "reason": "watermark", "total_pdfs": len(pdf_files)}
+
+    logger.info("[Form17Scan] {} new PDF(s) out of {} total", len(new_pdfs), len(pdf_files))
+
+    raw_records = parse_form17_inbox()
+    if not raw_records:
+        # Still update watermark so we don't re-scan next time
+        _WATERMARK_FILE.write_text(str(max(p.stat().st_mtime for p in pdf_files)))
+        logger.info("[Form17Scan] no records found")
+        return {"records_written": 0, "status": "empty", "reason": "no_records"}
+
+    cancelled_docs = set()
+    for raw in raw_records:
+        cd = raw.get("cancels_doc_number")
+        if cd:
+            cancelled_docs.add(cd)
+
+    plugin = KaveriForm17Plugin()
+    writer = IngestWriter()
+    written = 0
+    write_errors = 0
+    for raw in raw_records:
+        record = plugin._build_record(raw, raw.get("village", "all"), cancelled_docs)
+        if record is not None:
+            try:
+                writer.write(record)
+                written += 1
+            except Exception:
+                write_errors += 1
+                logger.warning("[Form17Scan] write failed for doc_no={}", raw.get("doc_number"))
+
+    # Update watermark to current time
+    _WATERMARK_FILE.write_text(str(max(p.stat().st_mtime for p in pdf_files)))
+
+    logger.info("[Form17Scan] {} records written, {} errors", written, write_errors)
+    return {
+        "records_written": written,
+        "status": "ok" if write_errors == 0 else "partial",
+        "write_errors": write_errors,
+        "total_raw": len(raw_records),
+        "new_pdfs": len(new_pdfs),
+    }
+
+
+_KILL_CRITERIA_MET_SUPPRESSION = "kill_criteria_both_met"
+_KILL_CRITERIA_WEEK1_FACT = "kill_criteria_met_week_1"
+
+
+def _kill_criteria_suppression_key(conn) -> str | None:
+    """Check suppression state. Returns 'suppressed' if both criteria met for 2 consecutive Mondays.
+    Returns 'week1' if this is the second consecutive Monday with both criteria green (write suppression).
+    Returns None if no suppression action needed."""
+    from sqlalchemy import text as _st
+
+    suppression_row = conn.execute(
+        _st("SELECT id FROM agent_memories WHERE agent_id='system' AND fact=:f LIMIT 1"),
+        {"f": _KILL_CRITERIA_MET_SUPPRESSION},
+    ).fetchone()
+    if suppression_row:
+        return "suppressed"
+
+    week1_row = conn.execute(
+        _st("SELECT created_at FROM agent_memories WHERE agent_id='system' AND fact=:f AND created_at > NOW() - INTERVAL '10 days' LIMIT 1"),
+        {"f": _KILL_CRITERIA_WEEK1_FACT},
+    ).fetchone()
+    if week1_row:
+        return "week2"
+
+    return "week1"
+
+
+_DEED_DEADLINE = date(2026, 8, 15)
+_DJ_DEADLINE = date(2026, 12, 31)
+_DEED_TARGET_WEEKLY = 50
+_DJ_TARGET_COUNT = 1
+_MAX_DISCORD_MSG_LEN = 400
+
+
+def run_kill_criteria_reminder():
+    """Weekly kill criteria deadline reminder — Monday 08:00 IST.
+
+    Queries registered_transactions and decision_journal, sends Discord
+    #re-os-health with weekly average and days-remaining counts.
+
+    Suppression logic (2-week confirmation):
+      - Week 1 (both criteria green): writes kill_criteria_met_week_1 fact
+      - Week 2 (both still green): writes kill_criteria_both_met suppression
+      - Week 3+: silenced by suppression check
+
+    Suppression is checked but NOT cleared when criteria regress — once
+    both are met for 2 weeks, reminders stop permanently. This prevents
+    alert fatigue on already-achieved milestones.
+    """
+    from utils.discord_notifier import send as _ds
+    from sqlalchemy import text as _st
+    from datetime import date as _dt
+
+    engine = get_engine()
+    today = _dt.today()
+
+    if today > _DEED_DEADLINE and today.weekday() == 0:
+        logger.info("[KillCriteriaReminder] Past deed deadline — acknowledging milestone, stopping regular reminders")
+    deed_days_left = (_DEED_DEADLINE - today).days
+    dj_days_left = (_DJ_DEADLINE - today).days
+
+    try:
+        with engine.connect() as conn:
+            deed_row = conn.execute(_st("""
+                SELECT COUNT(*)::float / GREATEST(
+                    EXTRACT(EPOCH FROM NOW()) - EXTRACT(EPOCH FROM MIN(created_at)), 1
+                ) * 604800.0 AS weekly_avg
+                FROM registered_transactions WHERE deed_type = 'Sale'
+            """)).fetchone()
+            deed_weekly_avg = round(float(deed_row[0]), 1) if deed_row and deed_row[0] else 0.0
+    except Exception as exc:
+        logger.warning("[KillCriteriaReminder] deed query failed: {}", exc)
+        deed_weekly_avg = 0.0
+
+    try:
+        with engine.connect() as conn:
+            journal_count = conn.execute(_st("SELECT COUNT(*) FROM decision_journal")).scalar() or 0
+    except Exception as exc:
+        logger.warning("[KillCriteriaReminder] journal query failed: {}", exc)
+        journal_count = 0
+
+    check_key = None
+    if deed_weekly_avg >= _DEED_TARGET_WEEKLY and journal_count >= _DJ_TARGET_COUNT:
+        try:
+            with engine.connect() as conn:
+                check_key = _kill_criteria_suppression_key(conn)
+        except Exception as exc:
+            logger.warning("[KillCriteriaReminder] suppression key check failed: {}", exc)
+
+        if check_key == "suppressed":
+            logger.info("[KillCriteriaReminder] Suppressed — criteria already met for 2+ weeks")
+            return
+        elif check_key == "week2":
+            logger.info("[KillCriteriaReminder] Both criteria met 2 weeks running — writing permanent suppression")
+            try:
+                with engine.begin() as conn:
+                    conn.execute(
+                        _st("INSERT INTO agent_memories (agent_id, market, fact, confidence, created_at) "
+                            "VALUES ('system', 'system', :f, 1.0, NOW()) ON CONFLICT (agent_id, market, fact) DO NOTHING"),
+                        {"f": _KILL_CRITERIA_MET_SUPPRESSION},
+                    )
+                logger.info("[KillCriteriaReminder] Suppression written — future reminders suppressed")
+                return
+            except Exception as exc:
+                logger.warning("[KillCriteriaReminder] suppression write failed: {}", exc)
+        elif check_key == "week1":
+            logger.info("[KillCriteriaReminder] Both criteria met first week — writing week-1 marker")
+            try:
+                with engine.begin() as conn:
+                    conn.execute(
+                        _st("INSERT INTO agent_memories (agent_id, market, fact, confidence, created_at) "
+                            "VALUES ('system', 'system', :f, 1.0, NOW()) ON CONFLICT (agent_id, market, fact) DO NOTHING"),
+                        {"f": _KILL_CRITERIA_WEEK1_FACT},
+                    )
+            except Exception as exc:
+                logger.warning("[KillCriteriaReminder] week1 marker write failed: {}", exc)
+
+    if check_key == "suppressed":
+        return
+
+    msg = (
+        f"\U0001f4cb Kill Criteria Weekly Check\n"
+        f"\u2022 Deed throughput: {deed_weekly_avg:.0f}/{_DEED_TARGET_WEEKLY} weekly avg — {max(deed_days_left, 0)}d until {_DEED_DEADLINE}\n"
+        f"\u2022 Decision journal: {journal_count}/{_DJ_TARGET_COUNT} entries — {max(dj_days_left, 0)}d until {_DJ_DEADLINE}"
+    )
+    if len(msg) > _MAX_DISCORD_MSG_LEN:
+        msg = msg[:_MAX_DISCORD_MSG_LEN] + "…"
+    try:
+        _ds("re-os-health", "Kill Criteria Weekly Reminder", msg)
+        logger.info("[KillCriteriaReminder] Discord message sent")
+    except Exception as exc:
+        logger.warning("[KillCriteriaReminder] Discord send failed: {}", exc)
+
+
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
     """Register maintenance-related scheduler jobs."""
     from apscheduler.triggers.cron import CronTrigger
@@ -862,6 +1173,22 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         name="Weekly Corridor Backtest (score vs distance rank correlation)",
         misfire_grace_time=7200,
     )
+    # Monthly corridor backtest — 1st of month 08:30 UTC (GATE-123, T-1302)
+    scheduler.add_job(
+        lambda: safe_job(run_corridor_backtest_monthly, "corridor_backtest_monthly"),
+        CronTrigger(day=1, hour=8, minute=30, timezone="UTC"),
+        id="corridor_backtest_monthly",
+        name="Monthly Corridor Backtest (accuracy kill threshold + consecutive miss tracking)",
+        misfire_grace_time=7200,
+    )
+    # Weekly kill criteria reminder — Monday 08:00 IST (GATE-123, T-1305)
+    scheduler.add_job(
+        lambda: safe_job(run_kill_criteria_reminder, "kill_criteria_weekly_reminder"),
+        CronTrigger(day_of_week="mon", hour=8, minute=0),
+        id="kill_criteria_weekly_reminder",
+        name="Weekly Kill Criteria Reminder (deed throughput + decision journal deadlines)",
+        misfire_grace_time=7200,
+    )
     # Monthly data floor cache refresh — 1st of month 05:00 UTC (T-1290)
     scheduler.add_job(
         lambda: safe_job(run_data_floor_refresh, "data_floor_refresh"),
@@ -879,4 +1206,12 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         id="chromadb_maintenance",
         name="Quarterly ChromaDB Maintenance (purge stale embeddings >90d)",
         misfire_grace_time=604800,
+    )
+    # Weekly Form 17 inbox scan — Sunday 03:15 IST (GATE-122, T-1299)
+    scheduler.add_job(
+        lambda: safe_job(run_form17_inbox_scan, "kaveri_form17_weekly"),
+        CronTrigger(day_of_week="sun", hour=3, minute=15),
+        id="kaveri_form17_weekly",
+        name="Weekly Form 17 Inbox Scan (ingest new PDFs → registered_transactions)",
+        misfire_grace_time=7200,
     )

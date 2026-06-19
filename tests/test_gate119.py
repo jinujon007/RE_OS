@@ -11,9 +11,6 @@
 import yaml
 from pathlib import Path
 
-from starlette.testclient import TestClient
-from dashboard.app_fastapi import app
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATASOURCE_YAML = REPO_ROOT / "config" / "grafana" / "provisioning" / "datasources" / "datasource.yml"
 DOCKER_COMPOSE = REPO_ROOT / "docker-compose.yml"
@@ -39,9 +36,13 @@ def test_gate119_assertion2_grafana_volume_mounted():
     )
 
 
+def _get_app_routes():
+    from dashboard.app_fastapi import app
+    return [r.path for r in app.routes]
+
 def test_gate119_assertion3_slo_route_registered():
-    routes = [r.path for r in app.routes]
-    assert "/api/v1/ops/slo" in routes, f"Route not found. Ops routes: {[r.path for r in app.routes if 'ops' in r.path]}"
+    routes = _get_app_routes()
+    assert "/api/v1/ops/slo" in routes, "Route not found"
 
 
 def test_gate119_assertion4_slo_burn_check_uses_deterministic_dedup():
