@@ -85,6 +85,7 @@ from config.scheduler.maintenance_jobs import (
     run_chromadb_maintenance,
     run_corridor_backtest_monthly,
     run_kill_criteria_reminder,
+    run_scraper_health_check,
     _ops_already_alerted,
     _bd_already_alerted,
 )
@@ -143,6 +144,7 @@ __all__ = [
     "run_chromadb_maintenance",
     "run_corridor_backtest_monthly",
     "run_kill_criteria_reminder",
+    "run_scraper_health_check",
     "start_scheduler",
 ]
 

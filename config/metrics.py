@@ -281,3 +281,93 @@ redis_connected = _gauge(
     "redis_connected",
     "1 if Redis client is connected and pingable, 0 if unavailable or disconnected",
 )
+
+# ── GATE-129 — Board Room formatter metrics ─────────────────────────────────
+
+format_duration_seconds = _histogram(
+    "format_duration_seconds",
+    "BoardRoomFormatter format method duration",
+    ["format_type"],
+    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, float("inf")),
+)
+
+board_decision_flag_total = _counter(
+    "board_decision_flag_total",
+    "Board Room sessions by computed decision flag",
+    ["flag"],
+)
+
+# ── GATE-130 — Firecrawl metrics ──────────────────────────────────────────────
+
+firecrawl_requests_total = _counter(
+    "firecrawl_requests_total",
+    "Total Firecrawl API requests by operation and status",
+    ["operation", "status"],
+)
+
+firecrawl_errors_total = _counter(
+    "firecrawl_errors_total",
+    "Total Firecrawl API errors by operation and error code",
+    ["operation", "code"],
+)
+
+firecrawl_duration_seconds = _histogram(
+    "firecrawl_duration_seconds",
+    "Firecrawl API request duration in seconds",
+    ["operation"],
+    buckets=(0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0),
+)
+
+# ── GATE-131 — Tavily metrics ─────────────────────────────────────────────────
+
+tavily_requests_total = _counter(
+    "tavily_requests_total",
+    "Total Tavily API requests by status",
+    ["status"],
+)
+
+tavily_errors_total = _counter(
+    "tavily_errors_total",
+    "Total Tavily API errors by code",
+    ["code"],
+)
+
+tavily_duration_seconds = _histogram(
+    "tavily_duration_seconds",
+    "Tavily API search duration in seconds",
+    buckets=(0.5, 1.0, 2.0, 5.0, 10.0, 30.0),
+)
+
+# ── GATE-132 — Google Maps metrics ─────────────────────────────────────────────
+
+google_maps_requests_total = _counter(
+    "google_maps_requests_total",
+    "Total Google Maps API requests by status",
+    ["status"],
+)
+
+google_maps_errors_total = _counter(
+    "google_maps_errors_total",
+    "Total Google Maps API errors by code",
+    ["code"],
+)
+
+google_maps_duration_seconds = _histogram(
+    "google_maps_duration_seconds",
+    "Google Maps API request duration in seconds",
+    buckets=(0.5, 1.0, 2.0, 5.0, 10.0, 30.0),
+)
+
+# ── GATE-133 — Obsidian Export metrics ──────────────────────────────────────
+
+obsidian_export_total = _counter(
+    "obsidian_export_total",
+    "Total Obsidian export calls by source",
+    ["source"],
+)
+
+obsidian_bytes_total = _counter(
+    "obsidian_bytes_total",
+    "Total bytes written to Obsidian export by source",
+    ["source"],
+)

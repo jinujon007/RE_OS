@@ -486,7 +486,31 @@ class NewsScout:
         """
         all_raw_articles: list[dict] = []
 
+        try:
+            from utils.tavily_client import _reset_count as _tavily_reset
+            _tavily_reset()
+        except ImportError:
+            pass
+
         for query in self.queries:
+            # Source 0: Tavily (primary — LLM-optimised search, no CAPTCHA)
+            try:
+                from utils.tavily_client import search as tavily_search
+                tavily_results = tavily_search(query, market=self.market, max_results=5)
+                if tavily_results:
+                    logger.debug(f"[NewsScout] Tavily '{query}' -> {len(tavily_results)} results")
+                    for r in tavily_results:
+                        all_raw_articles.append({
+                            "title": r.get("title", ""),
+                            "url": r.get("url", ""),
+                            "published": r.get("published_date", ""),
+                            "snippet": (r.get("content") or "")[:300],
+                            "source": "tavily",
+                        })
+            except Exception as exc:
+                logger.debug(f"[NewsScout] Tavily search failed for '{query}': {exc}")
+            time.sleep(0.3)
+
             # Source 1: Google News RSS
             articles = _fetch_google_news_rss(query, days_back=days_back)
             all_raw_articles.extend(articles)

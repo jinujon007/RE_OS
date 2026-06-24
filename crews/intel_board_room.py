@@ -326,6 +326,106 @@ def _get_competitive_context(market: str) -> str:
         return ""
 
 
+def _get_parcel_latlon(survey_no: str, market: str) -> tuple[float, float] | None:
+    """Look up parcel centroid from parcels table by survey_no + market village.
+
+    Falls back to market-level centroid from micro_markets table when parcels
+    table has no geometry for the given survey_no. This ensures commute context
+    is available even before deed-level parcels are linked.
+
+    Returns (lat, lon) tuple or None if neither source has data.
+    """
+    if not survey_no or not market:
+        return None
+
+    # Priority 1: parcel-level geometry from parcels table
+    try:
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lon
+                    FROM parcels
+                    WHERE survey_no = :survey_no
+                    LIMIT 1
+                """),
+                {"survey_no": survey_no.strip()},
+            ).fetchone()
+            if row and row.lat is not None and row.lon is not None:
+                return (float(row.lat), float(row.lon))
+    except Exception as exc:
+        logger.debug("[BoardRoomV2] parcel geometry lookup failed: {}", exc)
+
+    # Priority 2: market-level centroid fallback (consistent with V1 Board Room)
+    try:
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT ST_X(centroid::geometry) AS lon,
+                           ST_Y(centroid::geometry) AS lat
+                    FROM micro_markets
+                    WHERE name ILIKE :market
+                    LIMIT 1
+                """),
+                {"market": f"%{market}%"},
+            ).fetchone()
+            if row and row.lat is not None and row.lon is not None:
+                logger.debug(
+                    "[BoardRoomV2] market centroid fallback for {}: {}, {}",
+                    market, row.lat, row.lon,
+                )
+                return (float(row.lat), float(row.lon))
+    except Exception as exc:
+        logger.debug("[BoardRoomV2] market centroid lookup failed: {}", exc)
+
+    return None
+
+
+def _get_commute_context(survey_no: str, market: str) -> str:
+    """Build commute context string for BD Head.
+
+    Tries parcel lat/lon from parcels table, then CommuteScorer.
+    Returns formatted string or empty if unavailable.
+    """
+    latlon = _get_parcel_latlon(survey_no, market)
+    if latlon is None:
+        logger.debug("[BoardRoomV2] no parcel lat/lon for commute context")
+        return ""
+
+    lat, lon = latlon
+    try:
+        from utils.commute_scorer import CommuteScorer
+
+        scorer = CommuteScorer()
+        try:
+            result = scorer.score(lat, lon)
+        finally:
+            scorer.close()
+    except Exception as exc:
+        logger.debug("[BoardRoomV2] commute scoring failed: {}", exc)
+        return ""
+
+    if result is None:
+        return ""
+
+    manyata = result.get("manyata_minutes")
+    kial = result.get("kial_minutes")
+    hebbal = result.get("hebbal_minutes")
+    composite = result.get("composite_score", 0)
+
+    parts = ["COMMUTE ACCESSIBILITY (drive time from parcel centroid):"]
+    if manyata is not None:
+        parts.append(f"  Manyata Tech Park: {manyata} min")
+    if kial is not None:
+        parts.append(f"  KIAL Airport: {kial} min")
+    if hebbal is not None:
+        parts.append(f"  Hebbal: {hebbal} min")
+    parts.append(f"  Composite commute score: {composite}/100")
+
+    gcc = "EXCELLENT" if composite >= 70 else "GOOD" if composite >= 50 else "MODERATE" if composite >= 30 else "POOR"
+    parts.append(f"  Commute quality: {gcc}")
+    return "\n".join(parts)
+
+
 def _run_dept_heads(pkg: IntelPackage, pitch: str) -> dict[str, str]:
     from crewai import Task, Crew, Process
 
@@ -370,6 +470,9 @@ def _run_dept_heads(pkg: IntelPackage, pitch: str) -> dict[str, str]:
             comp_context = _get_competitive_context(pkg.market)
             if comp_context:
                 task_desc_parts.append(f"\n{comp_context}\n")
+            commute_text = _get_commute_context(pkg.survey_no, pkg.market)
+            if commute_text:
+                task_desc_parts.append(f"\n{commute_text}\n")
         task_desc_parts.extend(
             [
                 f"\n{prompt}\n",

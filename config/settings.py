@@ -431,6 +431,21 @@ DEVELOPER_ALIASES: dict[str, list[str]] = {
                  "Concorde Properties"],
 }
 
+# ── FIRECRAWL (GATE-130) ────────────────────────────────────────────────────────
+# Battle-tested web scraper. Handles JS-heavy sites + anti-bot. Returns clean markdown.
+# Free tier: 500 pages/month — sufficient for weekly developer site + portal checks.
+# Sign up: firecrawl.dev → Dashboard → API Keys → Generate
+# Self-hosted: set FIRECRAWL_BASE_URL to your instance (e.g. http://firecrawl:3002/v1)
+FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY", "")
+FIRECRAWL_BASE_URL = os.getenv("FIRECRAWL_BASE_URL", "https://api.firecrawl.dev/v1")
+
+# ── TAVILY (GATE-131) ────────────────────────────────────────────────────────────
+# LLM-optimised search API for real-time market intelligence.
+# Free tier: 1000 queries/month — sufficient for daily news_scout + intel search.
+# Sign up: tavily.com → Dashboard → API Keys
+# Rate limit: 20 RPM on free tier. 1-month rolling quota: warn 800, stop 950.
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+
 # ── SLO (GATE-119) ────────────────────────────────────────────────────────────
 SLO_SCHEDULER_TARGET = float(os.getenv("SLO_SCHEDULER_TARGET", "0.95"))
 SLO_SCHEDULER_BREACH_DAYS = max(1, int(os.getenv("SLO_SCHEDULER_BREACH_DAYS", "3")))

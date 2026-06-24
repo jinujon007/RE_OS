@@ -515,17 +515,18 @@ _READ_ONLY_PATHS = frozenset(
 _READ_ONLY_PREFIXES = (
     "/api/reports/", "/api/logs/", "/api/market/", "/api/evaluate/",
     "/api/data/", "/api/memory/", "/api/demand/", "/api/distress/",
-    "/api/scraper/", "/api/parcel/", "/api/finance/",
+    "/api/scraper/", "/api/parcel/", "/api/finance/", "/api/board/sessions/",
     "/api/content/", "/api/process-audit/", "/api/shareholders/",
     "/api/govt/", "/api/competitive/", "/api/portfolio/",
     "/api/pr/", "/api/optimizer/", "/api/llm/",
     # v1 prefix aliases
     "/api/v1/reports/", "/api/v1/logs/", "/api/v1/market/", "/api/v1/evaluate/",
     "/api/v1/data/", "/api/v1/memory/", "/api/v1/demand/", "/api/v1/distress/",
-    "/api/v1/scraper/", "/api/v1/parcel/", "/api/v1/finance/",
+    "/api/v1/scraper/", "/api/v1/parcel/", "/api/v1/finance/", "/api/v1/board/sessions/",
     "/api/v1/content/", "/api/v1/process-audit/", "/api/v1/shareholders/",
     "/api/v1/govt/", "/api/v1/competitive/", "/api/v1/portfolio/",
     "/api/v1/pr/", "/api/v1/optimizer/", "/api/v1/llm/",
+    "/api/v1/intel/propcontext-delta/", "/api/intel/propcontext-delta/",
 )
 
 

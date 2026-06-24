@@ -59,8 +59,10 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
-    # Port intentionally not published — access via: docker compose exec postgres psql -U re_os_user -d re_os
-    # Or: make db
+    # Exposed on loopback ONLY — accessible to Claude Code PostgreSQL MCP on host machine
+    # Not reachable from external networks (127.0.0.1 bind).
+    ports:
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U re_os_user -d re_os"]
       interval: 10s
@@ -181,6 +183,55 @@ services:
       retries: 3
       start_period: 60s
     command: python -m config.scheduler
+
+  # ── GRAFANA MCP BRIDGE ────────────────────────────────────────────────────
+  # Bridges Claude Code → Grafana via MCP protocol.
+  # Add to Claude Code project settings as: type=sse, url=http://localhost:8010
+  # Requires GRAFANA_API_KEY in .env (get from Grafana UI: Admin → Service Accounts)
+  grafana-mcp:
+    image: aimiox/amx-mcp-grafana:latest
+    container_name: re_os_grafana_mcp
+    restart: unless-stopped
+    ports:
+      - "8010:8010"
+    environment:
+      GRAFANA_URL: http://grafana:3000
+      GRAFANA_API_KEY: ${GRAFANA_API_KEY:-}
+    depends_on:
+      - grafana
+
+  # ── MCP SERVER ────────────────────────────────────────────────────────────
+  # Exposes RE_OS intelligence tools as MCP for Claude Code and other MCP clients.
+  re_os_mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: re_os_mcp
+    user: re_os
+    restart: unless-stopped
+    environment:
+      <<: *agent-env
+      MCP_SERVER_PORT: "8051"
+    ports:
+      - "8051:8051"
+    volumes: *agent-volumes
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8051/health', timeout=5)\" 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    command: python mcp_server/re_os_mcp.py
 
   # ── METRICS COLLECTION ────────────────────────────────────────────────────
   prometheus:

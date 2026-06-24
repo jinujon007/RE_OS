@@ -6,12 +6,26 @@ import json
 import logging
 import os
 import time
+import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Request, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy import text as _sa_text
 
 from dashboard.state import limiter, _get_sa_engine, _normalize_market, _VALID_BOARD_MARKETS, _err_resp
+
+
+
+class ObsidianExportResponse(BaseModel):
+    """Pydantic model for ``GET /board/sessions/{id}/obsidian-export``."""
+
+    filename: str
+    content: str
+    frontmatter: dict
+    decision_flag: str | None = None
+    dept_count: int = 0
 
 logger = logging.getLogger("re_os.dashboard")
 
@@ -65,24 +79,188 @@ async def board_sessions(request: Request):
         with _get_sa_engine().connect() as conn:
             rows = conn.execute(
                 _sa_text("""
-                SELECT session_id, market, status, created_at, pitch_text
+                SELECT session_id, market, status, created_at, pitch_text, ceo_synthesis
                 FROM board_sessions ORDER BY created_at DESC LIMIT 20
             """)
             ).fetchall()
         result = []
         for r in rows:
             pitch = r[4] or ""
+            decision_flag = None
+            if r[5]:
+                try:
+                    synth = json.loads(r[5]) if isinstance(r[5], str) else r[5]
+                    decision_flag = synth.get("decision_flag")
+                except Exception:
+                    pass
             result.append({
                 "session_id": str(r[0]),
                 "market": r[1],
                 "status": r[2],
                 "created_at": r[3].isoformat() if r[3] else None,
                 "pitch_excerpt": pitch[:120] + ("\u2026" if len(pitch) > 120 else ""),
+                "decision_flag": decision_flag,
             })
         return {"sessions": result}
     except Exception as e:
         logger.error("[board_sessions] %s", e)
         return JSONResponse({"sessions": [], "error": "database query failed", "code": "INTERNAL_ERROR"})
+
+
+@router.get(
+    "/board/sessions/{session_id}/obsidian-export",
+    summary="Get board session formatted for Obsidian paste",
+    response_model=ObsidianExportResponse,
+)
+@limiter.limit("30/minute")
+async def board_session_obsidian_export(request: Request, session_id: str):
+    # Validate session_id is a UUID before hitting the DB
+    try:
+        uuid.UUID(session_id)
+    except (ValueError, AttributeError):
+        return JSONResponse(
+            {
+                "error": {
+                    "code": "INVALID_SESSION_ID",
+                    "detail": "session_id must be a valid UUID",
+                },
+                "filename": None, "content": None, "frontmatter": {},
+                "decision_flag": None, "dept_count": 0,
+            },
+            status_code=400,
+        )
+
+    try:
+        with _get_sa_engine().connect() as conn:
+            row = conn.execute(
+                _sa_text("""
+                SELECT
+                    session_id, market, pitch_text, status,
+                    bd_response, finance_response, engineering_response,
+                    ops_response, legal_response, ceo_synthesis,
+                    created_at, completed_at
+                FROM board_sessions WHERE session_id = :sid
+            """),
+                {"sid": session_id},
+            ).fetchone()
+    except Exception as e:
+        logger.error("[board_session_obsidian_export] DB error: %s", e)
+        return JSONResponse(
+            {
+                "error": {"code": "DB_ERROR", "detail": "database query failed"},
+                "filename": None, "content": None, "frontmatter": {},
+                "decision_flag": None, "dept_count": 0,
+            },
+            status_code=500,
+        )
+
+    if not row:
+        return JSONResponse(
+            {
+                "error": {
+                    "code": "SESSION_NOT_FOUND",
+                    "detail": "No board session with this ID",
+                },
+                "filename": None, "content": None, "frontmatter": {},
+                "decision_flag": None, "dept_count": 0,
+            },
+            status_code=404,
+        )
+
+    mapping = row._mapping
+    market = mapping.get("market") or ""
+    pitch = mapping.get("pitch_text") or ""
+    status_val = mapping.get("status") or "unknown"
+    created = mapping["created_at"].isoformat() if mapping.get("created_at") else ""
+    completed = mapping["completed_at"].isoformat() if mapping.get("completed_at") else ""
+
+    dept_keys: list[tuple[str, str]] = [
+        ("bd_response", "BD Head"),
+        ("finance_response", "Finance Head"),
+        ("engineering_response", "Engineering Head"),
+        ("ops_response", "Operations Head"),
+        ("legal_response", "Legal Head"),
+    ]
+
+    lines: list[str] = [
+        "---",
+        "type: crystallization",
+        "area: lls",
+        "ai_generated: true",
+        f"generated_at: {created}",
+        f"market: {market}",
+        "source: board_room",
+        f"pitch: {pitch[:120]}",
+        "---",
+        "",
+        f"# Board Room Session - {market}",
+        "",
+        f"**Session ID:** {session_id}",
+        f"**Status:** {status_val}",
+        f"**Pitch:** {pitch}",
+        "",
+    ]
+
+    dept_count = 0
+    for col, label in dept_keys:
+        text = mapping.get(col) or ""
+        if text:
+            dept_count += 1
+            lines.append(f"## {label}")
+            lines.append("")
+            try:
+                parsed = json.loads(text) if isinstance(text, str) else text
+                if isinstance(parsed, dict):
+                    for k, v in parsed.items():
+                        lines.append(f"- **{k}:** {v}")
+                else:
+                    lines.append(str(parsed))
+            except (json.JSONDecodeError, TypeError):
+                lines.append(str(text))
+            lines.append("")
+
+    synth = mapping.get("ceo_synthesis") or ""
+    decision_flag: str | None = None
+    if synth:
+        lines.append("## CEO Synthesis")
+        lines.append("")
+        try:
+            parsed = json.loads(synth) if isinstance(synth, str) else synth
+            if isinstance(parsed, dict):
+                decision_flag = parsed.get("decision_flag")
+                for k, v in parsed.items():
+                    lines.append(f"- **{k}:** {v}")
+            else:
+                lines.append(str(parsed))
+        except (json.JSONDecodeError, TypeError):
+            lines.append(str(synth))
+        lines.append("")
+
+    if completed:
+        lines.append(f"**Completed at:** {completed}")
+
+    content = "\n".join(lines)
+    frontmatter = {
+        "type": "crystallization",
+        "area": "lls",
+        "ai_generated": True,
+        "generated_at": created,
+        "market": market,
+        "source": "board_room",
+    }
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    filename = f"(AI) Board Room Verdict {market} {date_str}.md"
+
+    from config.metrics import obsidian_export_total
+    obsidian_export_total.labels(source="board_export").inc()
+
+    return ObsidianExportResponse(
+        filename=filename,
+        content=content,
+        frontmatter=frontmatter,
+        decision_flag=decision_flag,
+        dept_count=dept_count,
+    )
 
 
 @router.get(

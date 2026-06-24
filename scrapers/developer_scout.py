@@ -18,6 +18,7 @@ Fetch strategy (tiered per developer):
   use_playwright=True  → Scrapling DynamicFetcher (stealth Playwright) → raw Playwright fallback
   use_playwright=False → Scrapling Fetcher (TLS fingerprint spoofing) → requests fallback
   All Scrapling calls degrade gracefully if the package is unavailable.
+  Final fallback (all above fail) → Firecrawl API (GATE-130).
 
 Model: Gemini Flash — handles unstructured developer marketing pages better
        than structured extraction models. Large context = full-page comprehension.
@@ -63,6 +64,7 @@ from config.settings import (
 )
 from config.metrics import scraper_runs_total
 from scrapers.scout_memory import ScoutMemory
+from utils.firecrawl_client import scrape_url as _firecrawl_scrape, _reset_count as _fc_reset_count
 
 
 # ── Developer registry ────────────────────────────────────────────────────────
@@ -668,6 +670,7 @@ class DeveloperScout:
         self.memory = memory or ScoutMemory(market)
         self.session = requests.Session()
         self.session.headers.update(SCRAPE_HEADERS)
+        _fc_reset_count()
 
     def scout(
         self, developers: list[str] | None = None, include_grade_b: bool = True
@@ -869,6 +872,7 @@ class DeveloperScout:
         Scrapling first, existing behavior as fallback.
         use_playwright=True  → DynamicFetcher (stealth Playwright) → raw Playwright
         use_playwright=False → Fetcher (TLS fingerprint spoof)     → requests
+        Firecrawl fallback if everything else fails.
         """
         if _SCRAPLING_OK:
             if use_playwright:
@@ -882,8 +886,15 @@ class DeveloperScout:
             )
 
         if use_playwright:
-            return self._playwright_fetch_raw(url)
-        return self._requests_fetch_raw(url)
+            html = self._playwright_fetch_raw(url)
+        else:
+            html = self._requests_fetch_raw(url)
+
+        if not html:
+            logger.info(f"[DeveloperScout][{dev_key}] All fetchers empty → Firecrawl fallback")
+            html = _firecrawl_scrape(url)
+
+        return html or ""
 
     # ── Scrapling fetchers ────────────────────────────────────────────────────
 

@@ -49,6 +49,9 @@ data/chroma/
 # Kaveri deed scout runtime checkpoints (regenerated each run — inbox PDFs stay committed)
 data/kaveri_deeds/checkpoints/
 
+# Deed inbox PDFs — user-provided files, not source
+data/deed_inbox/*.pdf
+
 # VS Code (keep .vscode committed so team shares settings)
 # .vscode/
 

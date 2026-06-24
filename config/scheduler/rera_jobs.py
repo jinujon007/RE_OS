@@ -13,7 +13,7 @@ from sqlalchemy import text
 from utils.db import get_engine
 
 
-def _send_rera_alert(market: str, job_start) -> None:
+def _send_rera_alert(market: str, job_start: datetime) -> None:
     """Query new RERA projects since job_start and send Discord alert."""
     try:
         from utils.discord_notifier import send_rera_alert

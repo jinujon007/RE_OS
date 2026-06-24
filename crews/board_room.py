@@ -938,6 +938,9 @@ def _update_session_row(session_id: str, status: str, transcript: dict) -> bool:
         "actions": transcript.get("actions", []),
         "ceo_decomposition": transcript.get("ceo_decomposition"),
         "error": transcript.get("error"),
+        "decision_flag": transcript.get("decision_flag"),
+        "formatted_md": transcript.get("formatted_md"),
+        "formatted_discord": transcript.get("formatted_discord"),
     }
     ceo_synthesis = (
         json.dumps(ceo_extra, default=str) if any(ceo_extra.values()) else None
@@ -1195,6 +1198,26 @@ def _run_board_session_bg(session_id: str, pitch: str, market: str) -> None:
         }
         if decomposition is not None:
             transcript["ceo_decomposition"] = decomposition
+
+        # Board Room formatter: decision flag + Discord/markdown output (GATE-129, T-1333)
+        try:
+            from utils.board_room_formatter import BoardRoomFormatter
+            fmt = BoardRoomFormatter(dept_responses)
+            decision_flag = fmt.decision_flag()
+            formatted_md = fmt.format_full_markdown()
+            formatted_discord = fmt.format_discord()
+            transcript["decision_flag"] = decision_flag
+            transcript["formatted_md"] = formatted_md
+            transcript["formatted_discord"] = formatted_discord
+        except Exception as fmt_exc:
+            logger.warning(
+                f"[board_room] BoardRoomFormatter failed for session {session_id}: "
+                f"{fmt_exc}. Falling back to CONDITIONAL default."
+            )
+            transcript["decision_flag"] = "CONDITIONAL"
+            transcript["formatted_md"] = transcript.get("formatted_md", "")
+            transcript["formatted_discord"] = transcript.get("formatted_discord", "")
+
         _update_session_row(session_id, "complete", transcript)
     except (ImportError, KeyError, AttributeError, TypeError) as exc:
         logger.error(f"board_room bg worker PERMANENT FAILURE for {session_id}: {exc}")
@@ -1294,6 +1317,20 @@ def get_board_session(session_id: str) -> Optional[dict]:
                 transcript["ceo_decomposition"] = ceo_extra["ceo_decomposition"]
             if ceo_extra.get("error"):
                 transcript["error"] = ceo_extra["error"]
+            if ceo_extra.get("formatted_md"):
+                transcript["formatted_md"] = ceo_extra["formatted_md"]
+            if ceo_extra.get("formatted_discord"):
+                transcript["formatted_discord"] = ceo_extra["formatted_discord"]
+
+            decision_flag = None
+            if row["status"] == "complete":
+                try:
+                    synth = row.get("ceo_synthesis") or "{}"
+                    if isinstance(synth, str):
+                        synth = json.loads(synth)
+                    decision_flag = synth.get("decision_flag")
+                except Exception:
+                    decision_flag = transcript.get("decision_flag")
 
             return {
                 "session_id": str(row["session_id"]),
@@ -1301,6 +1338,7 @@ def get_board_session(session_id: str) -> Optional[dict]:
                 "market": row["market"],
                 "status": row["status"],
                 "transcript": transcript,
+                "decision_flag": decision_flag,
                 "created_at": str(row["created_at"]),
                 "completed_at": str(row["completed_at"])
                 if row["completed_at"]

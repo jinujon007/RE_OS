@@ -41,6 +41,10 @@ from config.settings import MARKET_RERA_CONFIG, RERA_USE_PLAYWRIGHT_MARKETS
 from config.checkpointer import Checkpointer
 from config.settings import RERA_PLAYWRIGHT_LOCALITY_VALUES
 
+__all__ = ["scrape_market_standalone", "RERAKarnatakaScraper"]
+# Callers MUST use scrape_market_standalone() — it wraps the ScraperCircuitBreaker.
+# Direct RERAKarnatakaScraper().scrape_market() bypasses retry + cache fallback.
+
 _RERA_MODEL_NAME = "rera-extractor:3b"
 _RERA_OLLAMA_URL = "http://ollama:11434/api/generate"
 _MODEL_BATCH_SIZE = 8  # rows per batch for parallel model calls (H-2 fix)
@@ -327,7 +331,20 @@ class RERAKarnatakaScraper:
     def scrape_market(self, market_name: str) -> tuple[list[dict], list]:
         """
         Main entry point. Returns (projects, cookies) for the market.
-        Falls back to hardcoded sample data if portal unreachable.
+
+        Failure cascade (circuit breaker lives in scrape_market_standalone):
+          1. POST to /projectViewDetails with configured district/subdistrict
+          2. Alt subdistrict spellings if POST returns 0 results
+          3. Alt district spellings if both subdistrict variants fail
+          4. Playwright browser automation fallback (POST-failing markets only)
+          5. Hardcoded sample data (seed) if all live paths fail
+             → fires rate-limited FALLBACK_SEED Discord alert
+
+        Circuit breaker (outer layer in scrape_market_standalone):
+          Retries scrape_market() up to 3× with 30/60/120s backoff
+          Falls back to checkpoint cache (<7d) if all attempts fail
+          Fires RERA_SCRAPER_FALLBACK Discord alert on cache use
+          Raises CircuitOpenError if all attempts + cache exhausted
         """
         import time as _time
 
@@ -921,8 +938,26 @@ class RERAKarnatakaScraper:
 
 
 def scrape_market_standalone(market_name: str = "Yelahanka"):
+    from utils.scraper_circuit_breaker import ScraperCircuitBreaker, CircuitOpenError
+
+    cb = ScraperCircuitBreaker(market_name, max_attempts=3, base_delay=30.0)
     scraper = RERAKarnatakaScraper()
-    projects, _cookies = scraper.scrape_market(market_name)
+
+    def _do_scrape():
+        projs, _cookies = scraper.scrape_market(market_name)
+        return projs
+
+    try:
+        result = cb.run(_do_scrape)
+        projects = result.data
+        if result.from_cache:
+            logger.warning(f"[RERA][{market_name}] Using cached data ({result.cache_age_days:.1f}d old)")
+            cp = Checkpointer()
+            cp.save(market_name, "rera_scraped", projects)
+            logger.info(f"[RERA][{market_name}] Re-saved checkpoint to refresh mtime")
+    except CircuitOpenError:
+        logger.error(f"[RERA][{market_name}] Circuit breaker open — all attempts + cache exhausted")
+        projects = []
 
     output_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -933,7 +968,8 @@ def scrape_market_standalone(market_name: str = "Yelahanka"):
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     output_path = os.path.join(output_dir, f"rera_projects_{timestamp}.json")
-    scraper.save_to_json(projects, output_path)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(projects, f, indent=2, default=str)
 
     print(f"\n{'=' * 55}")
     print(f"RERA SCRAPE — {market_name.upper()}")

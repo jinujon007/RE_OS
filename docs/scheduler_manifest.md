@@ -71,8 +71,9 @@
 | `corridor_backtest_weekly` | Monday 08:30 | Weekly | Corridor backtest (score vs distance rank corr) |
 | `corridor_backtest_monthly` | **1st 14:00** | **Monthly** | **Kill-threshold alert on 3 consecutive misses** |
 | `kill_criteria_weekly_reminder` | **Monday 08:00** | **Weekly** | **Deed throughput + decision journal deadline reminder** |
+| `scraper_health_check` | **12:00 IST (06:30 UTC)** | **Daily** | **RERA checkpoint staleness check — RERA_DATA_STALE if >7d, RERA_SCRAPER_NEVER_RAN if no checkpoint after grace (GATE-128)** |
 
-**Bold rows** = added in Sprint 123 (GATE-123, T-1302/T-1305).
+**Bold rows** = added in Sprint 123 (GATE-123, T-1302/T-1305) or Sprint 128 (GATE-128, T-1329).
 
 ## RERA Jobs (config/scheduler/rera_jobs.py)
 

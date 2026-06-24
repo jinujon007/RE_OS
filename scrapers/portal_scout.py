@@ -12,9 +12,10 @@ Fetch strategy (tiered — each level falls back to the next on failure):
       Housing.com, NoBroker
   2.  Raw Playwright — fallback if Scrapling unavailable or fails
   3.  requests + BeautifulSoup — last resort
-  4.  Cerebras 8b AI extraction: cleaned text → structured JSON
+  4.  Firecrawl API — final fallback when all fetchers fail (GATE-130)
+  5.  Cerebras 8b AI extraction: cleaned text → structured JSON
       (8192 token cap → truncate to 2500 chars before AI call)
-  5.  ScoutMemory dedup: only new projects/listings are flagged is_new=True
+  6.  ScoutMemory dedup: only new projects/listings are flagged is_new=True
 
 Model: Cerebras llama3.1-8b — fastest structured extraction, handles short prompts.
        Falls back to Gemini if Cerebras unavailable.
@@ -53,6 +54,7 @@ from config.settings import (
 from config.metrics import scraper_runs_total
 from config.locality_aliases import get_locality_aliases
 from scrapers.scout_memory import ScoutMemory
+from utils.firecrawl_client import scrape_url as _firecrawl_scrape, _reset_count as _fc_reset_count
 
 # Counter for filtered-out mis-geocoded listings (exposed for metrics / tests)
 scraper_locality_filtered = 0
@@ -448,6 +450,7 @@ class PortalScout:
         self.urls = PORTAL_URLS.get(market, {})
         self.session = requests.Session()
         self.session.headers.update(SCRAPE_HEADERS)
+        _fc_reset_count()
         # Shared browser instance — lazy-init on first Playwright fallback call,
         # kept alive for the duration of scout() to avoid repeated browser spawns.
         self._pw_ctx = None
@@ -530,6 +533,10 @@ class PortalScout:
                     f"[PortalScout][{src}] Scrapling unavailable or empty → requests fallback"
                 )
                 text = self._requests_fetch(url)
+
+        if not text:
+            logger.info(f"[PortalScout][{src}] All fetchers empty → Firecrawl fallback")
+            text = _firecrawl_scrape(url)
 
         if not text:
             logger.debug(f"[PortalScout][{src}] No content retrieved")

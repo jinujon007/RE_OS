@@ -569,6 +569,62 @@ def run_data_floor_refresh():
         logger.warning("[Scheduler] Data floor refresh failed: {}", exc)
 
 
+def run_scraper_health_check():
+    """Daily RERA scraper health check — checkpoint mtime staleness (GATE-128, T-1329).
+
+    Checks checkpoint file mtime for each market's RERA scraper.
+    Fires RERA_DATA_STALE Discord alert if checkpoint >7 days old.
+    Fires RERA_SCRAPER_NEVER_RAN if no checkpoint exists after 7-day grace window.
+    """
+    import os
+    import time as time_mod
+    from config.checkpointer import Checkpointer
+    from utils.discord_notifier import send_ops_alert
+
+    cp = Checkpointer()
+    now = time_mod.time()
+    max_age_seconds = 7 * 86400
+    _grace_seconds = 7 * 86400  # 7-day grace before alerting "never ran"
+    # Track first-seen timestamps per market across function calls
+    _first_seen: dict[str, float] = getattr(run_scraper_health_check, "_first_seen", {})
+    run_scraper_health_check._first_seen = _first_seen
+
+    for market in ("Yelahanka", "Devanahalli", "Hebbal"):
+        try:
+            path = cp.path(market, "rera_scraped")
+            if not cp.exists(market, "rera_scraped") or not os.path.isfile(path):
+                if market not in _first_seen:
+                    _first_seen[market] = now
+                elapsed = now - _first_seen[market]
+                if elapsed > _grace_seconds:
+                    send_ops_alert(
+                        "RERA_SCRAPER_NEVER_RAN",
+                        f"[ScraperHealth] {market} has never had a RERA checkpoint "
+                        f"in {elapsed / 86400:.0f} days. Scraper may not be running.",
+                    )
+                    logger.warning("[ScraperHealth] {} never ran ({:.0f}d)", market, elapsed / 86400)
+                else:
+                    logger.info("[ScraperHealth] {}: no checkpoint yet ({:.0f}d grace remaining)",
+                                market, (_grace_seconds - elapsed) / 86400)
+                continue
+            mtime = os.path.getmtime(path)
+            age_seconds = now - mtime
+            if age_seconds > max_age_seconds:
+                age_days = age_seconds / 86400
+                send_ops_alert(
+                    "RERA_DATA_STALE",
+                    f"[ScraperHealth] {market} RERA checkpoint is {age_days:.1f} days old "
+                    f"(>7d threshold). Scraper may be failing silently.",
+                )
+                logger.warning("[ScraperHealth] {} stale: {:.1f}d (mtime={})",
+                               market, age_days, path)
+            else:
+                logger.info("[ScraperHealth] {} healthy ({:.1f}d old path={})",
+                            market, age_seconds / 86400, path)
+        except Exception as exc:
+            logger.warning("[ScraperHealth] {} check failed: {}", market, exc)
+
+
 def run_chromadb_maintenance():
     """Quarterly ChromaDB maintenance — purge stale embeddings >90 days (T-1247).
 
@@ -1214,4 +1270,12 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         id="kaveri_form17_weekly",
         name="Weekly Form 17 Inbox Scan (ingest new PDFs → registered_transactions)",
         misfire_grace_time=7200,
+    )
+    # Daily RERA scraper health check — 06:30 UTC = 12:00 IST (GATE-128, T-1329)
+    scheduler.add_job(
+        lambda: safe_job(run_scraper_health_check, "scraper_health_check"),
+        CronTrigger(hour=6, minute=30, timezone="UTC"),
+        id="scraper_health_check",
+        name="Daily RERA Scraper Health Check (checkpoint mtime, stale alert)",
+        misfire_grace_time=3600,
     )

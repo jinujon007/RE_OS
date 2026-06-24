@@ -8,6 +8,7 @@ Claude tokens for strategic decisions.
 
 from crewai import Agent
 from crewai.tools import BaseTool
+from loguru import logger
 from sqlalchemy import text
 import json
 
@@ -27,6 +28,11 @@ from agents.architect_agent import (
     FSICalculatorTool,
     TypologyRecommenderTool,
     GreenCoverageTool,
+)
+from tools.propcontext_tool import (
+    PropContextSearchTool,
+    PropContextDeveloperTool,
+    PropContextComplianceTool,
 )
 
 
@@ -426,7 +432,34 @@ class IntelSearchTool(BaseTool):
                         "note": f"intel_search: unknown market '{market}' — use Yelahanka, Devanahalli, or Hebbal",
                     }
                 )
+
+            # Source 1: ChromaDB semantic search (existing)
             results = IntelEmbedder().search(q, market=market, n=5)
+
+            # Source 2: Tavily live search (additive, dedup by URL)
+            seen_urls = {r.get("url", "") for r in results if r.get("url")}
+            try:
+                from utils.tavily_client import search as tavily_search
+                tavily_results = tavily_search(q, market=market, max_results=3)
+                for tr in tavily_results:
+                    url = tr.get("url", "")
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        raw_score = tr.get("score")
+                        score = round(float(raw_score), 4) if raw_score is not None else 0.7
+                        results.append({
+                            "text": (tr.get("content") or "")[:500],
+                            "source": url,
+                            "market": market or "unknown",
+                            "score": score,
+                            "url": url,
+                            "title": tr.get("title", ""),
+                            "published_date": tr.get("published_date", ""),
+                            "source_type": "tavily",
+                        })
+            except Exception as exc:
+                logger.debug(f"[IntelSearchTool] Tavily enrichment skipped: {exc}")
+
             return json.dumps({"results": results, "count": len(results)}, indent=2)
         except Exception as e:
             return json.dumps({"error": f"intel_search failed: {e}", "results": []})
@@ -612,7 +645,11 @@ def create_analyst_agent() -> Agent:
             "ADJUNCT TOOLS — fsi_calculator / typology_recommender / green_coverage: Call only when evaluating a specific land parcel. Use avg_listing_psf from market_summary_query as input to typology_recommender. Not part of standard pipeline sequence. "
             "ADJUNCT TOOL — full_feasibility: Call when financial feasibility of a specific land parcel is requested. "
             "Returns base/bull/bear IRR with GO/MARGINAL/NO-GO verdict. "
-            "ADJUNCT TOOL — intel_search: Search past intel reports for relevant context before forming market assessment."
+            "ADJUNCT TOOL — intel_search: Search past intel reports for relevant context before forming market assessment. "
+            "ADJUNCT TOOLS — propcontext_search_projects / propcontext_developer_projects / propcontext_rera_compliance: "
+            "Cross-reference RERA data against PropContext MCP. Call to verify RE_OS coverage. "
+            "Discrepancies weaken confidence in RE_OS data for that project or developer. "
+            "Returns empty when PropContext is unreachable — continue without cross-reference."
         ),
         tools=[
             MarketSummaryTool(),
@@ -626,6 +663,9 @@ def create_analyst_agent() -> Agent:
             FeasibilityAnalystTool(),
             IntelSearchTool(),
             AccessibilityTool(),
+            PropContextSearchTool(),
+            PropContextDeveloperTool(),
+            PropContextComplianceTool(),
         ],
         llm=get_analysis_llm(),
         verbose=True,

@@ -1,5 +1,5 @@
 """
-RE_OS — Corridor Scorer v1 (Sprint 95 — T-1161)
+RE_OS — Corridor Scorer v1 (Sprint 95 — T-1161, Sprint 132 — T-1348)
 
 Deterministic scoring of North Bengaluru land corridors against
 leading indicators. No LLM in the scoring path — every signal is
@@ -11,10 +11,12 @@ Corridors scored:
   - Doddaballapur   : Yelahanka → Doddaballapur Road
 
 Scoring formula (weighted sum, max 10.0):
-  1. Transaction velocity   30%  — registered Sale deeds/month in corridor villages
-  2. PSF trend MoM          25%  — month-over-month PSF appreciation (trailing 3M)
-  3. GCC hiring proximity   25%  — gcc_hiring_snapshots / gcc_events for nearby hubs
-  4. Infrastructure score   20%  — infrastructure_pipeline rows touching corridor
+  1. Transaction velocity   24%  — registered Sale deeds/month in corridor villages
+  2. PSF trend MoM          20%  — month-over-month PSF appreciation (trailing 3M)
+  3. GCC hiring proximity   20%  — gcc_hiring_snapshots / gcc_events for nearby hubs
+  4. Infrastructure score   16%  — infrastructure_pipeline rows touching corridor
+  5. Commute accessibility  20%  — Google Maps drive time to Manyata/KIAL/Hebbal
+       (Sprint 132, T-1348: uses CommuteScorer with batched Distance Matrix API)
 
 All queries are date-ranged — caller can pass a window for backtesting.
 
@@ -71,6 +73,7 @@ CORRIDOR_DEFINITIONS: list[dict[str, Any]] = [
         "gcc_hubs": ["Manyata Tech Park", "Karle Tech Park"],
         "infra_keywords": ["NH-44", "Bellary", "BIAL", "metro", "STRR"],
         "market": "Yelahanka",
+        "centroid": {"lat": 13.1007, "lon": 77.5963},
     },
     {
         "id": "hebbal_yelahanka",
@@ -89,6 +92,7 @@ CORRIDOR_DEFINITIONS: list[dict[str, Any]] = [
         "gcc_hubs": ["Manyata Tech Park"],
         "infra_keywords": ["Hebbal", "metro", "flyover", "BWSSB"],
         "market": "Hebbal",
+        "centroid": {"lat": 13.0450, "lon": 77.5980},
     },
     {
         "id": "doddaballapur",
@@ -107,14 +111,17 @@ CORRIDOR_DEFINITIONS: list[dict[str, Any]] = [
         "gcc_hubs": ["Manyata Tech Park", "Karle Tech Park"],
         "infra_keywords": ["Doddaballapur", "KIADB", "ITIR", "PRR"],
         "market": "Yelahanka",
+        "centroid": {"lat": 13.1007, "lon": 77.5963},
     },
 ]
 
 # ── Score weights ─────────────────────────────────────────────────────────────
-_W_VELOCITY = 0.30
-_W_PSF_TREND = 0.25
-_W_GCC = 0.25
-_W_INFRA = 0.20
+# Commute added Sprint 132 (T-1348) — 20% weight, others scaled proportionally.
+_W_VELOCITY = 0.24
+_W_PSF_TREND = 0.20
+_W_GCC = 0.20
+_W_INFRA = 0.16
+_W_COMMUTE = 0.20
 
 
 class CorridorScore:
@@ -128,11 +135,12 @@ class CorridorScore:
         psf_trend_score: float,
         gcc_score: float,
         infra_score: float,
-        n_transactions: int,
-        avg_psf: float | None,
-        psf_mom: float | None,
-        data_window: str,
-        notes: list[str],
+        commute_score: float = 0.0,
+        n_transactions: int = 0,
+        avg_psf: float | None = None,
+        psf_mom: float | None = None,
+        data_window: str = "",
+        notes: list[str] | None = None,
     ):
         self.corridor_id = corridor_id
         self.corridor_name = corridor_name
@@ -140,17 +148,19 @@ class CorridorScore:
         self.psf_trend_score = round(psf_trend_score, 3)
         self.gcc_score = round(gcc_score, 3)
         self.infra_score = round(infra_score, 3)
+        self.commute_score = round(commute_score, 3)
         self.n_transactions = n_transactions
         self.avg_psf = avg_psf
         self.psf_mom = psf_mom
         self.data_window = data_window
-        self.notes = notes
+        self.notes = notes or []
 
         self.composite = round(
             _W_VELOCITY * velocity_score
             + _W_PSF_TREND * psf_trend_score
             + _W_GCC * gcc_score
-            + _W_INFRA * infra_score,
+            + _W_INFRA * infra_score
+            + _W_COMMUTE * commute_score,
             3,
         )
 
@@ -163,6 +173,7 @@ class CorridorScore:
             "psf_trend_score": self.psf_trend_score,
             "gcc_score": self.gcc_score,
             "infra_score": self.infra_score,
+            "commute_score": self.commute_score,
             "n_transactions": self.n_transactions,
             "avg_psf": self.avg_psf,
             "psf_mom": self.psf_mom,
@@ -383,6 +394,9 @@ class CorridorScorer:
         # 4. Infrastructure score
         infra_score = self._score_infra(infra_kws, notes)
 
+        # 5. Commute score (Sprint 132 — T-1348)
+        commute_score = self._score_commute(corridor, notes)
+
         return CorridorScore(
             corridor_id=corridor["id"],
             corridor_name=corridor["name"],
@@ -390,6 +404,7 @@ class CorridorScorer:
             psf_trend_score=psf_trend_score,
             gcc_score=gcc_score,
             infra_score=infra_score,
+            commute_score=commute_score,
             n_transactions=n_tx,
             avg_psf=avg_psf,
             psf_mom=psf_mom,
@@ -619,6 +634,54 @@ class CorridorScorer:
         )
         return score
 
+    def _score_commute(
+        self,
+        corridor: dict[str, Any],
+        notes: list[str],
+    ) -> float:
+        """Score 0–10 based on commute time to Manyata/KIAL/Hebbal.
+
+        Uses CommuteScorer with corridor centroid lat/lon.
+        Falls back to neutral 5.0 if CommuteScorer returns None
+        (e.g. no API key, all destinations failed).
+        """
+        centroid = corridor.get("centroid")
+        if not centroid:
+            notes.append("No centroid defined for corridor — commute score 5.0")
+            return 5.0
+
+        try:
+            from utils.commute_scorer import CommuteScorer
+
+            scorer = CommuteScorer()
+            try:
+                result = scorer.score(centroid["lat"], centroid["lon"])
+            finally:
+                scorer.close()
+        except Exception as exc:
+            notes.append(f"CommuteScorer error: {exc} — neutral score 5.0")
+            return 5.0
+
+        if result is None:
+            notes.append(
+                "CommuteScorer returned None (no API key or all failed) — "
+                "neutral score 5.0"
+            )
+            return 5.0
+
+        composite = result.get("composite_score", 0.0)
+        manyata = result.get("manyata_minutes")
+        kial = result.get("kial_minutes")
+        hebbal = result.get("hebbal_minutes")
+
+        # Normalize 0-100 composite to 0-10 corridor scale
+        score = round(composite / 10.0, 3)
+        notes.append(
+            f"Commute: Manyata={manyata}m KIAL={kial}m Hebbal={hebbal}m "
+            f"→ score {score:.1f}"
+        )
+        return score
+
     def _query_avg_psf(
         self,
         villages: list[str],
@@ -686,14 +749,15 @@ class CorridorScorer:
         lines += [
             "## Train-Window Scores (Jan–Jun 2024)",
             "",
-            "| Corridor | Composite | Velocity | PSF Trend | GCC | Infra | Txns | Avg PSF |",
-            "|----------|-----------|----------|-----------|-----|-------|------|---------|",
+            "| Corridor | Composite | Velocity | PSF Trend | GCC | Infra | Commute | Txns | Avg PSF |",
+            "|----------|-----------|----------|-----------|-----|-------|---------|------|---------|",
         ]
         for s in train_scores:
             lines.append(
                 f"| {s['corridor_name']} | {s['composite']:.2f} "
                 f"| {s['velocity_score']:.1f} | {s['psf_trend_score']:.1f} "
                 f"| {s['gcc_score']:.1f} | {s['infra_score']:.1f} "
+                f"| {s['commute_score']:.1f} "
                 f"| {s['n_transactions']} | "
                 f"{'₹{:,.0f}'.format(s['avg_psf']) if s['avg_psf'] else 'N/A'} |"
             )

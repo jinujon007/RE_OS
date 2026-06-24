@@ -41,12 +41,23 @@ def _make_mock_engine(query_return=None):
 
 def test_score_all_returns_three_corridors():
     """Assertion (3): corridor_scorer returns ≥3 scored corridors."""
-    from utils.corridor_scorer import CorridorScorer
+    from utils.corridor_scorer import CORRIDOR_DEFINITIONS, CorridorScorer
 
     engine = _make_mock_engine(MagicMock(**{"__getitem__.return_value": 0, "fetchone.return_value": (0,)}))
     scorer = CorridorScorer(engine=engine)
     scores = scorer.score_all()
     assert len(scores) >= 3, f"Expected ≥3 corridors, got {len(scores)}"
+    for s in scores:
+        assert hasattr(s, "commute_score")
+
+    # Validate all corridor definitions have centroids for commute scoring
+    for corridor in CORRIDOR_DEFINITIONS:
+        assert "centroid" in corridor, \
+            f"Corridor '{corridor['id']}' missing centroid definition"
+        assert "lat" in corridor["centroid"], \
+            f"Corridor '{corridor['id']}' centroid missing lat"
+        assert "lon" in corridor["centroid"], \
+            f"Corridor '{corridor['id']}' centroid missing lon"
 
 
 def test_composite_in_range():

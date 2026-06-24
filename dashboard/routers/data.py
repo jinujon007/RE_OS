@@ -12,6 +12,7 @@ import re
 import time
 from collections import OrderedDict
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, Request, Query, Response
 from fastapi.responses import JSONResponse, HTMLResponse
@@ -26,9 +27,9 @@ from dashboard.state import (
     _estimated_cache, _ESTIMATED_CACHE_TTL,
     MARKET_SLUG, MARKET_CANONICAL,
     _pulse_cache, _pulse_cache_lock, _PULSE_CACHE_TTL, _PULSE_CACHE_MAX,
-    _err_resp,
+    _err_resp, _resolve_market, ErrorResponse,
 )
-from config.metrics import db_query_duration_seconds, digest_runs_total
+from config.metrics import db_query_duration_seconds, digest_runs_total, _counter
 from utils.etag import compute_etag, check_etag, add_etag
 
 logger = logging.getLogger("re_os.dashboard")
@@ -379,6 +380,194 @@ def _download_intel_csv(canonical: str | None):
     except Exception as e:
         logger.error("[download_intel_csv] %s", e)
         return _err_resp("failed to export intel csv", None, 500, "Data")
+
+
+# ── PropContext Delta (GATE-134) ───────────────────────────────────────
+
+# Prometheus metrics for propcontext usage
+_propcontext_delta_total = _counter(
+    "propcontext_delta_total",
+    "PropContext delta endpoint invocations by market and pc_status",
+    ["market", "pc_status"],
+)
+
+
+class PropContextProject(BaseModel):
+    rera_id: str | None = None
+    project_name: str | None = None
+    developer: str | None = None
+    project_status: str | None = None
+    launch_date: str | None = None
+    locality: str | None = None
+    rera_psf_min: float | None = None
+    rera_psf_max: float | None = None
+
+
+class PropContextDeltaResponse(BaseModel):
+    market: str
+    propcontext_status: str
+    re_os_only: list[PropContextProject]
+    propcontext_only: list[PropContextProject]
+    intersection: list[PropContextProject]
+    re_os_count: int
+    propcontext_count: int
+    intersection_count: int = 0
+    re_os_coverage_pct: float = 0.0
+    note: str = ""
+
+
+def _normalize_name(name: str | None) -> str:
+    """Normalize a project name for fuzzy comparison.
+
+    Lowercases, strips whitespace, removes parenthetical suffixes,
+    collapses multiple spaces, strips common suffixes like ' Pvt Ltd'.
+    """
+    if not name:
+        return ""
+    normalized = name.strip().lower()
+    # Remove parenthetical content like "(Phase 2)" or "(Previously ...)"
+    normalized = re.sub(r"\s*\([^)]*\)", "", normalized)
+    # Remove common legal suffixes
+    normalized = re.sub(r"\s+(pvt|ltd|private\s+limited|llp)$", "", normalized)
+    # Collapse whitespace
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def _names_match(a: str | None, b: str | None) -> bool:
+    """Check if two project names refer to the same project.
+
+    Uses exact match of normalized names, then substring containment.
+    """
+    na = _normalize_name(a)
+    nb = _normalize_name(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    # Substring: one name contains the other
+    if len(na) >= 5 and len(nb) >= 5:
+        if na in nb or nb in na:
+            return True
+    return False
+
+
+@router.get(
+    "/intel/propcontext-delta/{market}",
+    summary="PropContext vs RE_OS cross-reference delta",
+    response_model=PropContextDeltaResponse,
+)
+@limiter.limit("10/minute")
+async def propcontext_delta(market: str, request: Request):
+    """Compare projects between PropContext MCP and RE_OS database.
+
+    Returns delta analysis:
+    - re_os_only: projects in RE_OS not found in PropContext
+    - propcontext_only: projects in PropContext not found in RE_OS
+    - intersection: projects present in both sources
+    - re_os_coverage_pct: percentage of PropContext projects covered by RE_OS
+    """
+    canonical = _resolve_market(market)
+    if not canonical:
+        _propcontext_delta_total.labels(market=market, pc_status="invalid_market").inc()
+        return _err_resp(f"invalid market: {market}", request, 400, "Data")
+
+    re_os_projects_raw: list[dict[str, Any]] = []
+    try:
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text("""
+                    SELECT rp.rera_id, rp.project_name, d.name AS developer,
+                           rp.project_status,
+                           rp.launch_date::text AS launch_date,
+                           rp.locality,
+                           rp.price_min_psf AS rera_psf_min,
+                           rp.price_max_psf AS rera_psf_max
+                    FROM rera_projects rp
+                    JOIN micro_markets m ON m.id = rp.micro_market_id
+                    LEFT JOIN developers d ON d.id = rp.developer_id
+                    WHERE m.name = :m
+                      AND (rp.rera_id IS NOT NULL OR rp.project_name IS NOT NULL)
+                    ORDER BY rp.project_name
+                """),
+                {"m": canonical},
+            ).fetchall()
+        re_os_projects_raw = [dict(r._mapping) for r in rows]
+    except Exception as exc:
+        logger.warning("[propcontext-delta] RE_OS query failed: %s", exc)
+        _propcontext_delta_total.labels(market=canonical, pc_status="db_error").inc()
+        return _err_resp("RE_OS query failed", request, 500, "Data")
+
+    # Query PropContext
+    from tools.propcontext_tool import PropContextSearchTool
+
+    search_tool = PropContextSearchTool()
+    pc_result = search_tool._run(json.dumps({"query": canonical, "market": canonical}))
+    try:
+        pc_data = json.loads(pc_result)
+    except (json.JSONDecodeError, TypeError):
+        pc_data = {"status": "unavailable", "results": []}
+
+    pc_status = pc_data.get("status", "unavailable")
+    if pc_status == "unavailable":
+        _propcontext_delta_total.labels(market=canonical, pc_status="unavailable").inc()
+        re_os_projects = [PropContextProject(**p) for p in re_os_projects_raw]
+        return PropContextDeltaResponse(
+            market=canonical,
+            propcontext_status="unavailable",
+            re_os_only=re_os_projects,
+            propcontext_only=[],
+            intersection=[],
+            re_os_count=len(re_os_projects),
+            propcontext_count=0,
+            note="PropContext MCP unreachable — returning RE_OS projects only",
+        )
+
+    pc_projects_raw = pc_data.get("results", [])
+    if not isinstance(pc_projects_raw, list):
+        pc_projects_raw = []
+
+    # Compute delta with fuzzy name matching
+    matched_re_os: set[int] = set()
+    matched_pc: set[int] = set()
+
+    for i, re_p in enumerate(re_os_projects_raw):
+        for j, pc_p in enumerate(pc_projects_raw):
+            if j in matched_pc:
+                continue
+            if isinstance(pc_p, dict) and _names_match(
+                re_p.get("project_name"), pc_p.get("project_name")
+            ):
+                matched_re_os.add(i)
+                matched_pc.add(j)
+                break
+
+    re_os_only_raw = [p for i, p in enumerate(re_os_projects_raw) if i not in matched_re_os]
+    pc_only_raw = [p for i, p in enumerate(pc_projects_raw) if i not in matched_pc]
+    intersection_raw = [p for i, p in enumerate(re_os_projects_raw) if i in matched_re_os]
+
+    re_os_coverage = (
+        round(len(matched_re_os) / max(len(pc_projects_raw), 1) * 100, 1)
+        if pc_projects_raw
+        else 0.0
+    )
+
+    _propcontext_delta_total.labels(market=canonical, pc_status="ok").inc()
+
+    return PropContextDeltaResponse(
+        market=canonical,
+        propcontext_status="ok",
+        re_os_only=[PropContextProject(**p) for p in re_os_only_raw],
+        propcontext_only=[
+            PropContextProject(project_name=p.get("project_name")) if isinstance(p, dict) else PropContextProject()
+            for p in pc_only_raw
+        ],
+        intersection=[PropContextProject(**p) for p in intersection_raw],
+        re_os_count=len(re_os_projects_raw),
+        propcontext_count=len(pc_projects_raw),
+        intersection_count=len(matched_re_os),
+        re_os_coverage_pct=re_os_coverage,
+    )
 
 
 # ── Market Map ──────────────────────────────────────────────────────────

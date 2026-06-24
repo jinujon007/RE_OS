@@ -90,6 +90,12 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 slowapi>=0.1.9
 
+# MCP Server — RE_OS intelligence tools as MCP for Claude Code
+# RE_OS MCP implements the protocol via Starlette directly (no mcp SDK needed).
+# These remain commented out unless switching to FastMCP SDK:
+#   mcp>=1.0.0     # Anthropic MCP Python SDK
+#   fastmcp>=0.1.0 # Alternative FastMCP framework
+
 # Scout utilities (portal + news extraction)
 price-parser>=0.3.4
 dateparser>=1.2.0
