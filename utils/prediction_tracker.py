@@ -233,8 +233,8 @@ def compute_mape(market: str, min_samples: int = 3,
     from utils.db import get_engine
 
     params: dict = {"market": market, "max_err": _MAX_ERROR_PCT}
-    if model_version:
-        params["model_version"] = model_version
+    if model_version and model_version.strip():
+        params["model_version"] = model_version.strip()
 
     sql = """
         SELECT error_pct

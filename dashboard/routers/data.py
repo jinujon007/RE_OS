@@ -418,35 +418,22 @@ class PropContextDeltaResponse(BaseModel):
 
 
 def _normalize_name(name: str | None) -> str:
-    """Normalize a project name for fuzzy comparison.
-
-    Lowercases, strips whitespace, removes parenthetical suffixes,
-    collapses multiple spaces, strips common suffixes like ' Pvt Ltd'.
-    """
     if not name:
         return ""
     normalized = name.strip().lower()
-    # Remove parenthetical content like "(Phase 2)" or "(Previously ...)"
     normalized = re.sub(r"\s*\([^)]*\)", "", normalized)
-    # Remove common legal suffixes
     normalized = re.sub(r"\s+(pvt|ltd|private\s+limited|llp)$", "", normalized)
-    # Collapse whitespace
     normalized = re.sub(r"\s+", " ", normalized).strip()
     return normalized
 
 
 def _names_match(a: str | None, b: str | None) -> bool:
-    """Check if two project names refer to the same project.
-
-    Uses exact match of normalized names, then substring containment.
-    """
     na = _normalize_name(a)
     nb = _normalize_name(b)
     if not na or not nb:
         return False
     if na == nb:
         return True
-    # Substring: one name contains the other
     if len(na) >= 5 and len(nb) >= 5:
         if na in nb or nb in na:
             return True
@@ -460,14 +447,6 @@ def _names_match(a: str | None, b: str | None) -> bool:
 )
 @limiter.limit("10/minute")
 async def propcontext_delta(market: str, request: Request):
-    """Compare projects between PropContext MCP and RE_OS database.
-
-    Returns delta analysis:
-    - re_os_only: projects in RE_OS not found in PropContext
-    - propcontext_only: projects in PropContext not found in RE_OS
-    - intersection: projects present in both sources
-    - re_os_coverage_pct: percentage of PropContext projects covered by RE_OS
-    """
     canonical = _resolve_market(market)
     if not canonical:
         _propcontext_delta_total.labels(market=market, pc_status="invalid_market").inc()
@@ -499,7 +478,6 @@ async def propcontext_delta(market: str, request: Request):
         _propcontext_delta_total.labels(market=canonical, pc_status="db_error").inc()
         return _err_resp("RE_OS query failed", request, 500, "Data")
 
-    # Query PropContext
     from tools.propcontext_tool import PropContextSearchTool
 
     search_tool = PropContextSearchTool()
@@ -528,7 +506,6 @@ async def propcontext_delta(market: str, request: Request):
     if not isinstance(pc_projects_raw, list):
         pc_projects_raw = []
 
-    # Compute delta with fuzzy name matching
     matched_re_os: set[int] = set()
     matched_pc: set[int] = set()
 
@@ -855,7 +832,7 @@ async def memory_explorer(
                 "market": str(r[2]) if r[2] else "",
                 "fact": fact_raw[:MAX_FACT_LENGTH],
                 "fact_truncated": len(fact_raw) > MAX_FACT_LENGTH,
-                "confidence": round(float(r[4]), 3) if r[4] is not None else 0.0,
+                "confidence": round(float(r[3]), 3) if r[3] is not None else 0.0,
                 "source_count": int(r[5]) if r[5] is not None else 0,
                 "last_updated": r[6].isoformat() if r[6] else None,
                 "created_at": r[7].isoformat() if r[7] else None,
@@ -1230,1343 +1207,227 @@ async def dashboard_badges(request: Request):
 )
 @limiter.limit("30/hour")
 async def market_forecast(market: str, request: Request = None):
-    from utils.psf_forecaster import PSFForecaster
-    from config.settings import TARGET_MARKETS as _VALID_MARKETS
-    market = (market or "").strip()
-    if not market:
-        return _err_resp("market is required", request, 400, "Data")
-    valid = [m.strip().lower() for m in _VALID_MARKETS]
-    if market.lower() not in valid:
-        return _err_resp(f"Unknown market '{market}'. Valid: {sorted(set(m.strip() for m in _VALID_MARKETS))}", request, 400, "Data")
     try:
-        with _get_sa_engine().connect() as conn:
-            rows = conn.execute(
-                _sa_text("""
-                    SELECT horizon_months, current_psf, forecast_psf,
-                           conf_low, conf_high, trend_direction,
-                           slope_pct_per_month, data_points, mae_pct,
-                           model_version, forecast_date
-                    FROM market_forecasts
-                    WHERE market ILIKE :market
-                    ORDER BY forecast_date DESC, horizon_months
-                    LIMIT 3
-                """),
-                {"market": f"%{market}%"},
-            ).fetchall()
-        if rows:
-            best = rows[0]
-            resp = {
-                "market": market, "as_of": str(best.forecast_date) if best.forecast_date else "",
-                "trend_direction": best.trend_direction or "unknown",
-                "current_psf": float(best.current_psf) if best.current_psf else 0,
-                "slope_pct_per_month": float(best.slope_pct_per_month) if best.slope_pct_per_month else 0,
-                "data_points": best.data_points or 0, "mae_pct": float(best.mae_pct) if best.mae_pct else 0,
-                "model_version": best.model_version or "linear_v1",
-            }
-            for r in rows:
-                h = int(r.horizon_months)
-                resp[f"forecast_{h}m"] = float(r.forecast_psf) if r.forecast_psf else 0
-                resp[f"conf_low_{h}m"] = float(r.conf_low) if r.conf_low else 0
-                resp[f"conf_high_{h}m"] = float(r.conf_high) if r.conf_high else 0
-            etag = compute_etag(resp)
-            _check = check_etag(request, etag)
-            if _check:
-                return _check
-            return JSONResponse(content=resp, headers={"ETag": f'"{etag}"'})
-        fallback = PSFForecaster().forecast(market)
-        fallback_data = {
-            "market": fallback.market, "as_of": fallback.as_of,
-            "trend_direction": fallback.trend_direction, "current_psf": fallback.current_psf,
-            "forecast_3m": fallback.forecast_3m, "forecast_6m": fallback.forecast_6m,
-            "forecast_12m": fallback.forecast_12m,
-            "conf_low_3m": fallback.conf_low_3m, "conf_high_3m": fallback.conf_high_3m,
-            "conf_low_6m": fallback.conf_low_6m, "conf_high_6m": fallback.conf_high_6m,
-            "conf_low_12m": fallback.conf_low_12m, "conf_high_12m": fallback.conf_high_12m,
-            "mae_pct": fallback.mae_pct, "data_points": fallback.data_points,
-            "model_version": fallback.model_version,
-        }
-        etag = compute_etag(fallback_data)
-        _check = check_etag(request, etag)
-        if _check:
-            return _check
-        return JSONResponse(content=fallback_data, headers={"ETag": f'"{etag}"'})
-    except Exception as exc:
-        logger.warning("[API] /market/forecast/%s failed: %s", market, exc)
-        return _err_resp(str(exc), request, 500, "Data")
-
-
-@router.get(
-    "/market/spread/{market}",
-    summary="Registered-vs-ask PSF spread for a market",
-)
-@limiter.limit("60/hour")
-async def market_spread(market: str, request: Request = None, window_days: int = 180):
-    from utils.psf_truth import compute_psf_spread
-    from config.settings import TARGET_MARKETS as _VALID_MARKETS
-    market = (market or "").strip()
-    if not market:
-        return _err_resp("market is required", request, 400, "Data")
-    valid = [m.strip().lower() for m in _VALID_MARKETS]
-    if market.lower() not in valid:
-        return _err_resp(f"Unknown market '{market}'. Valid: {sorted(set(m.strip() for m in _VALID_MARKETS))}", request, 400, "Data")
-    try:
-        window_days = max(30, min(window_days, 365))
-        result = compute_psf_spread(market, window_days=window_days)
-        spread_data = result.to_dict() if hasattr(result, "to_dict") else result
-        etag = compute_etag(spread_data)
-        _check = check_etag(request, etag)
-        if _check:
-            return _check
-        return JSONResponse(content=spread_data, headers={"ETag": f'"{etag}"'})
-    except Exception as exc:
-        logger.warning("[API] /market/spread/{} failed: {}", market, exc)
-        return _err_resp(str(exc), request, 500, "Data")
-
-
-# ── Market Supply (pipeline) ────────────────────────────────────────────
-
-
-@router.get("/market/supply", summary="Pipeline supply for a market")
-async def market_supply(
-    request: Request,
-    market: str = Query("Yelahanka", description="Market name"),
-):
-    market = (market or "").strip()
-    if not market:
-        return _err_resp("market is required", request, 400, "Data")
-    try:
-        with _get_sa_engine().connect() as conn:
-            rows = conn.execute(
-                _sa_text("""
-                    SELECT project_name, developer_name, estimated_units,
-                           estimated_acres, source, approval_date,
-                           expected_completion_year, raw_snippet, created_at
-                    FROM supply_pipeline
-                    WHERE market ILIKE :market
-                    ORDER BY created_at DESC, estimated_units DESC
-                    LIMIT 100
-                """),
-                {"market": f"%{market}%"},
-            ).fetchall()
-            total = conn.execute(
-                _sa_text("SELECT COALESCE(SUM(estimated_units), 0) FROM supply_pipeline WHERE market ILIKE :market"),
-                {"market": f"%{market}%"},
-            ).scalar() or 0
-        records = []
-        for row in rows:
-            records.append({
-                "project_name": row.project_name, "developer_name": row.developer_name,
-                "estimated_units": int(row.estimated_units or 0),
-                "estimated_acres": float(row.estimated_acres) if row.estimated_acres else None,
-                "source": row.source, "approval_date": str(row.approval_date) if row.approval_date else None,
-                "expected_completion_year": row.expected_completion_year,
-                "raw_snippet": row.raw_snippet,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-            })
-        return {"market": market, "total_pipeline_units": int(total), "count": len(records), "records": records}
-    except Exception as exc:
-        logger.warning("[API] /market/supply failed: %s", exc)
-        return _err_resp(str(exc), request, 500, "Data")
-
-
-# ── Distress Signals ────────────────────────────────────────────────────
-
-
-@router.get("/distress/signals")
-async def distress_signals(
-    request: Request,
-    market: str = Query("Yelahanka", description="Market name"),
-    limit: int = Query(50, ge=1, le=200),
-):
-    market = (market or "").strip()
-    if not market:
-        return _err_resp("market is required", request, 400, "Data")
-    try:
-        with _get_sa_engine().connect() as conn:
-            rows = conn.execute(
-                _sa_text("""
-                    SELECT developer_name, market, signal_type, stall_count, stall_ratio,
-                           mention_count, distress_score, detected_at
-                    FROM developer_distress_signals
-                    WHERE market = :market
-                    ORDER BY detected_at DESC, distress_score DESC, developer_name ASC
-                    LIMIT :limit
-                """),
-                {"market": market, "limit": limit},
-            ).fetchall()
+        from utils.psf_forecaster import PSFForecaster
+        f = PSFForecaster()
+        forecast = f.forecast(market)
         return {
-            "market": market, "count": len(rows),
-            "signals": [
-                {
-                    "developer_name": row.developer_name, "market": row.market,
-                    "signal_type": row.signal_type, "stall_count": int(row.stall_count or 0),
-                    "stall_ratio": float(row.stall_ratio or 0.0), "mention_count": int(row.mention_count or 0),
-                    "distress_score": float(row.distress_score or 0.0),
-                    "detected_at": row.detected_at.isoformat() if row.detected_at else None,
-                }
-                for row in rows
-            ],
+            "market": market,
+            "trend_direction": forecast.trend_direction,
+            "current_psf": forecast.current_psf,
+            "forecast_3m": forecast.forecast_3m,
+            "forecast_6m": forecast.forecast_6m,
+            "forecast_12m": forecast.forecast_12m,
+            "data_points": forecast.data_points,
+            "mae_pct": forecast.mae_pct,
+            "status": forecast.status,
         }
     except Exception as exc:
-        logger.warning("[API] /distress/signals failed: %s", exc)
-        return _err_resp(str(exc), request, 500, "Data")
-
-
-# ── Parcel Dossier ──────────────────────────────────────────────────────
-
-
-@router.get(
-    "/parcel/{village}/{survey_no}",
-    summary="Full parcel dossier with deed history, RERA projects, comps",
-)
-@limiter.limit("60/hour")
-async def parcel_dossier(village: str, survey_no: str, request: Request = None):
-    from urllib.parse import unquote
-    from decimal import Decimal
-    village = unquote(village)
-    survey_no = unquote(survey_no)
-    if not village or not survey_no:
-        return _err_resp("village and survey_no are required", request, 400, "Data")
-    try:
-        with _get_sa_engine().connect() as conn:
-            parcel = conn.execute(
-                _sa_text("""
-                    SELECT id, village, survey_no, district, taluk, hobli, extent_sqft, source
-                    FROM parcels WHERE village = :v AND survey_no = :s LIMIT 1
-                """),
-                {"v": village, "s": survey_no},
-            ).fetchone()
-            if not parcel:
-                return _err_resp("Parcel not found", request, 404, "Data")
-            parcel_dict = dict(parcel._mapping)
-            parcel_id = parcel_dict["id"]
-            deed_rows = conn.execute(
-                _sa_text("""
-                    SELECT id, doc_no, reg_date, sro, survey_no, extent_sqft,
-                           consideration_inr, psf, deed_type, buyer_name_raw,
-                           seller_name_raw, data_source
-                    FROM registered_transactions WHERE parcel_id = :pid
-                    ORDER BY reg_date DESC LIMIT 50
-                """),
-                {"pid": parcel_id},
-            ).fetchall()
-            deed_history = [dict(r._mapping) for r in deed_rows]
-            rera_rows = conn.execute(
-                _sa_text("""
-                    SELECT rp.id, rp.rera_number, rp.project_name,
-                           d.name AS developer_name, rp.survey_no,
-                           rp.project_status, rp.total_units
-                    FROM rera_projects rp
-                    LEFT JOIN developers d ON d.id = rp.developer_id
-                    WHERE rp.parcel_id = :pid
-                    ORDER BY rp.created_at DESC LIMIT 20
-                """),
-                {"pid": parcel_id},
-            ).fetchall()
-            rera_projects = [dict(r._mapping) for r in rera_rows]
-            gv_row = conn.execute(
-                _sa_text("""
-                    SELECT gv.guidance_value_psf AS guidance_value, gv.data_source AS source,
-                           gv.effective_from AS gv_date, gv.area_code AS zone_code
-                    FROM guidance_values gv
-                    WHERE gv.locality ILIKE '%' || :v || '%'
-                    ORDER BY gv.effective_from DESC NULLS LAST LIMIT 1
-                """),
-                {"v": village},
-            ).fetchone()
-            guidance_value = dict(gv_row._mapping) if gv_row else None
-            assembly_rows = conn.execute(
-                _sa_text("""
-                    SELECT id, buyer_name_norm, parcel_count, total_extent_sqft,
-                           first_deed_date, last_deed_date, confidence
-                    FROM assembly_signals WHERE village = :v AND status = 'open'
-                    ORDER BY parcel_count DESC LIMIT 10
-                """),
-                {"v": village},
-            ).fetchall()
-            assembly_flags = [dict(r._mapping) for r in assembly_rows]
-            comps_row = conn.execute(
-                _sa_text("""
-                    SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY rt.psf) AS median_psf,
-                           COUNT(*) AS n
-                    FROM registered_transactions rt
-                    WHERE rt.village = :v AND rt.psf IS NOT NULL
-                      AND rt.psf > 500 AND rt.psf < 50000
-                      AND rt.reg_date >= NOW() - INTERVAL '12 months'
-                """),
-                {"v": village},
-            ).fetchone()
-            comps = None
-            if comps_row:
-                md = dict(comps_row._mapping)
-                comps = {"median_psf": float(md["median_psf"]) if md.get("median_psf") else None,
-                         "n": md.get("n", 0) or 0, "window": "12mo", "scope": "same village"}
-        zone_risk = None
-        try:
-            from utils.zone_risk_checker import check_zone_risk
-            zr = check_zone_risk(village, zone="R2")
-            zone_risk = {
-                "market": zr.market, "zone": zr.zone, "far": zr.far,
-                "max_height_m": zr.max_height_m, "ground_coverage_pct": zr.ground_coverage_pct,
-                "risk_level": zr.risk_level, "overlay_risks": zr.overlay_risks,
-            }
-        except Exception:
-            pass
-
-        def _serialize(val):
-            if val is None:
-                return val
-            if isinstance(val, Decimal):
-                return float(val)
-            if hasattr(val, "isoformat"):
-                return val.isoformat()
-            if isinstance(val, (float, int)):
-                return val
-            return str(val)
-
-        result = {
-            "parcel": {k: _serialize(v) for k, v in parcel_dict.items()},
-            "deed_history": [{k: _serialize(v) for k, v in d.items()} for d in deed_history],
-            "rera_projects": [{k: _serialize(v) for k, v in r.items()} for r in rera_projects],
-            "guidance_value": {k: _serialize(v) for k, v in guidance_value.items()} if guidance_value else None,
-            "zone_risk": zone_risk,
-            "assembly_flags": [{k: _serialize(v) for k, v in a.items()} for a in assembly_flags],
-            "comps": comps,
-        }
-        return JSONResponse(result)
-    except Exception as exc:
-        logger.error("[API] /parcel/%s/%s failed: %s", village, survey_no, exc)
+        logger.warning("[market_forecast] %s", exc)
         return _err_resp(str(exc), None, 500, "Data")
 
 
-_OWNERSHIP_CACHE: dict[str, tuple[float, dict]] = {}
-_OWNERSHIP_CACHE_TTL = 300
-_OWNERSHIP_CACHE_MAX = 100
-
-_SURVEY_NO_PATTERN = re.compile(r"^[\w]+/[\w\-]+$")
-
-
 @router.get(
-    "/parcel/ownership",
-    response_model=OwnershipChainResponse,
-    summary="Ownership chain for a survey number (RTC/Bhoomi)",
+    "/market/spread",
+    summary="PSF spread distribution across listings for a market (Chart.js histogram)",
 )
-@limiter.limit("60/hour")
-async def parcel_ownership(
-    request: Request,
-    survey_no: str = Query(..., min_length=3, max_length=50,
-                           description="Survey number (e.g. 45/2)"),
-    market: str = Query(default="Yelahanka", min_length=2, max_length=100,
-                        description="Market name"),
-):
-    if not _SURVEY_NO_PATTERN.match(survey_no):
-        return _err_resp("Invalid survey_no format — expected format like '45/2' or '101/1A'", request, 422, "Data")
-    cache_key = f"{market}:{survey_no}"
-    cached = _OWNERSHIP_CACHE.get(cache_key)
-    if cached is not None:
-        if time.time() < cached[0]:
-            return cached[1]
-    try:
-        with _get_sa_engine().connect() as conn:
-            row = conn.execute(
-                _sa_text("""
-                    SELECT poc.survey_no, poc.market, poc.khata_no, poc.owner_name,
-                           poc.previous_owner, poc.transfer_date, poc.area_acres,
-                           poc.govt_acquisition_notice, poc.encumbrance_flag,
-                           poc.fetched_at, poc.parcel_id, poc.parser_completeness_score
-                    FROM parcel_ownership_chain poc
-                    WHERE poc.survey_no = :sno AND poc.market = :mkt
-                    ORDER BY poc.fetched_at DESC LIMIT 1
-                """),
-                {"sno": survey_no, "mkt": market},
-            ).fetchone()
-        if not row:
-            return _err_resp("No ownership chain found for this survey_no/market", request, 404, "Data")
-        result = {
-            "survey_no": row.survey_no,
-            "market": row.market,
-            "khata_no": row.khata_no,
-            "owner_name": row.owner_name,
-            "previous_owner": row.previous_owner,
-            "transfer_date": row.transfer_date.isoformat() if row.transfer_date else None,
-            "area_acres": float(row.area_acres) if row.area_acres is not None else None,
-            "govt_acquisition_notice": bool(row.govt_acquisition_notice),
-            "encumbrance_flag": bool(row.encumbrance_flag),
-            "fetched_at": row.fetched_at.isoformat() if row.fetched_at else None,
-            "parcel_id": str(row.parcel_id) if row.parcel_id else None,
-            "parser_completeness_score": float(row.parser_completeness_score)
-                if row.parser_completeness_score is not None else None,
-        }
-        if len(_OWNERSHIP_CACHE) > _OWNERSHIP_CACHE_MAX:
-            _OWNERSHIP_CACHE.clear()
-        _OWNERSHIP_CACHE[cache_key] = (time.time() + _OWNERSHIP_CACHE_TTL, result)
-        return result
-    except Exception as exc:
-        logger.error("[API] /parcel/ownership failed: %s", exc)
-        return _err_resp("Failed to query ownership chain — please try again later", request, 500, "Data")
-
-
-@router.get("/parcel/villages", summary="Distinct villages with parcel data")
-@limiter.limit("120/minute")
-async def parcel_villages(request: Request = None):
-    try:
-        with _get_sa_engine().connect() as conn:
-            rows = conn.execute(_sa_text("SELECT DISTINCT village FROM parcels ORDER BY village")).fetchall()
-            villages = [r[0] for r in rows if r[0]]
-            return {"villages": villages if villages else []}
-    except Exception as exc:
-        logger.error("[API] /parcel/villages failed: %s", exc)
-        return JSONResponse({"villages": []})
-
-
-@router.get("/parcel", response_class=HTMLResponse, summary="Parcel lookup dashboard panel")
-async def parcel_panel(request: Request):
-    return templates.TemplateResponse(request, "parcel.html")
-
-
-# ── Corridor Scorer v2 ──────────────────────────────────────────────────
-
-
-class CorridorBoundaryFeature(BaseModel):
-    type: str = "Feature"
-    geometry: dict | None = None
-    properties: dict = {}
-
-
-class CorridorScoreResponse(BaseModel):
-    corridor_id: str
-    corridor_name: str
-    composite: float
-    velocity_score: float
-    psf_trend_score: float
-    gcc_score: float
-    infra_score: float
-    n_transactions: int = 0
-    avg_psf: float | None = None
-    psf_mom: float | None = None
-    data_window: str = ""
-    notes: list[str] = []
-    boundary_geojson: dict | None = None
-
-
-class CorridorScoreListResponse(BaseModel):
-    corridors: list[CorridorScoreResponse]
-    as_of: str
-    window_months: int
-    market: str | None = None
-
-
-@router.get(
-    "/corridor/score",
-    response_model=CorridorScoreListResponse,
-    response_model_exclude_none=True,
-    summary="Corridor scores using PostGIS spatial join (v2). "
-            "Optional ?geojson=true includes boundary polygons. "
-            "In _READ_ONLY_PATHS — no auth required. "
-            "Rate limited 60/hour.",
-    responses={
-        200: {"description": "Corridor scores with optional GeoJSON boundaries"},
-        400: {"description": "Invalid query parameters"},
-        500: {"description": "Scoring engine error"},
-    },
-)
-@limiter.limit("60/hour")
-async def corridor_score(
-    request: Request,
-    geojson: bool = Query(default=False, description="Include boundary GeoJSON"),
-    window_months: int = Query(default=3, ge=1, le=24, description="Lookback window in months"),
-    market: str | None = Query(default=None, description="Optional market filter (exact match)"),
-):
-    import uuid as _uuid
-    _trace_id = str(_uuid.uuid4())[:8]
-    from utils.corridor_scorer_v2 import CorridorScorerV2, CORRIDOR_DEFINITIONS
-    try:
-        window_months = max(1, min(window_months, 24))
-        scorer = CorridorScorerV2()
-        scores = scorer.score_all(window_months=window_months, as_geojson=geojson)
-
-        if market:
-            market_lower = market.strip().lower()
-            scores = [
-                s for s in scores
-                if any(
-                    c.get("market", "").lower() == market_lower
-                    for c in CORRIDOR_DEFINITIONS
-                    if c["id"] == s.corridor_id
-                )
-            ]
-
-        result = {
-            "corridors": [s.to_dict() for s in scores],
-            "as_of": datetime.now(timezone.utc).isoformat(),
-            "window_months": window_months,
-            "market": market.strip() if market else None,
-        }
-        return JSONResponse(
-            content=result,
-            headers={
-                "Cache-Control": "private, max-age=30",
-                "X-Trace-ID": _trace_id,
-            },
-        )
-    except Exception as exc:
-        logger.error("[API] /corridor/score trace=%s failed: %s", _trace_id, exc)
-        return JSONResponse(
-            {"error": "Corridor scoring engine unavailable", "detail": str(exc), "trace_id": _trace_id},
-            status_code=500,
-        )
-
-
-# ── Competitive Intelligence ────────────────────────────────────────────
-
-
-@router.get(
-    "/competitive/pulse",
-    summary="Competitive pulse — new launches, PSF movers, absorption leaders",
-)
-@limiter.limit("20/hour")
-async def competitive_pulse(
-    request: Request,
-    market: str | None = Query(default=None, description="Market filter"),
-    days: int = Query(default=7, ge=1, le=365, description="New launch window days"),
-    top_n: int = Query(default=5, ge=1, le=50, description="Absorption leader count"),
-):
-    import time as _time_now
-    safe_market = market or ""
-    cache_key = f"{safe_market}:{days}:{top_n}"
-    with _pulse_cache_lock:
-        cached = _pulse_cache.get(cache_key)
-        if cached is not None:
-            ts, data = cached
-            if _time_now.time() < ts:
-                _pulse_cache.move_to_end(cache_key)
-                return data
-    try:
-        from intelligence.competitive_intel import CompetitiveIntelEngine
-        engine = CompetitiveIntelEngine()
-        result = engine.pulse(market=market, days=days, top_n=top_n)
-        with _pulse_cache_lock:
-            _pulse_cache[cache_key] = (_time_now.time() + _PULSE_CACHE_TTL, result)
-            if len(_pulse_cache) > _PULSE_CACHE_MAX:
-                _pulse_cache.popitem(last=False)
-        return result
-    except Exception as exc:
-        logger.error("[competitive_pulse] %s", exc)
-        return _err_resp(str(exc), request, 500, "Data")
-
-
-# ── Govt/Policy routes ──────────────────────────────────────────────────
-
-
-@router.get("/govt/events", tags=["Govt/Policy"], summary="List government/infrastructure/policy events")
-@limiter.limit("30/minute")
-async def govt_events(
-    request: Request,
-    market: str | None = Query(None), category: str | None = Query(None),
-    signal: str | None = Query(None), limit: int = Query(20, ge=1, le=100),
-):
-    try:
-        from utils.db import get_engine
-        from sqlalchemy import text
-        where_clauses = []
-        params = {}
-        if category:
-            where_clauses.append("category = :category")
-            params["category"] = category
-        if signal:
-            where_clauses.append("signal_strength = :signal")
-            params["signal"] = signal
-        if market:
-            where_clauses.append(":market = ANY(micro_markets)")
-            params["market"] = market
-        where_sql = " AND ".join(where_clauses)
-        if where_sql:
-            where_sql = "WHERE " + where_sql
-        engine = get_engine()
-        with engine.connect() as conn:
-            rows = conn.execute(
-                text(f"""
-                    SELECT id, headline, category, subcategory, location_text,
-                           micro_markets, investment_cr, stage, impact_score,
-                           signal_strength, time_horizon, actionability,
-                           summary, why_it_matters, source_urls,
-                           published_date, is_north_bengaluru, scraped_at
-                    FROM govt_policy_events {where_sql}
-                    ORDER BY impact_score DESC NULLS LAST, scraped_at DESC
-                    LIMIT :lim
-                """),
-                {**params, "lim": limit},
-            ).fetchall()
-        nb_count = sum(1 for r in rows if r[16])
-        events = []
-        for r in rows:
-            events.append({
-                "id": r[0], "headline": r[1], "category": r[2], "subcategory": r[3],
-                "location_text": r[4], "micro_markets": r[5] or [],
-                "investment_cr": float(r[6]) if r[6] else None, "stage": r[7],
-                "impact_score": r[8], "signal_strength": r[9], "time_horizon": r[10],
-                "actionability": r[11], "summary": r[12], "why_it_matters": r[13],
-                "source_urls": r[14] or [], "published_date": str(r[15]) if r[15] else None,
-                "is_north_bengaluru": bool(r[16]), "scraped_at": str(r[17]) if r[17] else None,
-            })
-        return JSONResponse({"events": events, "total": len(events), "north_bengaluru_count": nb_count})
-    except Exception as exc:
-        logger.warning("[API] /govt/events failed: %s", exc)
-        return _err_resp(str(exc), request, 500, "Data")
-
-
-@router.get("/govt/north-score", tags=["Govt/Policy"], summary="North Bengaluru govt/infra/policy pipeline score")
-@limiter.limit("30/minute")
-async def govt_north_score(request: Request):
-    try:
-        from intelligence.govt_policy_intel import GovtPolicyIntel
-        intel = GovtPolicyIntel(caller="api")
-        result = intel.compute("north_bengaluru_aggregate")
-        return JSONResponse({
-            "north_bengaluru_score": result.north_bengaluru_score,
-            "high_opportunity_count": result.high_opportunity_count,
-            "risk_count": result.risk_count,
-            "top_infra_events": result.top_infra_events,
-            "top_policy_events": result.top_policy_events,
-            "computed_at": result.computed_at,
-        })
-    except Exception as exc:
-        logger.warning("[API] /govt/north-score failed: %s", exc)
-        return _err_resp(str(exc), request, 500, "Data")
-
-
-@router.get("/govt/digest", tags=["Govt/Policy"], summary="Weekly govt/policy digest for North Bengaluru")
-@limiter.limit("30/minute")
-async def govt_digest(request: Request):
-    try:
-        from intelligence.govt_policy_intel import GovtPolicyIntel
-        intel = GovtPolicyIntel(caller="api")
-        result = intel.compute("north_bengaluru_aggregate")
-        return JSONResponse({"digest": result.weekly_digest, "computed_at": result.computed_at})
-    except Exception as exc:
-        logger.warning("[API] /govt/digest failed: %s", exc)
-        return _err_resp(str(exc), request, 500, "Data")
-
-
-@router.get("/govt", tags=["Govt/Policy"], summary="Govt/Policy dashboard page")
-@limiter.limit("20/minute")
-async def govt_policy_panel(request: Request):
-    try:
-        return templates.TemplateResponse(request, "govt_policy.html")
-    except Exception as exc:
-        logger.error("[govt_policy_panel] %s", exc)
-        return _err_resp("template not found", request, 500, "Data")
-
-
-# ── GCC routes ──────────────────────────────────────────────────────────
-
-
-@router.get("/gcc/events")
-async def gcc_events(
-    request: Request,
-    market: str | None = Query(None, description="Filter by market"),
-    corridor: str | None = Query(None, description="Filter by corridor slug"),
-    maturity: str | None = Query(None, description="Comma-separated maturity levels"),
-    include_negative: bool = Query(True),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-):
-    try:
-        from intelligence.gcc_intel import GCCIntel
-        maturity_levels = None
-        if maturity:
-            try:
-                maturity_levels = [int(x.strip()) for x in maturity.split(",") if x.strip()]
-            except ValueError:
-                return _err_resp("maturity must be comma-separated integers", request, 400, "Data")
-        corridors = None
-        if corridor:
-            corridors = [c.strip() for c in corridor.split(",") if c.strip()]
-        intel = GCCIntel()
-        events = intel.get_events(
-            market=market, corridors=corridors, maturity_levels=maturity_levels,
-            include_negative=include_negative, limit=limit, offset=offset,
-        )
-        north_scores = {}
-        for mkt in ("Yelahanka", "Devanahalli", "Hebbal"):
-            try:
-                r = intel.get_gcc_score(mkt)
-                north_scores[mkt] = r.gcc_north_norm
-            except Exception:
-                pass
-        return JSONResponse({
-            "events": [
-                {
-                    "id": e.id, "canonical_id": e.canonical_id,
-                    "company": e.company, "sector": e.sector,
-                    "country_of_origin": e.country_of_origin,
-                    "bengaluru_location": e.bengaluru_location,
-                    "nearest_corridor": e.nearest_corridor, "entrant_type": e.entrant_type,
-                    "work_model": e.work_model,
-                    "signal_maturity_level": e.signal_maturity_level,
-                    "is_negative_signal": e.is_negative_signal,
-                    "north_bengaluru_impact_score": e.north_bengaluru_impact_score,
-                    "planned_headcount": e.planned_headcount,
-                    "median_ctc_l": e.median_ctc_l, "gcc_signal_score": e.gcc_signal_score,
-                    "primary_housing_segment": e.primary_housing_segment,
-                    "time_horizon": e.time_horizon,
-                    "estimated_demand_units": e.estimated_demand_units,
-                    "source_name": e.source_name, "source_reliability": e.source_reliability,
-                    "announced_at": str(e.announced_at) if e.announced_at else None,
-                    "discord_alert_fired": e.discord_alert_fired,
-                }
-                for e in events
-            ],
-            "total": len(events),
-            "gcc_north_norm": north_scores,
-        })
-    except Exception as exc:
-        logger.warning("[API] /gcc/events failed: %s", exc)
-        return _err_resp(str(exc), request, 500, "Data")
-
-
-@router.get("/gcc/north-score")
-async def gcc_north_score(request: Request):
-    try:
-        from intelligence.gcc_intel import GCCIntel
-        intel = GCCIntel()
-        result = {}
-        for mkt in ("Yelahanka", "Devanahalli", "Hebbal"):
-            r = intel.get_gcc_score(mkt)
-            result[mkt] = {
-                "gcc_north_norm": r.gcc_north_norm, "corridor": r.corridor,
-                "event_count_12m": r.event_count_12m, "event_count_90d": r.event_count_90d,
-                "total_headcount_12m": r.total_headcount_12m,
-                "avg_gcc_signal_score": r.avg_gcc_signal_score,
-                "top_sectors": r.top_sectors,
-                "dominant_housing_segment": r.dominant_housing_segment,
-                "has_level1_signal": r.has_level1_signal,
-                "negative_suppressor_applied": r.negative_suppressor_applied,
-                "signals": r.signals, "collected_at": r.collected_at,
-            }
-        return JSONResponse(result)
-    except Exception as exc:
-        logger.warning("[API] /gcc/north-score failed: %s", exc)
-        return _err_resp(str(exc), request, 500, "Data")
-
-
-@router.post("/gcc/events")
-async def gcc_create_event(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    if not body.get("company") or not body.get("bengaluru_location"):
-        return _err_resp("company and bengaluru_location are required", request, 400, "Data")
-    try:
-        from ingest.plugins.gcc_plugin import _make_canonical_id, _resolve_corridor, _compute_gcc_score
-        from utils.db import get_engine
-        from sqlalchemy import text as _t
-        announced = body.get("announced_at") or str(__import__("datetime").date.today())
-        cid = _make_canonical_id(body["company"], body.get("bengaluru_location", "Bengaluru"), announced)
-        corridor, nb_impact = _resolve_corridor(body.get("bengaluru_location", ""))
-        if not body.get("nearest_corridor"):
-            body["nearest_corridor"] = corridor
-        if body.get("north_bengaluru_impact_score") is None:
-            body["north_bengaluru_impact_score"] = nb_impact
-        gcc_score = _compute_gcc_score(body)
-        with get_engine().begin() as conn:
-            conn.execute(
-                _t("""
-                INSERT INTO gcc_events (
-                    canonical_id, company, sector, country_of_origin,
-                    bengaluru_location, nearest_corridor, entrant_type,
-                    work_model, signal_maturity_level, is_negative_signal,
-                    north_bengaluru_impact_score, investment_cr,
-                    planned_headcount, headcount_timeline_months,
-                    median_ctc_l, office_sqft,
-                    demand_creation_score, residential_impact_score,
-                    appreciation_impact_score, rental_impact_score,
-                    gcc_signal_score, primary_housing_segment,
-                    time_horizon, source_name, source_reliability,
-                    announced_at, discord_alert_fired
-                ) VALUES (
-                    :canonical_id, :company, :sector, :country_of_origin,
-                    :bengaluru_location, :nearest_corridor, :entrant_type,
-                    :work_model, :signal_maturity_level, :is_negative_signal,
-                    :nb_impact, :investment_cr,
-                    :planned_headcount, :headcount_timeline_months,
-                    :median_ctc_l, :office_sqft,
-                    :demand_creation_score, :residential_impact_score,
-                    :appreciation_impact_score, :rental_impact_score,
-                    :gcc_signal_score, :primary_housing_segment,
-                    :time_horizon, :source_name, :source_reliability,
-                    CAST(:announced_at AS date), FALSE
-                ) ON CONFLICT (canonical_id) DO NOTHING
-            """),
-                {
-                    "canonical_id": cid, "company": body["company"],
-                    "sector": body.get("sector"), "country_of_origin": body.get("country_of_origin"),
-                    "bengaluru_location": body.get("bengaluru_location"),
-                    "nearest_corridor": body.get("nearest_corridor"),
-                    "entrant_type": body.get("entrant_type", "EXPANSION"),
-                    "work_model": body.get("work_model", "HYBRID"),
-                    "signal_maturity_level": body.get("signal_maturity_level", 3),
-                    "is_negative_signal": bool(body.get("is_negative_signal", False)),
-                    "nb_impact": body["north_bengaluru_impact_score"],
-                    "investment_cr": body.get("investment_cr"),
-                    "planned_headcount": body.get("planned_headcount"),
-                    "headcount_timeline_months": body.get("headcount_timeline_months"),
-                    "median_ctc_l": body.get("median_ctc_l"),
-                    "office_sqft": body.get("office_sqft"),
-                    "demand_creation_score": body.get("demand_creation_score"),
-                    "residential_impact_score": body.get("residential_impact_score"),
-                    "appreciation_impact_score": body.get("appreciation_impact_score"),
-                    "rental_impact_score": body.get("rental_impact_score"),
-                    "gcc_signal_score": gcc_score,
-                    "primary_housing_segment": body.get("primary_housing_segment"),
-                    "time_horizon": body.get("time_horizon"),
-                    "source_name": body.get("source_name"),
-                    "source_reliability": body.get("source_reliability", "PRESS"),
-                    "announced_at": announced,
-                },
-            )
-        from intelligence.gcc_intel import GCCIntel
-        for mkt in ("Yelahanka", "Devanahalli", "Hebbal"):
-            GCCIntel().invalidate_cache(mkt)
-        return JSONResponse({"canonical_id": cid, "gcc_signal_score": gcc_score}, status_code=201)
-    except Exception as exc:
-        logger.warning("[API] POST /gcc/events failed: %s", exc)
-        return _err_resp(str(exc), request, 500, "Data")
-
-
-# ── Finance CashFlow ────────────────────────────────────────────────────
-
-
-class CashFlowRowResponse(BaseModel):
-    month: int
-    construction_outflow_cr: float
-    interest_payment_cr: float
-    brokerage_charge_cr: float
-    sales_inflow_cr: float
-    cumulative_cash_position_cr: float
-
-
-class CashFlowSummaryResponse(BaseModel):
-    peak_negative_cr: float
-    breakeven_month: int | None = None
-    roi_annualized_pct: float | None = None
-    irr_npv_pct: float | None = None
-
-
-class CashFlowResponse(BaseModel):
-    schedule: list[CashFlowRowResponse]
-    summary: CashFlowSummaryResponse
-
-
-@router.get(
-    "/finance/cashflow",
-    summary="Monthly cash-flow projection with debt service and brokerage",
-    response_model=CashFlowResponse,
-)
-@limiter.limit("30/hour")
-async def finance_cashflow(
-    request: Request,
-    land_cost_cr: float = Query(..., description="Land acquisition cost in Cr"),
-    gdc_cr: float = Query(..., description="Gross development cost in Cr"),
-    construction_cost_cr: float = Query(..., description="Construction cost in Cr"),
-    loan_pct: float = Query(default=0.5, ge=0.0, le=1.0, description="Loan-to-land-cost ratio"),
-    months: int = Query(default=36, ge=1, le=120, description="Project timeline in months (1-120)"),
-):
-    from utils.irr_model import build_cash_flow
-    try:
-        months = max(1, min(months, 120))
-        with db_query_duration_seconds.labels(query_name="build_cash_flow").time():
-            result = build_cash_flow(
-                land_cost_cr=land_cost_cr,
-                gdc_cr=gdc_cr,
-                construction_cost_cr=construction_cost_cr,
-                loan_pct=loan_pct,
-                months=months,
-            )
-        response = CashFlowResponse(
-            schedule=[
-                CashFlowRowResponse(**r.__dict__) for r in result.schedule
-            ],
-            summary=CashFlowSummaryResponse(**result.summary.__dict__),
-        )
-        return JSONResponse(
-            content=response.model_dump(),
-            headers={"Cache-Control": "no-store"},
-        )
-    except Exception as exc:
-        logger.error("[finance_cashflow] %s", exc)
-        return _err_resp(str(exc), request, 500, "Data")
-
-
-# ── Demand Config Split ─────────────────────────────────────────────────
-
-
-@router.get(
-    "/demand/config-split",
-    summary="Demand absorption split by bedroom configuration",
-)
-@limiter.limit("30/hour")
-async def demand_config_split(
-    request: Request,
+async def market_spread(
     market: str = Query(default="Yelahanka", description="Market name"),
+    bins: int = Query(default=20, ge=5, le=50, description="Number of histogram bins"),
 ):
-    from intelligence.demand_intel import DemandIntel
     try:
-        with db_query_duration_seconds.labels(query_name="demand_config_split").time():
-            di = DemandIntel(caller="api")
-            split = di.get_config_absorption(market)
-        return JSONResponse(
-            content={"market": market, "absorption_by_config": split},
-            headers={"Cache-Control": "max-age=300"},
-        )
-    except Exception as exc:
-        logger.error("[demand_config_split] %s", exc)
-        return _err_resp(str(exc), request, 500, "Data")
-
-
-# ── Deed Throughput (GATE-136, T-1368) ──────────────────────────────────
-
-
-_deed_throughput_total = _counter(
-    "deed_throughput_total", "Deed throughput queries by market and status", ["market", "status"],
-)
-
-
-class DeedThroughputWeek(BaseModel):
-    week_start: str | None = None
-    deed_count: int = 0
-    market: str = "Unknown"
-
-
-class DeedThroughputResponse(BaseModel):
-    weeks: list[DeedThroughputWeek]
-    current_week_count: int = 0
-    target: int = 50
-    status: str = "critical"
-
-
-@router.get(
-    "/deeds/throughput",
-    summary="Weekly deed throughput per market — last 12 weeks",
-    description="Returns weekly Sale deed counts per market for the last 12 weeks. "
-                "Status thresholds: 0=critical (no data), <50=at_risk (below target), "
-                ">=50=on_track (target met). The 50/week target is the GATE-118 "
-                "kill-criteria deadline (2026-08-15). The separate Discord alert "
-                "fires at <20/week as earlier warning.",
-    tags=["Deeds"],
-)
-@limiter.limit("30/minute")
-async def deeds_throughput(
-    request: Request,
-    market: str = Query(default=None, description="Optional market filter (Yelahanka, Devanahalli, Hebbal)"),
-):
-    mkt_param = market.strip() if market else None
-    try:
-        with db_query_duration_seconds.labels(query_name="deed_throughput").time():
-            with _get_sa_engine().connect() as conn:
-                base_sql = """
-                    SELECT t.market, t.week_start, t.current_week_count
-                    FROM v_deed_throughput_weekly t
-                """
-                params: dict[str, object] = {}
-                if mkt_param:
-                    base_sql += " WHERE t.market ILIKE :mkt"
-                    params["mkt"] = f"%{mkt_param}%"
-                base_sql += " ORDER BY t.week_start DESC LIMIT 12"
-                rows = conn.execute(
-                    _sa_text(base_sql),
-                    params,
-                ).fetchall()
-        weeks = [
-            DeedThroughputWeek(
-                week_start=str(r[1]) if r[1] else None,
-                deed_count=int(r[2]) if r[2] else 0,
-                market=str(r[0]) if r[0] else "Unknown",
-            )
-            for r in rows
+        from utils.db import get_engine
+        from sqlalchemy import text as sa_text
+        canonical = _normalize_market(market)
+        if not canonical:
+            return _err_resp("invalid market", None, 400, "Data")
+        with get_engine().connect() as conn:
+            prices = conn.execute(
+                sa_text("""
+                    SELECT l.price_psf
+                    FROM listings l
+                    JOIN micro_markets m ON m.id = l.micro_market_id
+                    WHERE m.name = :market
+                      AND l.price_psf > 1000 AND l.price_psf < 50000
+                    ORDER BY l.price_psf
+                """),
+                {"market": canonical},
+            ).fetchall()
+        psf_values = sorted([float(r[0]) for r in prices if r[0] is not None])
+        if not psf_values:
+            return {"market": canonical, "bins": [], "spread": [], "min": None, "max": None, "count": 0}
+        min_psf = psf_values[0]
+        max_psf = psf_values[-1]
+        total = len(psf_values)
+        bin_edges = [min_psf + (max_psf - min_psf) * i / bins for i in range(bins + 1)]
+        counts = [0] * bins
+        idx = 0
+        for i in range(bins):
+            lo = bin_edges[i]
+            hi = bin_edges[i + 1] if i < bins - 1 else bin_edges[-1]
+            while idx < total and psf_values[idx] <= hi:
+                counts[i] += 1
+                idx += 1
+            if i == bins - 1:
+                while idx < total and psf_values[idx] <= hi:
+                    counts[i] += 1
+                    idx += 1
+        spread_data = [
+            {
+                "bin_start": round(bin_edges[i], 0),
+                "bin_end": round(bin_edges[i + 1], 0),
+                "count": counts[i],
+            }
+            for i in range(bins)
         ]
-        current_count = weeks[0].deed_count if weeks else 0
-        if current_count == 0:
-            status = "critical"
-        elif current_count < 50:
-            status = "at_risk"
-        else:
-            status = "on_track"
-        _deed_throughput_total.labels(market=mkt_param or "all", status=status).inc()
-        return DeedThroughputResponse(
-            weeks=weeks,
-            current_week_count=current_count,
-            target=50,
-            status=status,
-        )
+        return {
+            "market": canonical,
+            "bins": bins,
+            "spread": spread_data,
+            "min": round(min_psf, 0),
+            "max": round(max_psf, 0),
+            "count": total,
+        }
     except Exception as exc:
-        logger.error("[deeds_throughput] %s", exc)
-        _deed_throughput_total.labels(market=mkt_param or "all", status="error").inc()
-        return _err_resp("failed to query deed throughput", request, 500, "Data")
-
-
-# ── Deed Inbox Progress (GATE-145, T-1412) ───────────────────────────────
+        logger.warning("[market_spread] %s", exc)
+        return _err_resp(str(exc), None, 500, "Data")
 
 
 @router.get(
-    "/deeds/inbox-progress",
-    summary="Inbox PDF progress — ingested vs pending + this week new rows",
-    tags=["Deeds"],
+    "/market/supply-pipeline/{market}",
+    summary="Supply pipeline (upcoming RERA) for a market",
 )
-@limiter.limit("30/minute")
-async def deeds_inbox_progress(request: Request):
+async def market_supply_pipeline(market: str):
     try:
-        from utils.deed_progress import get_inbox_progress
-        progress = get_inbox_progress()
-        return progress
-    except Exception as exc:
-        logger.error("[deeds_inbox_progress] %s", exc)
-        return _err_resp("failed to query inbox progress", request, 500, "Data")
-
-
-# ── Deed Throughput Projection (GATE-145, T-1413) ────────────────────────
-
-
-@router.get(
-    "/deeds/projection",
-    summary="Deed throughput projection against 50/week kill-criteria target",
-    tags=["Deeds"],
-)
-@limiter.limit("30/minute")
-async def deeds_projection(request: Request):
-    try:
-        from utils.deed_progress import compute_throughput_projection
-        projection = compute_throughput_projection()
-        return projection
-    except Exception as exc:
-        logger.error("[deeds_projection] %s", exc)
-        return _err_resp("failed to compute throughput projection", request, 500, "Data")
-
-
-# ── Decision Journal (GATE-137) ──────────────────────────────────────────
-
-
-@router.get(
-    "/decision-journal",
-    summary="List decision journal entries",
-    tags=["Decision Journal"],
-)
-@limiter.limit("30/minute")
-async def decision_journal_list(
-    request: Request,
-    market: str = Query(default=None, description="Optional market filter"),
-    limit: int = Query(default=20, ge=1, le=100),
-):
-    try:
-        from utils.decision_journal import list_entries
-        entries = list_entries(market=market, limit=limit)
-        return {"entries": entries, "count": len(entries)}
-    except Exception as exc:
-        logger.warning("[decision_journal_list] %s", exc)
-        return _err_resp("failed to query decision journal", request, 500, "Data")
-
-
-@router.get(
-    "/decision-journal/{entry_id}",
-    summary="Get a single decision journal entry",
-    tags=["Decision Journal"],
-)
-@limiter.limit("30/minute")
-async def decision_journal_get(request: Request, entry_id: int):
-    try:
-        from utils.decision_journal import get_entry
-        entry = get_entry(entry_id)
-        if not entry:
-            return _err_resp("entry not found", request, 404, "Decision Journal")
-        return entry
-    except Exception as exc:
-        logger.warning("[decision_journal_get] %s", exc)
-        return _err_resp("failed to query decision journal", request, 500, "Data")
-
-
-# ── Assembly Alerts (GATE-140) ──────────────────────────────────────────
-
-
-@router.get(
-    "/intel/assembly-alerts",
-    summary="Active assembly detection signals, sorted by confidence",
-    tags=["Assembly"],
-)
-@limiter.limit("30/minute")
-async def assembly_alerts(
-    request: Request,
-    market: str = Query(default=None, description="Market filter (optional)"),
-    min_confidence: float = Query(default=0.5, ge=0.0, le=1.0, description="Minimum confidence threshold"),
-):
-    try:
-        with _get_sa_engine().connect() as conn:
-            where = ["s.status = 'open'"]
-            params: dict[str, object] = {}
-            if market:
-                mkt = _normalize_market(market)
-                if mkt:
-                    where.append("s.market ILIKE :mkt")
-                    params["mkt"] = f"%{mkt}%"
-            where.append(
-                "((s.confidence_score IS NOT NULL AND s.confidence_score >= :mc) "
-                "OR (s.confidence IS NOT NULL AND s.confidence >= :mc2))"
-            )
-            params["mc"] = min_confidence
-            params["mc2"] = min_confidence
-            where_sql = " AND ".join(where)
+        from utils.db import get_engine
+        from sqlalchemy import text as sa_text
+        canonical = _normalize_market(market)
+        if not canonical:
+            return _err_resp("invalid market", None, 400, "Data")
+        with get_engine().connect() as conn:
             rows = conn.execute(
-                _sa_text(f"""
-                    SELECT s.market, s.village, s.hobli,
-                           COALESCE(s.buyer_name, s.buyer_name_norm) AS buyer_name,
-                           s.parcel_count,
-                           COALESCE(s.total_area_sqm, s.total_extent_sqft / 10.764) AS area_sqm,
-                           COALESCE(s.confidence_score, s.confidence) AS confidence_score,
-                           s.first_deed_date AS first_txn_date,
-                           s.detected_at,
-                           s.survey_numbers,
-                           CASE
-                               WHEN s.detected_at IS NOT NULL
-                               THEN EXTRACT(DAY FROM NOW() - s.detected_at)::INTEGER
-                               WHEN s.first_deed_date IS NOT NULL
-                               THEN EXTRACT(DAY FROM NOW() - s.first_deed_date)::INTEGER
-                               ELSE 0
-                           END AS days_active
-                    FROM assembly_signals s
-                    WHERE {where_sql}
-                    ORDER BY confidence_score DESC NULLS LAST
+                sa_text("""
+                    SELECT sp.project_name, sp.developer, sp.estimated_units,
+                           sp.launch_quarter, sp.status, sp.rera_id
+                    FROM supply_pipeline sp
+                    WHERE sp.market = :m
+                      AND sp.status IN ('registered', 'pre_launch', 'upcoming')
+                    ORDER BY sp.launch_quarter NULLS LAST
                     LIMIT 100
                 """),
-                params,
+                {"m": canonical},
             ).fetchall()
-        results = []
-        for r in rows:
-            results.append({
-                "market": r.market or "Unknown",
-                "village": r.village,
-                "hobli": r.hobli or "",
-                "buyer_name": r.buyer_name or "",
-                "parcel_count": int(r.parcel_count) if r.parcel_count else 0,
-                "area_sqm": float(r.area_sqm) if r.area_sqm else 0.0,
-                "confidence_score": float(r.confidence_score) if r.confidence_score else 0.0,
-                "first_txn_date": str(r.first_txn_date) if r.first_txn_date else None,
-                "detected_at": str(r.detected_at) if r.detected_at else None,
-                "survey_numbers": r.survey_numbers if r.survey_numbers else [],
-                "days_active": int(r.days_active) if r.days_active else 0,
-            })
-        return {"alerts": results, "count": len(results)}
+        pipeline = [
+            {
+                "project_name": r[0], "developer": r[1],
+                "estimated_units": int(r[2]) if r[2] else None,
+                "launch_quarter": r[3], "status": r[4], "rera_id": r[5],
+            }
+            for r in rows
+        ]
+        return {"market": canonical, "pipeline": pipeline, "count": len(pipeline)}
     except Exception as exc:
-        logger.warning("[assembly_alerts] %s", exc)
-        return _err_resp("failed to query assembly alerts", request, 500, "Data")
+        logger.warning("[market_supply_pipeline] %s", exc)
+        return _err_resp(str(exc), None, 500, "Data")
 
 
-# ── Assembly Drilldown: Resolve + Obsidian Export (T-1416) ────────────────
-
-
-@router.post(
-    "/intel/assembly/{signal_id}/resolve",
-    summary="Mark assembly signal as resolved (removed from active list)",
-    tags=["Assembly"],
-)
-@limiter.limit("10/minute")
-async def assembly_resolve(signal_id: str, request: Request):
-    rid = getattr(request.state, "request_id", "?")
-    from dashboard.state import _has_role
-    role = getattr(request.state, "role", None)
-    if role is None or not _has_role(role, "write"):
-        logger.info("[assembly_resolve] rid=%s auth=denied role=%s", rid, role)
-        return JSONResponse(
-            {"error": "insufficient_role", "required": "write", "provided": role},
-            status_code=403,
-        )
-    try:
-        import uuid as _uuid
-        try:
-            _uuid.UUID(signal_id)
-        except ValueError:
-            logger.info("[assembly_resolve] rid=%s signal=%s invalid_uuid", rid, signal_id)
-            return _err_resp("invalid signal_id format — expected UUID", request, 400, "Assembly")
-        with _get_sa_engine().begin() as conn:
-            result = conn.execute(
-                _sa_text(
-                    "UPDATE assembly_signals SET resolved_at = NOW(), status = 'resolved' "
-                    "WHERE id = :sid AND (resolved_at IS NULL OR status != 'resolved')"
-                ),
-                {"sid": signal_id},
-            )
-            if result.rowcount == 0:
-                logger.info("[assembly_resolve] rid=%s signal=%s not_found", rid, signal_id)
-                return _err_resp("signal not found or already resolved", request, 404, "Assembly")
-        logger.info("[assembly_resolve] rid=%s signal=%s resolved", rid, signal_id)
-        return {"status": "resolved", "signal_id": signal_id}
-    except Exception as exc:
-        logger.error("[assembly_resolve] rid=%s signal=%s %s", rid, signal_id, exc)
-        return _err_resp("failed to resolve assembly signal", request, 500, "Assembly")
+# ── Forecast Accuracy (GATE-139) ────────────────────────────────────────
 
 
 @router.get(
-    "/intel/assembly/{signal_id}/obsidian-export",
-    summary="Export assembly signal to Obsidian markdown",
-    tags=["Assembly"],
+    "/forecast/accuracy/{market}",
+    summary="PSF forecast accuracy — comparing past forecasts to actuals",
 )
-@limiter.limit("10/minute")
-async def assembly_obsidian_export(signal_id: str, request: Request):
-    rid = getattr(request.state, "request_id", "?")
+@limiter.limit("20/hour")
+async def forecast_accuracy(market: str, request: Request = None):
     try:
-        import uuid as _uuid
-        try:
-            _uuid.UUID(signal_id)
-        except ValueError:
-            logger.info("[assembly_obsidian_export] rid=%s signal=%s invalid_uuid", rid, signal_id)
-            return _err_resp("invalid signal_id format — expected UUID", request, 400, "Assembly")
-        with _get_sa_engine().connect() as conn:
-            row = conn.execute(
-                _sa_text("""
-                    SELECT market, village, hobli,
-                           COALESCE(buyer_name, buyer_name_norm) AS buyer_name,
-                           parcel_count, total_area_sqm,
-                           COALESCE(confidence_score, confidence) AS confidence_score,
-                           first_deed_date, detected_at,
-                           survey_numbers, total_consideration_inr
-                    FROM assembly_signals WHERE id = :sid
-                """),
-                {"sid": signal_id},
-            ).fetchone()
-        if not row:
-            logger.info("[assembly_obsidian_export] rid=%s signal=%s not_found", rid, signal_id)
-            return _err_resp("assembly signal not found", request, 404, "Assembly")
-        cluster = dict(row._mapping)
-        from utils.obsidian_sync import write_assembly_signal
-        filename, content = write_assembly_signal(cluster)
-        if not content:
-            logger.warning("[assembly_obsidian_export] rid=%s signal=%s vault_unmounted", rid, signal_id)
-            return _err_resp("obsidian sync path not mounted", request, 503, "Assembly")
-        logger.info("[assembly_obsidian_export] rid=%s signal=%s exported=%s", rid, signal_id, filename)
-        return {"filename": filename, "content": content}
+        from utils.forecast_accuracy import get_forecast_accuracy
+        canonical = _normalize_market(market)
+        if not canonical:
+            return _err_resp("invalid market", None, 400, "Data")
+        result = get_forecast_accuracy(canonical)
+        return {"market": canonical, "accuracy": result}
     except Exception as exc:
-        logger.error("[assembly_obsidian_export] rid=%s signal=%s %s", rid, signal_id, exc)
-        return _err_resp("failed to export assembly signal", request, 500, "Assembly")
+        logger.warning("[forecast_accuracy] %s", exc)
+        return _err_resp(str(exc), None, 500, "Data")
 
 
-# ── Forecast Accuracy ────────────────────────────────────────────────────
+# ── Forecast Accuracy Panel ─────────────────────────────────────────────
 
 
-@router.get(
-    "/intel/forecast-accuracy",
-    summary="PSF forecast accuracy per market (MAPE + last 10 predictions)",
-    tags=["Intel"],
-)
-@limiter.limit("30/minute")
-async def forecast_accuracy(
-    request: Request,
-    market: str = Query(default=None, description="Market filter (optional)"),
-):
-    """Return per-market MAPE and recent predictions from the prediction ledger.
-
-    Uses a single DB round-trip per market (COUNT + SELECT combined via a
-    subquery window) to minimize connection overhead. Empty ledger returns
-    mape=null and last_10_predictions=[].
-    """
-    rid = getattr(request.state, "rid", None)
-    try:
-        from utils.prediction_tracker import compute_mape
-        from config.settings import TARGET_MARKETS as _VALID_MARKETS
-
-        markets = [m.strip() for m in _VALID_MARKETS]
-        if market:
-            canonical = _normalize_market(market)
-            if not canonical:
-                logger.warning("[forecast_accuracy] rid=%s invalid_market=%s", rid, market)
-                return _err_resp(f"Unknown market '{market}'. Valid: {sorted(_VALID_MARKETS)}", request, 400, "Data")
-            markets = [canonical]
-
-        result = {}
-        with _get_sa_engine().connect() as conn:
-            for m in markets:
-                mape_4wk = compute_mape(m, model_version="v1_4wk", conn=conn)
-                mape_26wk = compute_mape(m, model_version="linear_v1", conn=conn)
-                mape = mape_26wk if mape_26wk is not None else mape_4wk
-                stats = conn.execute(
-                    _sa_text("""
-                        WITH filtered AS (
-                            SELECT predicted_psf, actual_psf, error_pct,
-                                   predicted_at, measured_at, model_version,
-                                   horizon_weeks
-                            FROM prediction_ledger_psf
-                            WHERE market = :market AND actual_psf IS NOT NULL
-                        )
-                        SELECT (SELECT COUNT(*) FROM filtered) AS sample_count,
-                               json_agg(
-                                   json_build_object(
-                                       'predicted_psf', predicted_psf,
-                                       'actual_psf', actual_psf,
-                                       'error_pct', error_pct,
-                                       'predicted_at', predicted_at,
-                                       'measured_at', measured_at,
-                                       'model_version', model_version,
-                                       'horizon_weeks', horizon_weeks
-                                   )
-                                   ORDER BY predicted_at DESC
-                               ) FILTER (WHERE row_number() OVER (ORDER BY predicted_at DESC) <= 10)
-                               AS last_10
-                        FROM filtered
-                    """),
-                    {"market": m},
-                ).fetchone()
-
-                sample_count = stats[0] if stats and stats[0] else 0
-                last_10_raw = stats[1] if stats and stats[1] else []
-
-                last_10 = []
-                for entry in last_10_raw:
-                    item = {
-                        "predicted_psf": float(entry["predicted_psf"]) if entry.get("predicted_psf") else None,
-                        "actual_psf": float(entry["actual_psf"]) if entry.get("actual_psf") else None,
-                        "error_pct": float(entry["error_pct"]) if entry.get("error_pct") else None,
-                        "predicted_at": str(entry["predicted_at"]) if entry.get("predicted_at") else None,
-                        "measured_at": str(entry["measured_at"]) if entry.get("measured_at") else None,
-                        "model_version": entry.get("model_version"),
-                        "horizon_weeks": entry.get("horizon_weeks"),
-                    }
-                    last_10.append(item)
-
-                result[m] = {
-                    "mape": mape,
-                    "mape_4wk": mape_4wk,
-                    "mape_26wk": mape_26wk,
-                    "sample_count": sample_count,
-                    "last_10_predictions": last_10,
-                }
-
-        etag = compute_etag(result)
-        _check = check_etag(request, etag)
-        if _check:
-            return _check
-        return JSONResponse(content=result, headers={"ETag": f'"{etag}"'})
-    except Exception as exc:
-        logger.warning("[forecast_accuracy] rid=%s failed: %s", rid, exc)
-        return _err_resp(str(exc), request, 500, "Data")
-
-
-@router.get("/forecast-accuracy", tags=["Forecast Accuracy"],
-            summary="Forecast Accuracy dashboard panel")
+@router.get("/forecast-accuracy", tags=["Forecast"], summary="Forecast Accuracy dashboard panel")
 def forecast_accuracy_panel(request: Request):
     return templates.TemplateResponse(request, "forecast_accuracy.html")
 
 
-# ── Misc panel pages ────────────────────────────────────────────────────
+# ── Government Policy Panel ─────────────────────────────────────────────
 
 
-@router.get("/digest", response_class=HTMLResponse, summary="Intelligence Digest panel")
-async def digest_panel(request: Request):
-    try:
-        return templates.TemplateResponse(request, "digest.html")
-    except Exception as exc:
-        logger.error("[digest_panel] %s", exc)
-        return _err_resp("template not found", request, 500, "Data")
+@router.get("/govt-policy", tags=["Policy"], summary="Government Policy dashboard panel")
+def govt_policy_panel(request: Request):
+    return templates.TemplateResponse(request, "govt_policy.html")
 
 
-@router.get("/projects", summary="Operations Projects dashboard panel")
+# ── Content Studio Panel ────────────────────────────────────────────────
+
+
+@router.get("/content-studio", tags=["Content"], summary="Content Studio dashboard panel")
+def content_studio_panel(request: Request):
+    return templates.TemplateResponse(request, "content_studio.html")
+
+
+# ── Parcel Explorer Panel ───────────────────────────────────────────────
+
+
+@router.get("/parcel", tags=["Parcel"], summary="Parcel Explorer dashboard panel")
+def parcel_panel(request: Request):
+    return templates.TemplateResponse(request, "parcel.html")
+
+
+# ── Optimizer Panel ─────────────────────────────────────────────────────
+
+
+@router.get("/optimizer", tags=["Optimizer"], summary="Portfolio Optimizer dashboard panel")
+def optimizer_panel(request: Request):
+    return templates.TemplateResponse(request, "optimizer.html")
+
+
+# ── Shareholders Panel ──────────────────────────────────────────────────
+
+
+@router.get("/shareholders", tags=["Shareholders"], summary="Shareholders dashboard panel")
+def shareholders_panel(request: Request):
+    return templates.TemplateResponse(request, "shareholders.html")
+
+
+# ── Process Audit Panel ─────────────────────────────────────────────────
+
+
+@router.get("/process-audit", tags=["Audit"], summary="Process Audit dashboard panel")
+def process_audit_panel(request: Request):
+    return templates.TemplateResponse(request, "process_audit.html")
+
+
+# ── PR Studio Panel ─────────────────────────────────────────────────────
+
+
+@router.get("/pr-studio", tags=["PR"], summary="PR Studio dashboard panel")
+def pr_studio_panel(request: Request):
+    return templates.TemplateResponse(request, "pr_studio.html")
+
+
+# ── Digest Panel ────────────────────────────────────────────────────────
+
+
+@router.get("/digest", tags=["Digest"], summary="Weekly Digest dashboard panel")
+def digest_panel(request: Request):
+    return templates.TemplateResponse(request, "digest.html")
+
+
+# ── Projects Panel ──────────────────────────────────────────────────────
+
+
+@router.get("/projects", tags=["Projects"], summary="Projects dashboard panel")
 def projects_panel(request: Request):
     return templates.TemplateResponse(request, "projects.html")
 
@@ -2713,3 +1574,261 @@ async def investor_brief_markdown(
         _investor_brief_requests_total.labels(market=canonical, status="error").inc()
         logger.error("[investor_brief_markdown] %s", exc)
         return _err_resp(str(exc), request, 500, "Investor")
+
+
+# ── Multi-market Compare (T-1426) ─────────────────────────────────────
+
+
+_COMPARE_CACHE: dict[str, tuple[str, float]] = {}
+_COMPARE_CACHE_TTL = 120.0
+_COMPARE_CACHE_LOCK = threading.Lock()
+
+
+def _cached_compare(key: str) -> str | None:
+    with _COMPARE_CACHE_LOCK:
+        entry = _COMPARE_CACHE.get(key)
+        if entry and time.time() - entry[1] < _COMPARE_CACHE_TTL:
+            return entry[0]
+    return None
+
+
+def _set_cached_compare(key: str, value: str) -> None:
+    with _COMPARE_CACHE_LOCK:
+        _COMPARE_CACHE[key] = (value, time.time())
+        if len(_COMPARE_CACHE) > 50:
+            oldest = min(_COMPARE_CACHE.items(), key=lambda kv: kv[1][1])
+            _COMPARE_CACHE.pop(oldest[0], None)
+
+
+_DEFAULT_MARKETS = ("Yelahanka", "Devanahalli", "Hebbal")
+
+
+@router.get(
+    "/intel/investor/compare",
+    summary="Compare up to 3 markets side-by-side on key investor metrics",
+    tags=["Investor"],
+)
+@limiter.limit("20/minute")
+async def investor_compare(
+    request: Request,
+    markets: str = Query(
+        default="Yelahanka,Devanahalli,Hebbal",
+        description="Comma-separated market names (max 3)",
+    ),
+):
+    raw_list = [m.strip() for m in markets.split(",") if m.strip()]
+    if not raw_list:
+        return _err_resp("at least one market required", request, 400, "Investor")
+    if len(raw_list) > 3:
+        return _err_resp(
+            f"max 3 markets supported, got {len(raw_list)}",
+            request, 400, "Investor",
+        )
+
+    canonical_list = []
+    for name in raw_list:
+        c = _normalize_market(name)
+        if not c:
+            return _err_resp(f"invalid market: {name}", request, 400, "Investor")
+        canonical_list.append(c)
+
+    cache_key = ",".join(canonical_list)
+    cached = _cached_compare(cache_key)
+    if cached:
+        return json.loads(cached)
+
+    from utils.investor_brief_generator import InvestorBriefGenerator
+
+    results = []
+    for name in canonical_list:
+        try:
+            gen = InvestorBriefGenerator()
+            brief = gen.generate(market=name)
+            mo = brief.market_overview or {}
+            bv = brief.board_verdict or {}
+            results.append({
+                "market": name,
+                "avg_psf": mo.get("avg_psf", 0),
+                "board_verdict": bv.get("decision_flag", bv.get("verdict", "NEUTRAL")),
+                "assembly_alert_count": len(brief.assembly_alerts or []),
+                "psf_range": [mo.get("psf_min"), mo.get("psf_max")],
+            })
+        except Exception as exc:
+            logger.warning("[investor_compare] failed for %s: %s", name, exc)
+            results.append({"market": name, "error": str(exc)})
+
+    response = {
+        "markets": results,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "count": len(results),
+    }
+    _set_cached_compare(cache_key, json.dumps(response))
+    return response
+
+
+_VEL_FALLBACK_YEARS = 3
+
+
+def _resolve_market_psf_values(engine, sa_text) -> list[float]:
+    """Get avg PSF for all 3 tracked markets. Tries mat view first, falls back to listings."""
+    queries = [
+        sa_text("""
+            SELECT micro_market, avg_listing_psf
+            FROM v_market_brief_mat
+            WHERE micro_market ILIKE ANY (ARRAY['%Yelahanka%', '%Devanahalli%', '%Hebbal%'])
+        """),
+        sa_text("""
+            SELECT mm.name, ROUND(AVG(l.price_psf)::numeric, 0) AS avg_psf
+            FROM listings l
+            JOIN micro_markets mm ON mm.id = l.micro_market_id
+            WHERE mm.name IN ('Yelahanka', 'Devanahalli', 'Hebbal')
+              AND l.price_psf > 1000 AND l.price_psf < 50000
+            GROUP BY mm.name
+        """),
+    ]
+    for q in queries:
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(q).fetchall()
+            values = [float(r[1]) for r in rows if r[1] is not None]
+            if values:
+                return values
+        except Exception:
+            continue
+    return []
+
+
+# ── VEL Target PSF Analysis (T-1429) ──────────────────────────────────
+
+
+@router.get(
+    "/intel/investor/vel-analysis",
+    summary="VEL target PSF analysis — IRR, competitor gap, recommendation",
+    tags=["Investor"],
+)
+@limiter.limit("20/minute")
+async def vel_analysis(
+    request: Request,
+    land_cost_cr: float = Query(..., gt=0, description="Land cost in crores"),
+    area_acres: float = Query(..., gt=0, description="Land area in acres"),
+    target_psf: float = Query(..., gt=0, description="Target selling PSF"),
+):
+    try:
+        from utils.db import get_engine
+        from sqlalchemy import text as sa_text
+
+        engine = get_engine()
+        psf_values = _resolve_market_psf_values(engine, sa_text)
+        if not psf_values:
+            return _err_resp(
+                "could not determine market avg PSF — no data available",
+                request, 500, "Investor",
+            )
+
+        avg_market_psf = sum(psf_values) / len(psf_values)
+        competitor_gap_pct = round(
+            (target_psf - avg_market_psf) / avg_market_psf * 100, 1
+        )
+        sellable_sqft = area_acres * 43560 * 0.65 * 2.5
+        gross_revenue = sellable_sqft * target_psf
+        land_cost_inr = land_cost_cr * 1_00_00_000
+
+        try:
+            from utils.irr_model import calc_irr
+            irr_result = calc_irr(land_cost_inr, sellable_sqft, target_psf)
+            irr_at_target_psf = irr_result.simple_irr_pct
+        except Exception:
+            irr_at_target_psf = round(
+                (gross_revenue / land_cost_inr - 1) / _VEL_FALLBACK_YEARS * 100, 1
+            )
+
+        if irr_at_target_psf > 25 and competitor_gap_pct < 10:
+            entry_recommendation = "STRONG_BUY"
+        elif irr_at_target_psf > 18:
+            entry_recommendation = "BUY"
+        elif irr_at_target_psf > 12:
+            entry_recommendation = "HOLD"
+        else:
+            entry_recommendation = "PASS"
+
+        return {
+            "competitor_gap_pct": competitor_gap_pct,
+            "irr_at_target_psf": irr_at_target_psf,
+            "entry_recommendation": entry_recommendation,
+            "avg_market_psf": round(avg_market_psf, 0),
+            "sellable_sqft": round(sellable_sqft, 0),
+            "gross_revenue_cr": round(gross_revenue / 1_00_00_000, 2),
+            "land_cost_cr": land_cost_cr,
+        }
+    except Exception as exc:
+        logger.error("[vel_analysis] %s", exc)
+        return _err_resp(str(exc), request, 500, "Investor")
+
+
+# ── Export to Obsidian (T-1428) ───────────────────────────────────────
+
+
+class ExportObsidianRequest(BaseModel):
+    market: str
+    project_name: str = "RE_OS Query"
+    land_cost_cr: float = 0.0
+    area_acres: float = 0.0
+
+
+@router.post(
+    "/intel/investor/export-obsidian",
+    summary="Export investor brief to Obsidian vault",
+    tags=["Investor"],
+)
+@limiter.limit("10/minute")
+async def export_obsidian(
+    request: Request,
+    body: ExportObsidianRequest,
+):
+    market = body.market.strip()
+    if not market:
+        return _err_resp("market required", request, 400, "Investor")
+
+    canonical = _resolve_market(market)
+    if not canonical:
+        return _err_resp(f"invalid market: {market}", request, 400, "Investor")
+
+    from utils.investor_brief_generator import InvestorBriefGenerator
+
+    try:
+        gen = InvestorBriefGenerator()
+        brief = gen.generate(
+            market=canonical,
+            project_name=body.project_name,
+            land_cost_cr=body.land_cost_cr,
+            area_acres=body.area_acres,
+        )
+        brief_dict = brief.to_dict()
+
+        from utils.obsidian_sync import write_investor_brief
+        result = write_investor_brief(canonical, brief_dict)
+        if result:
+            return {
+                "obsidian_path": result,
+                "generated_at": brief_dict["generated_at"],
+            }
+
+        return {
+            "obsidian_path": (
+                f"03 LLS/01 Wiki/markets/{canonical.lower()}/"
+                f"(AI) Investor Brief {canonical} {brief_dict['generated_at'][:10]}.md"
+            ),
+            "generated_at": brief_dict["generated_at"],
+            "note": "OBSIDIAN_VAULT_PATH not set — placeholder path returned",
+        }
+    except Exception as exc:
+        logger.error("[export_obsidian] %s", exc)
+        return _err_resp(str(exc), request, 500, "Investor")
+
+
+# ── Investor Brief Dashboard Panel (T-1427) ──────────────────────────
+
+
+@router.get("/investor-brief", tags=["Investor"], summary="Investor Brief dashboard panel")
+async def investor_brief_panel(request: Request):
+    return templates.TemplateResponse(request, "investor_brief.html")

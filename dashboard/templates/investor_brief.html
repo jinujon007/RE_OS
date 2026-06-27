@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Investor Brief — LLS Intelligence</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0e1a; color: #c9d1d9; font-family: 'Courier New', Courier, monospace; font-size: 13px; padding: 20px; }
+h1 { color: #f0a020; font-size: 16px; margin-bottom: 16px; letter-spacing: 1px; }
+h2 { color: #f0a020; font-size: 13px; margin: 16px 0 8px; }
+.tab-bar { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid #2a3a55; }
+.tab { padding: 8px 16px; cursor: pointer; color: #8b949e; border: 1px solid transparent; border-bottom: none; border-radius: 4px 4px 0 0; }
+.tab.active { color: #f0a020; border-color: #2a3a55; background: #0f1520; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+.form-row { display: flex; gap: 12px; margin-bottom: 12px; align-items: end; flex-wrap: wrap; }
+.form-row label { font-size: 10px; color: #8b949e; display: flex; flex-direction: column; gap: 2px; }
+.form-row input, .form-row select { background: #0f1520; border: 1px solid #2a3a55; color: #c9d1d9; padding: 6px 8px; font-family: 'Courier New', monospace; font-size: 12px; border-radius: 3px; }
+.form-row button { background: #2a3a55; color: #c9d1d9; border: 1px solid #3a4a65; padding: 6px 16px; cursor: pointer; font-family: 'Courier New', monospace; border-radius: 3px; }
+.form-row button:hover { background: #3a4a65; }
+table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #1a2a3a; font-size: 12px; }
+th { color: #8b949e; font-size: 10px; text-transform: uppercase; }
+.chip { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: bold; }
+.chip.go { background: #3fb95020; color: #3fb950; }
+.chip.nogo { background: #f8514920; color: #f85149; }
+.chip.conditional { background: #f0a02020; color: #f0a020; }
+.chip.neutral { background: #8b949e20; color: #8b949e; }
+.badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 9px; font-weight: bold; }
+.badge.warn { background: #f0a02020; color: #f0a020; }
+.section-card { background: #0f1520; border: 1px solid #1a2a3a; border-radius: 4px; padding: 12px; margin: 8px 0; }
+.section-card p { margin: 4px 0; font-size: 12px; }
+.error-box { background: #f8514920; border: 1px solid #f85149; color: #f85149; padding: 12px; border-radius: 4px; margin: 8px 0; }
+.loading { color: #8b949e; font-style: italic; }
+.result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 8px 0; }
+.result-item { background: #0f1520; border: 1px solid #1a2a3a; border-radius: 4px; padding: 10px; }
+.result-item .label { font-size: 10px; color: #8b949e; }
+.result-item .value { font-size: 16px; font-weight: bold; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<h1>&#x25B6; Investor Brief Center</h1>
+
+<div class="tab-bar">
+  <div class="tab active" data-tab="compare">Multi-Market Compare</div>
+  <div class="tab" data-tab="deepdive">Single-Market Deep-Dive</div>
+  <div class="tab" data-tab="vel">VEL Analysis</div>
+</div>
+
+<div id="tab-compare" class="tab-content active">
+  <div class="form-row">
+    <label>Markets
+      <select id="compare-markets" multiple style="height:80px;width:200px;">
+        <option value="Yelahanka" selected>Yelahanka</option>
+        <option value="Devanahalli" selected>Devanahalli</option>
+        <option value="Hebbal" selected>Hebbal</option>
+      </select>
+    </label>
+    <button onclick="loadCompare()">Compare</button>
+  </div>
+  <div id="compare-results"><p class="loading">Select markets and click Compare.</p></div>
+</div>
+
+<div id="tab-deepdive" class="tab-content">
+  <div class="form-row">
+    <label>Market
+      <select id="deepdive-market">
+        <option value="Yelahanka">Yelahanka</option>
+        <option value="Devanahalli">Devanahalli</option>
+        <option value="Hebbal">Hebbal</option>
+      </select>
+    </label>
+    <label>Project Name <input id="deepdive-project" value="RE_OS Query"></label>
+    <label>Land Cost (Cr) <input id="deepdive-land" type="number" value="50" min="0" step="0.1"></label>
+    <label>Area (Acres) <input id="deepdive-area" type="number" value="5" min="0" step="0.1"></label>
+    <button onclick="loadDeepDive()">Generate Brief</button>
+  </div>
+  <div id="deepdive-results"><p class="loading">Fill details and click Generate Brief.</p></div>
+</div>
+
+<div id="tab-vel" class="tab-content">
+  <div class="form-row">
+    <label>Land Cost (Cr) <input id="vel-land" type="number" value="50" min="0" step="0.1"></label>
+    <label>Area (Acres) <input id="vel-area" type="number" value="5" min="0" step="0.1"></label>
+    <label>Target PSF <input id="vel-psf" type="number" value="9000" min="0" step="100"></label>
+    <button onclick="loadVEL()">Analyze</button>
+  </div>
+  <div id="vel-results"><p class="loading">Fill inputs and click Analyze.</p></div>
+</div>
+
+<script>
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab, .tab-content').forEach(el => el.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+async function loadCompare() {
+  const sel = document.getElementById('compare-markets');
+  const selected = Array.from(sel.selectedOptions).map(o => o.value);
+  if (!selected.length) { document.getElementById('compare-results').innerHTML = '<p class="error-box">Select at least one market.</p>'; return; }
+  const el = document.getElementById('compare-results');
+  el.innerHTML = '<p class="loading">Loading...</p>';
+  try {
+    const resp = await fetch('/api/v1/intel/investor/compare?markets=' + selected.join(','));
+    if (!resp.ok) { el.innerHTML = '<div class="error-box">HTTP ' + resp.status + '</div>'; return; }
+    const data = await resp.json();
+    let html = '<table><tr><th>Market</th><th>Avg PSF</th><th>Board Verdict</th><th>Assembly Alerts</th></tr>';
+    data.markets.forEach(m => {
+      if (m.error) {
+        html += '<tr><td>' + m.market + '</td><td colspan="3" class="error-box">' + m.error + '</td></tr>';
+      } else {
+        const chipClass = (m.board_verdict || 'NEUTRAL').toLowerCase();
+        html += '<tr><td>' + m.market + '</td><td>&#x20B9;' + (m.avg_psf || 'N/A') + '</td>'
+          + '<td><span class="chip ' + chipClass + '">' + m.board_verdict + '</span></td>'
+          + '<td>' + (m.assembly_alert_count > 0 ? '<span class="badge warn">' + m.assembly_alert_count + '</span>' : '0') + '</td></tr>';
+      }
+    });
+    html += '</table><p style="font-size:10px;color:#484f58;">Generated: ' + data.generated_at + '</p>';
+    el.innerHTML = html;
+  } catch (e) { el.innerHTML = '<div class="error-box">Network error: ' + e.message + '</div>'; }
+}
+
+async function loadDeepDive() {
+  const market = document.getElementById('deepdive-market').value;
+  const project = document.getElementById('deepdive-project').value || 'RE_OS Query';
+  const land = document.getElementById('deepdive-land').value || 0;
+  const area = document.getElementById('deepdive-area').value || 0;
+  const el = document.getElementById('deepdive-results');
+  el.innerHTML = '<p class="loading">Generating brief...</p>';
+  try {
+    const resp = await fetch('/api/v1/investor/brief/' + encodeURIComponent(market)
+      + '?project_name=' + encodeURIComponent(project) + '&land_cost_cr=' + land + '&area_acres=' + area);
+    if (!resp.ok) { el.innerHTML = '<div class="error-box">HTTP ' + resp.status + '</div>'; return; }
+    const d = await resp.json();
+    let html = '<div class="section-card"><h2>1. Market Overview</h2>';
+    const mo = d.market_overview || {};
+    html += '<p>Average PSF: &#x20B9;' + (mo.avg_psf || 'N/A') + '</p>'
+      + '<p>PSF Range: &#x20B9;' + (mo.psf_min || 'N/A') + ' - &#x20B9;' + (mo.psf_max || 'N/A') + '</p>'
+      + '<p>Listings: ' + (mo.listing_count || 0) + '</p>'
+      + '<p>RERA Projects: ' + (mo.rera_projects || 0) + ' total, ' + (mo.active_projects || 0) + ' active</p></div>';
+    html += '<div class="section-card"><h2>2. Competitive Landscape</h2>';
+    const cl = d.competitive_landscape || {};
+    html += '<p>Grade A Developers: ' + (cl.grade_a_count || 0) + '</p></div>';
+    html += '<div class="section-card"><h2>3. Financial Summary</h2>';
+    const fs = d.financial_summary || {};
+    if (fs.status === 'insufficient_inputs') html += '<p>' + (fs.note || 'Provide inputs to compute.') + '</p>';
+    else html += '<p>Land Cost: &#x20B9;' + (fs.land_cost_cr || 0) + ' Cr</p><p>Area: ' + (fs.area_acres || 0) + ' acres</p>'
+      + '<p>Sellable SqFt: ' + (fs.sellable_sqft || 0) + '</p>';
+    html += '</div>';
+    html += '<div class="section-card"><h2>4. Supply Risk</h2>';
+    const sr = d.supply_risk || {};
+    html += '<p>Pipeline Units: ' + (sr.pipeline_units || 0) + '</p><p>Weeks of Inventory: ' + (sr.weeks_of_inventory || 0) + '</p></div>';
+    html += '<div class="section-card"><h2>5. Assembly Alerts</h2>';
+    const alerts = d.assembly_alerts || [];
+    if (alerts.length) alerts.forEach(a => { html += '<p>' + (a.buyer || 'Unknown') + ' - ' + (a.parcel_count || 0) + ' parcels</p>'; });
+    else html += '<p>No active assembly signals.</p>';
+    html += '</div>';
+    html += '<div class="section-card"><h2>6. Board Verdict</h2>';
+    const bv = d.board_verdict || {};
+    html += '<p>Decision: <span class="chip ' + (bv.decision_flag || 'neutral').toLowerCase() + '">' + (bv.decision_flag || 'N/A') + '</span></p>'
+      + '<p>Context: ' + (bv.context_summary || '').substring(0, 200) + '</p></div>';
+    el.innerHTML = html;
+  } catch (e) { el.innerHTML = '<div class="error-box">Network error: ' + e.message + '</div>'; }
+}
+
+async function loadVEL() {
+  const land = document.getElementById('vel-land').value;
+  const area = document.getElementById('vel-area').value;
+  const psf = document.getElementById('vel-psf').value;
+  if (!land || !area || !psf) { document.getElementById('vel-results').innerHTML = '<p class="error-box">All fields required.</p>'; return; }
+  const el = document.getElementById('vel-results');
+  el.innerHTML = '<p class="loading">Analyzing...</p>';
+  try {
+    const resp = await fetch('/api/v1/intel/investor/vel-analysis?land_cost_cr=' + land + '&area_acres=' + area + '&target_psf=' + psf);
+    if (!resp.ok) { el.innerHTML = '<div class="error-box">HTTP ' + resp.status + '</div>'; return; }
+    const d = await resp.json();
+    const recColor = d.entry_recommendation === 'STRONG_BUY' ? '#3fb950' : d.entry_recommendation === 'BUY' ? '#3fb950' : d.entry_recommendation === 'HOLD' ? '#f0a020' : '#f85149';
+    el.innerHTML = '<div class="result-grid">'
+      + '<div class="result-item"><div class="label">Competitor Gap</div><div class="value">' + d.competitor_gap_pct + '%</div></div>'
+      + '<div class="result-item"><div class="label">IRR at Target PSF</div><div class="value">' + d.irr_at_target_psf + '%</div></div>'
+      + '<div class="result-item"><div class="label">Avg Market PSF</div><div class="value">&#x20B9;' + d.avg_market_psf + '</div></div>'
+      + '<div class="result-item"><div class="label">Sellable SqFt</div><div class="value">' + d.sellable_sqft.toLocaleString() + '</div></div>'
+      + '<div class="result-item"><div class="label">Gross Revenue</div><div class="value">&#x20B9;' + d.gross_revenue_cr + ' Cr</div></div>'
+      + '<div class="result-item"><div class="label">Land Cost</div><div class="value">&#x20B9;' + d.land_cost_cr + ' Cr</div></div>'
+      + '</div>'
+      + '<div style="margin-top:12px;padding:12px;background:#0f1520;border:1px solid ' + recColor + ';border-radius:4px;">'
+      + '<span style="font-size:10px;color:#8b949e;">Recommendation</span><br>'
+      + '<span style="font-size:20px;font-weight:bold;color:' + recColor + ';">' + d.entry_recommendation + '</span></div>';
+  } catch (e) { el.innerHTML = '<div class="error-box">Network error: ' + e.message + '</div>'; }
+}
+</script>
+</body>
+</html>

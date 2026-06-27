@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, date, timezone
 
 from fastapi import APIRouter, Request, Query
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import text as _sa_text
 
@@ -1628,6 +1628,9 @@ class V2ReadinessResponse(_BM):
     discord_digest_count: int
     live_rera_growth: bool
     board_room_avg_response_s: float | None = None
+    kill_criteria_deed_status: str = "unknown"
+    kill_criteria_journal_status: str = "unknown"
+    weeks_remaining: int = 0
     model_config = {"extra": "forbid", "frozen": True}
 
 
@@ -1639,6 +1642,10 @@ class V2DeclareResponse(_BM):
 
 _DECLARE_FACT = "RE_OS V2.0 declared"
 
+
+# ponytail: _compute_v2_readiness runs 7 DB queries per call. At >10 req/min add
+# Redis caching (cache key per market hash). At >50 req/min add materialized view
+# v_v2_readiness refreshed by scheduler.
 
 def _compute_v2_readiness(conn) -> V2ReadinessResponse:
     with db_query_duration_seconds.labels(query_name="v2_scheduler_days").time():
@@ -1693,10 +1700,41 @@ def _compute_v2_readiness(conn) -> V2ReadinessResponse:
         ).fetchone()
         board_room_avg_response_s = round(float(br_row[0]), 2) if br_row and br_row[0] is not None else None
     v2_ready = scheduler_success_rate >= 0.8 and scheduler_days_running >= 7 and discord_digest_count >= 1
+
+    kill_criteria_deed_status = "unknown"
+    kill_criteria_journal_status = "unknown"
+    weeks_remaining = 0
+    try:
+        from datetime import date as _dt_date
+        weeks_remaining = max(0, (date(2026, 8, 15) - _dt_date.today()).days // 7)
+        proj_row = conn.execute(
+            _sa_text("""
+                SELECT week_start, deed_count
+                FROM v_deed_throughput_weekly
+                ORDER BY week_start DESC LIMIT 4
+            """)
+        ).fetchall()
+        if proj_row:
+            counts = [int(r[1]) if r[1] else 0 for r in proj_row]
+            avg_4wk = sum(counts) / len(counts)
+            kill_criteria_deed_status = "on_track" if avg_4wk >= 50 else ("at_risk" if avg_4wk * 1.2 >= 50 else "will_miss")
+    except Exception as exc:
+        logger.warning("[_compute_v2_readiness] deed_projection query failed: %s", exc)
+    try:
+        dj_row = conn.execute(
+            _sa_text("SELECT COUNT(*) FROM decision_journal LIMIT 1")
+        ).scalar()
+        kill_criteria_journal_status = "met" if (dj_row or 0) >= 1 else "unmet"
+    except Exception as exc:
+        logger.warning("[_compute_v2_readiness] decision_journal query failed: %s", exc)
+
     return V2ReadinessResponse(
         v2_ready=v2_ready, scheduler_days_running=scheduler_days_running,
         scheduler_success_rate=scheduler_success_rate, discord_digest_count=discord_digest_count,
         live_rera_growth=live_rera_growth, board_room_avg_response_s=board_room_avg_response_s,
+        kill_criteria_deed_status=kill_criteria_deed_status,
+        kill_criteria_journal_status=kill_criteria_journal_status,
+        weeks_remaining=weeks_remaining,
     )
 
 
@@ -1984,158 +2022,227 @@ async def audit_log(request: Request, limit: int = Query(default=50, ge=1, le=20
         return {"entries": [], "count": 0}
 
 
-# ── Kill Criteria Dashboard (GATE-118, T-1277) ─────────────────────────────
+# ── Kill Criteria Live (GATE-149, T-1431) ──────────────────────────────────
 
 
 class KillCriteriaDeedThroughput(BaseModel):
-    weekly_avg_deeds: float = 0.0
-    weeks_measured: int = 0
+    current_avg_4wk: float = 0.0
     target: int = 50
-    on_track: bool = False
+    deadline: str = "2026-08-15"
+    status: str = "unknown"
+    weeks_remaining: int = 0
+    error: str | None = None
 
 
-class KillCriteriaLedger(BaseModel):
-    hit_rate: float = 0.0
-    total_verdicts: int = 0
-    target_hit_rate: float = 0.6
+class KillCriteriaDecisionJournal(BaseModel):
+    entry_count: int = 0
+    target: int = 1
+    deadline: str = "2026-12-31"
+    status: str = "unmet"
+    error: str | None = None
 
 
-class KillCriteriaCorridorItem(BaseModel):
-    name: str
-    verdict: str = "INSUFFICIENT_DATA"
-    rank_correlation: float | None = None
-    projects_evaluated: int | None = None
-    run_date: str | None = None
-    status: str = "data_present"
-
-
-class KillCriteriaCorridor(BaseModel):
-    corridors: list[KillCriteriaCorridorItem] = []
-    status: str = "data_present"
-
-
-class KillCriteriaDeadlines(BaseModel):
-    deed_throughput: str = "2026-08-15"
-    days_remaining: int = 0
-    decision_journal: str = "2026-12-31"
-    dj_days_remaining: int = 0
-
-
-class NewKillCriteriaResponse(BaseModel):
+class KillCriteriaResponse(BaseModel):
     deed_throughput: KillCriteriaDeedThroughput
-    ledger: KillCriteriaLedger
-    corridor: KillCriteriaCorridor
-    deadlines: KillCriteriaDeadlines
-    decision_journal_entries: int = 0
+    decision_journal: KillCriteriaDecisionJournal
+    generated_at: str
 
 
 @router.get(
     "/ops/kill-criteria",
-    response_model=NewKillCriteriaResponse,
-    summary="Kill criteria dashboard (deed throughput, ledger hit-rate, corridor verdicts, deadlines)",
+    response_model=KillCriteriaResponse,
+    summary="Kill criteria live status against deed throughput and decision journal targets",
 )
-@limiter.limit("10/hour")
+@limiter.limit("30/minute")
 async def kill_criteria(request: Request):
+    from utils.deed_progress import compute_throughput_projection
+    from utils.decision_journal import list_entries
+
+    try:
+        proj = compute_throughput_projection()
+        dt = KillCriteriaDeedThroughput(
+            current_avg_4wk=proj.get("avg_4wk", 0.0),
+            target=50,
+            deadline="2026-08-15",
+            status=proj.get("projection_verdict", "unknown"),
+            weeks_remaining=proj.get("weeks_remaining", 0),
+        )
+    except Exception as exc:
+        logger.error("[kill_criteria] deed_throughput failed: %s", exc)
+        dt = KillCriteriaDeedThroughput(status="unknown", error=str(exc))
+
+    try:
+        entries = list_entries(limit=1)
+        entry_count = len(entries)
+        dj = KillCriteriaDecisionJournal(
+            entry_count=entry_count,
+            target=1,
+            deadline="2026-12-31",
+            status="met" if entry_count >= 1 else "unmet",
+        )
+    except Exception as exc:
+        logger.error("[kill_criteria] decision_journal failed: %s", exc)
+        dj = KillCriteriaDecisionJournal(status="unknown", error=str(exc))
+
+    data = KillCriteriaResponse(
+        deed_throughput=dt,
+        decision_journal=dj,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    etag = compute_etag(data.model_dump())
+    _check = check_etag(request, etag)
+    if _check:
+        return _check
+    return JSONResponse(content=data.model_dump(), headers={"ETag": f'"{etag}"'})
+
+
+# ── Ops Handover Document (GATE-149, T-1433) ─────────────────────────────────
+
+
+HANDOVER_MARKETS = ["Yelahanka", "Devanahalli", "Hebbal"]
+
+_HANDOVER_JINU_ACTIONS = [
+    "J-20: docker compose up -d",
+    "J-21: drop Form17 PDFs in inbox",
+    "J-22: run scripts/check_conditional_gates.py",
+    "J-23: run crew",
+    "J-24: run Board Room session",
+    "J-25: POST /api/ops/v2-declare",
+]
+
+
+def _build_handover_md() -> str:
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    lines = [f"# RE_OS V2.0 Ops Handover — {now_str}", ""]
+
     try:
         with _get_sa_engine().connect() as conn:
-            deed_row = conn.execute(_sa_text("""
-                SELECT
-                    COUNT(*)::float / NULLIF(EXTRACT(WEEK FROM NOW()) - EXTRACT(WEEK FROM MIN(created_at)), 0) AS weekly_avg,
-                    COUNT(*)::int AS total_deeds,
-                    EXTRACT(WEEK FROM NOW())::int - EXTRACT(WEEK FROM MIN(created_at))::int AS weeks
-                FROM registered_transactions WHERE deed_type = 'Sale'
-            """)).fetchone()
-            weekly_avg = round(float(deed_row[0]), 1) if deed_row and deed_row[0] else 0.0
-            weeks_measured = int(deed_row[2]) if deed_row and deed_row[2] else 0
-
-            hit = conn.execute(_sa_text("SELECT COUNT(*) FROM prediction_ledger WHERE verdict = 'hit'")).scalar() or 0
-            miss = conn.execute(_sa_text("SELECT COUNT(*) FROM prediction_ledger WHERE verdict = 'miss'")).scalar() or 0
-            total_verdicts = hit + miss
-            hit_rate = round(hit / max(total_verdicts, 1), 4)
-
-            corridor_rows = conn.execute(_sa_text("""
-                SELECT DISTINCT ON (corridor_name)
-                    corridor_name, verdict, rank_correlation,
-                    projects_evaluated, run_date
-                FROM corridor_backtest_verdicts
-                ORDER BY corridor_name, created_at DESC
-            """)).fetchall()
-            corridor_map: dict[str, dict] = {}
-            for r in corridor_rows:
-                name = str(r[0])
-                corridor_map[name] = {
-                    "verdict": str(r[1]) if r[1] else "INSUFFICIENT_DATA",
-                    "rank_correlation": float(r[2]) if r[2] is not None else None,
-                    "projects_evaluated": int(r[3]) if r[3] is not None else None,
-                    "run_date": str(r[4]) if r[4] else None,
-                }
-            from utils.corridor_scorer_v2 import _CORRIDOR_SEEDS
-            _KNOWN_CORRIDOR_NAMES = [s.corridor_id for s in _CORRIDOR_SEEDS]
-            has_data = len(corridor_rows) > 0
-            _corridor_verdicts = []
-            for name in _KNOWN_CORRIDOR_NAMES:
-                entry = corridor_map.get(name, {})
-                if not entry:
-                    _corridor_verdicts.append(KillCriteriaCorridorItem(
-                        name=name,
-                        verdict="INSUFFICIENT_DATA",
-                        rank_correlation=None,
-                        projects_evaluated=None,
-                        run_date=None,
-                        status="no_data",
-                    ))
-                else:
-                    _corridor_verdicts.append(KillCriteriaCorridorItem(
-                        name=name,
-                        verdict=entry.get("verdict", "INSUFFICIENT_DATA"),
-                        rank_correlation=entry.get("rank_correlation"),
-                        projects_evaluated=entry.get("projects_evaluated"),
-                        run_date=entry.get("run_date"),
-                        status="data_present",
-                    ))
-
+            lines.append("## System Status")
+            lines.append("")
             try:
-                dj_count = conn.execute(_sa_text("SELECT COUNT(*) FROM decision_journal")).scalar() or 0
-            except Exception as _dj_exc:
-                _dj_str = str(_dj_exc)
-                if "relation" in _dj_str and "does not exist" in _dj_str:
-                    dj_count = 0
+                last_crew = conn.execute(
+                    _sa_text("""
+                        SELECT agent_id, status, created_at FROM agent_runs
+                        ORDER BY created_at DESC LIMIT 1
+                    """)
+                ).fetchone()
+                if last_crew:
+                    lines.append(f"- Last crew run: **{last_crew[0]}** — {last_crew[1]} at {last_crew[2].isoformat() if last_crew[2] else 'N/A'}")
                 else:
-                    raise
+                    lines.append("- Last crew run: No data")
+            except Exception as exc:
+                logger.warning("[handover] system status failed: %s", exc)
+                lines.append("- Container health: Data unavailable.")
+            lines.append("")
 
-        today = date.today()
-        deed_deadline = date(2026, 8, 15)
-        dj_deadline = date(2026, 12, 31)
+            lines.append("## Kill Criteria")
+            lines.append("")
+            try:
+                proj_row = conn.execute(
+                    _sa_text("""
+                        SELECT week_start, deed_count
+                        FROM v_deed_throughput_weekly
+                        ORDER BY week_start DESC LIMIT 4
+                    """)
+                ).fetchall()
+                if proj_row:
+                    counts = [int(r[1]) if r[1] else 0 for r in proj_row]
+                    avg_4wk = sum(counts) / len(counts)
+                    lines.append(f"- Deed throughput: **{avg_4wk:.1f}/week** (target: 50/week, deadline: 2026-08-15)")
+                else:
+                    lines.append("- Deed throughput: No data (v_deed_throughput_weekly empty)")
+            except Exception as exc:
+                logger.warning("[handover] kill criteria deed failed: %s", exc)
+                lines.append("- Deed throughput: Data unavailable.")
+            try:
+                dj_count = conn.execute(
+                    _sa_text("SELECT COUNT(*) FROM decision_journal")
+                ).scalar() or 0
+                lines.append(f"- Decision journal entries: **{dj_count}** (target: 1, deadline: 2026-12-31)")
+            except Exception as exc:
+                logger.warning("[handover] kill criteria journal failed: %s", exc)
+                lines.append("- Decision journal: Data unavailable.")
+            lines.append("")
 
-        data = NewKillCriteriaResponse(
-            deed_throughput=KillCriteriaDeedThroughput(
-                weekly_avg_deeds=weekly_avg,
-                weeks_measured=weeks_measured,
-                target=50,
-                on_track=weekly_avg >= 50,
-            ),
-            ledger=KillCriteriaLedger(
-                hit_rate=hit_rate,
-                total_verdicts=total_verdicts,
-                target_hit_rate=0.6,
-            ),
-            corridor=KillCriteriaCorridor(corridors=_corridor_verdicts, status="no_data" if not has_data else "data_present"),
-            deadlines=KillCriteriaDeadlines(
-                deed_throughput="2026-08-15",
-                days_remaining=(deed_deadline - today).days,
-                decision_journal="2026-12-31",
-                dj_days_remaining=(dj_deadline - today).days,
-            ),
-            decision_journal_entries=dj_count,
-        )
-        etag = compute_etag(data.model_dump())
-        _check = check_etag(request, etag)
-        if _check:
-            return _check
-        return JSONResponse(content=data.model_dump(), headers={"ETag": f'"{etag}"'})
+            lines.append("## Markets")
+            lines.append("")
+            lines.append("| Market | Active RERA | Avg PSF | Last Scrape |")
+            lines.append("|--------|-------------|---------|-------------|")
+            for m in HANDOVER_MARKETS:
+                rera_count = "N/A"
+                avg_psf_str = "N/A"
+                last_scrape = "N/A"
+                try:
+                    r = conn.execute(
+                        _sa_text("""
+                            SELECT COUNT(*) FROM rera_projects rp
+                            JOIN micro_markets mm ON mm.id = rp.micro_market_id
+                            WHERE mm.name ILIKE :m
+                        """),
+                        {"m": f"%{m}%"},
+                    ).scalar()
+                    rera_count = str(r or 0)
+                except Exception:
+                    pass
+                try:
+                    r = conn.execute(
+                        _sa_text("""
+                            SELECT AVG(psf) FROM v_market_inventory
+                            WHERE market ILIKE :m AND psf IS NOT NULL
+                        """),
+                        {"m": f"%{m}%"},
+                    ).scalar()
+                    avg_psf_str = f"\u20b9{int(r):,}" if r else "N/A"
+                except Exception:
+                    pass
+                try:
+                    r = conn.execute(
+                        _sa_text("""
+                            SELECT created_at FROM agent_runs
+                            WHERE market ILIKE :m
+                            ORDER BY created_at DESC LIMIT 1
+                        """),
+                        {"m": f"%{m}%"},
+                    ).fetchone()
+                    last_scrape = r[0].isoformat() if r and r[0] else "N/A"
+                except Exception:
+                    pass
+                lines.append(f"| {m} | {rera_count} | {avg_psf_str} | {last_scrape} |")
+            lines.append("")
+
+            lines.append("## Board Room (last session)")
+            lines.append("")
+            try:
+                r = conn.execute(
+                    _sa_text("SELECT summary FROM board_sessions ORDER BY created_at DESC LIMIT 1")
+                ).fetchone()
+                lines.append(r[0] if r and r[0] else "No board sessions found.")
+            except Exception:
+                lines.append("Data unavailable.")
+            lines.append("")
     except Exception as exc:
-        logger.error("[kill_criteria] %s", exc)
-        return _err_resp(str(exc), request, 500, "Ops")
+        logger.warning("[handover] DB connection failed: %s", exc)
+        lines.append("## System Status")
+        lines.append("- Database connection failed: Data unavailable.")
+        lines.append("")
+
+    lines.append("## Jinu Next Actions")
+    lines.append("")
+    for a in _HANDOVER_JINU_ACTIONS:
+        lines.append(f"- `{a}`")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+@router.get(
+    "/ops/handover-doc",
+    summary="Markdown ops handover document with live DB status",
+)
+@limiter.limit("10/hour")
+async def ops_handover(request: Request):
+    md = _build_handover_md()
+    return Response(content=md, media_type="text/markdown", headers={"Cache-Control": "no-cache, max-age=300"})
 
 
 # ── Conditional Gates (GATE-122, T-1298) ─────────────────────────────────────
@@ -2550,18 +2657,8 @@ async def ops_ledger_full(
             return _check
         return JSONResponse(content=data.model_dump(), headers={"ETag": f'"{etag}"'})
     except Exception as exc:
-        logger.error("[ops_ledger_full] %s", exc)
+        logger.error("[ops_ledger_full] rid=%s %s", rid, exc)
         return _err_resp(str(exc), request, 500, "Ops")
-
-
-try:
-    from prometheus_client import Counter as _LedgerVerdictCounter
-    _ledger_manual_verdicts = _LedgerVerdictCounter(
-        "ledger_manual_verdicts_total",
-        "Manual verdict entries on prediction_ledger",
-    )
-except ImportError:
-    _ledger_manual_verdicts = None
 
 
 class VerdictEntryRequest(BaseModel):
@@ -2578,7 +2675,11 @@ class VerdictEntryRequest(BaseModel):
 )
 @limiter.limit("10/minute")
 async def ops_ledger_verdict(request: Request, body: VerdictEntryRequest):
+    rid = getattr(request.state, "rid", None)
     try:
+        if body.ledger_id <= 0:
+            return _err_resp(f"Invalid ledger_id {body.ledger_id}: must be positive", request, 400, "Ops")
+
         valid_verdicts = {"hit", "miss", "partial", "unverifiable"}
         if body.verdict not in valid_verdicts:
             return _err_resp(f"Invalid verdict '{body.verdict}'. Valid: {valid_verdicts}", request, 400, "Ops")
@@ -2600,12 +2701,17 @@ async def ops_ledger_verdict(request: Request, body: VerdictEntryRequest):
             if result.rowcount == 0:
                 return _err_resp(f"Ledger row {body.ledger_id} not found", request, 404, "Ops")
 
-        if _ledger_manual_verdicts is not None:
-            _ledger_manual_verdicts.inc()
+        try:
+            from prometheus_client import Counter
+            _v = Counter("ledger_manual_verdicts_total", "Manual verdict entries on prediction_ledger")
+            _v.inc()
+        except Exception:
+            pass
 
+        logger.info("[ops_ledger_verdict] rid=%s id=%s verdict=%s", rid, body.ledger_id, body.verdict)
         return {"status": "ok", "updated_id": body.ledger_id, "verdict": body.verdict}
     except Exception as exc:
-        logger.error("[ops_ledger_verdict] %s", exc)
+        logger.error("[ops_ledger_verdict] rid=%s %s", rid, exc)
         return _err_resp(str(exc), request, 500, "Ops")
 
 

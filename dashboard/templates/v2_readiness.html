@@ -72,6 +72,10 @@ tr:hover td { background: #1a2540; }
 .declare-btn.enabled { background: #3fb950; color: #0a0e1a; border: 2px solid #3fb950; }
 .declare-btn.enabled:hover { background: #4fd960; box-shadow: 0 0 20px #3fb95060; }
 .declare-btn.disabled { background: #1a2235; color: #484f58; border: 2px solid #2a3a55; cursor: not-allowed; }
+.declare-btn.amber-enabled { background: #f0a020; color: #0a0e1a; border: 2px solid #f0a020; }
+.declare-btn.amber-enabled:hover { background: #f5b840; box-shadow: 0 0 20px #f0a02060; }
+.declare-btn.amber-disabled { background: #2a1f0f; color: #f0a020; border: 2px solid #f0a020; cursor: not-allowed; }
+.declare-btn .warning-badge { display: inline-block; background: #2a1f0f; color: #f0a020; font-size: 10px; padding: 2px 6px; border-radius: 3px; margin-left: 8px; vertical-align: middle; }
 .declare-result { text-align: center; font-size: 12px; margin-top: 8px; }
 .declare-result.success { color: #3fb950; }
 .declare-result.error { color: #f85149; }
@@ -143,8 +147,27 @@ tr:hover td { background: #1a2540; }
   </div>
 </div>
 
-<button class="declare-btn disabled" id="declare-btn" onclick="declareV2()">DECLARE V2.0</button>
+<div class="panel" id="kill-criteria-section">
+  <h2>Kill Criteria</h2>
+  <div class="metric-grid" id="kill-criteria-metrics">
+    <div class="metric-card">
+      <div class="label">Deed Throughput Verdict</div>
+      <div class="value" id="kill-deed-status">—</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">Weeks Remaining</div>
+      <div class="value" id="kill-weeks-remaining">—</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">Decision Journal</div>
+      <div class="value" id="kill-journal-status">—</div>
+    </div>
+  </div>
+</div>
+
+<button class="declare-btn disabled" id="declare-btn" onclick="declareV2()" data-deed-status="unknown" data-journal-status="unknown">DECLARE V2.0</button>
 <div id="declare-result"></div>
+<a href="/api/v1/ops/handover-doc" id="handover-link" style="display:block;text-align:center;margin-top:12px;color:#58a6ff;font-size:12px;">Download Handover Doc</a>
 
 <script>
 const LS_KEY = 're_os_v2_jlist';
@@ -181,6 +204,7 @@ async function loadReadiness() {
     const resp = await fetch('/api/v1/ops/v2-readiness');
     const data = await resp.json();
     renderMetrics(data);
+    renderKillCriteria(data);
   } catch (e) {
     document.getElementById('v2-status-header').className = 'v2-status validating';
     document.getElementById('v2-status-header').textContent = '⏳ CONNECTION ERROR';
@@ -193,13 +217,9 @@ function renderMetrics(data) {
   if (data.v2_ready) {
     header.className = 'v2-status live';
     header.textContent = '✅ V2.0 LIVE — All readiness criteria met';
-    document.getElementById('declare-btn').className = 'declare-btn enabled';
-    document.getElementById('declare-btn').disabled = false;
   } else {
     header.className = 'v2-status validating';
     header.textContent = '⏳ VALIDATING — System accumulating live data';
-    document.getElementById('declare-btn').className = 'declare-btn disabled';
-    document.getElementById('declare-btn').disabled = true;
   }
 
   document.getElementById('metric-days').textContent = data.scheduler_days_running + 'd';
@@ -224,6 +244,52 @@ function renderMetrics(data) {
   } else {
     document.getElementById('metric-br-response').textContent = 'N/A';
     document.getElementById('metric-br-response').className = 'value';
+  }
+}
+
+function renderKillCriteria(data) {
+  const deedStatus = data.kill_criteria_deed_status || 'unknown';
+  const journalStatus = data.kill_criteria_journal_status || 'unknown';
+  const weeksRemaining = data.weeks_remaining !== undefined ? data.weeks_remaining : null;
+  const btn = document.getElementById('declare-btn');
+
+  btn.dataset.deedStatus = deedStatus;
+  btn.dataset.journalStatus = journalStatus;
+
+  const deedEl = document.getElementById('kill-deed-status');
+  const statusClass = deedStatus === 'on_track' ? 'green' : (deedStatus === 'at_risk' ? 'amber' : 'red');
+  deedEl.textContent = deedStatus.toUpperCase();
+  deedEl.className = 'value ' + statusClass;
+
+  const journalEl = document.getElementById('kill-journal-status');
+  const jClass = journalStatus === 'met' ? 'green' : (journalStatus === 'unmet' ? 'amber' : 'red');
+  journalEl.textContent = journalStatus.toUpperCase();
+  journalEl.className = 'value ' + jClass;
+
+  const weeksEl = document.getElementById('kill-weeks-remaining');
+  if (weeksRemaining !== null) {
+    weeksEl.textContent = weeksRemaining + 'w';
+    weeksEl.className = 'value ' + (weeksRemaining > 4 ? 'green' : (weeksRemaining > 0 ? 'amber' : 'red'));
+  } else {
+    weeksEl.textContent = '—';
+    weeksEl.className = 'value';
+  }
+
+  if (deedStatus === 'will_miss') {
+    btn.className = 'declare-btn amber-disabled';
+    btn.disabled = true;
+    btn.title = 'Deed throughput will miss 2026-08-15 target — resolve before declaring';
+    btn.innerHTML = 'DECLARE V2.0';
+  } else if (deedStatus === 'at_risk') {
+    btn.className = 'declare-btn amber-enabled';
+    btn.disabled = false;
+    btn.title = 'At risk — proceed with caution';
+    btn.innerHTML = 'DECLARE V2.0 <span class="warning-badge">At risk</span>';
+  } else if (deedStatus === 'on_track') {
+    btn.className = 'declare-btn enabled';
+    btn.disabled = false;
+    btn.title = '';
+    btn.innerHTML = 'DECLARE V2.0';
   }
 }
 

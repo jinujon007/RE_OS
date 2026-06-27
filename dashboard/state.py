@@ -525,6 +525,8 @@ _READ_ONLY_PATHS = frozenset(
         "/api/v1/intel/assembly-alerts",
         "/api/intel/assembly-alerts",
         "/api/v1/intel/assembly/obsidian-export",
+        "/api/v1/ops/handover-doc",
+        "/api/ops/handover-doc",
     }
 )
 _READ_ONLY_PREFIXES = (

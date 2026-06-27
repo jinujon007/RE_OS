@@ -514,23 +514,31 @@ def write_assembly_signal(cluster: dict) -> tuple[str, str]:
 
 def write_investor_brief(
     market: str,
-    brief_md: str,
+    brief_md: str | dict,
     project_name: str = "RE_OS",
     land_cost_cr: float = 0.0,
     area_acres: float = 0.0,
 ) -> Optional[str]:
-    """Write an investor brief as an Obsidian note under the VEL or RE_market project.
+    """Write an investor brief as an Obsidian note.
+
+    Two modes:
+    - brief_md is str: writes to VEL/RE_market project dir (legacy path).
+    - brief_md is dict: writes to 03 LLS/01 Wiki/markets/{market}/ with
+      YAML frontmatter (new path, T-1428).
 
     Args:
         market: Micro-market name.
-        brief_md: Formatted markdown body.
-        project_name: Project name for the brief (default RE_OS).
-        land_cost_cr: Land cost in crores (for filename context).
-        area_acres: Land area in acres (for filename context).
+        brief_md: Formatted markdown body (str) or InvestorBrief.to_dict() (dict).
+        project_name: Project name (used in legacy mode only).
+        land_cost_cr: Land cost in crores (used in legacy mode only).
+        area_acres: Land area in acres (used in legacy mode only).
 
     Returns:
         File path on success, ``None`` if sync path not mounted, ``""`` on write failure.
     """
+    if isinstance(brief_md, dict):
+        return _write_investor_brief_from_dict(market, brief_md)
+
     if not _ensure_sync_dir():
         return None
     now = datetime.now(timezone.utc)
@@ -572,6 +580,102 @@ def write_investor_brief(
         with open(filepath, "wb") as f:
             f.write(encoded)
         _log_write_audit(filename, filepath, content)
+        obsidian_export_total.labels(source="investor_brief").inc()
+        obsidian_bytes_total.labels(source="investor_brief").inc(len(encoded))
+        return filepath
+    except Exception as exc:
+        logger.warning(f"[ObsidianSync] Failed to write investor brief {filename}: {exc}")
+        return ""
+
+
+def _write_investor_brief_from_dict(market: str, brief_dict: dict) -> Optional[str]:
+    """Write investor brief from to_dict() output to the wiki markets path."""
+    vault_base = _sync_path()
+    if not _ensure_sync_dir():
+        return None
+    now = datetime.now(timezone.utc)
+    date_str = now.strftime("%Y-%m-%d")
+    generated_at = brief_dict.get("generated_at", now.isoformat(timespec="seconds"))
+
+    market_dir = os.path.join(vault_base, "03 LLS", "01 Wiki", "markets", market.lower())
+    filename = f"(AI) Investor Brief {market} {date_str}.md"
+    filepath = os.path.join(market_dir, filename)
+
+    lines = [
+        "---",
+        "type: wiki",
+        "area: lls",
+        "ai_generated: true",
+        "confidence: 0.75",
+        "sources: 5",
+        f"generated_at: {generated_at}",
+        "---",
+        "",
+        f"# Investor Brief — {market}",
+        "",
+        "## 1. Market Overview",
+        "",
+    ]
+    mo = brief_dict.get("market_overview", {})
+    lines.append(f"- **Average PSF:** {mo.get('avg_psf', 'N/A')}")
+    lines.append(f"- **PSF Range:** {mo.get('psf_min', 'N/A')} – {mo.get('psf_max', 'N/A')}")
+    lines.append(f"- **Listings:** {mo.get('listing_count', 0)}")
+    lines.append(f"- **RERA Projects:** {mo.get('rera_projects', 0)}")
+    lines += [
+        "",
+        "## 2. Competitive Landscape",
+        "",
+        f"- **Grade A Developers:** {brief_dict.get('competitive_landscape', {}).get('grade_a_count', 0)}",
+        "",
+        "## 3. Financial Summary",
+        "",
+    ]
+    fs = brief_dict.get("financial_summary", {})
+    lines.append(f"- **Land Cost:** \u20b9{fs.get('land_cost_cr', 0)} Cr")
+    lines.append(f"- **Area:** {fs.get('area_acres', 0)} acres")
+    lines.append(f"- **Sellable SqFt:** {fs.get('sellable_sqft', 0):,.0f}")
+    lines += [
+        "",
+        "## 4. Supply Risk",
+        "",
+        f"- **Pipeline Units:** {brief_dict.get('supply_risk', {}).get('pipeline_units', 0)}",
+        f"- **Weeks of Inventory:** {brief_dict.get('supply_risk', {}).get('weeks_of_inventory', 0)}",
+        "",
+        "## 5. Assembly Alerts",
+        "",
+    ]
+    alerts = brief_dict.get("assembly_alerts", [])
+    if alerts:
+        for a in alerts:
+            lines.append(f"- {a.get('buyer', 'Unknown')} — {a.get('parcel_count', 0)} parcels")
+    else:
+        lines.append("*No active assembly signals.*")
+    bv = brief_dict.get("board_verdict", {})
+    lines += [
+        "",
+        "## 6. Board Verdict",
+        "",
+        f"- **Decision:** {bv.get('decision_flag', 'N/A')}",
+        f"- **Context:** {bv.get('context_summary', '')[:200]}",
+        "",
+    ]
+
+    content = "\n".join(lines)
+    encoded = content.encode("utf-8")
+    if len(encoded) > _MAX_CONTENT_BYTES:
+        logger.warning(f"[ObsidianSync] Investor brief too large: {len(encoded)}B (max {_MAX_CONTENT_BYTES}B)")
+        return ""
+    try:
+        _check_disk_space(market_dir)
+    except OSError as exc:
+        logger.warning(f"[ObsidianSync] Disk space check failed: {exc}")
+        return ""
+    try:
+        os.makedirs(market_dir, exist_ok=True)
+        with open(filepath, "wb") as f:
+            f.write(encoded)
+        _log_write_audit(filename, filepath, content)
+        from config.metrics import obsidian_export_total, obsidian_bytes_total
         obsidian_export_total.labels(source="investor_brief").inc()
         obsidian_bytes_total.labels(source="investor_brief").inc(len(encoded))
         return filepath
