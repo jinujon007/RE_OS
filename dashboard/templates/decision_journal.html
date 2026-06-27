@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+<title>Decision Journal — LLS</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0a0e1a; color: #c9d1d9;
+  font-family: 'Courier New', Courier, monospace; font-size: 14px;
+  min-height: 100vh; padding: 20px;
+}
+h1 { color: #58a6ff; font-size: 18px; margin-bottom: 4px; letter-spacing: 1px; }
+.subtitle { color: #6b7280; font-size: 11px; margin-bottom: 20px; }
+.panel {
+  background: #0f1520; border: 1px solid #2a3a55;
+  padding: 16px; margin-bottom: 16px; max-width: 1400px;
+}
+.filter-bar {
+  display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;
+  margin-bottom: 20px;
+}
+.filter-group {
+  display: flex; flex-direction: column; gap: 4px;
+}
+.filter-group label {
+  font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px;
+}
+.filter-group select {
+  background: #0a0e1a; border: 1px solid #2a3a55; color: #c9d1d9;
+  padding: 6px 8px; font-family: 'Courier New', monospace; font-size: 12px;
+  border-radius: 4px; min-width: 120px;
+}
+.filter-group select:focus { outline: none; border-color: #58a6ff; }
+.stats-row {
+  display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.stat-card {
+  background: #161b2e; border: 1px solid #2a3a55;
+  padding: 12px 16px; min-width: 120px;
+}
+.stat-card .label { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
+.stat-card .value { font-size: 18px; color: #f0a020; margin-top: 2px; }
+.stat-card .value.green { color: #3fb950; }
+.stat-card .value.red { color: #f85149; }
+.stat-card .value.amber { color: #f0a020; }
+table { width: 100%; border-collapse: collapse; }
+th {
+  text-align: left; padding: 8px 12px; border-bottom: 1px solid #2a3a55;
+  color: #8b949e; font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+  position: sticky; top: 0; background: #0f1520; z-index: 1;
+}
+td {
+  padding: 8px 12px; border-bottom: 1px solid #1a2540; font-size: 12px;
+  max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+tr:hover td { background: #1a2540; }
+.flag-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 3px;
+  font-size: 11px; font-weight: bold;
+}
+.flag-badge.go { background: #0f2a0f; color: #3fb950; }
+.flag-badge.no-go { background: #2a0f0f; color: #f85149; }
+.flag-badge.conditional { background: #2a1f0f; color: #f0a020; }
+.flag-badge.neutral { background: #1a1a2a; color: #8b949e; }
+tr.expandable { cursor: pointer; }
+tr.expandable td:first-child::before { content: '\25B6'; color: #6b7280; margin-right: 6px; font-size: 10px; }
+tr.expanded td:first-child::before { content: '\25BC'; }
+tr.detail-row td { background: #0a0e1a; padding: 12px 16px 12px 32px; }
+tr.detail-row td { color: #8b949e; font-size: 12px; line-height: 1.6; }
+.detail-link { color: #58a6ff; text-decoration: none; margin-left: 8px; }
+.detail-link:hover { text-decoration: underline; }
+.spinner { display: none; color: #8b949e; font-size: 13px; padding: 20px; text-align: center; }
+.spinner.active { display: block; }
+.error-msg { color: #f85149; font-size: 12px; padding: 16px; text-align: center; }
+.error-msg button { background: #3a1a1a; border: 1px solid #f85149; color: #f85149; padding: 4px 12px; font-family: inherit; font-size: 11px; cursor: pointer; border-radius: 4px; margin-top: 8px; }
+.error-msg button:hover { background: #4a2a2a; }
+.empty-msg { color: #484f58; font-size: 12px; padding: 20px; text-align: center; font-style: italic; }
+.toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a3a55; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3a5a85; }
+</style>
+</head>
+<body>
+
+<h1>DECISION JOURNAL</h1>
+<div class="subtitle" id="last-updated">Loading...</div>
+
+<div class="toolbar">
+  <button id="refresh-btn" style="background:#161b2e;border:1px solid #2a3a55;color:#8b949e;padding:6px 12px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:4px;" aria-label="Refresh data">⟳ Refresh</button>
+  <span style="font-size:10px;color:#484f58;margin-left:8px;" id="connection-status"></span>
+</div>
+
+<div class="panel">
+  <div class="filter-bar">
+    <div class="filter-group">
+      <label for="market-filter">Market</label>
+      <select id="market-filter">
+        <option value="">All Markets</option>
+        <option value="Yelahanka">Yelahanka</option>
+        <option value="Devanahalli">Devanahalli</option>
+        <option value="Hebbal">Hebbal</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label for="flag-filter">Decision Flag</label>
+      <select id="flag-filter">
+        <option value="">All Flags</option>
+        <option value="GO">GO</option>
+        <option value="NO-GO">NO-GO</option>
+        <option value="CONDITIONAL">CONDITIONAL</option>
+        <option value="NEUTRAL">NEUTRAL</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="label">Total Entries</div>
+      <div class="value" id="stat-total">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Today</div>
+      <div class="value" id="stat-today">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">GO</div>
+      <div class="value green" id="stat-go">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">NO-GO</div>
+      <div class="value" id="stat-nogo">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">CONDITIONAL</div>
+      <div class="value amber" id="stat-conditional">—</div>
+    </div>
+  </div>
+
+  <div style="max-height:500px;overflow-y:auto;border:1px solid #1a2540;border-radius:4px;">
+    <table id="journal-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Market</th>
+          <th>Flag</th>
+          <th>Context Summary</th>
+          <th>Session</th>
+        </tr>
+      </thead>
+      <tbody id="journal-tbody">
+        <tr><td colspan="5" class="empty-msg">Loading decisions...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="spinner" id="spinner">⟳ Loading...</div>
+<div class="error-msg" id="error-msg" style="display:none;"></div>
+
+<script>
+"use strict";
+
+let expandedRow = null;
+let autoRefreshTimer = null;
+const AUTO_REFRESH_MS = 30000;
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+  })[ch]);
+}
+
+function getFlagClass(flag) {
+  const f = (flag || '').toUpperCase();
+  if (f === 'GO') return 'go';
+  if (f === 'NO-GO') return 'no-go';
+  if (f === 'CONDITIONAL') return 'conditional';
+  return 'neutral';
+}
+
+function updateUrlState() {
+  const params = new URLSearchParams();
+  const m = document.getElementById('market-filter').value; if (m) params.set('m', m);
+  const f = document.getElementById('flag-filter').value; if (f) params.set('f', f);
+  const qs = params.toString();
+  history.replaceState(null, '', qs ? '/decision-journal?' + qs : '/decision-journal');
+}
+
+function restoreUrlState() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('m')) document.getElementById('market-filter').value = params.get('m');
+    if (params.has('f')) document.getElementById('flag-filter').value = params.get('f');
+  } catch (e) { /* ignore invalid URL state */ }
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh();
+  autoRefreshTimer = setInterval(loadJournal, AUTO_REFRESH_MS);
+}
+
+function stopAutoRefresh() {
+  if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('market-filter').addEventListener('change', function() { updateUrlState(); loadJournal(); });
+  document.getElementById('flag-filter').addEventListener('change', function() { updateUrlState(); loadJournal(); });
+  document.getElementById('refresh-btn').addEventListener('click', function() { loadJournal(); });
+  restoreUrlState();
+  loadJournal();
+  startAutoRefresh();
+});
+
+async function loadJournal() {
+  const tbody = document.getElementById('journal-tbody');
+  const spinner = document.getElementById('spinner');
+  const errorMsg = document.getElementById('error-msg');
+
+  spinner.classList.add('active');
+  errorMsg.style.display = 'none';
+  tbody.innerHTML = '<tr><td colspan="5" style="padding:8px 12px;color:#2a3a55;text-align:center;">⟳ Loading...</td></tr>';
+
+  const market = document.getElementById('market-filter').value;
+  const flag = document.getElementById('flag-filter').value;
+
+  const params = new URLSearchParams();
+  params.set('limit', 50);
+  if (market) params.set('market', market);
+  if (flag) params.set('decision_flag', flag);
+
+  try {
+    const resp = await fetch('/api/v1/decision-journal?' + params.toString());
+    spinner.classList.remove('active');
+    if (!resp.ok) {
+      errorMsg.innerHTML = 'Failed to load (HTTP ' + resp.status + ')<br><button onclick="loadJournal()">Retry</button>';
+      errorMsg.style.display = 'block';
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">Error loading</td></tr>';
+      return;
+    }
+
+    const data = await resp.json();
+    const entries = data.entries || [];
+
+    let todayCount = 0, goCount = 0, noGoCount = 0, condCount = 0;
+    const todayStr = new Date().toISOString().slice(0, 10);
+
+    entries.forEach(function(e) {
+      const ef = (e.decision_flag || '').toUpperCase();
+      if (ef === 'GO') goCount++;
+      if (ef === 'NO-GO') noGoCount++;
+      if (ef === 'CONDITIONAL') condCount++;
+      const entryDate = (e.entry_date || '').slice(0, 10);
+      if (entryDate === todayStr) todayCount++;
+    });
+
+    document.getElementById('stat-total').textContent = data.count || 0;
+    document.getElementById('stat-today').textContent = todayCount;
+    document.getElementById('stat-go').textContent = goCount;
+    document.getElementById('stat-nogo').textContent = noGoCount;
+    document.getElementById('stat-conditional').textContent = condCount;
+
+    document.getElementById('last-updated').textContent = 'Last updated: ' + new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }) + ' IST';
+
+    if (!entries.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">No decision journal entries found</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = entries.map(function(e, idx) {
+      try {
+        const eflag = (e.decision_flag || 'NEUTRAL').toUpperCase();
+        const flagClass = getFlagClass(eflag);
+        const date = (e.entry_date || '').slice(0, 10) || '\u2014';
+        const marketDisplay = escapeHtml(e.market || '\u2014');
+        const summary = escapeHtml(e.context_summary || '');
+        const truncated = summary.length > 120 ? summary.slice(0, 120) + '\u2026' : summary;
+        const sessionId = e.board_session_id ? escapeHtml(e.board_session_id.slice(0, 8)) + '\u2026' : '\u2014';
+        const sessionLink = e.board_session_id ? '/board-room?session=' + encodeURIComponent(e.board_session_id) : '';
+
+        return '<tr class="expandable' + (expandedRow === idx ? ' expanded' : '') + '" onclick="toggleDetail(' + idx + ')">'
+          + '<td style="color:#6b7280;">' + date + '</td>'
+          + '<td style="color:#c9d1d9;">' + marketDisplay + '</td>'
+          + '<td><span class="flag-badge ' + flagClass + '">' + eflag + '</span></td>'
+          + '<td title="' + summary + '" style="color:#c9d1d9;">' + truncated + '</td>'
+          + '<td style="color:#6b7280;">' + (sessionLink ? '<a href="' + sessionLink + '" class="detail-link">' + sessionId + '</a>' : sessionId) + '</td>'
+          + '</tr>'
+          + (expandedRow === idx ? '<tr class="detail-row"><td colspan="5"><strong>Full Context:</strong><br>' + summary + '<br><br><strong>Board Session ID:</strong> ' + escapeHtml(e.board_session_id || 'N/A') + '<br><strong>Entry Date:</strong> ' + date + '<br><strong>Market:</strong> ' + marketDisplay + '</td></tr>' : '');
+      } catch (rowErr) {
+        return '<tr><td colspan="5" style="color:#f85149;padding:8px 12px;">Error: ' + escapeHtml(rowErr.message) + '</td></tr>';
+      }
+    }).join('');
+
+    const connStatus = document.getElementById('connection-status');
+    if (connStatus) connStatus.textContent = '';
+
+  } catch (e) {
+    spinner.classList.remove('active');
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    const msg = isOffline ? 'Browser is offline — check network connection' : 'Server unreachable: ' + escapeHtml(e.message);
+    errorMsg.innerHTML = msg + '<br><button onclick="loadJournal()">Retry</button>';
+    errorMsg.style.display = 'block';
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">Failed to load</td></tr>';
+    const cs = document.getElementById('connection-status');
+    if (cs) cs.textContent = isOffline ? '\u26A0 OFFLINE' : '\u26A0 ERROR';
+  }
+}
+
+function toggleDetail(idx) {
+  expandedRow = expandedRow === idx ? null : idx;
+  loadJournal();
+}
+</script>
+</body>
+</html>

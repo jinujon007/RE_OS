@@ -315,6 +315,46 @@ async def _legacy_api_redirect(path: str, request: Request):
     return RedirectResponse(url=target, status_code=301)
 
 
+# ── Panel Routes (un-prefixed — nav buttons point here directly) ──────────
+
+_PANEL_CACHE: dict[str, str] = {}
+_PANEL_CACHE_TTL: dict[str, float] = {}
+
+
+def _serve_panel(name: str) -> HTMLResponse:
+    import time
+    now = time.time()
+    cache_key = f"panel_{name}"
+    cached = _PANEL_CACHE.get(cache_key)
+    ttl = _PANEL_CACHE_TTL.get(cache_key, 0)
+    if cached and now < ttl:
+        return HTMLResponse(content=cached)
+    path = os.path.join(os.path.dirname(__file__), "templates", name)
+    try:
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+    except FileNotFoundError:
+        return HTMLResponse(status_code=404)
+    _PANEL_CACHE[cache_key] = content
+    _PANEL_CACHE_TTL[cache_key] = now + 300
+    return HTMLResponse(content=content)
+
+
+@app.get("/decision-journal", response_class=HTMLResponse, include_in_schema=False)
+async def decision_journal_page():
+    return _serve_panel("decision_journal.html")
+
+
+@app.get("/deed-throughput", response_class=HTMLResponse, include_in_schema=False)
+async def deed_throughput_page():
+    return _serve_panel("deed_throughput.html")
+
+
+@app.get("/assembly-signals", response_class=HTMLResponse, include_in_schema=False)
+async def assembly_signals_page():
+    return _serve_panel("assembly_signals.html")
+
+
 # ── Root Route ───────────────────────────────────────────────────────────────
 
 

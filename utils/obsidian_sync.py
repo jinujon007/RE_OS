@@ -45,6 +45,7 @@ __all__ = [
     "write_psf_forecast",
     "write_decision_journal_entry",
     "write_investor_brief",
+    "write_assembly_signal",
 ]
 
 _VALID_DECISION_FLAGS: frozenset[str] = frozenset({"GO", "NO-GO", "CONDITIONAL"})
@@ -391,6 +392,124 @@ def write_decision_journal_entry(entry: dict) -> Optional[str]:
     safe_flag = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in decision_flag)
     filename = f"(AI) {date_str}-{safe_market}-{safe_flag}.md"
     return _write_md(filename, content)
+
+
+def write_assembly_signal(cluster: dict) -> tuple[str, str]:
+    """Write an assembly signal as an Obsidian note.
+
+    Args:
+        cluster: dict with keys: buyer_name, village, market, confidence_score,
+                 parcel_count, total_area_sqm, first_deed_date, detected_at,
+                 survey_numbers, days_active, total_consideration_inr.
+
+    Returns:
+        Tuple of (filename, content). Filename is str, content is the full
+        markdown with frontmatter. Content is "" when sync path not mounted
+        or write fails — caller checks content truthiness.
+    """
+    now = datetime.now(timezone.utc)
+    ts = now.isoformat(timespec="seconds")
+    date_str = now.strftime("%Y-%m-%d")
+
+    buyer = cluster.get("buyer_name", "Unknown")
+    village = cluster.get("village", "Unknown")
+    market = cluster.get("market", "Unknown")
+    confidence = float(cluster.get("confidence_score", 0) or 0)
+    parcel_count = int(cluster.get("parcel_count", 0) or 0)
+    area_sqm = float(cluster.get("total_area_sqm", 0) or 0)
+    first_deed = cluster.get("first_deed_date")
+    detected = cluster.get("detected_at")
+    survey_nos = cluster.get("survey_numbers") or []
+    consideration = cluster.get("total_consideration_inr")
+    days_span = int(cluster.get("days_active", 0) or 0)
+
+    safe_buyer = "".join(c if c.isalnum() or c in (" ", "-", "_") else "_" for c in buyer)
+
+    fm_lines = [
+        "---",
+        "type: assembly_signal",
+        "area: lls",
+        "ai_generated: true",
+        f"generated_at: {ts}",
+        f"date: {date_str}",
+        f"market: {market}",
+        "status: active",
+        f"confidence: {confidence:.2f}",
+        "---",
+    ]
+    frontmatter = "\n".join(fm_lines)
+
+    lines = [
+        f"# Assembly Signal: {buyer} — {village}",
+        "",
+        "## Summary",
+        "| Field | Value |",
+        "|-------|-------|",
+        f"| Buyer | {buyer} |",
+        f"| Village | {village} |",
+        f"| Market | {market} |",
+        f"| Confidence | {confidence:.0%} |",
+        f"| Parcel Count | {parcel_count} |",
+        f"| Total Area | {area_sqm:,.0f} sqm |",
+    ]
+    if consideration:
+        cr = float(consideration) / 1e7
+        lines.append(f"| Total Consideration | ₹{cr:.2f} Cr |")
+    if first_deed:
+        lines.append(f"| First Deed Date | {first_deed} |")
+    if detected:
+        lines.append(f"| Detected At | {detected} |")
+
+    lines.extend([
+        "",
+        "## Survey Numbers",
+    ])
+    if survey_nos:
+        for sn in survey_nos[:20]:
+            lines.append(f"- {sn}")
+    else:
+        lines.append("(none recorded)")
+
+    lines.extend([
+        "",
+        "## Timeline",
+        "| Metric | Value |",
+        "|--------|-------|",
+    ])
+    if first_deed:
+        lines.append(f"| First Deed | {first_deed} |")
+    if detected:
+        lines.append(f"| Last Deed / Detected | {detected} |")
+    if days_span:
+        lines.append(f"| Days Span | {days_span} days |")
+
+    lines.extend([
+        "",
+        "## PSF Context",
+        f"Data source: registered_transactions for {market}. ",
+        f"Generated: {date_str}. Track deed throughput at /api/v1/deeds/throughput.",
+        "",
+        "## Next Actions",
+        "- [ ] Verify ownership at Sub-Registrar",
+        "- [ ] Check RERA filings for this parcel/developer",
+        "- [ ] Approach as JD/JV if unannounced",
+        "",
+    ])
+
+    body = "\n".join(lines)
+    content = f"{frontmatter}\n\n{body}\n"
+    filename = f"(AI) Assembly {safe_buyer} {village} {date_str}.md"
+
+    try:
+        from config.metrics import obsidian_export_total, obsidian_bytes_total
+        filepath = _write_md(filename, content)
+        if filepath:
+            obsidian_export_total.labels(source="assembly_signal").inc()
+            obsidian_bytes_total.labels(source="assembly_signal").inc(len(content.encode("utf-8")))
+    except Exception as exc:
+        logger.warning("[ObsidianSync] Failed to write assembly signal %s: %s", filename, exc)
+
+    return filename, content
 
 
 def write_investor_brief(

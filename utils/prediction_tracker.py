@@ -219,28 +219,42 @@ def update_actuals(market: str) -> int:
         return updated
 
 
-def compute_mape(market: str, min_samples: int = 3) -> float | None:
+def compute_mape(market: str, min_samples: int = 3,
+                 model_version: str | None = None,
+                 conn=None) -> float | None:
     """Mean absolute percentage error over all predictions with actuals.
 
     Returns None when fewer than min_samples rows have non-null error_pct.
     Ignores rows where error_pct exceeded safety bounds (should not occur
     with CHECK constraint, but handled defensively).
+    Optionally filter by model_version to separate 4wk vs 26wk MAPE.
+    Accepts optional `conn` to reuse caller's DB connection (avoids N+1).
     """
     from utils.db import get_engine
 
-    with get_engine().connect() as conn:
-        rows = conn.execute(
-            text("""
-                SELECT error_pct
-                FROM prediction_ledger_psf
-                WHERE market = :market
-                  AND actual_psf IS NOT NULL
-                  AND error_pct IS NOT NULL
-                  AND abs(error_pct) < :max_err
-                ORDER BY predicted_at DESC
-            """),
-            {"market": market, "max_err": _MAX_ERROR_PCT},
-        ).fetchall()
+    params: dict = {"market": market, "max_err": _MAX_ERROR_PCT}
+    if model_version:
+        params["model_version"] = model_version
+
+    sql = """
+        SELECT error_pct
+        FROM prediction_ledger_psf
+        WHERE market = :market
+          AND actual_psf IS NOT NULL
+          AND error_pct IS NOT NULL
+          AND abs(error_pct) < :max_err
+    """
+    if model_version:
+        sql += " AND model_version = :model_version"
+    sql += " ORDER BY predicted_at DESC"
+
+    engine = get_engine()
+
+    if conn is not None:
+        rows = conn.execute(text(sql), params).fetchall()
+    else:
+        with engine.connect() as _conn:
+            rows = _conn.execute(text(sql), params).fetchall()
 
     n = len(rows)
     if n < min_samples:

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+<title>Forecast Accuracy — LLS</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0a0e1a; color: #c9d1d9;
+  font-family: 'Courier New', Courier, monospace; font-size: 14px;
+  min-height: 100vh; padding: 20px;
+}
+h1 { color: #58a6ff; font-size: 18px; margin-bottom: 4px; letter-spacing: 1px; }
+.subtitle { color: #6b7280; font-size: 11px; margin-bottom: 20px; }
+.panel {
+  background: #0f1520; border: 1px solid #2a3a55;
+  padding: 16px; margin-bottom: 16px; max-width: 1400px;
+}
+.panel h2 { color: #f0a020; font-size: 14px; margin-bottom: 12px; }
+table { width: 100%; border-collapse: collapse; }
+th {
+  text-align: left; padding: 8px 12px; border-bottom: 1px solid #2a3a55;
+  color: #8b949e; font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+  position: sticky; top: 0; background: #0f1520; z-index: 1;
+}
+td { padding: 8px 12px; border-bottom: 1px solid #1a2540; font-size: 12px; }
+.metric-card {
+  display: inline-block; background: #1a2235; border: 1px solid #2a3a55;
+  border-radius: 6px; padding: 12px; margin: 4px; min-width: 200px;
+}
+.metric-card .label { color: #8b949e; font-size: 10px; text-transform: uppercase; }
+.metric-card .value { color: #f0a020; font-size: 18px; font-weight: bold; margin-top: 4px; }
+.metric-card .sub { color: #6b7280; font-size: 11px; margin-top: 2px; }
+.badge-green { color: #3fb950; }
+.badge-amber { color: #f0a020; }
+.badge-red { color: #f85149; }
+.badge-gray { color: #6b7280; }
+.health-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: 10px; font-weight: bold;
+}
+.health-badge.ok { background: #1a3a2a; color: #3fb950; border: 1px solid #3fb950; }
+.health-badge.warn { background: #3a2a1a; color: #f0a020; border: 1px solid #f0a020; }
+.health-badge.alert { background: #3a1a1a; color: #f85149; border: 1px solid #f85149; }
+.health-badge.neutral { background: #1a2235; color: #6b7280; border: 1px solid #2a3a55; }
+</style>
+</head>
+<body>
+<h1>📈 Forecast Accuracy</h1>
+<div class="subtitle">PSF prediction quality — per-market MAPE (short vs long horizon)</div>
+
+<div id="accuracy-content">
+<p class="badge-gray" id="loading-text">Loading accuracy data...</p>
+</div>
+
+<script>
+let _accuracyRetries = 0;
+const _ACC_MAX_RETRIES = 3;
+const _ACC_RETRY_DELAY = 5000;
+
+async function loadAccuracy() {
+  try {
+    const resp = await fetch('/api/v1/intel/forecast-accuracy');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    render(data);
+    _accuracyRetries = 0;
+  } catch (e) {
+    _accuracyRetries++;
+    if (_accuracyRetries <= _ACC_MAX_RETRIES) {
+      const el = document.getElementById('accuracy-content');
+      if (el) el.innerHTML = '<p class="badge-amber">Retrying (' + _accuracyRetries + '/' + _ACC_MAX_RETRIES + ')...</p>';
+      setTimeout(loadAccuracy, _ACC_RETRY_DELAY * _accuracyRetries);
+    } else {
+      document.getElementById('accuracy-content').innerHTML =
+        '<div class="panel" style="border-color:#f85149;"><h2 style="color:#f85149;">Connection Error</h2>' +
+        '<p class="badge-red">Failed to load accuracy data after ' + _ACC_MAX_RETRIES + ' attempts: ' + e.message + '</p>' +
+        '<p style="margin-top:8px;color:#8b949e;font-size:11px;">Verify scheduler is running and ' +
+        '<code>/api/v1/intel/forecast-accuracy</code> is reachable.</p></div>';
+    }
+  }
+}
+
+function mapeBadge(mape) {
+  if (mape === null || mape === undefined) return '<span class="health-badge neutral">Insufficient data — need ≥3 actuals</span>';
+  if (mape < 10) return '<span class="health-badge ok">' + mape.toFixed(1) + '%</span>';
+  if (mape < 20) return '<span class="health-badge warn">' + mape.toFixed(1) + '%</span>';
+  return '<span class="health-badge alert">' + mape.toFixed(1) + '%</span>';
+}
+
+function errorPctBadge(pct) {
+  if (pct === null || pct === undefined) return '<span class="badge-gray">—</span>';
+  const abs = Math.abs(pct);
+  if (abs < 10) return '<span class="badge-green">' + pct.toFixed(1) + '%</span>';
+  if (abs < 20) return '<span class="badge-amber">' + pct.toFixed(1) + '%</span>';
+  return '<span class="badge-red">' + pct.toFixed(1) + '%</span>';
+}
+
+function render(data) {
+  const keys = Object.keys(data);
+  if (keys.length === 0) {
+    document.getElementById('accuracy-content').innerHTML = '<p class="badge-gray">No market data available.</p>';
+    return;
+  }
+
+  let html = '';
+
+  // Model health check
+  const hasRecent = keys.some(m => {
+    const preds = data[m].last_10_predictions || [];
+    if (preds.length === 0) return false;
+    const lastDate = new Date(preds[0].predicted_at);
+    const daysAgo = (Date.now() - lastDate.getTime()) / 86400000;
+    return daysAgo <= 30;
+  });
+  if (!hasRecent) {
+    html += '<div class="panel" style="border-color:#f85149;">';
+    html += '<h2 style="color:#f85149;">⚠ Model Health</h2>';
+    html += '<p class="badge-red">No recent predictions in last 30 days — verify scheduler is running</p>';
+    html += '</div>';
+  }
+
+  // Per-market MAPE cards
+  for (const m of keys) {
+    const d = data[m];
+    const sampleCount = d.sample_count || 0;
+    html += '<div class="panel">';
+    html += '<h2>' + m + '</h2>';
+
+    html += '<div>';
+    html += '<div class="metric-card"><div class="label">Short-horizon MAPE (4wk)</div><div class="value">' + mapeBadge(d.mape_4wk) + '</div><div class="sub">v1_4wk model</div></div>';
+    html += '<div class="metric-card"><div class="label">Long-horizon MAPE (26wk)</div><div class="value">' + mapeBadge(d.mape_26wk) + '</div><div class="sub">linear_v1 model</div></div>';
+    html += '<div class="metric-card"><div class="label">Total Samples</div><div class="value">' + sampleCount + '</div></div>';
+    html += '</div>';
+
+    // Last 10 predictions table
+    const preds = d.last_10_predictions || [];
+    if (preds.length > 0) {
+      html += '<h3 style="color:#8b949e;font-size:12px;margin:12px 0 8px;">Last ' + preds.length + ' Predictions</h3>';
+      html += '<table><thead><tr><th>Predicted At</th><th>Model</th><th>Horizon</th><th>Predicted PSF</th><th>Actual PSF</th><th>Error %</th></tr></thead><tbody>';
+      for (const p of preds) {
+        const dateStr = p.predicted_at ? new Date(p.predicted_at).toLocaleDateString() : '—';
+        const actual = p.actual_psf !== null ? '₹' + Number(p.actual_psf).toLocaleString() : '<span class="badge-gray">—</span>';
+        html += '<tr>';
+        html += '<td>' + dateStr + '</td>';
+        html += '<td>' + (p.model_version || '—') + '</td>';
+        html += '<td>' + (p.horizon_weeks || '—') + 'wk</td>';
+        html += '<td>' + (p.predicted_psf !== null ? '₹' + Number(p.predicted_psf).toLocaleString() : '—') + '</td>';
+        html += '<td>' + actual + '</td>';
+        html += '<td>' + errorPctBadge(p.error_pct) + '</td>';
+        html += '</tr>';
+      }
+      html += '</tbody></table>';
+    } else {
+      html += '<p class="badge-gray" style="margin-top:8px;">No predictions with actuals yet.</p>';
+    }
+
+    html += '</div>';
+  }
+
+  document.getElementById('accuracy-content').innerHTML = html;
+}
+
+loadAccuracy();
+setInterval(loadAccuracy, 120000);
+</script>
+</body>
+</html>

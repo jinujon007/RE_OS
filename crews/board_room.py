@@ -212,6 +212,51 @@ def _ceo_decompose(pitch: str, market: str, _session_excluded: set) -> Optional[
         return None
 
 
+def _build_assembly_context(market: str) -> str:
+    """Build assembly context string for Finance Head Board Room (T-1419).
+
+    Queries active assembly_signals for the market.
+    Returns formatted string or "No assembly signals" message when empty.
+    """
+    if not market:
+        return ""
+    try:
+        from utils.db import get_engine as _as_engine
+        from sqlalchemy import text as _as_text
+        with _as_engine().connect() as _as_c:
+            rows = _as_c.execute(
+                _as_text("""
+                    SELECT buyer_name_norm, village, parcel_count,
+                           confidence_score, total_area_sqm
+                    FROM assembly_signals
+                    WHERE resolved_at IS NULL AND status = 'open'
+                      AND market ILIKE :m
+                      AND (confidence_score > 0.5 OR confidence > 0.5)
+                    ORDER BY confidence_score DESC NULLS LAST
+                    LIMIT 5
+                """),
+                {"m": f"%{market}%"},
+            ).fetchall()
+        if not rows:
+            return "\n\n[ASSEMBLY SIGNALS] No assembly signals yet — deed throughput below detection threshold.\n"
+        lines = ["\n\n[ACTIVE ASSEMBLY SIGNALS (top 5 by confidence)]"]
+        for r in rows:
+            buyer = r[0] or "Unknown"
+            village = r[1] or "Unknown"
+            parcels = int(r[2]) if r[2] else 0
+            conf = float(r[3]) if r[3] else 0.0
+            area = float(r[4]) if r[4] else 0.0
+            lines.append(
+                f"  \u2022 {buyer} in {village} \u2014 {parcels} parcels, "
+                f"{conf:.0%} confidence, {area:.0f} sqm"
+            )
+        lines.append("")
+        return "\n".join(lines)
+    except Exception as exc:
+        logger.debug("[board_room] Assembly context build failed for %s: %s", market, exc)
+        return ""
+
+
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
 _DEPT_TASK_TEMPLATES = {
@@ -706,7 +751,9 @@ def _run_dept_heads(
                     "[board_room] GV source lookup failed for {}: {}", market, _gv_exc
                 )
 
-            dept_question = gv_source_context + irr_context + dept_question
+            # Assembly context injection (T-1419)
+            assembly_context = _build_assembly_context(market_safe)
+            dept_question = assembly_context + gv_source_context + irr_context + dept_question
 
         if key == "legal":
             legal_context = ""

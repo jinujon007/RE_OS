@@ -994,6 +994,12 @@ body {
    <button onclick="window.open('/memory','_blank')" style="background:#1a2235;border:1px solid #2a3a55;color:#58a6ff;padding:4px 8px;font-size:8px;cursor:pointer;border-radius:4px;font-family:'Press Start 2P',cursive;">MEMORY</button>
    <button onclick="window.open('/data-quality','_blank')" style="background:#1a2235;border:1px solid #2a3a55;color:#3fb950;padding:4px 8px;font-size:8px;cursor:pointer;border-radius:4px;font-family:'Press Start 2P',cursive;">DATA Q</button>
    <button onclick="window.open('/ops/v2','_blank')" style="background:#1a2235;border:1px solid #2a3a55;color:#f0a020;padding:4px 8px;font-size:8px;cursor:pointer;border-radius:4px;font-family:'Press Start 2P',cursive;">V2</button>
+   <button onclick="window.open('/decision-journal','_blank')" style="background:#1a2235;border:1px solid #2a3a55;color:#58a6ff;padding:4px 8px;font-size:8px;cursor:pointer;border-radius:4px;font-family:'Press Start 2P',cursive;">📓 DECISIONS</button>
+   <button onclick="window.open('/deed-throughput','_blank')" style="background:#1a2235;border:1px solid #2a3a55;color:#f0a020;padding:4px 8px;font-size:8px;cursor:pointer;border-radius:4px;font-family:'Press Start 2P',cursive;">📊 DEEDS</button>
+   <button onclick="window.open('/assembly-signals','_blank')" style="background:#1a2235;border:1px solid #2a3a55;color:#f85149;padding:4px 8px;font-size:8px;cursor:pointer;border-radius:4px;font-family:'Press Start 2P',cursive;">🔍 ASSEMBLY</button>
+   <button onclick="window.open('/forecast-accuracy','_blank')" style="background:#1a2235;border:1px solid #2a3a55;color:#3fb950;padding:4px 8px;font-size:8px;cursor:pointer;border-radius:4px;font-family:'Press Start 2P',cursive;">📈 FORECAST ACC</button>
+   <span id="badge-decision" style="display:none;background:#f85149;color:#fff;border-radius:9999px;padding:0 6px;font-size:10px;line-height:18px;margin-left:2px;vertical-align:middle;"></span>
+   <span id="badge-deed-status" style="display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin-left:4px;" title="Deed status"></span>
    </div>
 
 <!-- ── MARKET STRIP ── -->
@@ -1133,6 +1139,7 @@ body {
       <button class="panel-tab" data-tab="board" onclick="switchTab('board')">BOARD</button>
       <button class="panel-tab" data-tab="data" onclick="switchTab('data')">DATA</button>
       <button class="panel-tab" data-tab="intel" onclick="switchTab('intel')">INTEL</button>
+      <button class="panel-tab" data-tab="deeds" onclick="switchTab('deeds')">DEEDS</button>
       <button class="panel-tab" data-tab="logs" onclick="switchTab('logs')">LOGS</button>
     </div>
 
@@ -1449,6 +1456,45 @@ body {
 
     </div><!-- end pane-intel -->
 
+    <!-- ── DEEDS pane ── -->
+    <div class="panel-pane" id="pane-deeds">
+
+    <div class="infra-section">
+      <div class="infra-title">DEED THROUGHPUT
+        <button class="db-explorer-refresh" onclick="pollDeedThroughput()" title="Refresh">⟳</button>
+      </div>
+      <div style="margin-bottom:8px;">
+        <span style="font-size:8px;color:#8b949e;">Kill criteria: <strong style="color:#f0a020;">50 deeds/week by 2026-08-15</strong></span>
+      </div>
+      <div id="deed-throughput-chart" style="height:80px;margin-bottom:8px;">
+        <svg id="deed-sparkline-svg" width="100%" height="80" viewBox="0 0 600 80" preserveAspectRatio="none" style="display:block;"></svg>
+      </div>
+      <div id="deed-throughput-stats" style="font-size:9px;color:#8b949e;line-height:1.6;">
+        <span id="deed-current-count">—</span>
+        <span id="deed-status-badge"></span>
+      </div>
+    </div>
+
+    <div class="infra-section">
+      <div class="infra-title">PROJECTION
+        <button class="db-explorer-refresh" onclick="pollDeedProjection()" title="Refresh">⟳</button>
+      </div>
+      <div id="deed-projection-stats" style="font-size:9px;color:#8b949e;line-height:1.8;">
+        Loading...
+      </div>
+    </div>
+
+    <div class="infra-section">
+      <div class="infra-title">INBOX PROGRESS
+        <button class="db-explorer-refresh" onclick="pollDeedInbox()" title="Refresh">⟳</button>
+      </div>
+      <div id="deed-inbox-stats" style="font-size:9px;color:#8b949e;line-height:1.8;">
+        Loading...
+      </div>
+    </div>
+
+    </div><!-- end pane-deeds -->
+
     <!-- ── LOGS pane ── -->
     <div class="panel-pane" id="pane-logs">
 
@@ -1534,1716 +1580,130 @@ function switchTab(name) {
     p.classList.toggle('active', p.id === 'pane-' + name);
   });
 }
-</script>
-<script>
-"use strict";
 
-// ── State ──
-let autoScroll = true;
-let openCommands = new Set();
-const AGENT_ACTIONS = {
-  ceo: [
-    { label: '▶ Yelahanka', prompt: 'run yelahanka' },
-    { label: '▶ Devanahalli', prompt: 'run devanahalli' },
-    { label: '▶ Hebbal', prompt: 'run hebbal' },
-    { label: '⏹ Stop', prompt: 'stop' },
-    { label: '? Status', prompt: 'status' },
-  ],
-  scraper: [
-    { label: '▶ Scrape Yelahanka', prompt: 'scrape yelahanka' },
-    { label: '▶ Scrape Devanahalli', prompt: 'scrape devanahalli' },
-    { label: '▶ Scrape Hebbal', prompt: 'scrape hebbal' },
-    { label: '⏹ Stop', prompt: 'stop' },
-    { label: '? Status', prompt: 'status' },
-  ],
-  analyst: [
-    { label: '📊 Analyze Yelahanka', prompt: 'analyze yelahanka' },
-    { label: '📊 Analyze Devanahalli', prompt: 'analyze devanahalli' },
-    { label: '📊 Analyze Hebbal', prompt: 'analyze hebbal' },
-    { label: '⏹ Stop', prompt: 'stop' },
-    { label: '? Status', prompt: 'status' },
-  ],
-};
-const feedbackTimers = new Map();
-
-function markUpdated(label) {
-  const el = document.getElementById('last-updated');
-  if (!el) return;
-  const ts = new Date().toLocaleTimeString('en-IN', { hour12: false });
-  el.textContent = `UPDATED ${ts} · ${label}`;
-}
-
-// ── Clock ──
-function tick() {
-  const now = new Date();
-  document.getElementById('clock').textContent = now.toLocaleString('en-IN', {
-    dateStyle: 'short',
-    timeStyle: 'medium',
-    hour12: false
-  });
-}
-tick();
-setInterval(tick, 1000);
-
-// ── Health Polling ──
-async function pollHealth() {
+// ── Deed panel functions (GATE-145, T-1414) ──
+async function pollDeedThroughput() {
+  const chartEl = document.getElementById('deed-sparkline-svg');
+  const statsEl = document.getElementById('deed-throughput-stats');
+  const currentEl = document.getElementById('deed-current-count');
+  const badgeEl = document.getElementById('deed-status-badge');
   try {
-    const data = await fetch('/api/v1/health').then(r => r.json());
-    document.getElementById('health-db').className = 'health-dot ' + (data.postgres || 'error');
-    document.getElementById('health-redis').className = 'health-dot ' + (data.redis || 'error');
-    document.getElementById('health-ollama').className = 'health-dot ' + (data.ollama || 'warn');
-    document.getElementById('health-agents').className = 'health-dot ' + (data.agents || 'error');
-    
-    document.getElementById('infra-db').textContent = data.postgres || 'error';
-    document.getElementById('infra-redis').textContent = data.redis || 'error';
-    document.getElementById('infra-ollama').textContent = data.ollama || 'warn';
-    markUpdated('health');
-  } catch (e) {
-    ['db', 'redis', 'ollama', 'agents'].forEach(s => {
-      const el = document.getElementById('health-' + s);
-      if (el) el.className = 'health-dot error';
+    const resp = await fetch('/api/v1/deeds/throughput');
+    if (!resp.ok) { statsEl.textContent = 'Error: HTTP ' + resp.status; return; }
+    const data = await resp.json();
+    const weeks = data.weeks || [];
+    const current = data.current_week_count || 0;
+    const status = data.status || 'critical';
+    const target = data.target || 50;
+
+    if (weeks.length === 0) {
+      chartEl.innerHTML = '<text x="300" y="40" text-anchor="middle" fill="#484f58" font-size="10">No deed data yet</text>';
+      currentEl.textContent = 'Current: 0/week';
+      badgeEl.innerHTML = '<span style="display:inline-block;background:#f8514920;color:#f85149;padding:1px 6px;border-radius:3px;font-size:8px;font-weight:bold;">NO DATA</span>';
+      return;
+    }
+
+    const maxVal = Math.max(target, ...weeks.map(w => w.deed_count || 0), 1);
+    const w = 600, h = 80, barW = Math.max(10, (w - 40) / Math.min(weeks.length, 12));
+    let bars = '';
+    const visibleWeeks = weeks.slice(0, 12).reverse();
+    visibleWeeks.forEach((wk, i) => {
+      const count = wk.deed_count || 0;
+      const barH = (count / maxVal) * (h - 20);
+      const x = 20 + i * barW;
+      const y = h - 10 - barH;
+      const color = count >= target ? '#3fb950' : count >= 20 ? '#f0a020' : '#f85149';
+      bars += `<rect x="${x}" y="${y}" width="${Math.max(barW - 2, 1)}" height="${Math.max(barH, 0)}" fill="${color}" rx="2" opacity="0.8"><title>${wk.market || '?'}: ${count} deeds (${wk.week_start || ''})</title></rect>`;
     });
-  }
-}
-pollHealth();
-setInterval(pollHealth, 5000);
+    const targetY = h - 10 - (target / maxVal) * (h - 20);
+    bars += `<line x1="18" y1="${targetY}" x2="${20 + Math.min(weeks.length, 12) * barW}" y2="${targetY}" stroke="#f85149" stroke-width="1.5" stroke-dasharray="4,3" opacity="0.7"/>`;
+    bars += `<text x="${20 + Math.min(weeks.length, 12) * barW + 2}" y="${targetY + 3}" fill="#f85149" font-size="7">target</text>`;
+    chartEl.innerHTML = bars;
 
-// ── DB State Polling ──
-async function pollDbState() {
-  try {
-    const data = await fetch('/api/v1/db/state').then(r => r.json());
-    if (data.error) return;
-
-    document.getElementById('db-rera').textContent = data.rera_projects ?? '—';
-    document.getElementById('db-listings').textContent = data.listings ?? '—';
-    document.getElementById('db-kaveri').textContent = data.kaveri_registrations ?? '—';
-    document.getElementById('db-gv').textContent = data.guidance_values ?? '—';
-
-    const runsEl = document.getElementById('recent-runs');
-    if (data.recent_runs?.length) {
-      runsEl.innerHTML = data.recent_runs.map(r => {
-        const dt = r.start_time
-          ? new Date(r.start_time).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', hour12: false })
-          : '—';
-        const sc = r.status === 'completed' ? 'ok' : r.status === 'running' ? 'run' : 'fail';
-        const dur = r.duration != null ? Math.round(r.duration) + 's' : '';
-        return `
-          <div class="run-item">
-            <span class="run-market">${r.market || 'all'}</span>
-            <span class="run-status ${sc}">${r.status || '—'}</span>
-            <span class="run-dur">${dur}</span>
-            <span class="run-ts">${dt}</span>
-          </div>`;
-      }).join('');
-    } else {
-      runsEl.innerHTML = '<div class="empty-msg">No runs yet</div>';
-    }
-    markUpdated('db');
+    const badgeColor = status === 'on_track' ? '#3fb950' : status === 'at_risk' ? '#f0a020' : '#f85149';
+    currentEl.textContent = `Current: ${current}/week`;
+    badgeEl.innerHTML = `<span style="display:inline-block;background:${badgeColor}20;color:${badgeColor};padding:1px 6px;border-radius:3px;font-size:8px;margin-left:4px;font-weight:bold;">${status.toUpperCase()}</span>`;
   } catch (e) {
-    console.error('DB state poll error:', e);
+    chartEl.innerHTML = '<text x="300" y="40" text-anchor="middle" fill="#f85149" font-size="10">Network error</text>';
+    statsEl.textContent = 'Failed to load deed throughput: ' + (e.message || 'unknown');
   }
 }
-pollDbState();
-setInterval(pollDbState, 30000);
 
-// ── Sentinel Polling ──
-async function pollSentinel() {
+async function pollDeedProjection() {
+  const el = document.getElementById('deed-projection-stats');
   try {
-    const data = await fetch('/api/v1/sentinel/status').then(r => r.json());
-    const nxt = data.next_run || {};
-    const lst = data.last_run;
-    const nextEl = document.getElementById('sentinel-next');
-    const lastEl = document.getElementById('sentinel-last');
-    const actionEl = document.getElementById('action-sentinel');
-    if (nextEl) nextEl.textContent = 'Next run: ' + (nxt.label || '—');
-    if (lastEl) lastEl.textContent = lst && !lst.error
-      ? 'Last: ' + (lst.status || '?') + ' · ' + (lst.micro_market || '?')
-      : 'Last run: no data yet';
-    if (actionEl) actionEl.textContent = 'Scheduler · Next: ' + (nxt.label || '—');
+    const resp = await fetch('/api/v1/deeds/projection');
+    if (!resp.ok) { el.textContent = 'Error: HTTP ' + resp.status; return; }
+    const data = await resp.json();
+    const verdict = data.projection_verdict || 'unknown';
+    const color = verdict === 'on_track' ? '#3fb950' : verdict === 'at_risk' ? '#f0a020' : '#f85149';
+    el.innerHTML = `
+      <div>Average (4wk): <strong>${data.avg_4wk}</strong> /week</div>
+      <div>Required: <strong>${data.required_rate}</strong> /week</div>
+      <div>Weeks remaining: <strong>${data.weeks_remaining}</strong></div>
+      <div>Verdict: <span style="color:${color};font-weight:bold;">${verdict.toUpperCase()}</span></div>
+      ${data.weeks_to_target !== null && data.weeks_to_target !== undefined ? `<div>Weeks to target: <strong>${data.weeks_to_target}</strong></div>` : ''}
+      <div style="font-size:7px;color:#484f58;margin-top:2px;">Deadline: ${data.deadline || '2026-08-15'}</div>
+    `;
   } catch (e) {
-    const el = document.getElementById('action-sentinel');
-    if (el) el.textContent = 'Sentinel unreachable';
+    el.textContent = 'Failed to load projection: ' + (e.message || 'unknown');
   }
 }
-pollSentinel();
-setInterval(pollSentinel, 30000);
 
-// ── Agent State Polling ──
-async function pollAgents() {
+async function pollDeedInbox() {
+  const el = document.getElementById('deed-inbox-stats');
   try {
-    const data = await fetch('/api/v1/agents').then(r => r.json());
-    const agents = data.agents || data; // support both nested and top-level contracts
-    renderOrgChart(agents);
-
-    ['ceo', 'analyst', 'scraper', 'processor'].forEach(agent => {
-      const state = agents[agent];
-      if (!state) {
-        updateAgent(agent, { state: 'offline', last_action: 'No connection' });
-        return;
-      }
-      updateAgent(agent, state);
-    });
-
-    // Scout terminals
-    if (agents.scraper?.terminals) {
-      ['rera', 'listings', 'kaveri'].forEach(t => {
-        const el = document.getElementById('term-' + t);
-        if (el) {
-          const terminalState = String(agents.scraper.terminals[t] || '').toLowerCase();
-          const active = terminalState === 'active' || terminalState === 'working';
-          el.className = 'terminal-dot' + (active ? ' active' : '');
-        }
-      });
-    } else if (agents.scraper?.state === 'working') {
-      // Fallback: detect from last_action
-      const action = (agents.scraper.last_action || '').toLowerCase();
-      ['rera', 'listings', 'kaveri'].forEach(t => {
-        const el = document.getElementById('term-' + t);
-        if (el) {
-          const active = action.includes(t);
-          el.className = 'terminal-dot' + (active ? ' active' : '');
-        }
-      });
-    } else {
-      // Idle
-      ['rera', 'listings', 'kaveri'].forEach(t => {
-        const el = document.getElementById('term-' + t);
-        if (el) el.className = 'terminal-dot';
-      });
-    }
-
-    markUpdated('agents');
+    const resp = await fetch('/api/v1/deeds/inbox-progress');
+    if (!resp.ok) { el.textContent = 'Error: HTTP ' + resp.status; return; }
+    const data = await resp.json();
+    el.innerHTML = `
+      <div>PDFs ingested: <strong>${data.ingested}</strong> / ${data.total_pdfs}</div>
+      <div>Pending: <strong>${data.pending}</strong> files</div>
+      <div>New this week: <strong>${data.this_week_new_rows}</strong> rows</div>
+      ${data.last_ingested_at ? `<div style="font-size:7px;color:#484f58;">Last ingested: ${data.last_ingested_at}</div>` : ''}
+      ${data.pending_files && data.pending_files.length > 0 ? `<div style="font-size:7px;color:#f0a020;margin-top:2px;">Pending files: ${data.pending_files.slice(0, 5).join(', ')}${data.pending_files.length > 5 ? '...' : ''}</div>` : ''}
+    `;
   } catch (e) {
-    // Offline
-    ['ceo', 'analyst', 'scraper', 'processor'].forEach(agent => {
-      updateAgent(agent, { state: 'offline', last_action: 'Connection lost' });
-    });
-    renderOrgChart(null, 'Agents unavailable');
+    el.textContent = 'Failed to load inbox progress: ' + (e.message || 'unknown');
   }
 }
 
+// ── Consolidated deed panel refresh (GATE-145, T-1414) ──
+function refreshDeedPanel() {
+  pollDeedThroughput();
+  pollDeedProjection();
+  pollDeedInbox();
+}
+refreshDeedPanel();
+setInterval(refreshDeedPanel, 60000);
 
-async function runIntelSearch() {
-  const q = (document.getElementById('intel-search-q').value || '').trim();
-  const market = document.getElementById('intel-search-market').value;
-  const resultEl = document.getElementById('intel-search-results');
-  const statusEl = document.getElementById('intel-search-status');
-  const spinner = document.getElementById('intel-search-spinner');
-  if (!q) return;
-  statusEl.textContent = '';
-  spinner.style.display = 'block';
-  resultEl.innerHTML = '';
+// ── Dashboard Badges (T-1409) ──
+async function pollDashboardBadges() {
+  const badgeDecision = document.getElementById('badge-decision');
+  const badgeDeed = document.getElementById('badge-deed-status');
+  if (!badgeDecision && !badgeDeed) return;
   try {
-    const url = `/api/v1/intel/search?q=${encodeURIComponent(q)}${market ? '&market='+encodeURIComponent(market) : ''}`;
-    const data = await fetch(url).then(r => r.json());
-    spinner.style.display = 'none';
-    if (data.error) {
-      statusEl.textContent = data.error;
-      resultEl.innerHTML = '<div style="color:#f85149;font-size:8px;padding:4px;">' + escapeHtml(data.error) + '</div>';
-      return;
-    }
-    if (!data.results || !data.results.length) {
-      resultEl.innerHTML = '<div style="color:#484f58;font-size:8px;padding:4px;">No results \u2014 run a pipeline first to build the index.</div>';
-      statusEl.textContent = '';
-      return;
-    }
-    resultEl.innerHTML = data.results.map(r => {
-      const pct = Math.round((r.score || 0) * 100);
-      const truncated = (r.text || '').slice(0, 280);
-      const ellipsis = (r.text || '').length > 280 ? '\u2026' : '';
-      return '<div style="border:1px solid #1a2235;border-radius:4px;padding:6px 8px;margin-bottom:5px;">'
-        + '<div style="display:flex;justify-content:space-between;margin-bottom:3px;">'
-        + '<span style="color:#58a6ff;font-family:\'Press Start 2P\',cursive;font-size:6px;">' + escapeHtml(r.market || '\u2014') + '</span>'
-        + '<span style="color:#484f58;font-size:7px;">' + escapeHtml(r.source || '') + ' \u00b7 ' + pct + '%</span>'
-        + '</div>'
-        + '<div style="font-size:8px;color:#c9d1d9;line-height:1.4;">' + escapeHtml(truncated) + ellipsis + '</div>'
-        + '</div>';
-    }).join('');
-    statusEl.textContent = data.cached ? data.results.length + ' results for "' + escapeHtml(q) + '" (cached)' : data.results.length + ' results for "' + escapeHtml(q) + '"';
-    markUpdated('intel-search');
-  } catch (e) {
-    spinner.style.display = 'none';
-    statusEl.textContent = 'Search failed: ' + e.message;
-    resultEl.innerHTML = '<div style="color:#f85149;font-size:8px;padding:4px;">' + escapeHtml(e.message) + '</div>';
-  }
-}
-
-function clearIntelSearch() {
-  document.getElementById('intel-search-q').value = '';
-  document.getElementById('intel-search-market').value = '';
-  document.getElementById('intel-search-results').innerHTML = '';
-  document.getElementById('intel-search-status').textContent = '';
-  document.getElementById('intel-search-spinner').style.display = 'none';
-}
-
-async function loadMarketMap() {
-    const market = document.getElementById('market-map-select').value;
-    const container = document.getElementById('market-map-container');
-    const status = document.getElementById('market-map-status');
-    status.textContent = 'Loading map for ' + market + '…';
-    try {
-        const resp = await fetch('/api/v1/market/map/' + encodeURIComponent(market));
-        if (!resp.ok) { status.textContent = 'Map unavailable'; return; }
-        const html = await resp.text();
-        container.innerHTML = html;
-        status.textContent = 'Map loaded — ' + market;
-        markUpdated('market-map');
-    } catch (e) {
-        status.textContent = 'Map error: ' + e.message;
-    }
-}
-
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>'"]/g, ch => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    "'": '&#39;',
-    '"': '&quot;'
-  }[ch]));
-}
-
-function formatAgentTime(value) {
-  if (!value) return '—';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', hour12: false });
-}
-
-function renderOrgChart(agents, errorMsg) {
-  const wrap = document.getElementById('org-chart');
-  if (!wrap) return;
-  if (errorMsg) {
-    wrap.innerHTML = `<div class="empty-msg">${escapeHtml(errorMsg)}</div>`;
-    return;
-  }
-  const _DEPT_COLORS = { bd: '#f0a020', engineering: '#58a6ff', finance: '#3fb950', legal: '#9b7ec7', ops: '#f85149', process: '#6b7280', scout: '#3a9fff', board: '#7b5ea7' };
-  const cabinOrder = ['ceo', 'analyst', 'scraper', 'processor', 'sentinel'];
-  const cabinSet = new Set(cabinOrder);
-  const cabinRows = cabinOrder
-    .map(id => agents && agents[id] ? { id, ...agents[id] } : null)
-    .filter(Boolean);
-  const extraRows = Object.entries(agents || {})
-    .filter(([id]) => !cabinSet.has(id))
-    .map(([id, val]) => ({ id, ...val }));
-  const allRows = [...cabinRows, ...extraRows];
-  if (!allRows.length) {
-    wrap.innerHTML = '<div class="empty-msg">No agents found</div>';
-    return;
-  }
-  const _HAS_CMD = { ceo: 1, analyst: 1, scraper: 1 };
-  wrap.innerHTML = allRows.map(agent => {
-    const status = String(agent.state || agent.status || 'offline').toLowerCase();
-    const lastAction = String(agent.last_action || '').slice(0, 40);
-    const cmdAttr = _HAS_CMD[agent.id] ? `onclick="toggleCommand('${agent.id}')"` : '';
-    const deptColor = _DEPT_COLORS[(agent.department || '').toLowerCase()] || null;
-    const deptTag = deptColor ? `<span style="margin-left:4px;padding:1px 4px;border-radius:3px;font-size:6px;background:${deptColor}33;color:${deptColor};">${escapeHtml(agent.department.toUpperCase())}</span>` : '';
-    return `
-      <div class="org-card ${escapeHtml(status)}" ${cmdAttr} style="${_HAS_CMD[agent.id] ? 'cursor:pointer;' : ''}">
-        <div class="org-head">
-          <span class="org-name">${escapeHtml(agent.name || agent.id)}${deptTag}</span>
-          <span class="org-status ${escapeHtml(status)}">${escapeHtml(status.toUpperCase())}</span>
-        </div>
-        <div class="org-role">${escapeHtml(agent.role || '—')}</div>
-        <div class="org-last" title="${escapeHtml(agent.last_action || '')}">${escapeHtml(lastAction || '—')}</div>
-      </div>`;
-  }).join('');
-}
-
-function updateAgent(agent, state) {
-  const cabinEl = document.getElementById('cabin-' + agent);
-  const badgeEl = document.getElementById('badge-' + agent);
-  const dotEl = document.getElementById('dot-' + agent);
-  const statusEl = document.getElementById('status-' + agent);
-  const actionEl = document.getElementById('action-' + agent);
-
-  const st = state.state || 'offline';
-  const stLower = st.toLowerCase();
-  const isWorking = stLower === 'working';
-
-  // Badge — use label (SCRAPING/ANALYZING/DIRECTING) when available; fall back to state
-  const label = state.label || st.toUpperCase();
-  const labelLower = label.toLowerCase();
-
-  let badgeText = label;
-  let badgeClass;
-  if (isWorking) {
-    badgeClass = 'cabin-badge ' + labelLower;  // scraping / analyzing / directing
-  } else if (stLower === 'done') {
-    badgeClass = 'cabin-badge done';
-  } else if (stLower === 'failed') {
-    badgeClass = 'cabin-badge failed';
-  } else if (stLower === 'idle') {
-    badgeClass = 'cabin-badge idle';
-  } else if (stLower === 'standby') {
-    badgeClass = 'cabin-badge standby';
-  } else {
-    badgeClass = 'cabin-badge offline';
-    badgeText = 'OFFLINE';
-  }
-  badgeEl.textContent = badgeText;
-  badgeEl.className = badgeClass;
-
-  // Active animation
-  if (isWorking) {
-    cabinEl.classList.add('active');
-  } else {
-    cabinEl.classList.remove('active');
-  }
-
-  // Dot color
-  let dotClass = 'status-dot grey';
-  if (isWorking) {
-    dotClass = 'status-dot amber';
-  } else if (stLower === 'done') {
-    dotClass = 'status-dot green';
-  } else if (stLower === 'failed') {
-    dotClass = 'status-dot red';
-  } else if (stLower === 'idle') {
-    dotClass = 'status-dot green';
-  }
-  dotEl.className = dotClass;
-
-  // Status text
-  statusEl.textContent = '● ' + st.toUpperCase();
-
-  // Last action
-  actionEl.textContent = state.last_action || 'Awaiting instructions...';
-}
-
-pollAgents();
-setInterval(pollAgents, 30000);
-
-// ── Command Panel Toggle ──
-function toggleCommand(agent) {
-  const panel = document.getElementById('cmd-' + agent);
-  if (openCommands.has(agent)) {
-    panel.classList.remove('open');
-    openCommands.delete(agent);
-  } else {
-    panel.classList.add('open');
-    openCommands.add(agent);
-    // Stop propagation so clicking panel doesn't bubble up and close it
-    panel.addEventListener('click', e => e.stopPropagation());
-    // Inject quick action buttons
-    injectQuickActions(agent, panel);
-    setTimeout(() => document.getElementById('input-' + agent).focus(), 200);
-  }
-}
-
-function injectQuickActions(agent, panel) {
-  // Remove existing buttons if any
-  const existing = panel.querySelector('.quick-actions');
-  if (existing) existing.remove();
-  const actions = AGENT_ACTIONS[agent];
-  if (!actions) return;
-  const container = document.createElement('div');
-  container.className = 'quick-actions';
-  actions.forEach(a => {
-    const btn = document.createElement('button');
-    btn.className = 'quick-btn';
-    btn.textContent = a.label;
-    btn.onclick = e => {
-      e.stopPropagation();
-      document.getElementById('input-' + agent).value = a.prompt;
-      sendCommand(agent);
-    };
-    container.appendChild(btn);
-  });
-  // Insert before the input
-  const input = panel.querySelector('.command-input');
-  panel.insertBefore(container, input);
-}
-
-// ── Send Command ──
-async function sendCommand(agent) {
-  const input = document.getElementById('input-' + agent);
-  const responseEl = document.getElementById('response-' + agent);
-  const actionEl = document.getElementById('action-' + agent);
-  const cabinEl = document.getElementById('cabin-' + agent);
-  const prompt = input.value.trim();
-  if (!prompt) return;
-
-  // Clear any pending restore timer for this agent
-  if (feedbackTimers.has(agent)) {
-    clearTimeout(feedbackTimers.get(agent));
-    feedbackTimers.delete(agent);
-  }
-
-  // Store original action text for restore
-  const originalAction = actionEl.textContent;
-
-  // Show sending state
-  responseEl.textContent = 'Sending...';
-  input.value = '';
-
-  try {
-    const res = await fetch(`/api/v1/agents/${agent}/command`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt })
-    });
-    const data = await res.json();
-
-    // Update response panel
-    responseEl.textContent = data.details || data.action || 'Command sent';
-
-    // Update action line with feedback
-    const feedback = data.hint || data.details || data.action || 'Command sent';
-    actionEl.textContent = feedback;
-
-    // Color-code action line
-    if (data.status === 'accepted' || data.status === 'running') {
-      actionEl.style.color = '#f0a020'; // amber
-    } else if (data.status === 'error' || data.status === 'unknown_command') {
-      actionEl.style.color = '#f85149'; // red
-    } else {
-      actionEl.style.color = '#8b949e'; // default
-    }
-
-    // Flash accept animation on cabin
-    cabinEl.classList.remove('flash-accept');
-    void cabinEl.offsetWidth; // reflow to restart animation
-    cabinEl.classList.add('flash-accept');
-    cabinEl.addEventListener('animationend', () => cabinEl.classList.remove('flash-accept'), { once: true });
-
-    // Restore action line after 3s (unless pollAgents overwrites it first)
-    const timer = setTimeout(() => {
-      if (actionEl.textContent === feedback) {
-        actionEl.textContent = originalAction;
-        actionEl.style.color = '';
-      }
-      feedbackTimers.delete(agent);
-    }, 3000);
-    feedbackTimers.set(agent, timer);
-
-  } catch (e) {
-    responseEl.textContent = 'Error: ' + e.message;
-    actionEl.textContent = 'Error: ' + e.message;
-    actionEl.style.color = '#f85149';
-    const timer = setTimeout(() => {
-      if (actionEl.textContent.startsWith('Error:')) {
-        actionEl.textContent = originalAction;
-        actionEl.style.color = '';
-      }
-      feedbackTimers.delete(agent);
-    }, 3000);
-    feedbackTimers.set(agent, timer);
-  }
-}
-
-// ── Report Loading ──
-async function loadReport() {
-  const market = document.getElementById('report-market').value;
-  const contentEl = document.getElementById('report-content');
-  contentEl.innerHTML = '<span class="empty-msg">Loading...</span>';
-  try {
-    const data = await fetch('/api/v1/reports/' + market).then(r => r.json());
-    if (data.content) {
-      contentEl.textContent = data.content;
-    } else {
-      contentEl.innerHTML = '<span class="empty-msg">No report yet</span>';
-    }
-  } catch (e) {
-    contentEl.innerHTML = '<span class="empty-msg">Failed to load</span>';
-  }
-}
-loadReport();
-
-// ── Intel Cards ──
-async function pollIntel() {
-  const wrap = document.getElementById('intel-cards');
-  if (!wrap) return;
-  try {
-    const cardsData = await fetch('/api/v1/intel/cards').then(r => r.json());
-    if (!cardsData.cards || !cardsData.cards.length) {
-      wrap.innerHTML = '<div class="empty-msg">No intel yet</div>';
-      return;
-    }
-    const targetMarkets = ['Yelahanka', 'Devanahalli', 'Hebbal'];
-    const byMarket = new Map(cardsData.cards.map(c => [String(c.market || '').toLowerCase(), c]));
-    wrap.innerHTML = targetMarkets.map(market => {
-      const c = byMarket.get(market.toLowerCase()) || { market, projects: 0, avg_psf: null };
-      const estimated = Boolean(c.estimated);
-      const psf = c.avg_psf != null ? `₹${c.avg_psf}/sqft` : '—';
-      const projectCount = c.projects ?? c.active_projects ?? 0;
-      const slug = encodeURIComponent(market.toLowerCase());
-      const signal = String(c.go_no_go || 'WATCH').toLowerCase();
-      return `
-        <div class="intel-card">
-          <div class="intel-head">
-            <span>${market}</span>
-            ${estimated ? '<span class="intel-badge">ESTIMATED DATA</span>' : ''}
-          </div>
-          <div class="intel-meta">Active Projects: ${projectCount}</div>
-          <div class="intel-meta">Avg PSF: ${psf}</div>
-          <div class="intel-actions">
-            <span class="intel-signal ${signal}">${escapeHtml(c.go_no_go || 'WATCH')}</span>
-            <a class="intel-link" href="/api/v1/intel/download?market=${slug}" download>TXT</a>
-            <a class="intel-link" href="/api/v1/intel/download?format=csv&market=${slug}" download>CSV</a>
-          </div>
-        </div>
-      `;
-    }).join('');
-    _updateMarketStrip(cardsData.cards);
-    markUpdated('intel');
-  } catch (e) {
-    wrap.innerHTML = '<div class="empty-msg">Intel unavailable</div>';
-  }
-}
-pollIntel();
-setInterval(pollIntel, 30000);
-
-// ── Engineering Brief ──
-let _engLoading = false;
-async function pollEngineeringBrief() {
-  if (_engLoading) return;
-  _engLoading = true;
-  const marketEl = document.getElementById('engineering-brief-market');
-  const contentEl = document.getElementById('engineering-brief-content');
-  const metaEl = document.getElementById('engineering-brief-meta');
-  const statusEl = document.getElementById('engineering-brief-status');
-  const firstLoad = !contentEl.textContent;
-  if (firstLoad) contentEl.textContent = 'Loading…';
-  try {
-    const data = await fetch('/api/v1/engineering/brief').then(r => r.json());
-    if (data.brief) {
-      marketEl.textContent = data.brief.market || '';
-      const raw = data.brief.response || '';
-      const truncated = raw.length > 800;
-      contentEl.textContent = raw.slice(0, 800) + (truncated ? '\n\n[... response truncated at 800 chars]' : '');
-      const ts = data.brief.created_at
-        ? new Date(data.brief.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', hour12: false })
-        : '';
-      const sid = (data.brief.session_id || '').slice(0, 8);
-      metaEl.textContent = ts ? `${sid} · ${ts}` : sid;
-      statusEl.textContent = truncated ? 'Response exceeds 800 chars — full text in board session' : '';
-      markUpdated('engineering');
-    } else {
-      contentEl.textContent = 'No engineering brief yet — run a Board Room session.';
-      marketEl.textContent = '';
-      metaEl.textContent = '';
-      statusEl.textContent = '';
-    }
-  } catch (e) {
-    contentEl.textContent = 'Failed to load engineering brief.';
-    statusEl.textContent = 'Retrying in 60s…';
-  } finally {
-    _engLoading = false;
-  }
-}
-pollEngineeringBrief();
-setInterval(pollEngineeringBrief, 60000);
-
-// ── Finance Brief ──
-let _finLoading = false;
-async function pollFinanceBrief() {
-  if (_finLoading) return;
-  _finLoading = true;
-  const marketEl = document.getElementById('finance-brief-market');
-  const contentEl = document.getElementById('finance-brief-content');
-  const metaEl = document.getElementById('finance-brief-meta');
-  const statusEl = document.getElementById('finance-brief-status');
-  const firstLoad = !contentEl.textContent;
-  if (firstLoad) contentEl.textContent = 'Loading…';
-  try {
-    const data = await fetch('/api/v1/finance/brief').then(r => r.json());
-    if (data.brief) {
-      marketEl.textContent = data.brief.market || '';
-      const raw = data.brief.response || '';
-      const truncated = raw.length > 800;
-      contentEl.textContent = raw.slice(0, 800) + (truncated ? '\n\n[... response truncated at 800 chars]' : '');
-      const ts = data.brief.created_at
-        ? new Date(data.brief.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', hour12: false })
-        : '';
-      const sid = (data.brief.session_id || '').slice(0, 8);
-      metaEl.textContent = ts ? `${sid} · ${ts}` : sid;
-      statusEl.textContent = truncated ? 'Response exceeds 800 chars — full text in board session' : '';
-      markUpdated('finance');
-    } else {
-      contentEl.textContent = 'No finance brief yet — run a Board Room session.';
-      marketEl.textContent = '';
-      metaEl.textContent = '';
-      statusEl.textContent = '';
-    }
-  } catch (e) {
-    contentEl.textContent = 'Failed to load finance brief.';
-    statusEl.textContent = 'Retrying in 60s…';
-  } finally {
-    _finLoading = false;
-  }
-}
-pollFinanceBrief();
-setInterval(pollFinanceBrief, 60000);
-
-// ── Legal Brief ──
-let _legalLoading = false;
-async function pollLegalBrief() {
-  if (_legalLoading) return;
-  _legalLoading = true;
-  const marketEl = document.getElementById('legal-brief-market');
-  const contentEl = document.getElementById('legal-brief-content');
-  const metaEl = document.getElementById('legal-brief-meta');
-  const statusEl = document.getElementById('legal-brief-status');
-  const badgeEl = document.getElementById('legal-brief-badge');
-  const spinnerEl = document.getElementById('legal-brief-spinner');
-  const firstLoad = !contentEl.textContent;
-  if (firstLoad) { contentEl.textContent = ''; spinnerEl.style.display = 'block'; }
-  try {
-    const data = await fetch('/api/v1/legal/brief').then(r => r.json());
-    spinnerEl.style.display = 'none';
-    if (data.brief) {
-      marketEl.textContent = data.brief.market || '';
-      const raw = data.brief.response || '';
-      // Determine compliance badge from structured verdict line (first 200 chars)
-      const header = raw.slice(0, 200).toUpperCase();
-      let badgeClass = 'unknown';
-      let badgeText = 'UNKNOWN';
-      if (/\b(?:VERDICT|SIGNAL)\s*[:：]\s*CLEAR\b/.test(header) || /\bCLEAN\b/.test(header)) {
-        badgeText = 'CLEAR'; badgeClass = 'clear';
-      } else if (/\b(?:VERDICT|SIGNAL)\s*[:：]\s*WATCH\b/.test(header) || /\bWATCH\b(?:\s|$)/.test(header)) {
-        badgeText = 'WATCH'; badgeClass = 'watch';
-      } else if (/\b(?:VERDICT|SIGNAL)\s*[:：]\s*(?:RISK|BLOCKED|CONDITIONAL)\b/.test(header) || /\bRISK\b/.test(header)) {
-        badgeText = 'RISK'; badgeClass = 'risk';
-      } else if (/\bBLOCKED\b/.test(header)) {
-        badgeText = 'BLOCKED'; badgeClass = 'blocked';
-      }
-      badgeEl.className = 'legal-badge ' + badgeClass;
-      badgeEl.textContent = badgeText;
-      badgeEl.style.display = 'inline';
-      const CHARS = 800;
-      const truncated = raw.length > CHARS;
-      const content = truncated ? raw.slice(0, raw.lastIndexOf(' ', CHARS)) : raw;
-      contentEl.textContent = content + (truncated ? '\n\n[... response truncated at 800 chars]' : '');
-      const ts = data.brief.created_at
-        ? new Date(data.brief.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', hour12: false })
-        : '';
-      const sid = (data.brief.session_id || '').slice(0, 8);
-      metaEl.textContent = ts ? `${sid} · ${ts}` : sid;
-      statusEl.textContent = truncated ? 'Response exceeds 800 chars — full text in board session' : '';
-      markUpdated('legal');
-    } else {
-      contentEl.textContent = 'No legal brief yet — run a Board Room session.';
-      marketEl.textContent = '';
-      badgeEl.style.display = 'none';
-      metaEl.textContent = '';
-      statusEl.textContent = '';
-    }
-  } catch (e) {
-    spinnerEl.style.display = 'none';
-    contentEl.textContent = 'Failed to load legal brief.';
-    statusEl.textContent = 'Retrying in 60s…';
-  } finally {
-    _legalLoading = false;
-  }
-}
-pollLegalBrief();
-setInterval(pollLegalBrief, 60000);
-
-// ── Alerts Panel ──
-const _ALERT_CHANNEL_COLORS = {
-  rera_yelahanka: '#3fb950', rera_devanahalli: '#58a6ff', rera_hebbal: '#9b7ec7',
-  competitor: '#f0a020', price: '#f85149', intel: '#58a6ff', system: '#f85149',
-};
-async function pollAlerts() {
-  try {
-    const data = await fetch('/api/v1/alerts').then(r => r.json());
-    const list = document.getElementById('alerts-list');
-    const statusEl = document.getElementById('alerts-status');
-    if (data.error) {
-      list.innerHTML = '<div style="color:#f85149;font-size:8px;padding:4px;">API error: ' + escapeHtml(data.error) + '</div>';
-      return;
-    }
-    if (!data.alerts || !data.alerts.length) {
-      list.innerHTML = '<div style="color:#484f58;font-size:8px;padding:4px;">No alerts yet — configure Discord webhooks in .env</div>';
-      return;
-    }
-    list.innerHTML = data.alerts.map(a => {
-      const color = _ALERT_CHANNEL_COLORS[a.channel] || '#8b949e';
-      const st = a.status === 'sent' ? '\u2713' : a.status === 'failed' ? '\u2717' : '\u2013';
-      const ts = a.created_at ? new Date(a.created_at).toLocaleTimeString('en-IN', {hour12:false}) : '';
-      return `<div style="display:flex;gap:6px;padding:4px 0;border-bottom:1px solid #1a2235;font-size:8px;align-items:flex-start;">
-        <span style="color:${color};font-family:'Press Start 2P',cursive;font-size:6px;flex-shrink:0;padding-top:2px;">${escapeHtml(a.channel.replace(/_/g,' '))}</span>
-        <span style="flex:1;color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(a.title)}</span>
-        <span style="color:${a.status==='sent'?'#3fb950':a.status==='failed'?'#f85149':'#6b7280'};flex-shrink:0;">${st}</span>
-        <span style="color:#484f58;flex-shrink:0;">${ts}</span>
-      </div>`;
-    }).join('');
-    statusEl.textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', {hour12:false});
-    markUpdated('alerts');
-  } catch (e) { console.warn('[Alerts] poll failed:', e); }
-}
-pollAlerts();
-setInterval(pollAlerts, 60000);
-
-// ── Data Freshness ──
-async function pollFreshness() {
-  const tbody = document.getElementById('freshness-tbody');
-  const statusEl = document.getElementById('freshness-status');
-  try {
-    const data = await fetch('/api/v1/data/freshness').then(r => r.json());
-    if (data.error) {
-      tbody.innerHTML = '<tr><td colspan="5" style="color:#f85149;text-align:center;padding:12px;">Error: ' + escapeHtml(data.error) + '</td></tr>';
-      return;
-    }
-    const rows = data.freshness || [];
-    if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="5" style="color:#484f58;text-align:center;padding:12px;">No freshness data yet</td></tr>';
-      return;
-    }
-    tbody.innerHTML = rows.map(row => {
-      const ts = row.last_scraped_at ? new Date(row.last_scraped_at).toLocaleString('en-IN', {
-        month:'short', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false
-      }) : '—';
-      const badgeClass = 'freshness-badge ' + row.label;
-      return `<tr style="border-bottom:1px solid #1a2235;">
-        <td style="padding:4px;color:#c9d1d9;">${escapeHtml(row.source)}</td>
-        <td style="padding:4px;color:#8b949e;">${escapeHtml(row.market)}</td>
-        <td style="padding:4px;color:#6b7280;">${ts}</td>
-        <td style="padding:4px;text-align:right;color:#c9d1d9;">${row.record_count || 0}</td>
-        <td style="padding:4px;text-align:center;"><span class="${badgeClass}">${row.label}</span></td>
-      </tr>`;
-    }).join('');
-    statusEl.textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', {hour12:false});
-    markUpdated('freshness');
-  } catch (e) { 
-    tbody.innerHTML = '<tr><td colspan="5" style="color:#f85149;text-align:center;padding:12px;">Failed to load</td></tr>';
-    console.warn('[Freshness] poll failed:', e);
-  }
-}
-pollFreshness();
-setInterval(pollFreshness, 300000); // 5 min
-
-// ── Agent Registry ──
-async function pollRegistry() {
-  const list = document.getElementById('registry-list');
-  const statusEl = document.getElementById('registry-status');
-  try {
-    const data = await fetch('/api/v1/registry').then(r => r.json());
-    if (data.error) {
-      list.innerHTML = '<div style="color:#f85149;font-size:8px;">Error: ' + escapeHtml(data.error) + '</div>';
-      return;
-    }
-    if (!data.agents || !data.agents.length) {
-      list.innerHTML = '<div style="color:#484f58;font-size:8px;padding:4px;">No agents registered yet.</div>';
-      return;
-    }
-    const now = Date.now();
-    const dayMs = 86400000;
-    const _deptColors = { bd: '#f0a020', engineering: '#58a6ff', finance: '#3fb950', legal: '#9b7ec7', ops: '#f85149', process: '#6b7280', scout: '#3a9fff', board: '#7b5ea7' };
-    list.innerHTML = data.agents.map(a => {
-      const name = escapeHtml(a.name || a.id || '—');
-      const role = escapeHtml(a.role || '');
-      const active = a.active !== false;
-      const deptColor = _deptColors[(a.department || '').toLowerCase()] || '#6b7280';
-      const deptTag = '<span style="padding:1px 5px;border-radius:3px;font-size:6px;background:' + deptColor + '33;color:' + deptColor + ';flex-shrink:0;">' + escapeHtml((a.department || '—').toUpperCase()) + '</span>';
-      const tierTag = '<span style="font-size:7px;color:#484f58;flex-shrink:0;">' + escapeHtml(a.llm_tier || '') + '</span>';
-      // Recency badge: hired within 24h → green dot with "NEW"
-      let recencyTag = '';
-      if (a.hired_on) {
-        const hiredTs = new Date(a.hired_on).getTime();
-        if (!Number.isNaN(hiredTs) && (now - hiredTs) < dayMs) {
-          recencyTag = '<span style="padding:1px 5px;border-radius:3px;font-size:6px;background:#3fb95033;color:#3fb950;flex-shrink:0;font-weight:bold;">NEW</span>';
-        }
-      }
-      return '<div style="display:flex;gap:6px;padding:5px 0;border-bottom:1px solid #1a2235;align-items:center;">'
-        + '<span style="width:8px;height:8px;border-radius:50%;background:' + (active ? '#3fb950' : '#484f58') + ';flex-shrink:0;"></span>'
-        + '<div style="flex:1;min-width:0;">'
-        + '<div style="font-size:8px;color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + name + '</div>'
-        + '<div style="font-size:7px;color:#6b7280;">' + role + '</div>'
-        + '</div>'
-        + deptTag
-        + tierTag
-        + recencyTag
-        + '</div>';
-    }).join('');
-    statusEl.textContent = data.agents.length + ' agents · ' + new Date().toLocaleTimeString('en-IN', {hour12:false});
-    markUpdated('registry');
-  } catch (e) {
-    list.innerHTML = '<div style="color:#f85149;font-size:8px;">Failed to load registry.</div>';
-  }
-}
-pollRegistry();
-setInterval(pollRegistry, 60000);
-
-// ── Pipeline Control (T-282) ──
-const PIPELINE_SLUGS = ['yelahanka', 'devanahalli', 'hebbal'];
-
-function _getApiKey() {
-  return (document.getElementById('pipeline-api-key').value || '').trim();
-}
-
-function toggleApiKeyVis() {
-  const el = document.getElementById('pipeline-api-key');
-  el.type = el.type === 'password' ? 'text' : 'password';
-}
-
-function _syncLogMarket(slug) {
-  const logSel = document.getElementById('log-market-select');
-  const market = slug === 'all' ? '' : slug;
-  if (logSel && logSel.value !== market) logSel.value = market;
-  clearFeed();
-  connectSse(market);
-}
-
-function selectPipelineMarket() {
-  const sel = document.getElementById('pipeline-market-select');
-  _syncLogMarket(sel ? sel.value : 'all');
-}
-
-async function runSelectedMarket() {
-  const sel = document.getElementById('pipeline-market-select');
-  await runMarket(sel ? sel.value : 'all');
-}
-
-async function stopSelectedMarket() {
-  const sel = document.getElementById('pipeline-market-select');
-  await stopMarket(sel ? sel.value : 'all');
-}
-
-function _setPipelineBadge(slug, text, cls) {
-  if (slug === 'all') {
-    PIPELINE_SLUGS.forEach(s => _setPipelineBadge(s, text, cls));
-    return;
-  }
-  const badge = document.getElementById('pbadge-' + slug);
-  if (!badge) return;
-  badge.textContent = text;
-  badge.className = cls || 'pipeline-badge';
-}
-
-async function runMarket(slug) {
-  const key = _getApiKey();
-  const headers = { 'Content-Type': 'application/json' };
-  if (key) headers['X-API-Key'] = key;
-  _syncLogMarket(slug);
-  try {
-    const res = await fetch(`/api/v1/run/${slug}`, { method: 'POST', headers });
-    const data = await res.json();
-    _setPipelineBadge(slug, res.ok ? 'STARTED' : (data.error || 'ERR'), 'pipeline-badge' + (res.ok ? ' running' : ' failed'));
-    // Immediately refresh status
-    pollPipelineStatus();
-  } catch (e) {
-    _setPipelineBadge(slug, 'ERR', 'pipeline-badge failed');
-  }
-}
-
-async function stopMarket(slug) {
-  const key = _getApiKey();
-  const headers = {};
-  if (key) headers['X-API-Key'] = key;
-  _syncLogMarket(slug);
-  try {
-    await fetch(`/api/v1/run/${slug}`, { method: 'DELETE', headers });
-    pollPipelineStatus();
-  } catch (e) { /* ignore */ }
-}
-
-async function pollPipelineStatus() {
-  try {
-    const data = await fetch('/api/v1/status').then(r => r.json());
-    // Build a slug-to-canonical map: API returns canonical "Yelahanka" etc.
-    const bySlug = {};
-    for (const [market, info] of Object.entries(data || {})) {
-      bySlug[market.toLowerCase()] = info;
-    }
-    PIPELINE_SLUGS.forEach(slug => {
-      const badge = document.getElementById('pbadge-' + slug);
-      if (!badge) return;
-      const info = bySlug[slug];
-      if (!info) {
-        badge.textContent = '—';
-        badge.className = 'pipeline-badge';
-        return;
-      }
-      const st = info.state || '—';
-      badge.textContent = st.toUpperCase();
-      badge.className = 'pipeline-badge ' + st;
-    });
-    markUpdated('status');
-  } catch (e) { /* ignore */ }
-}
-pollPipelineStatus();
-setInterval(pollPipelineStatus, 30000);
-
-// ── Log Streaming (SSE) — with market selector + auto-reconnect (T-283) ──
-const feedArea = document.getElementById('feed-area');
-let _sseSource = null;
-let _sseReconnectDelay = 1000;
-let _sseMarket = '';
-
-function classifyLog(line) {
-  const l = line.toLowerCase();
-  if (l.includes('error') || l.includes('exception') || l.includes('traceback')) return 'error';
-  if (l.includes('warning') || l.includes('warn')) return 'warn';
-  if (/stage [123]/i.test(l) || l.includes('re_os') || l.includes('pipeline')) return 'stage';
-  if (l.includes('done') || l.includes('upserted') || l.includes('success') ||
-      l.includes('complete') || l.includes('✓') || l.includes('inserted')) return 'success';
-  if (l.includes('───') || l.includes('===') || !line.trim()) return 'dim';
-  return 'default';
-}
-
-function appendLog(line) {
-  if (!line.trim()) return;
-  const el = document.createElement('div');
-  el.className = 'log-line ' + classifyLog(line);
-  el.textContent = line;
-  feedArea.appendChild(el);
-  if (autoScroll) feedArea.scrollTop = feedArea.scrollHeight;
-  while (feedArea.children.length > 800) feedArea.removeChild(feedArea.firstChild);
-}
-
-function _buildSseUrl(market) {
-  return market ? `/api/v1/logs/stream?market=${encodeURIComponent(market)}` : '/api/v1/logs/stream';
-}
-
-function connectSse(market) {
-  if (_sseSource) { _sseSource.close(); _sseSource = null; }
-  _sseMarket = market || '';
-  const src = new EventSource(_buildSseUrl(_sseMarket));
-  _sseSource = src;
-
-  src.onmessage = e => {
-    _sseReconnectDelay = 1000; // reset backoff on success
-    try { appendLog(JSON.parse(e.data)); } catch { appendLog(e.data); }
-  };
-
-  src.onerror = () => {
-    src.close();
-    _sseSource = null;
-    // Exponential backoff: 1s → 2s → 4s → 8s → max 30s
-    const delay = Math.min(_sseReconnectDelay, 30000);
-    _sseReconnectDelay = Math.min(_sseReconnectDelay * 2, 30000);
-    appendLog(`[SSE] Disconnected. Reconnecting in ${Math.round(delay / 1000)}s…`);
-    setTimeout(() => connectSse(_sseMarket), delay);
-  };
-}
-
-function switchLogMarket() {
-  const sel = document.getElementById('log-market-select');
-  const pipelineSel = document.getElementById('pipeline-market-select');
-  if (pipelineSel) pipelineSel.value = sel && sel.value ? sel.value : 'all';
-  clearFeed();
-  connectSse(sel ? sel.value : '');
-}
-
-connectSse('');
-
-function clearFeed() {
-  feedArea.innerHTML = '';
-}
-
-function toggleAutoScroll() {
-  autoScroll = !autoScroll;
-  const btn = document.getElementById('autoscroll-btn');
-  btn.className = 'feed-btn' + (autoScroll ? ' active' : '');
-  if (autoScroll) feedArea.scrollTop = feedArea.scrollHeight;
-}
-
-// ── Sentinel Footer (T-286) ──
-async function pollSentinelFooter() {
-  const badge = document.getElementById('footer-sentinel-badge');
-  const lastEl = document.getElementById('footer-sentinel-last');
-  const nextEl = document.getElementById('footer-sentinel-next');
-  if (!badge) return;
-  try {
-    const data = await fetch('/api/v1/sentinel/status').then(r => r.json());
-    const last = data.last_run || {};
-    const next = data.next_run || {};
-    if (last.error) {
-      badge.textContent = 'ERR';
-      badge.className = 'sentinel-footer-badge error';
-      if (lastEl) lastEl.textContent = 'Last: error';
-    } else if (last.status) {
-      const ok = last.status === 'completed' || last.status === 'success';
-      badge.textContent = ok ? 'OK' : (last.status || '—').toUpperCase();
-      badge.className = 'sentinel-footer-badge' + (ok ? ' ok' : ' error');
-      const market = last.micro_market || last.market || '';
-      const ts = last.started_at
-        ? new Date(last.started_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', hour12: false })
-        : '';
-      if (lastEl) lastEl.textContent = `Last: ${market} ${ts}`.trim();
-    } else {
-      badge.textContent = '—';
-      badge.className = 'sentinel-footer-badge';
-      if (lastEl) lastEl.textContent = 'Last: no data';
-    }
-    if (nextEl) nextEl.textContent = 'Next: ' + (next.label || '—');
-  } catch {
-    if (badge) { badge.textContent = '—'; badge.className = 'sentinel-footer-badge'; }
-    if (nextEl) nextEl.textContent = 'Sentinel unavailable';
-  }
-}
-pollSentinelFooter();
-setInterval(pollSentinelFooter, 30000);
-
-// ── Board Room ──
-let _boardPollTimer = null;
-let _currentBoardSessionId = null;
-let _currentTranscript = null;
-
-async function submitBoardSession() {
-  const pitch = document.getElementById('board-pitch').value.trim();
-  const market = document.getElementById('board-market').value;
-  const statusEl = document.getElementById('board-status');
-  const resultEl = document.getElementById('board-result');
-  if (!pitch) { statusEl.textContent = 'Enter a pitch first.'; return; }
-  statusEl.style.color = '#f0a020';
-  statusEl.textContent = 'Convening board… (est. 90s)';
-  resultEl.style.display = 'none';
-  try {
-    const r = await fetch('/api/v1/board/session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pitch, market }),
-    });
-    const data = await r.json();
-    if (data.session_id) {
-      statusEl.textContent = `Session ${data.session_id.slice(0, 8)}… running`;
-      _pollBoardSession(data.session_id);
-    } else {
-      statusEl.style.color = '#f85149';
-      statusEl.textContent = data.error || 'Failed to start session';
-    }
-  } catch (e) {
-    statusEl.style.color = '#f85149';
-    statusEl.textContent = 'Network error: ' + e.message;
-  }
-}
-
-function _pollBoardSession(sessionId) {
-  if (_boardPollTimer) clearInterval(_boardPollTimer);
-  _boardPollTimer = setInterval(async () => {
-    try {
-      const r = await fetch(`/api/v1/board/session/${sessionId}`);
-      const data = await r.json();
-      const statusEl = document.getElementById('board-status');
-      const resultEl = document.getElementById('board-result');
-      if (data.status === 'complete') {
-        clearInterval(_boardPollTimer);
-        statusEl.style.color = '#3fb950';
-        statusEl.textContent = 'Board session complete.';
-        _currentBoardSessionId = sessionId;
-        _currentTranscript = data.transcript;
-        _renderBoardResult(data.transcript, resultEl);
-      } else if (data.status === 'failed') {
-        clearInterval(_boardPollTimer);
-        statusEl.style.color = '#f85149';
-        statusEl.textContent = 'Board session failed: ' + (data.transcript?.error || '?');
+    const data = await fetch('/api/v1/dashboard/badges').then(r => r.json()).catch(() => ({}));
+    if (badgeDecision) {
+      const count = data.decision_journal_today || 0;
+      if (count > 0) {
+        badgeDecision.textContent = count;
+        badgeDecision.style.display = 'inline-block';
       } else {
-        statusEl.textContent = `Status: ${data.status}…`;
+        badgeDecision.style.display = 'none';
       }
-    } catch { /* network blip — keep polling */ }
-  }, 3000);
-}
-
-let _boardSessionsCache = null;
-
-async function loadBoardSessions() {
-  try {
-    const data = await fetch('/api/v1/board/sessions').then(r => r.json());
-    _boardSessionsCache = data.sessions || [];
-    _renderBoardSessionsVisible();
-  } catch {
-    /* keep stale cache on network error */
-  }
-}
-
-function _renderBoardSessionsVisible() {
-  const list = document.getElementById('board-sessions-list');
-  if (!list || list.style.display === 'none' || _boardSessionsCache === null) return;
-  if (!_boardSessionsCache.length) {
-    list.innerHTML = '<div class="empty-msg" style="padding:4px 0;">No past sessions</div>';
-    return;
-  }
-  list.innerHTML = _boardSessionsCache.map(s => {
-    const sid = s.session_id ? s.session_id.slice(0, 8) : '—';
-    const ts = s.created_at
-      ? new Date(s.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short', hour12: false })
-      : '—';
-    const st = String(s.status || '').toLowerCase();
-    const stColor = st === 'complete' ? '#3fb950' : st === 'failed' ? '#f85149' : st === 'active' ? '#f0a020' : '#8b949e';
-    const df = s.decision_flag ? String(s.decision_flag).toUpperCase() : null;
-    const dfColor = df === 'GO' ? '#3fb950' : df === 'CONDITIONAL' ? '#f0a020' : df === 'NO-GO' ? '#f85149' : null;
-    const dfLabel = df === 'GO' ? 'Go — proceed' : df === 'CONDITIONAL' ? 'Conditional — further review needed' : df === 'NO-GO' ? 'No-Go — declined' : null;
-    const excerpt = escapeHtml(s.pitch_excerpt || '');
-    return `<div class="board-session-item" onclick="loadBoardSession('${escapeHtml(s.session_id)}')">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <span style="color:#9b7ec7;font-family:'Press Start 2P',cursive;font-size:6px;">${escapeHtml(sid)}</span>
-        <span style="color:#6b7280;font-size:8px;">${escapeHtml(s.market || '—')} · ${ts}</span>
-      </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
-        <span style="color:#8b949e;font-size:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${excerpt}</span>
-        <span style="display:flex;gap:4px;align-items:center;flex-shrink:0;margin-left:6px;">
-          ${df ? `<span style="background:${dfColor};color:#0d1117;font-family:'Press Start 2P',cursive;font-size:5px;padding:0 4px;border-radius:2px;line-height:14px;cursor:default;" title="${escapeHtml(dfLabel)}">${escapeHtml(df)}</span>` : `<span style="color:#484f58;font-size:5px;font-family:'Press Start 2P',cursive;">—</span>`}
-          <span style="color:${stColor};font-family:'Press Start 2P',cursive;font-size:6px;">${escapeHtml(s.status || '').toUpperCase()}</span>
-        </span>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function toggleBoardSessions() {
-  const list = document.getElementById('board-sessions-list');
-  const toggle = document.getElementById('board-recent-toggle');
-  if (list.style.display === 'none') {
-    list.style.display = 'block';
-    toggle.textContent = '▼';
-    _renderBoardSessionsVisible();
-  } else {
-    list.style.display = 'none';
-    toggle.textContent = '▶';
-  }
-}
-
-async function loadBoardSession(sessionId) {
-  const statusEl = document.getElementById('board-status');
-  const resultEl = document.getElementById('board-result');
-  statusEl.style.color = '#f0a020';
-  statusEl.textContent = 'Loading session…';
-  resultEl.style.display = 'none';
-  try {
-    const r = await fetch(`/api/v1/board/session/${sessionId}`);
-    const data = await r.json();
-    const statusEl = document.getElementById('board-status');
-    const resultEl = document.getElementById('board-result');
-    if (data.status === 'complete') {
-      clearInterval(_boardPollTimer);
-      statusEl.style.color = '#3fb950';
-      statusEl.textContent = 'Board session loaded.';
-      _currentBoardSessionId = sessionId;
-      _currentTranscript = data.transcript;
-      _renderBoardResult(data.transcript, resultEl, data.decision_flag);
-    } else if (data.status === 'failed') {
-      statusEl.style.color = '#f85149';
-      statusEl.textContent = 'Session failed: ' + (data.transcript?.error || '?');
-    } else {
-      statusEl.textContent = `Status: ${data.status}… — polling for completion`;
-      _pollBoardSession(sessionId);
     }
-  } catch (e) {
-    statusEl.style.color = '#f85149';
-    statusEl.textContent = 'Error loading session';
-  }
-}
-
-// Pre-fetch on page load + periodic refresh (spec requirement)
-loadBoardSessions();
-setInterval(loadBoardSessions, 30000);
-
-// ── DB Explorer (T-349) ──
-let _dbTablesCache = null;
-let _dbCurrentView = 'market_inventory';
-let _dbSortCol = null;
-let _dbSortDir = 'asc';
-
-const _DB_VIEW_COLUMNS = {
-  market_inventory: { label: 'Market Inventory' },
-  developer_scorecard: { label: 'Developer Scorecard' },
-  active_projects: { label: 'Active Projects' },
-};
-
-// Human-readable column labels — snake_case keys → display strings
-const _COL_LABELS = {
-  micro_market: 'Market', developer: 'Developer', developer_name: 'Developer',
-  total_projects: 'Projects', project_count: 'Projects',
-  total_units: 'Units', total_sold: 'Sold', total_unsold: 'Unsold', unsold_units: 'Unsold',
-  avg_absorption_pct: 'Absorption %', absorption_pct: 'Absorption %',
-  avg_min_psf: 'Min PSF', avg_max_psf: 'Max PSF', avg_listing_psf: 'Listing PSF',
-  unique_developers: 'Developers', grade: 'Grade',
-  completed: 'Completed', delayed: 'Delayed', avg_delay_months: 'Avg Delay (mo)',
-  markets_active_in: 'Markets', project_name: 'Project', project_status: 'Status',
-};
-
-function _formatVal(v) {
-  if (v === null || v === undefined) return '—';
-  if (typeof v === 'number') return v.toLocaleString('en-IN');
-  return String(v);
-}
-
-function _isNumericCol(val) {
-  const n = Number(val);
-  return !Number.isNaN(n) && Number.isFinite(n);
-}
-
-async function pollDbTables() {
-  const statusEl = document.getElementById('db-explorer-status');
-  try {
-    const data = await fetch('/api/v1/db/tables').then(r => r.json());
-    if (data.error) { statusEl.textContent = 'Error: ' + data.error; return; }
-    _dbTablesCache = data;
-    statusEl.textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { hour12: false });
-    _renderDbView();
-    markUpdated('db-explorer');
-  } catch (e) {
-    statusEl.textContent = 'Failed to load: ' + e.message;
-  }
-}
-
-function switchDbView(view) {
-  _dbCurrentView = view;
-  _dbSortCol = null;
-  document.querySelectorAll('#db-explorer-tabs button').forEach(b => {
-    b.classList.toggle('active', b.dataset.view === view);
-  });
-  _renderDbView();
-}
-
-function _renderDbView() {
-  if (!_dbTablesCache || !_dbTablesCache[_dbCurrentView]) {
-    document.getElementById('db-explorer-tbody').innerHTML = '<tr><td style="color:#6b7280;padding:12px;text-align:center;">No data</td></tr>';
-    document.getElementById('db-explorer-count').textContent = '';
-    return;
-  }
-  const rows = _dbTablesCache[_dbCurrentView];
-  document.getElementById('db-explorer-count').textContent = rows.length + ' rows';
-
-  if (rows.length === 0) {
-    document.getElementById('db-explorer-thead').innerHTML = '';
-    document.getElementById('db-explorer-tbody').innerHTML =
-      '<tr><td style="color:#6b7280;padding:14px;text-align:center;">No rows in this view yet</td></tr>';
-    return;
-  }
-
-  // Derive columns from first row
-  const columns = Object.keys(rows[0]);
-  const thead = document.getElementById('db-explorer-thead');
-  thead.innerHTML = columns.map(col => {
-    const active = _dbSortCol === col;
-    const arrow = active ? (_dbSortDir === 'asc' ? '▲' : '▼') : '⇅';
-    const label = _COL_LABELS[col] || col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-    return `<th data-col="${escapeHtml(col)}">${escapeHtml(label)} <span class="sort-arrow${active ? ' active' : ''}">${arrow}</span></th>`;
-  }).join('');
-  thead.onclick = function(e) {
-    const th = e.target.closest('th');
-    if (!th || !th.dataset.col) return;
-    _dbSort(th.dataset.col);
-  };
-
-  // Sort
-  let sorted = [...rows];
-  if (_dbSortCol) {
-    sorted.sort((a, b) => {
-      const va = a[_dbSortCol], vb = b[_dbSortCol];
-      const na = _isNumericCol(va), nb = _isNumericCol(vb);
-      let cmp;
-      if (na && nb) cmp = (Number(va) || 0) - (Number(vb) || 0);
-      else cmp = String(va ?? '').localeCompare(String(vb ?? ''));
-      return _dbSortDir === 'asc' ? cmp : -cmp;
-    });
-  }
-
-  const tbody = document.getElementById('db-explorer-tbody');
-  tbody.innerHTML = sorted.map(row => {
-    const cells = columns.map(col => {
-      const val = _formatVal(row[col]);
-      const num = _isNumericCol(row[col]) ? ' num' : '';
-      return `<td class="db-cell${num}" title="${escapeHtml(String(row[col] ?? ''))}">${escapeHtml(val)}</td>`;
-    }).join('');
-    return '<tr>' + cells + '</tr>';
-  }).join('');
-}
-
-function _dbSort(col) {
-  if (_dbSortCol === col) {
-    _dbSortDir = _dbSortDir === 'asc' ? 'desc' : 'asc';
-  } else {
-    _dbSortCol = col;
-    _dbSortDir = 'asc';
-  }
-  _renderDbView();
-}
-
-pollDbTables();
-setInterval(pollDbTables, 60000);
-
-// ── Absorption Rate Bar Chart (T-775) ──
-let _absorptionChart = null;
-
-function renderAbsorptionChart() {
-    const section = document.getElementById('absorption-chart-section');
-    const statusEl = document.getElementById('absorption-chart-status');
-    const canvas = document.getElementById('absorption-chart-canvas');
-    if (!_dbTablesCache || !_dbTablesCache.market_inventory) {
-        section.style.display = 'none';
-        return;
+    if (badgeDeed) {
+      const s = data.deed_status || 'unknown';
+      if (s === 'on_track') badgeDeed.style.background = '#3fb950';
+      else if (s === 'at_risk') badgeDeed.style.background = '#f0a020';
+      else badgeDeed.style.background = '#f85149';
+      badgeDeed.title = 'Deed status: ' + s;
     }
-    const data = _dbTablesCache.market_inventory;
-    const labels = data.map(r => r.micro_market || r.market || '?');
-    const moSupply = data.map(r => {
-        const v = r.months_of_supply;
-        return v != null ? Number(v) : 0;
-    });
-    const hasData = moSupply.some(v => v > 0);
-    if (!hasData) {
-        section.style.display = 'none';
-        statusEl.textContent = 'No absorption data';
-        return;
-    }
-    section.style.display = 'block';
-    if (_absorptionChart) _absorptionChart.destroy();
-    _absorptionChart = new Chart(canvas, {
-        type: 'bar',
-        data: {
-            labels,
-            datasets: [{
-                label: 'Months of Supply',
-                data: moSupply,
-                backgroundColor: '#f0a020',
-                borderColor: '#f0a020',
-                borderWidth: 1,
-            }],
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false },
-            },
-            scales: {
-                x: {
-                    ticks: { color: '#8b949e', font: { size: 8 } },
-                    grid: { color: '#1a2235' },
-                },
-                y: {
-                    beginAtZero: true,
-                    ticks: { color: '#8b949e', font: { size: 8 } },
-                    grid: { color: '#1a2235' },
-                },
-            },
-        },
-    });
-    statusEl.textContent = data.length + ' markets';
+  } catch (e) { /* badges non-critical */ }
 }
-
-// ── Developer Scorecard Radar (T-776) ──
-let _devRadarChart = null;
-
-function renderDevRadarChart() {
-    const section = document.getElementById('dev-scorecard-radar-section');
-    const statusEl = document.getElementById('dev-radar-status');
-    const canvas = document.getElementById('dev-radar-canvas');
-    if (!_dbTablesCache || !_dbTablesCache.developer_scorecard) {
-        section.style.display = 'none';
-        return;
-    }
-    const rows = _dbTablesCache.developer_scorecard;
-    if (!rows.length) {
-        section.style.display = 'none';
-        statusEl.textContent = 'No developer data';
-        return;
-    }
-    // Pick top 3 developers by total_projects
-    const top = [...rows].sort((a, b) => (b.total_projects || 0) - (a.total_projects || 0)).slice(0, 3);
-    if (!top.length) { section.style.display = 'none'; return; }
-
-    section.style.display = 'block';
-    const maxProjects = Math.max(...top.map(r => r.total_projects || 0), 1);
-    const datasets = top.map((r, i) => {
-        const colors = ['#58a6ff', '#3fb950', '#f0a020'];
-        const color = colors[i % colors.length];
-        return {
-            label: r.developer || 'Dev ' + (i + 1),
-            data: [
-                (r.total_projects || 0) / maxProjects * 100,
-                (r.total_units || 0) / Math.max(...top.map(x => x.total_units || 0), 1) * 100,
-                (r.avg_absorption_pct || 0),
-                (r.completed || 0) / Math.max(...top.map(x => x.completed || 0), 1) * 100,
-                top.length > 1 ? (r.markets_active_in || 0) / Math.max(...top.map(x => x.markets_active_in || 0), 1) * 100 : 0,
-            ],
-            borderColor: color,
-            backgroundColor: color + '33',
-            borderWidth: 1,
-            pointRadius: 2,
-        };
-    });
-
-    if (_devRadarChart) _devRadarChart.destroy();
-    _devRadarChart = new Chart(canvas, {
-        type: 'radar',
-        data: {
-            labels: ['Projects', 'Units', 'Absorption %', 'Completed', 'Markets'],
-            datasets,
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    position: 'bottom',
-                    labels: { color: '#8b949e', font: { size: 7 }, boxWidth: 10, padding: 4 },
-                },
-            },
-            scales: {
-                r: {
-                    angleLines: { color: '#2a3a55' },
-                    grid: { color: '#2a3a55' },
-                    pointLabels: { color: '#8b949e', font: { size: 7 } },
-                    ticks: { display: false },
-                    suggestedMin: 0,
-                    suggestedMax: 100,
-                },
-            },
-        },
-    });
-    statusEl.textContent = top.length + ' developers';
-}
-
-// Extend pollDbTables to render charts
-const _origPollDbTables = pollDbTables;
-pollDbTables = function() {
-    _origPollDbTables();
-    Promise.resolve().then(() => {
-        renderAbsorptionChart();
-        renderDevRadarChart();
-    });
-};
-
-// ── Task Board ──
-const _TASK_STATUSES = ['queued', 'active', 'done', 'failed'];
-const _TASK_STATUS_LABELS = { queued: 'QUEUED', active: 'ACTIVE', done: 'DONE', failed: 'FAILED' };
-let _tasksCache = [];
-
-async function pollTasks() {
-  const statusEl = document.getElementById('task-board-status');
-  try {
-    const data = await fetch('/api/v1/tasks').then(r => r.json());
-    if (data.error) { statusEl.textContent = 'Error: ' + data.error; return; }
-    _tasksCache = data.tasks || [];
-    _renderTaskBoard();
-    statusEl.textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { hour12: false });
-    markUpdated('task-board');
-  } catch (e) {
-    statusEl.textContent = 'Unavailable';
-  }
-}
-
-function _renderTaskBoard() {
-  const col = document.getElementById('task-board-columns');
-  if (!col) return;
-  const byStatus = {};
-  _TASK_STATUSES.forEach(s => { byStatus[s] = []; });
-  _tasksCache.forEach(t => { if (byStatus[t.status]) byStatus[t.status].push(t); });
-
-  col.innerHTML = _TASK_STATUSES.map(status => {
-    const tasks = byStatus[status];
-    const cards = tasks.length
-      ? tasks.map(t => {
-          const pri = t.priority || 'medium';
-          const owner = t.owner ? `<span style="color:#58a6ff;">${escapeHtml(t.owner.toUpperCase())}</span> · ` : '';
-          return `<div class="task-card task-priority-${escapeHtml(pri)}">
-            <div class="tc-title" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</div>
-            <div class="tc-meta">${owner}${escapeHtml(pri)}</div>
-          </div>`;
-        }).join('')
-      : '<div style="color:#484f58;font-size:7px;padding:4px 0;">empty</div>';
-    return `<div class="task-col">
-      <div class="task-col-header col-${escapeHtml(status)}">${_TASK_STATUS_LABELS[status]} <span style="color:#484f58;">(${tasks.length})</span></div>
-      ${cards}
-    </div>`;
-  }).join('');
-}
-
-pollTasks();
-setInterval(pollTasks, 30000);
-
-async function approveAction(idx) {
-  const action = _currentTranscript && _currentTranscript.actions && _currentTranscript.actions[idx];
-  if (!action) return;
-  const btn = document.querySelector(`#action-row-${idx} button`);
-  if (btn) { btn.disabled = true; btn.textContent = '\u2026'; }
-  try {
-    const apiKey = _getApiKey();
-    const r = await fetch('/api/v1/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
-      body: JSON.stringify({
-        title: action.action,
-        owner: action.owner || 'ceo',
-        priority: action.priority || 'medium',
-        source_type: 'board_session',
-        source_id: _currentBoardSessionId,
-      }),
-    });
-    const data = await r.json();
-    if (data.task_id) {
-      const row = document.getElementById(`action-row-${idx}`);
-      if (row) row.style.opacity = '0.5';
-      if (btn) { btn.textContent = '\u2713 QUEUED'; btn.style.color = '#3fb950'; }
-      pollTasks();
-    } else {
-      if (btn) { btn.disabled = false; btn.textContent = '\u2713 APPROVE'; }
-    }
-  } catch (e) {
-    if (btn) { btn.disabled = false; btn.textContent = '\u2713 APPROVE'; }
-  }
-}
-
-function rejectAction(idx) {
-  const row = document.getElementById(`action-row-${idx}`);
-  if (row) { row.style.opacity = '0.3'; row.style.pointerEvents = 'none'; }
-}
-
-function _renderBoardResult(transcript, el, decisionFlag) {
-   const _DEPT_COLORS = { bd: '#f0a020', finance: '#3fb950', engineering: '#58a6ff', ops: '#f85149', legal: '#9b7ec7' };
-   const _DEPT_LABELS = { bd: 'BD', finance: 'FINANCE', engineering: 'ENG', ops: 'OPS', legal: 'LEGAL' };
-   const _DF_BANNERS = { GO: { bg: '#0f2d0f', border: '#3fb950', text: '#3fb950', label: '✅ GO — PROCEED' }, CONDITIONAL: { bg: '#2d1f0a', border: '#f0a020', text: '#f0a020', label: '⚠️ CONDITIONAL — FURTHER REVIEW REQUIRED' }, 'NO-GO': { bg: '#2d0a0a', border: '#f85149', text: '#f85149', label: '❌ NO-GO — DECLINED' } };
-   if (!transcript || !transcript.responses) { el.style.display = 'none'; return; }
-   let html = '';
-   const df = decisionFlag ? String(decisionFlag).toUpperCase() : null;
-   const banner = df ? _DF_BANNERS[df] : null;
-   if (banner) {
-     html += '<div style="background:' + banner.bg + ';border:1px solid ' + banner.border + ';color:' + banner.text + ';border-radius:4px;padding:8px 12px;margin-bottom:12px;font-family:\'Press Start 2P\',cursive;font-size:8px;text-align:center;letter-spacing:1px;">' + banner.label + '</div>';
-   }
-   html += '<div class="board-dept-grid">';
-   for (const [key, color] of Object.entries(_DEPT_COLORS)) {
-     const resp = transcript.responses[key] || '';
-     const label = _DEPT_LABELS[key];
-     html += '<div class="board-dept-col">';
-     html += `<div class="board-dept-header" style="border-bottom:2px solid ${color};color:${color};">${escapeHtml(label)}</div>`;
-     if (resp) {
-       const shortResp = String(resp).slice(0, 600) + (String(resp).length > 600 ? '…' : '');
-       html += `<div class="board-dept-body">${escapeHtml(shortResp)}</div>`;
-     } else {
-       html += '<div class="board-dept-body empty-msg">No response</div>';
-     }
-     html += '</div>';
-   }
-   html += '</div>';
-   if (transcript.actions && transcript.actions.length) {
-     html += '<div class="board-actions-row">';
-     html += '<div class="board-actions-title">ACTION ITEMS</div>';
-     transcript.actions.forEach((a, i) => {
-       const pri = a.priority || 'medium';
-       const owner = a.owner || 'ceo';
-       html += `<div id="action-row-${i}" style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;padding:5px 6px;background:#0f1520;border:1px solid #2a3a55;border-radius:4px;">
-         <div style="flex:1;font-size:9px;color:#c9d1d9;">${escapeHtml(a.action || '')}<br>
-           <span style="font-size:7px;color:#6b7280;">${escapeHtml(owner.toUpperCase())} · ${escapeHtml(pri)}</span>
-         </div>
-         <button onclick="approveAction(${i})" style="background:#1a3a1a;border:1px solid #3fb950;color:#3fb950;font-size:7px;padding:3px 6px;cursor:pointer;border-radius:3px;white-space:nowrap;">✓ APPROVE</button>
-         <button onclick="rejectAction(${i})" style="background:#1a1010;border:1px solid #484f58;color:#6b7280;font-size:7px;padding:3px 6px;cursor:pointer;border-radius:3px;white-space:nowrap;">✗</button>
-       </div>`;
-     });
-     html += '</div>';
-   }
-   el.innerHTML = html;
-   el.style.display = 'block';
-}
-
-// ── Memory Explorer (T-807) ──
-async function pollMemoryExplorer() {
-  const tbody = document.getElementById('memory-explorer-tbody');
-  const statusEl = document.getElementById('memory-explorer-status');
-  const spinner = document.getElementById('memory-explorer-spinner');
-  const agentFilter = document.getElementById('memory-agent-filter')?.value || '';
-  const marketFilter = document.getElementById('memory-market-filter')?.value || '';
-  const confFilter = document.getElementById('memory-confidence-filter')?.value || '0.5';
-  
-  spinner.style.display = 'block';
-  statusEl.textContent = '';
-  
-  try {
-    const params = new URLSearchParams();
-    if (agentFilter) params.set('agent_id', agentFilter);
-    if (marketFilter) params.set('market', marketFilter);
-    if (confFilter) params.set('min_confidence', confFilter);
-    
-    const data = await fetch('/api/v1/memory/explorer?' + params.toString()).then(r => r.json());
-    spinner.style.display = 'none';
-    if (data.error) {
-      tbody.innerHTML = '<tr><td colspan="5" style="color:#f85149;text-align:center;padding:12px;">Error: ' + escapeHtml(data.error) + '</td></tr>';
-      return;
-    }
-    
-    const rows = data.memories || [];
-    if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="5" style="color:#484f58;text-align:center;padding:12px;">No memories found</td></tr>';
-      statusEl.textContent = 'No memories';
-      return;
-    }
-    
-    tbody.innerHTML = rows.map(m => {
-      const conf = m.confidence || 0;
-      const confColor = conf >= 0.75 ? '#3fb950' : (conf >= 0.5 ? '#f0a020' : '#f85149');
-      const rowClass = m.fact_type === 'conflict' ? ' style="background:#3a2a1a;"' : '';
-      const factPrefix = m.fact_type === 'conflict' ? '<span style="color:#f0a020;font-weight:bold;">CONFLICT</span> ' : '';
-      const ts = m.created_at ? new Date(m.created_at).toLocaleDateString('en-IN', { day:'2-digit', month:'short' }) : '—';
-      return `<tr${rowClass} style="border-bottom:1px solid #1a2235;">
-        <td style="padding:4px;color:#c9d1d9;">${escapeHtml(m.agent_id)}</td>
-        <td style="padding:4px;color:#8b949e;">${escapeHtml(m.market || '')}</td>
-        <td style="padding:4px;color:#c9d1d9;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(m.fact || '')}">${factPrefix}${escapeHtml((m.fact || '').slice(0, 40))}${(m.fact || '').length > 40 ? '…' : ''}</td>
-        <td style="padding:4px;text-align:center;color:${confColor};font-weight:bold;">${conf}</td>
-        <td style="padding:4px;text-align:center;color:#6b7280;">${ts}</td>
-      </tr>`;
-    }).join('');
-    
-    statusEl.textContent = rows.length + ' memories · Updated ' + new Date().toLocaleTimeString('en-IN', {hour12:false});
-    markUpdated('memory');
-  } catch (e) {
-    spinner.style.display = 'none';
-    tbody.innerHTML = '<tr><td colspan="5" style="color:#f85149;text-align:center;padding:12px;">Failed to load</td></tr>';
-    statusEl.textContent = 'Error: ' + e.message;
-  }
-}
-
-// Poll memory explorer on load and periodically
-pollMemoryExplorer();
-setInterval(pollMemoryExplorer, 60000);
-
-// ── Conflict Badge (T-808) ──
-async function pollConflictBadge() {
-  const badge = document.getElementById('conflict-badge');
-  const countEl = document.getElementById('conflict-count');
-  if (!badge) return;
-  
-  try {
-    const data = await fetch('/api/v1/memory/conflict-count').then(r => r.json()).catch(() => ({unresolved_conflicts: 0}));
-    const count = (data && data.unresolved_conflicts != null ? data.unresolved_conflicts : 0);
-    countEl.textContent = count;
-    badge.className = count > 0 ? 'conflict-badge has-conflicts' : 'conflict-badge no-conflicts';
-  } catch (e) {
-    badge.className = 'conflict-badge no-conflicts';
-  }
-}
-
-pollConflictBadge();
-setInterval(pollConflictBadge, 300000); // 5 min
-
-function openConflictPanel() {
-  window.open('/memory', '_blank');
-}
-
-// ── Panel Tab Navigation ──
-function switchTab(name) {
-  document.querySelectorAll('.panel-tab').forEach(b => {
-    b.classList.toggle('active', b.dataset.tab === name);
-  });
-  document.querySelectorAll('.panel-pane').forEach(p => {
-    p.classList.toggle('active', p.id === 'pane-' + name);
-  });
-}
-
-// ── Market Strip Population ──
-function _updateMarketStrip(cards) {
-  const targets = ['Yelahanka', 'Devanahalli', 'Hebbal'];
-  const byMarket = new Map((cards || []).map(c => [String(c.market || '').toLowerCase(), c]));
-  targets.forEach(market => {
-    const slug = market.toLowerCase();
-    const c = byMarket.get(slug) || {};
-    const psf = c.avg_psf != null ? '₹' + Number(c.avg_psf).toLocaleString('en-IN') : '—';
-    const projects = c.projects ?? c.active_projects ?? 0;
-    const signal = String(c.go_no_go || 'WATCH').toLowerCase().replace(/[^a-z-]/g, '');
-    const psfEl = document.getElementById('mkt-psf-' + slug);
-    const metaEl = document.getElementById('mkt-meta-' + slug);
-    const sigEl = document.getElementById('mkt-signal-' + slug);
-    if (psfEl) psfEl.textContent = psf;
-    if (metaEl) metaEl.textContent = projects + ' projects';
-    if (sigEl) {
-      sigEl.textContent = c.go_no_go || 'WATCH';
-      sigEl.className = 'mkt-card-signal ' + signal;
-    }
-  });
-}
+pollDashboardBadges();
+setInterval(pollDashboardBadges, 300000);
 
 </script>
 </body>

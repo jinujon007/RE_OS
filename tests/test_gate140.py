@@ -106,6 +106,23 @@ class TestGate140:
             call_args = mock_conn.execute.call_args[1]
             assert "; DROP TABLE" not in str(call_args)
 
+    @pytest.mark.parametrize("parcels,span,area,expected_tier", [
+        (10, 10, 10000, "high"),
+        (6, 10, 5000, "medium"),
+        (10, 30, 3000, "medium"),
+        (3, 90, 2500, "low"),
+        (2, 365, 100, "low"),
+        (1, 200, 100, "low"),
+    ])
+    def test_score_tier_boundaries(self, parcels, span, area, expected_tier):
+        from utils.assembly_detector import AssemblyDetector
+        detector = AssemblyDetector()
+        score = detector.score_confidence(parcels, span, area)
+        from config.scheduler.deed_jobs import _get_tier
+        tier = _get_tier(score)
+        assert tier == expected_tier, \
+            f"score={score:.3f} for p={parcels} s={span} a={area} → tier={tier}, expected={expected_tier}"
+
     def test_score_confidence_monotonic_properties(self):
         from utils.assembly_detector import AssemblyDetector
         detector = AssemblyDetector()

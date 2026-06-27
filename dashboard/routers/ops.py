@@ -2464,6 +2464,151 @@ async def ops_ledger(request: Request):
         return _err_resp(str(exc), request, 500, "Ops")
 
 
+class LedgerFullItem(BaseModel):
+    claim_type: str
+    market: str | None = None
+    total: int
+    hit: int
+    miss: int
+    pending: int
+    hit_rate_pct: float | None = None
+
+
+class LedgerFullResponse(BaseModel):
+    items: list[LedgerFullItem]
+    as_of: str
+
+
+@router.get(
+    "/ops/ledger/full",
+    response_model=LedgerFullResponse,
+    summary="All-module prediction ledger grouped by claim_type + market + verdict",
+    description="Returns grouped prediction counts from prediction_ledger (all claim types: "
+    "psf_forecast, opportunity_score, assembly_alert, corridor_call). "
+    "Supports optional claim_type, market, verdict filters via query params.",
+)
+@limiter.limit("30/minute")
+async def ops_ledger_full(
+    request: Request,
+    claim_type: str | None = Query(default=None, description="Filter by claim_type"),
+    market: str | None = Query(default=None, description="Filter by market"),
+    verdict: str | None = Query(default=None, description="Filter by verdict"),
+):
+    rid = getattr(request.state, "rid", None)
+    try:
+        with _get_sa_engine().connect() as conn:
+            where_parts: list[str] = []
+            params: dict = {}
+            if claim_type:
+                where_parts.append("claim_type = :claim_type")
+                params["claim_type"] = claim_type
+            if market:
+                where_parts.append("market = :market")
+                params["market"] = market
+            if verdict:
+                where_parts.append("verdict = :verdict")
+                params["verdict"] = verdict
+            where_sql = " AND ".join(where_parts) if where_parts else "TRUE"
+
+            rows = conn.execute(
+                _sa_text(f"""
+                    SELECT
+                        claim_type,
+                        market,
+                        COUNT(*) AS total,
+                        COUNT(*) FILTER (WHERE verdict = 'hit') AS hit,
+                        COUNT(*) FILTER (WHERE verdict = 'miss') AS miss,
+                        COUNT(*) FILTER (WHERE verdict IS NULL OR verdict NOT IN ('hit', 'miss')) AS pending
+                    FROM prediction_ledger
+                    WHERE {where_sql}
+                    GROUP BY claim_type, market
+                    ORDER BY claim_type, market
+                """),
+                params,
+            ).fetchall()
+
+        items = []
+        for r in rows:
+            hit = int(r[2])
+            miss = int(r[3])
+            total_hit_miss = hit + miss
+            hit_rate_pct = round(hit / total_hit_miss * 100, 1) if total_hit_miss > 0 else None
+            items.append(LedgerFullItem(
+                claim_type=str(r[0]),
+                market=str(r[1]) if r[1] else None,
+                total=int(r[2]),
+                hit=hit,
+                miss=miss,
+                pending=int(r[4]),
+                hit_rate_pct=hit_rate_pct,
+            ))
+
+        data = LedgerFullResponse(items=items, as_of=datetime.now(timezone.utc).isoformat())
+        etag = compute_etag(data.model_dump())
+        _check = check_etag(request, etag)
+        if _check:
+            return _check
+        return JSONResponse(content=data.model_dump(), headers={"ETag": f'"{etag}"'})
+    except Exception as exc:
+        logger.error("[ops_ledger_full] %s", exc)
+        return _err_resp(str(exc), request, 500, "Ops")
+
+
+try:
+    from prometheus_client import Counter as _LedgerVerdictCounter
+    _ledger_manual_verdicts = _LedgerVerdictCounter(
+        "ledger_manual_verdicts_total",
+        "Manual verdict entries on prediction_ledger",
+    )
+except ImportError:
+    _ledger_manual_verdicts = None
+
+
+class VerdictEntryRequest(BaseModel):
+    ledger_id: int
+    verdict: str
+    actual_value: float | None = None
+
+
+@router.post(
+    "/ops/ledger/verdict",
+    summary="Manually set a verdict on a prediction_ledger row",
+    description="Admin-only. Updates the verdict (hit/miss/partial/unverifiable) "
+    "and optional actual_value for a single prediction_ledger row.",
+)
+@limiter.limit("10/minute")
+async def ops_ledger_verdict(request: Request, body: VerdictEntryRequest):
+    try:
+        valid_verdicts = {"hit", "miss", "partial", "unverifiable"}
+        if body.verdict not in valid_verdicts:
+            return _err_resp(f"Invalid verdict '{body.verdict}'. Valid: {valid_verdicts}", request, 400, "Ops")
+
+        with _get_sa_engine().begin() as conn:
+            result = conn.execute(
+                _sa_text("""
+                    UPDATE prediction_ledger
+                    SET verdict = :verdict,
+                        actual_value = :actual_value
+                    WHERE id = :id
+                """),
+                {
+                    "id": body.ledger_id,
+                    "verdict": body.verdict,
+                    "actual_value": body.actual_value,
+                },
+            )
+            if result.rowcount == 0:
+                return _err_resp(f"Ledger row {body.ledger_id} not found", request, 404, "Ops")
+
+        if _ledger_manual_verdicts is not None:
+            _ledger_manual_verdicts.inc()
+
+        return {"status": "ok", "updated_id": body.ledger_id, "verdict": body.verdict}
+    except Exception as exc:
+        logger.error("[ops_ledger_verdict] %s", exc)
+        return _err_resp(str(exc), request, 500, "Ops")
+
+
 # ── Corridor Backtest Verdicts (GATE-116, T-1270) ────────────────────────────
 
 

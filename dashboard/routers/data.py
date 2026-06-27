@@ -1132,6 +1132,95 @@ def data_quality_panel(request: Request):
     return templates.TemplateResponse(request, "data_quality.html")
 
 
+# ── Decision Journal Panel (T-1406) ──────────────────────────────────────
+
+
+@router.get("/decision-journal", tags=["Decision Journal"], summary="Decision Journal dashboard panel")
+def decision_journal_panel(request: Request):
+    return templates.TemplateResponse(request, "decision_journal.html")
+
+
+# ── Deed Throughput Panel (T-1407) ───────────────────────────────────────
+
+
+@router.get("/deed-throughput", tags=["Deeds"], summary="Deed Throughput Kill Criteria dashboard panel")
+def deed_throughput_panel(request: Request):
+    return templates.TemplateResponse(request, "deed_throughput.html")
+
+
+# ── Assembly Signals Panel (T-1408) ──────────────────────────────────────
+
+
+@router.get("/assembly-signals", tags=["Assembly"], summary="Assembly Signals dashboard panel")
+def assembly_signals_panel(request: Request):
+    return templates.TemplateResponse(request, "assembly_signals.html")
+
+
+# ── Dashboard Badges (T-1409) ────────────────────────────────────────────
+
+
+_deed_throughput_badge_hits_total = _counter(
+    "deed_throughput_badge_hits_total", "Badge endpoint queries", ["status"],
+)
+
+
+class DashboardBadgesResponse(BaseModel):
+    decision_journal_today: int = 0
+    assembly_high_confidence: int = 0
+    deed_status: str = "unknown"
+    as_of: str = ""
+
+
+@router.get(
+    "/dashboard/badges",
+    summary="Real-time nav badge counts (decision journal today, assembly high confidence, deed status)",
+    tags=["Dashboard"],
+)
+@limiter.limit("60/minute")
+async def dashboard_badges(request: Request):
+    try:
+        t0 = time.time()
+        with _get_sa_engine().connect() as conn:
+            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            dj_today = conn.execute(
+                _sa_text(
+                    "SELECT COUNT(*) FROM decision_journal WHERE entry_date = :d"
+                ), {"d": today_str},
+            ).scalar() or 0
+            assembly_high = conn.execute(
+                _sa_text(
+                    "SELECT COUNT(*) FROM assembly_signals WHERE "
+                    "(confidence_score > 0.75 OR confidence > 0.75) "
+                    "AND (resolved_at IS NULL OR status = 'open')"
+                ),
+            ).scalar() or 0
+            deed_row = conn.execute(
+                _sa_text(
+                    "SELECT current_week_count FROM v_deed_throughput_weekly "
+                    "ORDER BY week_start DESC LIMIT 1"
+                ),
+            ).fetchone()
+            current = int(deed_row[0]) if deed_row else 0
+        elapsed = time.time() - t0
+        if current == 0:
+            deed_status = "critical"
+        elif current < 50:
+            deed_status = "at_risk"
+        else:
+            deed_status = "on_track"
+        _deed_throughput_badge_hits_total.labels(status=deed_status).inc()
+        db_query_duration_seconds.labels(query_name="dashboard_badges").observe(elapsed)
+        return DashboardBadgesResponse(
+            decision_journal_today=dj_today,
+            assembly_high_confidence=assembly_high,
+            deed_status=deed_status,
+            as_of=datetime.now(timezone.utc).isoformat(),
+        )
+    except Exception as exc:
+        logger.warning("[dashboard_badges] %s", exc)
+        return DashboardBadgesResponse(as_of=datetime.now(timezone.utc).isoformat())
+
+
 # ── Market Forecaster / Spread / Supply ─────────────────────────────────
 
 
@@ -2117,6 +2206,44 @@ async def deeds_throughput(
         return _err_resp("failed to query deed throughput", request, 500, "Data")
 
 
+# ── Deed Inbox Progress (GATE-145, T-1412) ───────────────────────────────
+
+
+@router.get(
+    "/deeds/inbox-progress",
+    summary="Inbox PDF progress — ingested vs pending + this week new rows",
+    tags=["Deeds"],
+)
+@limiter.limit("30/minute")
+async def deeds_inbox_progress(request: Request):
+    try:
+        from utils.deed_progress import get_inbox_progress
+        progress = get_inbox_progress()
+        return progress
+    except Exception as exc:
+        logger.error("[deeds_inbox_progress] %s", exc)
+        return _err_resp("failed to query inbox progress", request, 500, "Data")
+
+
+# ── Deed Throughput Projection (GATE-145, T-1413) ────────────────────────
+
+
+@router.get(
+    "/deeds/projection",
+    summary="Deed throughput projection against 50/week kill-criteria target",
+    tags=["Deeds"],
+)
+@limiter.limit("30/minute")
+async def deeds_projection(request: Request):
+    try:
+        from utils.deed_progress import compute_throughput_projection
+        projection = compute_throughput_projection()
+        return projection
+    except Exception as exc:
+        logger.error("[deeds_projection] %s", exc)
+        return _err_resp("failed to compute throughput projection", request, 500, "Data")
+
+
 # ── Decision Journal (GATE-137) ──────────────────────────────────────────
 
 
@@ -2233,6 +2360,94 @@ async def assembly_alerts(
         return _err_resp("failed to query assembly alerts", request, 500, "Data")
 
 
+# ── Assembly Drilldown: Resolve + Obsidian Export (T-1416) ────────────────
+
+
+@router.post(
+    "/intel/assembly/{signal_id}/resolve",
+    summary="Mark assembly signal as resolved (removed from active list)",
+    tags=["Assembly"],
+)
+@limiter.limit("10/minute")
+async def assembly_resolve(signal_id: str, request: Request):
+    rid = getattr(request.state, "request_id", "?")
+    from dashboard.state import _has_role
+    role = getattr(request.state, "role", None)
+    if role is None or not _has_role(role, "write"):
+        logger.info("[assembly_resolve] rid=%s auth=denied role=%s", rid, role)
+        return JSONResponse(
+            {"error": "insufficient_role", "required": "write", "provided": role},
+            status_code=403,
+        )
+    try:
+        import uuid as _uuid
+        try:
+            _uuid.UUID(signal_id)
+        except ValueError:
+            logger.info("[assembly_resolve] rid=%s signal=%s invalid_uuid", rid, signal_id)
+            return _err_resp("invalid signal_id format — expected UUID", request, 400, "Assembly")
+        with _get_sa_engine().begin() as conn:
+            result = conn.execute(
+                _sa_text(
+                    "UPDATE assembly_signals SET resolved_at = NOW(), status = 'resolved' "
+                    "WHERE id = :sid AND (resolved_at IS NULL OR status != 'resolved')"
+                ),
+                {"sid": signal_id},
+            )
+            if result.rowcount == 0:
+                logger.info("[assembly_resolve] rid=%s signal=%s not_found", rid, signal_id)
+                return _err_resp("signal not found or already resolved", request, 404, "Assembly")
+        logger.info("[assembly_resolve] rid=%s signal=%s resolved", rid, signal_id)
+        return {"status": "resolved", "signal_id": signal_id}
+    except Exception as exc:
+        logger.error("[assembly_resolve] rid=%s signal=%s %s", rid, signal_id, exc)
+        return _err_resp("failed to resolve assembly signal", request, 500, "Assembly")
+
+
+@router.get(
+    "/intel/assembly/{signal_id}/obsidian-export",
+    summary="Export assembly signal to Obsidian markdown",
+    tags=["Assembly"],
+)
+@limiter.limit("10/minute")
+async def assembly_obsidian_export(signal_id: str, request: Request):
+    rid = getattr(request.state, "request_id", "?")
+    try:
+        import uuid as _uuid
+        try:
+            _uuid.UUID(signal_id)
+        except ValueError:
+            logger.info("[assembly_obsidian_export] rid=%s signal=%s invalid_uuid", rid, signal_id)
+            return _err_resp("invalid signal_id format — expected UUID", request, 400, "Assembly")
+        with _get_sa_engine().connect() as conn:
+            row = conn.execute(
+                _sa_text("""
+                    SELECT market, village, hobli,
+                           COALESCE(buyer_name, buyer_name_norm) AS buyer_name,
+                           parcel_count, total_area_sqm,
+                           COALESCE(confidence_score, confidence) AS confidence_score,
+                           first_deed_date, detected_at,
+                           survey_numbers, total_consideration_inr
+                    FROM assembly_signals WHERE id = :sid
+                """),
+                {"sid": signal_id},
+            ).fetchone()
+        if not row:
+            logger.info("[assembly_obsidian_export] rid=%s signal=%s not_found", rid, signal_id)
+            return _err_resp("assembly signal not found", request, 404, "Assembly")
+        cluster = dict(row._mapping)
+        from utils.obsidian_sync import write_assembly_signal
+        filename, content = write_assembly_signal(cluster)
+        if not content:
+            logger.warning("[assembly_obsidian_export] rid=%s signal=%s vault_unmounted", rid, signal_id)
+            return _err_resp("obsidian sync path not mounted", request, 503, "Assembly")
+        logger.info("[assembly_obsidian_export] rid=%s signal=%s exported=%s", rid, signal_id, filename)
+        return {"filename": filename, "content": content}
+    except Exception as exc:
+        logger.error("[assembly_obsidian_export] rid=%s signal=%s %s", rid, signal_id, exc)
+        return _err_resp("failed to export assembly signal", request, 500, "Assembly")
+
+
 # ── Forecast Accuracy ────────────────────────────────────────────────────
 
 
@@ -2252,6 +2467,7 @@ async def forecast_accuracy(
     subquery window) to minimize connection overhead. Empty ledger returns
     mape=null and last_10_predictions=[].
     """
+    rid = getattr(request.state, "rid", None)
     try:
         from utils.prediction_tracker import compute_mape
         from config.settings import TARGET_MARKETS as _VALID_MARKETS
@@ -2260,18 +2476,22 @@ async def forecast_accuracy(
         if market:
             canonical = _normalize_market(market)
             if not canonical:
+                logger.warning("[forecast_accuracy] rid=%s invalid_market=%s", rid, market)
                 return _err_resp(f"Unknown market '{market}'. Valid: {sorted(_VALID_MARKETS)}", request, 400, "Data")
             markets = [canonical]
 
         result = {}
         with _get_sa_engine().connect() as conn:
             for m in markets:
-                mape = compute_mape(m)
+                mape_4wk = compute_mape(m, model_version="v1_4wk", conn=conn)
+                mape_26wk = compute_mape(m, model_version="linear_v1", conn=conn)
+                mape = mape_26wk if mape_26wk is not None else mape_4wk
                 stats = conn.execute(
                     _sa_text("""
                         WITH filtered AS (
                             SELECT predicted_psf, actual_psf, error_pct,
-                                   predicted_at, measured_at
+                                   predicted_at, measured_at, model_version,
+                                   horizon_weeks
                             FROM prediction_ledger_psf
                             WHERE market = :market AND actual_psf IS NOT NULL
                         )
@@ -2282,7 +2502,9 @@ async def forecast_accuracy(
                                        'actual_psf', actual_psf,
                                        'error_pct', error_pct,
                                        'predicted_at', predicted_at,
-                                       'measured_at', measured_at
+                                       'measured_at', measured_at,
+                                       'model_version', model_version,
+                                       'horizon_weeks', horizon_weeks
                                    )
                                    ORDER BY predicted_at DESC
                                ) FILTER (WHERE row_number() OVER (ORDER BY predicted_at DESC) <= 10)
@@ -2303,11 +2525,15 @@ async def forecast_accuracy(
                         "error_pct": float(entry["error_pct"]) if entry.get("error_pct") else None,
                         "predicted_at": str(entry["predicted_at"]) if entry.get("predicted_at") else None,
                         "measured_at": str(entry["measured_at"]) if entry.get("measured_at") else None,
+                        "model_version": entry.get("model_version"),
+                        "horizon_weeks": entry.get("horizon_weeks"),
                     }
                     last_10.append(item)
 
                 result[m] = {
                     "mape": mape,
+                    "mape_4wk": mape_4wk,
+                    "mape_26wk": mape_26wk,
                     "sample_count": sample_count,
                     "last_10_predictions": last_10,
                 }
@@ -2318,8 +2544,14 @@ async def forecast_accuracy(
             return _check
         return JSONResponse(content=result, headers={"ETag": f'"{etag}"'})
     except Exception as exc:
-        logger.warning("[API] /intel/forecast-accuracy failed: %s", exc)
+        logger.warning("[forecast_accuracy] rid=%s failed: %s", rid, exc)
         return _err_resp(str(exc), request, 500, "Data")
+
+
+@router.get("/forecast-accuracy", tags=["Forecast Accuracy"],
+            summary="Forecast Accuracy dashboard panel")
+def forecast_accuracy_panel(request: Request):
+    return templates.TemplateResponse(request, "forecast_accuracy.html")
 
 
 # ── Misc panel pages ────────────────────────────────────────────────────

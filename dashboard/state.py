@@ -501,6 +501,8 @@ _READ_ONLY_PATHS = frozenset(
         "/api/v1/ops/corridor-backtest",
         "/api/ops/corridor-backtest",
         "/api/v1/ops/ledger",
+        "/api/v1/ops/ledger/full",
+        "/api/ops/ledger/full",
         "/api/ops/slo",
         "/api/v1/ops/slo",
         "/api/v1/ops/corridor-backtest",
@@ -514,6 +516,15 @@ _READ_ONLY_PATHS = frozenset(
         "/api/mcp/health",
         "/api/v1/deeds/throughput",
         "/api/deeds/throughput",
+        "/api/v1/deeds/inbox-progress",
+        "/api/deeds/inbox-progress",
+        "/api/v1/deeds/projection",
+        "/api/deeds/projection",
+        "/api/v1/dashboard/badges",
+        "/api/dashboard/badges",
+        "/api/v1/intel/assembly-alerts",
+        "/api/intel/assembly-alerts",
+        "/api/v1/intel/assembly/obsidian-export",
     }
 )
 _READ_ONLY_PREFIXES = (

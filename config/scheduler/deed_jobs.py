@@ -22,6 +22,7 @@ from sqlalchemy import text
 
 from utils.db import get_engine
 from utils.discord_notifier import send_ops_alert, send
+from config.settings import ASSEMBLY_ALERT_THRESHOLDS
 
 try:
     from prometheus_client import Counter as _PromCounter
@@ -35,16 +36,20 @@ try:
         "assembly_detection_runs_total", "Assembly detection pipeline runs", ["status", "market"],
     )
     _assembly_clusters = _PromCounter(
-        "assembly_detection_clusters_total", "Assembly clusters detected per run", ["market"],
+        "assembly_detection_clusters_total", "Assembly clusters detected per run", ["market", "tier"],
+    )
+    _reminder_runs = _PromCounter(
+        "deed_reminder_runs_total", "Kaveri download reminder runs", ["status", "market"],
     )
 except ImportError:
-    _deed_records = _deed_runs = _assembly_runs = _assembly_clusters = None
+    _deed_records = _deed_runs = _assembly_runs = _assembly_clusters = _reminder_runs = None
 
 
 __all__ = [
     "run_daily_deed_scrape",
     "run_weekly_deed_threshold_check",
     "run_assembly_detection",
+    "run_kaveri_download_reminder",
     "register_jobs",
 ]
 
@@ -250,69 +255,262 @@ def run_weekly_deed_threshold_check():
             logger.debug("[DeedJobs] Discord send failed: {}", exc)
 
 
+from typing import Literal
+
+def _get_tier(confidence: float) -> Literal["high", "medium", "low"]:
+    if confidence > ASSEMBLY_ALERT_THRESHOLDS["high"]:
+        return "high"
+    if confidence >= ASSEMBLY_ALERT_THRESHOLDS["medium"]:
+        return "medium"
+    return "low"
+
+
 def run_assembly_detection():
     """Weekly assembly detection — Monday 07:00 UTC (GATE-140, T-1388).
 
-    Calls AssemblyDetector.detect_clusters() for all 3 markets.
-    Fires Discord #bd-intel alert when confidence > 0.7.
+    Three-tier alert system (T-1418):
+      HIGH  (>0.75): Discord #intel + Telegram + Obsidian sync
+      MEDIUM (0.5-0.75): Discord #intel only
+      LOW   (<0.5): DB only (already persisted by detect_clusters)
     """
     from config.settings import TARGET_MARKETS
-    from utils.discord_notifier import send
     from utils.assembly_detector import AssemblyDetector
 
     logger.info("[DeedJobs] Assembly detection starting")
     detector = AssemblyDetector()
     total_clusters = 0
-    high_conf_alerts = []
+    tier_counts: dict[str, int] = {"high": 0, "medium": 0, "low": 0}
+    tier_alerts: dict[str, list[dict]] = {"high": [], "medium": [], "low": []}
 
     for market in TARGET_MARKETS:
         try:
             clusters = detector.detect_clusters(market, window_months=6, min_parcels=3)
             total_clusters += len(clusters)
-            if _assembly_runs:
-                _assembly_runs.labels(status="success", market=market).inc()
-            if _assembly_clusters:
-                _assembly_clusters.labels(market=market).inc(len(clusters))
             for cl in clusters:
-                if cl.get("confidence_score", 0) > 0.7:
-                    high_conf_alerts.append(cl)
+                conf = float(cl.get("confidence_score", 0) or 0)
+                tier = _get_tier(conf)
+                tier_counts[tier] += 1
+                if tier != "low":
+                    tier_alerts[tier].append(cl)
+                if _assembly_runs:
+                    _assembly_runs.labels(status="success", market=market).inc()
+                if _assembly_clusters:
+                    _assembly_clusters.labels(market=market, tier=tier).inc(1)
         except Exception as exc:
             logger.warning("[DeedJobs] Assembly detection failed for {}: {}", market, exc)
             if _assembly_runs:
                 _assembly_runs.labels(status="error", market=market).inc()
 
-    if high_conf_alerts:
-        for cl in high_conf_alerts:
-            try:
-                send(
-                    "bd-intel",
-                    f"Assembly: {cl['buyer_name']} — {cl['village']}",
-                    (
-                        f"\U0001f514 Assembly signal: {cl['buyer_name']} accumulating in "
-                        f"{cl['village']}, {cl['parcel_count']} parcels, "
-                        f"{cl['total_area_sqm']:.0f} sqm "
-                        f"(confidence: {cl['confidence_score']:.0%})"
-                    ),
-                )
-            except Exception as exc:
-                logger.warning("[DeedJobs] Discord alert failed: {}", exc)
-            try:
-                from utils.telegram_notifier import send_message as _tg_send2
-                _tg_send2(
-                    f"\U0001f514 Assembly signal\n"
-                    f"{cl['village']}, {cl['market']}\n"
-                    f"{cl['buyer_name']}\n"
-                    f"{cl['parcel_count']} parcels \u00b7 {cl['total_area_sqm']:.0f} sqm\n"
-                    f"Confidence: {cl['confidence_score']:.0%}"
-                )
-            except Exception as _tg_exc2:
-                logger.warning("[DeedJobs] Telegram alert failed: {}", _tg_exc2)
+    # HIGH tier: Discord + Telegram + Obsidian
+    for cl in tier_alerts["high"]:
+        try:
+            send(
+                "intel",
+                f"Assembly: {cl['buyer_name']} — {cl['village']}",
+                (
+                    f"\U0001f514 HIGH Assembly signal: {cl['buyer_name']} accumulating in "
+                    f"{cl['village']}, {cl['parcel_count']} parcels, "
+                    f"{cl['total_area_sqm']:.0f} sqm "
+                    f"(confidence: {cl['confidence_score']:.0%})"
+                ),
+            )
+        except Exception as exc:
+            logger.warning("[DeedJobs] Discord alert failed: {}", exc)
+        try:
+            from utils.telegram_notifier import send_message as _tg_send
+            _tg_send(
+                f"\U0001f514 HIGH Assembly signal\n"
+                f"{cl['village']}, {cl['market']}\n"
+                f"{cl['buyer_name']}\n"
+                f"{cl['parcel_count']} parcels \u00b7 {cl['total_area_sqm']:.0f} sqm\n"
+                f"Confidence: {cl['confidence_score']:.0%}"
+            )
+        except Exception as _tg_exc:
+            logger.warning("[DeedJobs] Telegram alert failed: {}", _tg_exc)
+        try:
+            from utils.obsidian_sync import write_assembly_signal
+            _fn, _content = write_assembly_signal(cl)
+            if _content:
+                logger.info("[DeedJobs] Assembly signal synced to Obsidian: {}", _fn)
+            else:
+                logger.debug("[DeedJobs] Obsidian vault not mounted — skipped assembly sync")
+        except Exception as _obs_exc:
+            logger.warning("[DeedJobs] Obsidian assembly sync failed: {}", _obs_exc)
+
+    # MEDIUM tier: Discord only
+    for cl in tier_alerts["medium"]:
+        try:
+            send(
+                "intel",
+                f"Assembly: {cl['buyer_name']} — {cl['village']}",
+                (
+                    f"MEDIUM Assembly signal: {cl['buyer_name']} accumulating in "
+                    f"{cl['village']}, {cl['parcel_count']} parcels, "
+                    f"{cl['total_area_sqm']:.0f} sqm "
+                    f"(confidence: {cl['confidence_score']:.0%})"
+                ),
+            )
+        except Exception as exc:
+            logger.warning("[DeedJobs] Discord MEDIUM alert failed: {}", exc)
+
+    # LOW tier: already persisted by detect_clusters — no alert
 
     logger.info(
-        "[DeedJobs] Assembly detection complete — {} clusters, {} high-confidence alerts",
-        total_clusters, len(high_conf_alerts),
+        "[DeedJobs] Assembly detection complete — {} total, {} high, {} medium, {} low",
+        total_clusters, tier_counts["high"], tier_counts["medium"], tier_counts["low"],
     )
-    return {"total": total_clusters, "alerts": len(high_conf_alerts)}
+    return {"total": total_clusters, **tier_counts}
+
+
+def run_kaveri_download_reminder():
+    """Monday 09:00 IST — proactive Kaveri Form 17 download reminder.
+
+    Loads market→village mapping from re_os_market_kaveri_map.json.
+    Computes per-market last deed seen date from registered_transactions.
+    Builds priority-ordered download reminder message.
+    Sends via Discord (ops) AND Telegram.
+    Falls back to generic reminder if village map is missing.
+    """
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    target_url = "https://kaverionline.karnataka.gov.in"
+
+    map_path = Path("data/kaveri_jurisdiction/re_os_market_kaveri_map.json")
+    if not map_path.exists():
+        logger.warning("[DeedJobs] kaveri market map not found — sending generic reminder")
+        _send_generic_reminder()
+        if _reminder_runs:
+            _reminder_runs.labels(status="map_missing", market="all").inc()
+        return
+
+    try:
+        market_map = json.loads(map_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("[DeedJobs] Failed to parse kaveri market map: {} — sending generic", exc)
+        _send_generic_reminder()
+        if _reminder_runs:
+            _reminder_runs.labels(status="parse_error", market="all").inc()
+        return
+
+    priorities: list[tuple[str, str, str, str | None]] = []
+    village_skip_patterns = ["other areas", "layout", "town", "nagar"]
+
+    for market_name, mdata in market_map.items():
+        sro = mdata.get("kaveri_sro_district", "Unknown")
+        villages: list[dict] = list(mdata.get("villages", []))
+        if not villages:
+            hoblis = mdata.get("all_hobli_villages", {})
+            for hvillages in hoblis.values():
+                villages.extend(hvillages if isinstance(hvillages, list) else [])
+        if not villages:
+            continue
+
+        # Pick representative: prefer non-urban, non-layout, non-numbered
+        candidates = [
+            v for v in villages
+            if isinstance(v, dict)
+            and not v.get("is_urban", False)
+            and not any(skip in (v["name"] or "").lower() for skip in village_skip_patterns)
+        ]
+        if not candidates:
+            candidates = [v for v in villages if isinstance(v, dict)]
+        rep_village = candidates[0]["name"] if candidates else "Unknown"
+        rep_village_stripped = rep_village.split("(")[0].strip()
+
+        last_deed: str | None = None
+        try:
+            with get_engine().connect() as conn:
+                row = conn.execute(
+                    text("""
+                        SELECT MAX(rt.reg_date)::text
+                        FROM registered_transactions rt
+                        WHERE rt.village ILIKE :village
+                          AND rt.deed_type ILIKE '%sale%'
+                    """),
+                    {"village": f"%{rep_village_stripped}%"},
+                ).fetchone()
+                if row and row[0]:
+                    last_deed = row[0]
+        except Exception as exc:
+            logger.warning("[DeedJobs] Last deed query failed for {}: {}", market_name, exc)
+
+        priorities.append((market_name, rep_village_stripped, sro, last_deed))
+        if _reminder_runs:
+            _reminder_runs.labels(status="queried", market=market_name.lower().replace(" ", "_")).inc()
+
+    if not priorities:
+        logger.warning("[DeedJobs] No market priorities built — sending generic reminder")
+        _send_generic_reminder()
+        if _reminder_runs:
+            _reminder_runs.labels(status="no_priorities", market="all").inc()
+        return
+
+    def _sort_key(p):
+        d = p[3]
+        return "0000-00-00" if d is None else d
+
+    priorities.sort(key=_sort_key)
+
+    lines = [
+        "**Kaveri Form 17 Download Due**",
+        "Place new PDFs in `data/kaveri_deeds/inbox/form17/`.\n",
+    ]
+    for i, (mkt, vlg, sro_str, last) in enumerate(priorities, 1):
+        last_str = last if last else "*no deeds yet*"
+        lines.append(
+            f"{i}. **{mkt}** ({vlg}, SRO {sro_str}) — last deed: {last_str}"
+        )
+
+    lines.append("")
+    lines.append(f"1. Go to {target_url}")
+    lines.append("2. Select 'Form of Index 2' (Request for Encumbrance Certificate)")
+    lines.append(f"3. Choose village (e.g., {priorities[0][1]}), date range from {priorities[0][3] or 'earliest'} to today")
+    lines.append("4. Pay ₹50, download PDF, place in `data/kaveri_deeds/inbox/form17/`")
+    msg = "\n".join(lines)
+
+    try:
+        send("ops", "KAVERI_DOWNLOAD_REMINDER", msg)
+    except Exception as exc:
+        logger.warning("[DeedJobs] Discord reminder send failed: {}", exc)
+
+    try:
+        from utils.telegram_notifier import send_message as _tg_send_rd
+        _tg_send_rd(msg)
+    except Exception as exc:
+        logger.warning("[DeedJobs] Telegram reminder send failed: {}", exc)
+
+    if _reminder_runs:
+        _reminder_runs.labels(status="sent", market="all").inc()
+    logger.info("[DeedJobs] Kaveri download reminder sent — {} markets", len(priorities))
+
+
+def _send_generic_reminder() -> None:
+    """Fallback reminder when village map is unavailable.
+
+    Sends hardcoded market list so Jinu always gets a Monday reminder
+    even if the jurisdiction file is missing or corrupt.
+    """
+    msg = (
+        "**Kaveri Form 17 Download Due**\n"
+        "Place new PDFs in `data/kaveri_deeds/inbox/form17/`.\n\n"
+        "Priority markets:\n"
+        "1. Yelahanka — Yalahanka Hobli, SRO Gandhinagar\n"
+        "2. Devanahalli — Kasaba Hobli, SRO Bangalore Rural\n"
+        "3. Hebbal — Bangalore North, SRO Rajajinagar\n\n"
+        "URL: https://kaverionline.karnataka.gov.in → Form of Index 2\n"
+        "Select: Village, Date range: last_deed to today"
+    )
+    try:
+        send("ops", "KAVERI_DOWNLOAD_REMINDER_GENERIC", msg)
+    except Exception as exc:
+        logger.warning("[DeedJobs] Generic Discord send failed: {}", exc)
+    try:
+        from utils.telegram_notifier import send_message as _tg_send_g2
+        _tg_send_g2(msg)
+    except Exception as exc:
+        logger.warning("[DeedJobs] Generic Telegram send failed: {}", exc)
+    logger.info("[DeedJobs] Generic Kaveri download reminder sent")
 
 
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
@@ -343,4 +541,13 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         id="assembly_detection_weekly",
         name="Weekly Assembly Detection — cluster Kaveri txns (Mon 07:00 UTC)",
         misfire_grace_time=3600,
+    )
+
+    # Weekly Kaveri download reminder — Monday 09:00 IST (GATE-145, T-1411)
+    scheduler.add_job(
+        lambda: safe_job(run_kaveri_download_reminder, "kaveri_download_reminder"),
+        CronTrigger(day_of_week="mon", hour=9, minute=0),
+        id="kaveri_download_reminder",
+        name="Weekly Kaveri Form 17 Download Reminder (Mon 09:00 IST)",
+        misfire_grace_time=7200,
     )

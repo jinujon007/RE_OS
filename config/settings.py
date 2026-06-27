@@ -452,5 +452,11 @@ SLO_SCHEDULER_BREACH_DAYS = max(1, int(os.getenv("SLO_SCHEDULER_BREACH_DAYS", "3
 SLO_SCHEDULER_WARN_DAYS = max(1, int(os.getenv("SLO_SCHEDULER_WARN_DAYS", "2")))
 SLO_BOARD_ROOM_P95_TARGET_S = max(1.0, float(os.getenv("SLO_BOARD_ROOM_P95_TARGET_S", "90.0")))
 
+# ── ASSEMBLY ALERT THRESHOLDS (T-1418) ──────────────────────────────────────
+ASSEMBLY_ALERT_THRESHOLDS: dict[str, float] = {
+    "high": float(os.getenv("ASSEMBLY_ALERT_HIGH", "0.75")),
+    "medium": float(os.getenv("ASSEMBLY_ALERT_MEDIUM", "0.5")),
+}
+
 # ── AGENT RUN STATUSES ────────────────────────────────────────────────────────
 AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]
