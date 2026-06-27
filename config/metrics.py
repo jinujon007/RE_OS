@@ -297,6 +297,12 @@ board_decision_flag_total = _counter(
     ["flag"],
 )
 
+format_truncation_total = _counter(
+    "format_truncation_total",
+    "Board Room formatter truncation events by reason",
+    ["reason"],
+)
+
 # ── GATE-130 — Firecrawl metrics ──────────────────────────────────────────────
 
 firecrawl_requests_total = _counter(
@@ -370,4 +376,21 @@ obsidian_bytes_total = _counter(
     "obsidian_bytes_total",
     "Total bytes written to Obsidian export by source",
     ["source"],
+)
+
+pricing_tracker_runs_total = _counter(
+    "pricing_tracker_runs_total",
+    "Developer pricing tracker query count",
+    ["market"],
+)
+price_move_alerts_total = _counter(
+    "price_move_alerts_total",
+    "Price move Discord alerts sent",
+    ["market"],
+)
+
+decision_journal_entries_total = _counter(
+    "decision_journal_entries_total",
+    "Decision journal entries created by market and flag",
+    ["market", "flag"],
 )

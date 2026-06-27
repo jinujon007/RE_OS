@@ -2,8 +2,8 @@
 RE_OS Dashboard — Health routes
 """
 
-import os
 import logging
+import os
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -231,3 +231,39 @@ async def test_alert(request: Request):
     from utils.notifier import send_alert
     sent = send_alert("Test from RE_OS", "INFO")
     return {"sent": sent}
+
+
+@router.get(
+    "/mcp/health",
+    summary="MCP server health passthrough — checks re_os_mcp:8051/health",
+)
+@limiter.limit("30/minute")
+async def mcp_health(request: Request):
+    import httpx
+    mcp_url = os.environ.get("MCP_HEALTH_URL", "http://re_os_mcp:8051/health")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(mcp_url)
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "mcp_status": "ok",
+                    "mcp_tools": data.get("tools_count", data.get("mcp_tools", 4)),
+                    "mcp_auth_required": data.get("auth_required", False),
+                    "mcp_version": data.get("version", "unknown"),
+                }
+            return JSONResponse(
+                {"mcp_status": "error", "detail": f"MCP returned {resp.status_code}"},
+                status_code=503,
+            )
+    except httpx.ConnectError:
+        return JSONResponse(
+            {"mcp_status": "down", "detail": "Cannot connect to re_os_mcp:8051"},
+            status_code=503,
+        )
+    except Exception as exc:
+        logger.warning("[mcp_health] %s", exc)
+        return JSONResponse(
+            {"mcp_status": "error", "detail": str(exc)},
+            status_code=503,
+        )

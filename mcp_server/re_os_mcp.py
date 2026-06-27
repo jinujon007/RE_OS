@@ -11,16 +11,22 @@ Architecture:
   - Starlette ASGI app for SSE + HTTP transport
   - Minimal MCP protocol: /sse (SSE stream) + /message (JSON-RPC POST)
   - DB via utils.db.get_engine() — same pool as main app
-  - Optional auth via MCP_API_KEY env var on /message
-  - Session TTL cleanup (60s idle) — no orphan leaks
   - CORS for web-based MCP inspectors (e.g., mcp.inspect)
-  - /health for Docker health check (no auth)
 
-Security:
-  - /sse and /message require MCP_API_KEY if set (optional, env-gated)
-  - /health is always unauthenticated
-  - Input bounds validation on all tool parameters
-  - Request body capped at 256KB
+GATE-135:
+  - Optional auth via MCP_API_KEY env var on /sse and /message (403 if wrong/missing)
+  - /health always unauthenticated — includes uptime, cache size, rate limiter state
+  - Input bounds validation, 256KB body cap, session TTL cleanup (60s idle)
+  - Prometheus metrics: mcp_tool_calls_total, mcp_tool_errors_total (per-tool)
+
+GATE-138 (T-1376–T-1380):
+  - Auth: X-API-Key header matching MCP_API_KEY. 403 on mismatch. Empty string = disabled.
+  - Cache: 5-min TTL dict cache on psf_forecast and corridor_score (max 500 entries,
+    LRU eviction). md5 cache key = tool_name + JSON-sorted args. Thread-safe via Lock.
+    In-flight tracking prevents cache stampede on concurrent cache-miss for same key.
+  - Rate limiter: 10 req/min per client IP. Token bucket via deque. 429 Retry-After.
+    Max 5000 tracked IPs with stale cleanup. Prometheus counter + gauge.
+  - Logging: auth failures and rate-limit hits logged at WARNING level with client IP.
 
 Protocol:
   - Implements initialize, notifications/initialized, tools/list, tools/call, ping
@@ -32,6 +38,7 @@ Run: python mcp_server/re_os_mcp.py
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -39,6 +46,7 @@ import os
 import threading
 import time
 import uuid
+from collections import deque
 from contextlib import asynccontextmanager
 
 from sqlalchemy import text as _sa_text
@@ -59,10 +67,132 @@ _MCP_API_KEY: str | None = os.environ.get("MCP_API_KEY") or None
 _SESSION_TTL_SECONDS: int = 60
 _MAX_BODY_BYTES: int = 262144
 
+# ── Cache (T-1377) ───────────────────────────────────────────────────────────
+
+_MCP_CACHE: dict[str, tuple[str, float]] = {}
+_MCP_CACHE_LOCK = threading.Lock()
+_MCP_CACHE_TTL: float = 300.0
+_MCP_CACHE_MAX: int = 500
+
+_CACHED_TOOL_NAMES: frozenset = frozenset({"psf_forecast", "corridor_score", "investor_brief"})
+
+
+def _cache_key(tool_name: str, arguments: dict) -> str:
+    raw = f"{tool_name}:{json.dumps(arguments, sort_keys=True, default=str)}"
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def _clear_mcp_cache() -> None:
+    with _MCP_CACHE_LOCK:
+        _MCP_CACHE.clear()
+    with _MCP_CACHE_INFLIGHT_LOCK:
+        for event in _MCP_CACHE_INFLIGHT.values():
+            event.set()
+        _MCP_CACHE_INFLIGHT.clear()
+
+
+_MCP_CACHE_INFLIGHT: dict[str, threading.Event] = {}
+_MCP_CACHE_INFLIGHT_LOCK = threading.Lock()
+_MCP_CACHE_INFLIGHT_TIMEOUT: float = 2.0
+
+
+def _mcp_cache_get(tool: str, args: dict) -> str | None:
+    key = _cache_key(tool, args)
+    with _MCP_CACHE_LOCK:
+        entry = _MCP_CACHE.get(key)
+        if entry is not None:
+            cached, ts = entry
+            if time.monotonic() - ts <= _MCP_CACHE_TTL:
+                return cached
+            _MCP_CACHE.pop(key, None)
+
+    with _MCP_CACHE_INFLIGHT_LOCK:
+        inflight_event = _MCP_CACHE_INFLIGHT.get(key)
+        if inflight_event is not None:
+            inflight_event.wait(timeout=_MCP_CACHE_INFLIGHT_TIMEOUT)
+            with _MCP_CACHE_LOCK:
+                entry = _MCP_CACHE.get(key)
+                if entry is not None:
+                    return entry[0]
+            return None
+        event = threading.Event()
+        _MCP_CACHE_INFLIGHT[key] = event
+    return None
+
+
+def _mcp_cache_set(tool: str, args: dict, result: str) -> None:
+    key = _cache_key(tool, args)
+    with _MCP_CACHE_LOCK:
+        if len(_MCP_CACHE) >= _MCP_CACHE_MAX:
+            oldest = min(_MCP_CACHE.items(), key=lambda kv: kv[1][1])
+            _MCP_CACHE.pop(oldest[0], None)
+        _MCP_CACHE[key] = (result, time.monotonic())
+    with _MCP_CACHE_INFLIGHT_LOCK:
+        event = _MCP_CACHE_INFLIGHT.pop(key, None)
+        if event is not None:
+            event.set()
+
+
+# ── Rate limiter (T-1378) — token bucket, 10 req/min per client IP ─────────
+
+_RATE_LIMITER: dict[str, deque[float]] = {}
+_RATE_LIMITER_LOCK = threading.Lock()
+_RATE_LIMIT_REQS: int = 10
+_RATE_LIMIT_WINDOW: float = 60.0
+_RATE_LIMITER_MAX_CLIENTS: int = 5000
+
+_RATE_LIMIT_HITS = 0
+
+
+def _rate_limiter_cleanup():
+    now = time.monotonic()
+    with _RATE_LIMITER_LOCK:
+        stale_ips = [
+            ip for ip, dq in _RATE_LIMITER.items()
+            if not dq or now - dq[-1] > _RATE_LIMIT_WINDOW
+        ]
+        n_clean = 0
+        for ip in stale_ips:
+            if now - _RATE_LIMITER[ip][-1] > _RATE_LIMIT_WINDOW:
+                del _RATE_LIMITER[ip]
+                n_clean += 1
+        if n_clean:
+            logger.debug("[mcp] rate limiter cleaned %d stale IPs (%d remain)", n_clean, len(_RATE_LIMITER))
+
+
+def _check_rate_limit(client_ip: str) -> str | None:
+    now = time.monotonic()
+    with _RATE_LIMITER_LOCK:
+        if len(_RATE_LIMITER) >= _RATE_LIMITER_MAX_CLIENTS:
+            _rate_limiter_cleanup()
+
+        ts_deque = _RATE_LIMITER.get(client_ip)
+        if ts_deque is None:
+            ts_deque = deque()
+            _RATE_LIMITER[client_ip] = ts_deque
+        while ts_deque and now - ts_deque[0] > _RATE_LIMIT_WINDOW:
+            ts_deque.popleft()
+        if len(ts_deque) >= _RATE_LIMIT_REQS:
+            oldest = ts_deque[0]
+            retry_after = int(_RATE_LIMIT_WINDOW - (now - oldest)) + 1
+            global _RATE_LIMIT_HITS
+            _RATE_LIMIT_HITS += 1
+            logger.warning("[mcp] rate limit exceeded for %s (%d hits total)", client_ip, _RATE_LIMIT_HITS)
+            if _rate_limit_hits_total is not None:
+                _rate_limit_hits_total.inc()
+            return str(retry_after)
+        ts_deque.append(now)
+    # Update Prometheus gauges periodically (every ~10 calls)
+    if _rate_limiter_clients_gauge is not None and (now % 10 < 0.5):
+        _rate_limiter_clients_gauge.set(len(_RATE_LIMITER))
+    if _mcp_cache_entries_gauge is not None and (now % 10 < 0.5):
+        _mcp_cache_entries_gauge.set(len(_MCP_CACHE))
+    return None
+
 # ── Optional Prometheus metrics ──────────────────────────────────────────────
 
 try:
-    from prometheus_client import Counter as _PCounter, REGISTRY as _PRegistry
+    from prometheus_client import Counter as _PCounter, Gauge as _PGauge, REGISTRY as _PRegistry
     _tool_calls_total = _PCounter(
         "mcp_tool_calls_total", "MCP tool calls", ["tool", "status"],
         registry=_PRegistry,
@@ -71,9 +201,24 @@ try:
         "mcp_tool_errors_total", "MCP tool execution errors", ["tool", "error_code"],
         registry=_PRegistry,
     )
+    _rate_limit_hits_total = _PCounter(
+        "mcp_rate_limit_hits_total", "MCP rate limit hits by client IP",
+        registry=_PRegistry,
+    )
+    _rate_limiter_clients_gauge = _PGauge(
+        "mcp_rate_limiter_clients", "Current MCP rate limiter tracked IPs",
+        registry=_PRegistry,
+    )
+    _mcp_cache_entries_gauge = _PGauge(
+        "mcp_cache_entries", "Current MCP cache entries",
+        registry=_PRegistry,
+    )
 except ImportError:
     _tool_calls_total = None
     _tool_errors_total = None
+    _rate_limit_hits_total = None
+    _rate_limiter_clients_gauge = None
+    _mcp_cache_entries_gauge = None
 
 
 def _inc_tool_call(tool: str, status: str) -> None:
@@ -157,6 +302,11 @@ def _rera_search(query: str, market: str = "Yelahanka") -> str:
 
 
 def _psf_forecast(market: str = "Yelahanka", months: int = 6) -> str:
+    args = {"market": market, "months": months}
+    cached = _mcp_cache_get("psf_forecast", args)
+    if cached is not None:
+        return cached
+
     valid_markets = {"Yelahanka", "Devanahalli", "Hebbal"}
     if market not in valid_markets:
         return json.dumps({
@@ -190,7 +340,7 @@ def _psf_forecast(market: str = "Yelahanka", months: int = 6) -> str:
         monthly_change = float(psf_change_pct) / 12.0
         projected_psf = base_psf * (1 + monthly_change * forecast_months)
 
-    return json.dumps({"status": "ok", "result": {
+    result = json.dumps({"status": "ok", "result": {
         "market": market,
         "current_forecast_psf": round(base_psf, 2),
         "projected_psf": round(projected_psf, 2),
@@ -200,6 +350,8 @@ def _psf_forecast(market: str = "Yelahanka", months: int = 6) -> str:
         "forecast_date": str(r["forecast_date"]),
         "projection_note": "Linear projection from latest trend" if psf_change_pct else "Static — no trend data",
     }})
+    _mcp_cache_set("psf_forecast", args, result)
+    return result
 
 
 def _quick_feasibility(land_cost_cr: float, area_acres: float, market: str = "Yelahanka") -> str:
@@ -274,6 +426,11 @@ def _quick_feasibility(land_cost_cr: float, area_acres: float, market: str = "Ye
 
 
 def _corridor_score(lat: float, lon: float) -> str:
+    args = {"lat": lat, "lon": lon}
+    cached = _mcp_cache_get("corridor_score", args)
+    if cached is not None:
+        return cached
+
     errors: list[str] = []
     err = _validate_bounds("lat", lat, -90.0, 90.0)
     if err:
@@ -311,7 +468,7 @@ def _corridor_score(lat: float, lon: float) -> str:
         }})
 
     r = _row_to_dict(rows[0])
-    return json.dumps({"status": "ok", "result": {
+    result = json.dumps({"status": "ok", "result": {
         "composite_score": round(float(r["composite_score"]), 4),
         "in_corridor": True,
         "corridor_name": r["name"],
@@ -319,6 +476,76 @@ def _corridor_score(lat: float, lon: float) -> str:
         "commercial_score": round(float(r.get("commercial_score", 0)), 4),
         "distance_m": round(float(r["distance_m"]), 1),
     }})
+    _mcp_cache_set("corridor_score", args, result)
+    return result
+
+
+def _investor_brief(market: str = "Yelahanka", land_cost_cr: float = 0.0,
+                    area_acres: float = 0.0, project_name: str = "RE_OS Query") -> str:
+    args = {"market": market, "land_cost_cr": land_cost_cr,
+            "area_acres": area_acres, "project_name": project_name}
+    cached = _mcp_cache_get("investor_brief", args)
+    if cached is not None:
+        return cached
+
+    errors: list[str] = []
+    try:
+        from config.settings import TARGET_MARKETS
+        valid_markets = set(m.strip() for m in TARGET_MARKETS)
+    except Exception:
+        valid_markets = {"Yelahanka", "Devanahalli", "Hebbal"}
+    if market not in valid_markets:
+        errors.append(f"market must be one of {sorted(valid_markets)}, got '{market}'")
+    err = _validate_bounds("land_cost_cr", land_cost_cr, 0.0, 1_000_000.0)
+    if err:
+        errors.append(err)
+    err = _validate_bounds("area_acres", area_acres, 0.0, 10_000.0)
+    if err:
+        errors.append(err)
+    if errors:
+        return json.dumps({"status": "validation_error", "errors": errors})
+
+    try:
+        from utils.investor_brief_generator import InvestorBriefGenerator
+        gen = InvestorBriefGenerator()
+        brief = gen.generate(market, project_name, land_cost_cr, area_acres)
+        data = brief.to_dict()
+
+        # Keep under 2000 chars — strip verbose fields for MCP efficiency
+        summary = {
+            "status": "ok",
+            "market": data["market"],
+            "market_overview": {
+                "avg_psf": data["market_overview"].get("avg_psf"),
+                "psf_range": [data["market_overview"].get("psf_min"),
+                              data["market_overview"].get("psf_max")],
+                "trend": data["market_overview"].get("psf_trend", {}).get("direction"),
+                "rera_projects": data["market_overview"].get("rera_projects"),
+            },
+            "competitive_landscape": {
+                "grade_a_count": data["competitive_landscape"].get("grade_a_count"),
+            },
+            "financial_summary": {
+                "status": data["financial_summary"].get("status"),
+                "scenarios": {
+                    k: {"irr_pct": v["irr_pct"], "verdict": v["verdict"],
+                        "profit_margin_pct": v["profit_margin_pct"]}
+                    for k, v in data["financial_summary"].get("scenarios", {}).items()
+                } if data["financial_summary"].get("status") == "computed" else {},
+            },
+            "supply_risk": {
+                "pipeline_units": data["supply_risk"].get("pipeline_units"),
+                "weeks_of_inventory": data["supply_risk"].get("weeks_of_inventory"),
+            },
+            "assembly_alerts_count": len(data.get("assembly_alerts", [])),
+            "board_verdict": data["board_verdict"].get("decision_flag", "no_verdict"),
+        }
+        result = json.dumps(summary)
+        _mcp_cache_set("investor_brief", args, result)
+        return result
+    except Exception as exc:
+        logger.warning("[mcp] investor_brief failed: %s", exc)
+        return json.dumps({"status": "error", "error": str(exc)})
 
 
 # ── Tool registry ───────────────────────────────────────────────────────────
@@ -375,6 +602,21 @@ TOOLS: dict[str, dict] = {
                 "lon": {"type": "number", "description": "Longitude in decimal degrees (-180 to 180)"},
             },
             "required": ["lat", "lon"],
+        },
+    },
+    "investor_brief": {
+        "name": "investor_brief",
+        "description": "Generate a 6-section investor-ready market brief from live RE_OS database. Sections: market_overview (PSF range, trend, absorption), competitive_landscape (Grade A devs), financial_summary (IRR at 3 scenarios), supply_risk, assembly_alerts, board_verdict. No LLM calls — deterministic from DB. Returns JSON under 2000 chars.",
+        "handler": _investor_brief,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "market": {"type": "string", "description": "Market name: Yelahanka, Devanahalli, or Hebbal"},
+                "land_cost_cr": {"type": "number", "description": "Land cost in crores INR (0.01–1,000,000)"},
+                "area_acres": {"type": "number", "description": "Land area in acres (0.01–10,000)"},
+                "project_name": {"type": "string", "description": "Optional project name for the brief", "default": "RE_OS Query"},
+            },
+            "required": ["market", "land_cost_cr", "area_acres"],
         },
     },
 }
@@ -526,17 +768,21 @@ async def _lifespan(app_instance):
         logger.debug("[mcp] cleaned %d remaining sessions on shutdown", remaining)
 
 
+_START_TIME: float = time.monotonic()
+
+
 async def _health(request):
     return JSONResponse({
         "status": "ok",
         "service": "re_os_mcp",
         "version": "1.0.2",
         "auth_required": _MCP_API_KEY is not None,
-        "uptime_s": round(time.monotonic() - _START_TIME, 1) if "_START_TIME" in dir() else 0,
+        "uptime_s": round(time.monotonic() - _START_TIME, 1),
+        "tools_count": len(TOOLS),
+        "rate_limiter_clients": len(_RATE_LIMITER),
+        "rate_limit_hits": _RATE_LIMIT_HITS,
+        "cache_entries": len(_MCP_CACHE),
     })
-
-
-_START_TIME: float = time.monotonic()
 
 
 # ── Auth middleware ────────────────────────────────────────────────────────
@@ -553,7 +799,13 @@ def _is_authorized(headers: Headers) -> bool:
 
 async def _sse(request):
     if not _is_authorized(request.headers):
-        return JSONResponse({"error": "unauthorized"}, status_code=401)
+        logger.warning("[mcp] auth failure on /sse from %s", request.client.host if request.client else "unknown")
+        return JSONResponse({"error": "unauthorized — provide X-API-Key header matching MCP_API_KEY env"}, status_code=403)
+
+    client_ip = request.client.host if request.client else "unknown"
+    retry_after = _check_rate_limit(client_ip)
+    if retry_after is not None:
+        return JSONResponse({"error": "rate limit exceeded"}, status_code=429, headers={"Retry-After": retry_after})
 
     session_id = uuid.uuid4().hex
     queue: asyncio.Queue = asyncio.Queue()
@@ -584,6 +836,7 @@ async def _sse(request):
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "X-Content-Type-Options": "nosniff",
         },
     )
 
@@ -593,9 +846,20 @@ async def _sse(request):
 
 async def _message(request):
     if not _is_authorized(request.headers):
+        client_ip = request.client.host if request.client else "unknown"
+        logger.warning("[mcp] auth failure on /message from %s", client_ip)
         return JSONResponse(
             _make_error(-32000, "unauthorized — provide X-API-Key header matching MCP_API_KEY env"),
-            status_code=401,
+            status_code=403,
+        )
+
+    client_ip = request.client.host if request.client else "unknown"
+    retry_after = _check_rate_limit(client_ip)
+    if retry_after is not None:
+        return JSONResponse(
+            _make_error(-32000, "rate limit exceeded — try again later"),
+            status_code=429,
+            headers={"Retry-After": retry_after},
         )
 
     session_id = request.query_params.get("sessionId", "")

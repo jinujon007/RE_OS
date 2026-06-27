@@ -275,13 +275,13 @@ def test_negation_does_not_false_positive():
 
 
 def test_discord_includes_session_api_reference():
-    """19. Discord output references the session API endpoint."""
+    """19. Discord output references the v1 session API endpoint."""
     from utils.board_room_formatter import BoardRoomFormatter
 
     fmt = BoardRoomFormatter(_make_dept_responses())
     output = fmt.format_discord()
-    assert "/api/board/session" in output, (
-        "Discord output should reference session API for full memo"
+    assert "/api/v1/board/session" in output, (
+        "Discord output should reference v1 session API for full memo"
     )
 
 
@@ -369,3 +369,100 @@ def test_summary_table_skips_missing_depts():
     assert "| Engineering " not in table  # no assessment
     assert "| Ops " not in table
     assert "| Legal " not in table
+
+
+def test_unicode_nfc_normalization():
+    """26. Unicode responses normalised to NFC, keyword matching works."""
+    from utils.board_room_formatter import BoardRoomFormatter
+
+    # Pre-composed and decomposed forms of "viable" should both match
+    responses = {"bd": "This deal is v\u00edable. Proceed."}  # precomposed í (U+00ED)
+    fmt = BoardRoomFormatter(responses)
+    assert fmt.assessments.get("bd", {}).get("verdict") == "GO", (
+        "Unicode NFC-normalised 'viable' should match GO pattern"
+    )
+
+
+def test_bytes_input_coerced():
+    """27. Bytes values coerced to str without crash."""
+    from utils.board_room_formatter import BoardRoomFormatter
+
+    responses = {"bd": b"I recommend proceeding.", "finance": b"Viable."}
+    fmt = BoardRoomFormatter(responses)
+    assert fmt.decision_flag() in ("GO", "CONDITIONAL", "NO-GO")
+    assert isinstance(fmt.format_discord(), str)
+
+
+def test_none_input_handled():
+    """28. None values in dept_responses do not crash."""
+    from utils.board_room_formatter import BoardRoomFormatter
+
+    responses = {"bd": None, "finance": "Viable.", "legal": None}
+    fmt = BoardRoomFormatter(responses)
+    assert fmt.assessments.get("bd") is None
+    assert fmt.assessments.get("legal") is None
+    assert fmt.assessments.get("finance", {}).get("verdict") == "GO"
+
+
+def test_non_dict_input():
+    """29. Non-dict input defaults to empty dict — does not crash."""
+    from utils.board_room_formatter import BoardRoomFormatter
+
+    for bad in [None, "string", 42, ["list"]]:
+        fmt = BoardRoomFormatter(bad)  # type: ignore[arg-type]
+        assert fmt.decision_flag() == "CONDITIONAL"
+        assert isinstance(fmt.format_discord(), str)
+
+
+def test_max_dept_chars_truncated():
+    """30. Very long dept response truncated at _MAX_DEPT_CHARS with marker."""
+    from utils.board_room_formatter import BoardRoomFormatter
+
+    # 15K chars of text
+    long_text = "I recommend proceeding. " * 600
+    responses = {"bd": long_text, "finance": "Viable.", "legal": "Clear."}
+    fmt = BoardRoomFormatter(responses)
+    bd_text = fmt.dept_responses.get("bd", "")
+    assert len(bd_text) <= 10_100, f"BD response should be truncated: {len(bd_text)} chars"
+    assert "truncated" in bd_text, "Truncation marker should be present"
+
+
+def test_all_empty_responses_meaningful_discord():
+    """31. All dept responses empty still produces meaningful Discord output."""
+    from utils.board_room_formatter import BoardRoomFormatter
+
+    responses = {"bd": "", "finance": "", "engineering": "", "ops": "", "legal": ""}
+    fmt = BoardRoomFormatter(responses)
+    output = fmt.format_discord()
+    assert len(output) >= 50, f"Empty-state Discord output too short: {len(output)} chars"
+    assert "No department responses" in output, (
+        "Discord should mention missing responses"
+    )
+
+
+def test_all_neutral_summary_table():
+    """32. All departments NEUTRAL still renders summary table with all rows."""
+    from utils.board_room_formatter import BoardRoomFormatter
+
+    responses = {
+        "bd": "The site is in Yelahanka near Manyata.",
+        "finance": "The IRR needs more analysis.",
+        "engineering": "Standard construction methods apply.",
+        "ops": "Operations team is reviewing the schedule.",
+        "legal": "Documents are being reviewed.",
+    }
+    fmt = BoardRoomFormatter(responses)
+    table = fmt.format_summary_table()
+    assert table, "Summary table should not be empty for neutral assessments"
+    for dept in ("BD", "Finance", "Engineering", "Ops", "Legal"):
+        assert f"| {dept} " in table, f"Table missing {dept}"
+
+
+def test_discord_fallback_on_no_assessments():
+    """33. format_discord includes fallback message when no assessments parsed."""
+    from utils.board_room_formatter import BoardRoomFormatter
+
+    fmt = BoardRoomFormatter({})
+    output = fmt.format_discord()
+    assert "No department responses" in output
+    assert "DECISION: CONDITIONAL" in output

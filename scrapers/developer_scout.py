@@ -986,6 +986,121 @@ class DeveloperScout:
             return ""
 
 
+# ── Pricing history upsert ────────────────────────────────────────────────────
+
+
+def _upsert_dev_pricing_history(findings: list[dict], market: str) -> int:
+    """Upsert each finding with a valid price to developer_pricing_history.
+
+    PSF heuristic:
+      - price_min > 100000 → total project price (₹1L+ threshold).
+        PSF = total / area_sqft when area available, else NULL.
+      - price_min <= 100000 → already a per-sqft value. Store directly.
+      - total_price_inr always stored for raw price reference.
+
+    psf_launch populated from finding's launch_psf field when present.
+    change_pct computed vs prior scrape filtered to last 90 days.
+
+    Returns:
+        Number of records successfully upserted.
+        Safe against missing DB or invalid data — never raises.
+    """
+    from datetime import date, timedelta
+    from sqlalchemy import text
+    from utils.db import get_engine
+
+    today = date.today()
+    engine = get_engine()
+    upserted = 0
+
+    for f in findings:
+        dev = (f.get("developer") or "").strip()
+        proj = (f.get("project_name") or "").strip()
+        pmin_raw = f.get("price_min", 0) or 0
+        area_raw = f.get("area_sqft", "") or ""
+        launch_psf_raw = f.get("launch_psf")
+
+        if not dev or not proj or pmin_raw <= 0:
+            continue
+
+        pmin = float(pmin_raw)
+        area = 0.0
+        try:
+            area = float(area_raw.replace(",", "").split()[0]) if area_raw else 0.0
+        except (ValueError, IndexError):
+            area = 0.0
+
+        psf_val: float | None = None
+        # Heuristic: price > 1L = total price, need area to compute PSF
+        if pmin > 100_000:
+            if area > 0:
+                psf_val = round(pmin / area, 2)
+            # else: keep None — store as total_price_inr only
+        else:
+            # Already a per-sqft value
+            psf_val = round(pmin, 2)
+
+        launch_psf: float | None = None
+        if launch_psf_raw:
+            try:
+                launch_psf = round(float(launch_psf_raw), 2)
+            except (ValueError, TypeError):
+                pass
+
+        try:
+            with engine.begin() as conn:
+                prior = conn.execute(
+                    text("""
+                        SELECT psf_listed FROM developer_pricing_history
+                        WHERE developer_name = :d
+                          AND project_name = :p
+                          AND scrape_date >= :age_cutoff
+                        ORDER BY scrape_date DESC LIMIT 1
+                    """),
+                    {"d": dev, "p": proj, "age_cutoff": today - timedelta(days=90)},
+                ).fetchone()
+                prior_psf = float(prior[0]) if prior and prior[0] is not None else None
+                change_pct = None
+                if psf_val is not None and prior_psf is not None and prior_psf > 0:
+                    change_pct = round((psf_val - prior_psf) / prior_psf * 100, 2)
+
+                conn.execute(
+                    text("""
+                        INSERT INTO developer_pricing_history
+                            (developer_name, market, project_name,
+                             psf_listed, total_price_inr, psf_launch,
+                             scrape_date, change_pct, prior_psf)
+                        VALUES (:d, :m, :p, :psf, :total, :launch,
+                                :sd, :chg, :prior)
+                        ON CONFLICT (developer_name, project_name, scrape_date)
+                        DO UPDATE SET
+                            psf_listed = EXCLUDED.psf_listed,
+                            total_price_inr = EXCLUDED.total_price_inr,
+                            psf_launch = EXCLUDED.psf_launch,
+                            change_pct = EXCLUDED.change_pct,
+                            prior_psf = EXCLUDED.prior_psf
+                    """),
+                    {
+                        "d": dev,
+                        "m": market,
+                        "p": proj,
+                        "psf": psf_val,
+                        "total": round(pmin, 2) if pmin > 0 else None,
+                        "launch": launch_psf,
+                        "sd": today,
+                        "chg": change_pct,
+                        "prior": prior_psf,
+                    },
+                )
+                upserted += 1
+        except Exception as exc:
+            logger.warning(
+                "[DevPricing] Upsert failed for {}/{}: {}", dev, proj, exc
+            )
+
+    return upserted
+
+
 # ── Standalone runner ─────────────────────────────────────────────────────────
 
 
@@ -1027,6 +1142,8 @@ def scout_developers(
             f"[DeveloperScout] Competitor alert failed for {market}: {_alert_err}"
         )
 
+    n_pricing = _upsert_dev_pricing_history(findings, market)
+    logger.info("[DevPricing] Upserted {} pricing records for {}", n_pricing, market)
     scraper_runs_total.labels(source="developer", market=market, status="success").inc()
     print(f"\n{'=' * 55}")
     print(f"DEVELOPER SCOUT — {market.upper()}")

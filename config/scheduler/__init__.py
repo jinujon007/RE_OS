@@ -67,6 +67,16 @@ from config.scheduler.digest_jobs import (
     run_ledger_verdict_digest,
 )
 
+from config.scheduler.deed_jobs import (
+    run_daily_deed_scrape,
+    run_weekly_deed_threshold_check,
+    run_assembly_detection,
+)
+
+from config.scheduler.forecast_jobs import (
+    run_update_actuals,
+)
+
 from config.scheduler.maintenance_jobs import (
     run_memory_decay,
     run_confidence_decay_check,
@@ -86,12 +96,16 @@ from config.scheduler.maintenance_jobs import (
     run_corridor_backtest_monthly,
     run_kill_criteria_reminder,
     run_scraper_health_check,
+    run_check_developer_price_moves,
     _ops_already_alerted,
     _bd_already_alerted,
 )
 
 __all__ = [
     "run_single_market_rera",
+    "run_daily_deed_scrape",
+    "run_weekly_deed_threshold_check",
+    "run_assembly_detection",
     "run_kaveri_deeds_weekly",
     "run_kaveri_weekly_orchestration",
     "run_bhoomi_auto_survey",
@@ -145,6 +159,8 @@ __all__ = [
     "run_corridor_backtest_monthly",
     "run_kill_criteria_reminder",
     "run_scraper_health_check",
+    "run_check_developer_price_moves",
+    "run_update_actuals",
     "start_scheduler",
 ]
 
@@ -163,15 +179,19 @@ def start_scheduler():
 
     from config.scheduler.rera_jobs import register_jobs as _register_rera
     from config.scheduler.kaveri_jobs import register_jobs as _register_kaveri
+    from config.scheduler.deed_jobs import register_jobs as _register_deed
     from config.scheduler.intel_jobs import register_jobs as _register_intel
     from config.scheduler.digest_jobs import register_jobs as _register_digest
     from config.scheduler.maintenance_jobs import register_jobs as _register_maintenance
+    from config.scheduler.forecast_jobs import register_jobs as _register_forecast
 
     _register_rera(scheduler, _safe_job)
     _register_kaveri(scheduler, _safe_job)
+    _register_deed(scheduler, _safe_job)
     _register_intel(scheduler, _safe_job)
     _register_digest(scheduler, _safe_job)
     _register_maintenance(scheduler, _safe_job)
+    _register_forecast(scheduler, _safe_job)
 
     if SCHEDULER_DRY_RUN:
         jobs = scheduler.get_jobs()

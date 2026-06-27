@@ -2663,6 +2663,9 @@ function _renderBoardSessionsVisible() {
       : '—';
     const st = String(s.status || '').toLowerCase();
     const stColor = st === 'complete' ? '#3fb950' : st === 'failed' ? '#f85149' : st === 'active' ? '#f0a020' : '#8b949e';
+    const df = s.decision_flag ? String(s.decision_flag).toUpperCase() : null;
+    const dfColor = df === 'GO' ? '#3fb950' : df === 'CONDITIONAL' ? '#f0a020' : df === 'NO-GO' ? '#f85149' : null;
+    const dfLabel = df === 'GO' ? 'Go — proceed' : df === 'CONDITIONAL' ? 'Conditional — further review needed' : df === 'NO-GO' ? 'No-Go — declined' : null;
     const excerpt = escapeHtml(s.pitch_excerpt || '');
     return `<div class="board-session-item" onclick="loadBoardSession('${escapeHtml(s.session_id)}')">
       <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -2671,7 +2674,10 @@ function _renderBoardSessionsVisible() {
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
         <span style="color:#8b949e;font-size:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${excerpt}</span>
-        <span style="color:${stColor};font-family:'Press Start 2P',cursive;font-size:6px;margin-left:6px;">${escapeHtml(s.status || '').toUpperCase()}</span>
+        <span style="display:flex;gap:4px;align-items:center;flex-shrink:0;margin-left:6px;">
+          ${df ? `<span style="background:${dfColor};color:#0d1117;font-family:'Press Start 2P',cursive;font-size:5px;padding:0 4px;border-radius:2px;line-height:14px;cursor:default;" title="${escapeHtml(dfLabel)}">${escapeHtml(df)}</span>` : `<span style="color:#484f58;font-size:5px;font-family:'Press Start 2P',cursive;">—</span>`}
+          <span style="color:${stColor};font-family:'Press Start 2P',cursive;font-size:6px;">${escapeHtml(s.status || '').toUpperCase()}</span>
+        </span>
       </div>
     </div>`;
   }).join('');
@@ -2707,7 +2713,7 @@ async function loadBoardSession(sessionId) {
       statusEl.textContent = 'Board session loaded.';
       _currentBoardSessionId = sessionId;
       _currentTranscript = data.transcript;
-      _renderBoardResult(data.transcript, resultEl);
+      _renderBoardResult(data.transcript, resultEl, data.decision_flag);
     } else if (data.status === 'failed') {
       statusEl.style.color = '#f85149';
       statusEl.textContent = 'Session failed: ' + (data.transcript?.error || '?');
@@ -3078,11 +3084,18 @@ function rejectAction(idx) {
   if (row) { row.style.opacity = '0.3'; row.style.pointerEvents = 'none'; }
 }
 
-function _renderBoardResult(transcript, el) {
+function _renderBoardResult(transcript, el, decisionFlag) {
    const _DEPT_COLORS = { bd: '#f0a020', finance: '#3fb950', engineering: '#58a6ff', ops: '#f85149', legal: '#9b7ec7' };
    const _DEPT_LABELS = { bd: 'BD', finance: 'FINANCE', engineering: 'ENG', ops: 'OPS', legal: 'LEGAL' };
+   const _DF_BANNERS = { GO: { bg: '#0f2d0f', border: '#3fb950', text: '#3fb950', label: '✅ GO — PROCEED' }, CONDITIONAL: { bg: '#2d1f0a', border: '#f0a020', text: '#f0a020', label: '⚠️ CONDITIONAL — FURTHER REVIEW REQUIRED' }, 'NO-GO': { bg: '#2d0a0a', border: '#f85149', text: '#f85149', label: '❌ NO-GO — DECLINED' } };
    if (!transcript || !transcript.responses) { el.style.display = 'none'; return; }
-   let html = '<div class="board-dept-grid">';
+   let html = '';
+   const df = decisionFlag ? String(decisionFlag).toUpperCase() : null;
+   const banner = df ? _DF_BANNERS[df] : null;
+   if (banner) {
+     html += '<div style="background:' + banner.bg + ';border:1px solid ' + banner.border + ';color:' + banner.text + ';border-radius:4px;padding:8px 12px;margin-bottom:12px;font-family:\'Press Start 2P\',cursive;font-size:8px;text-align:center;letter-spacing:1px;">' + banner.label + '</div>';
+   }
+   html += '<div class="board-dept-grid">';
    for (const [key, color] of Object.entries(_DEPT_COLORS)) {
      const resp = transcript.responses[key] || '';
      const label = _DEPT_LABELS[key];

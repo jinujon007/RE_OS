@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import time
+import unicodedata
 from typing import Any
 
 __all__: list[str] = [
@@ -28,6 +29,7 @@ _DISCORD_MAX_CHARS: int = 2000
 _DISCORD_MIN_CHARS: int = 100
 _TRUNC_SAFETY_MARGIN: int = 80
 _PSF_RANGE_CAP: int = 2  # max PSF values in range display
+_MAX_DEPT_CHARS: int = 10_000  # per-dept regex guard — truncates longer responses
 
 _DEPT_DISPLAY_NAMES: dict[str, str] = {
     "bd": "BD",
@@ -143,6 +145,15 @@ def _inc_decision_flag_total(flag: str) -> None:
         pass
 
 
+def _inc_truncation_total(reason: str) -> None:
+    """Increment truncation-event counter if Prometheus is loaded."""
+    try:
+        from config.metrics import format_truncation_total
+        format_truncation_total.labels(reason=reason).inc()
+    except Exception:
+        pass
+
+
 # ── Core class ─────────────────────────────────────────────────────────────────
 
 
@@ -158,7 +169,19 @@ class BoardRoomFormatter:
     """
 
     def __init__(self, dept_responses: dict[str, str]) -> None:
-        self._dept_responses: dict[str, str] = dept_responses
+        if not isinstance(dept_responses, dict):
+            dept_responses = {}
+        coerced: dict[str, str] = {}
+        for k, v in dept_responses.items():
+            if isinstance(v, bytes):
+                v = v.decode("utf-8", errors="replace")
+            elif not isinstance(v, str):
+                v = str(v) if v is not None else ""
+            v = unicodedata.normalize("NFC", v)
+            if len(v) > _MAX_DEPT_CHARS:
+                v = v[:_MAX_DEPT_CHARS] + "\n… *[truncated]*"
+            coerced[k] = v
+        self._dept_responses: dict[str, str] = coerced
         self._assessments: dict[str, dict[str, Any]] = {}
         self._parsed: bool = False
         self._cached_flag: str | None = None
@@ -310,15 +333,21 @@ class BoardRoomFormatter:
             "",
             "**Department Verdicts:**",
         ]
+        has_any_assessment = False
         for dept in _DEPT_ORDER:
             assessment = self.assessments.get(dept)
             if not assessment:
                 continue
+            has_any_assessment = True
             v_icon = _VERDICT_ICONS.get(assessment["verdict"], "⚪")
             display = _DEPT_DISPLAY_NAMES.get(dept, dept.title())
             lines.append(
                 f"{v_icon} **{display}**: {assessment['verdict']} "
                 f"(confidence: {assessment['confidence']})"
+            )
+        if not has_any_assessment:
+            lines.append(
+                "⚪ _No department responses available for automated flag._"
             )
 
         lines.append("")
@@ -329,7 +358,7 @@ class BoardRoomFormatter:
         lines.append("")
         lines.append(
             "_Full markdown memo: "
-            "`GET /api/board/session/{session_id}`_"
+            "`GET /api/v1/board/session/{session_id}`_"
         )
 
         output = "\n".join(lines)
@@ -426,6 +455,7 @@ class BoardRoomFormatter:
                 cutoff -= 1
             if cutoff <= 0:
                 cutoff = max_chars - _TRUNC_SAFETY_MARGIN
+        _inc_truncation_total("discord_exceeded_max_chars")
         return text[:cutoff].rstrip() + "\n… *truncated*"
 
     @staticmethod

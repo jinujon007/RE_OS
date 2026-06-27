@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from collections import OrderedDict
 from datetime import datetime, timezone
@@ -29,7 +30,7 @@ from dashboard.state import (
     _pulse_cache, _pulse_cache_lock, _PULSE_CACHE_TTL, _PULSE_CACHE_MAX,
     _err_resp, _resolve_market, ErrorResponse,
 )
-from config.metrics import db_query_duration_seconds, digest_runs_total, _counter
+from config.metrics import db_query_duration_seconds, digest_runs_total, _counter, _histogram
 from utils.etag import compute_etag, check_etag, add_etag
 
 logger = logging.getLogger("re_os.dashboard")
@@ -2035,6 +2036,292 @@ async def demand_config_split(
         return _err_resp(str(exc), request, 500, "Data")
 
 
+# ── Deed Throughput (GATE-136, T-1368) ──────────────────────────────────
+
+
+_deed_throughput_total = _counter(
+    "deed_throughput_total", "Deed throughput queries by market and status", ["market", "status"],
+)
+
+
+class DeedThroughputWeek(BaseModel):
+    week_start: str | None = None
+    deed_count: int = 0
+    market: str = "Unknown"
+
+
+class DeedThroughputResponse(BaseModel):
+    weeks: list[DeedThroughputWeek]
+    current_week_count: int = 0
+    target: int = 50
+    status: str = "critical"
+
+
+@router.get(
+    "/deeds/throughput",
+    summary="Weekly deed throughput per market — last 12 weeks",
+    description="Returns weekly Sale deed counts per market for the last 12 weeks. "
+                "Status thresholds: 0=critical (no data), <50=at_risk (below target), "
+                ">=50=on_track (target met). The 50/week target is the GATE-118 "
+                "kill-criteria deadline (2026-08-15). The separate Discord alert "
+                "fires at <20/week as earlier warning.",
+    tags=["Deeds"],
+)
+@limiter.limit("30/minute")
+async def deeds_throughput(
+    request: Request,
+    market: str = Query(default=None, description="Optional market filter (Yelahanka, Devanahalli, Hebbal)"),
+):
+    mkt_param = market.strip() if market else None
+    try:
+        with db_query_duration_seconds.labels(query_name="deed_throughput").time():
+            with _get_sa_engine().connect() as conn:
+                base_sql = """
+                    SELECT t.market, t.week_start, t.current_week_count
+                    FROM v_deed_throughput_weekly t
+                """
+                params: dict[str, object] = {}
+                if mkt_param:
+                    base_sql += " WHERE t.market ILIKE :mkt"
+                    params["mkt"] = f"%{mkt_param}%"
+                base_sql += " ORDER BY t.week_start DESC LIMIT 12"
+                rows = conn.execute(
+                    _sa_text(base_sql),
+                    params,
+                ).fetchall()
+        weeks = [
+            DeedThroughputWeek(
+                week_start=str(r[1]) if r[1] else None,
+                deed_count=int(r[2]) if r[2] else 0,
+                market=str(r[0]) if r[0] else "Unknown",
+            )
+            for r in rows
+        ]
+        current_count = weeks[0].deed_count if weeks else 0
+        if current_count == 0:
+            status = "critical"
+        elif current_count < 50:
+            status = "at_risk"
+        else:
+            status = "on_track"
+        _deed_throughput_total.labels(market=mkt_param or "all", status=status).inc()
+        return DeedThroughputResponse(
+            weeks=weeks,
+            current_week_count=current_count,
+            target=50,
+            status=status,
+        )
+    except Exception as exc:
+        logger.error("[deeds_throughput] %s", exc)
+        _deed_throughput_total.labels(market=mkt_param or "all", status="error").inc()
+        return _err_resp("failed to query deed throughput", request, 500, "Data")
+
+
+# ── Decision Journal (GATE-137) ──────────────────────────────────────────
+
+
+@router.get(
+    "/decision-journal",
+    summary="List decision journal entries",
+    tags=["Decision Journal"],
+)
+@limiter.limit("30/minute")
+async def decision_journal_list(
+    request: Request,
+    market: str = Query(default=None, description="Optional market filter"),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    try:
+        from utils.decision_journal import list_entries
+        entries = list_entries(market=market, limit=limit)
+        return {"entries": entries, "count": len(entries)}
+    except Exception as exc:
+        logger.warning("[decision_journal_list] %s", exc)
+        return _err_resp("failed to query decision journal", request, 500, "Data")
+
+
+@router.get(
+    "/decision-journal/{entry_id}",
+    summary="Get a single decision journal entry",
+    tags=["Decision Journal"],
+)
+@limiter.limit("30/minute")
+async def decision_journal_get(request: Request, entry_id: int):
+    try:
+        from utils.decision_journal import get_entry
+        entry = get_entry(entry_id)
+        if not entry:
+            return _err_resp("entry not found", request, 404, "Decision Journal")
+        return entry
+    except Exception as exc:
+        logger.warning("[decision_journal_get] %s", exc)
+        return _err_resp("failed to query decision journal", request, 500, "Data")
+
+
+# ── Assembly Alerts (GATE-140) ──────────────────────────────────────────
+
+
+@router.get(
+    "/intel/assembly-alerts",
+    summary="Active assembly detection signals, sorted by confidence",
+    tags=["Assembly"],
+)
+@limiter.limit("30/minute")
+async def assembly_alerts(
+    request: Request,
+    market: str = Query(default=None, description="Market filter (optional)"),
+    min_confidence: float = Query(default=0.5, ge=0.0, le=1.0, description="Minimum confidence threshold"),
+):
+    try:
+        with _get_sa_engine().connect() as conn:
+            where = ["s.status = 'open'"]
+            params: dict[str, object] = {}
+            if market:
+                mkt = _normalize_market(market)
+                if mkt:
+                    where.append("s.market ILIKE :mkt")
+                    params["mkt"] = f"%{mkt}%"
+            where.append(
+                "((s.confidence_score IS NOT NULL AND s.confidence_score >= :mc) "
+                "OR (s.confidence IS NOT NULL AND s.confidence >= :mc2))"
+            )
+            params["mc"] = min_confidence
+            params["mc2"] = min_confidence
+            where_sql = " AND ".join(where)
+            rows = conn.execute(
+                _sa_text(f"""
+                    SELECT s.market, s.village, s.hobli,
+                           COALESCE(s.buyer_name, s.buyer_name_norm) AS buyer_name,
+                           s.parcel_count,
+                           COALESCE(s.total_area_sqm, s.total_extent_sqft / 10.764) AS area_sqm,
+                           COALESCE(s.confidence_score, s.confidence) AS confidence_score,
+                           s.first_deed_date AS first_txn_date,
+                           s.detected_at,
+                           s.survey_numbers,
+                           CASE
+                               WHEN s.detected_at IS NOT NULL
+                               THEN EXTRACT(DAY FROM NOW() - s.detected_at)::INTEGER
+                               WHEN s.first_deed_date IS NOT NULL
+                               THEN EXTRACT(DAY FROM NOW() - s.first_deed_date)::INTEGER
+                               ELSE 0
+                           END AS days_active
+                    FROM assembly_signals s
+                    WHERE {where_sql}
+                    ORDER BY confidence_score DESC NULLS LAST
+                    LIMIT 100
+                """),
+                params,
+            ).fetchall()
+        results = []
+        for r in rows:
+            results.append({
+                "market": r.market or "Unknown",
+                "village": r.village,
+                "hobli": r.hobli or "",
+                "buyer_name": r.buyer_name or "",
+                "parcel_count": int(r.parcel_count) if r.parcel_count else 0,
+                "area_sqm": float(r.area_sqm) if r.area_sqm else 0.0,
+                "confidence_score": float(r.confidence_score) if r.confidence_score else 0.0,
+                "first_txn_date": str(r.first_txn_date) if r.first_txn_date else None,
+                "detected_at": str(r.detected_at) if r.detected_at else None,
+                "survey_numbers": r.survey_numbers if r.survey_numbers else [],
+                "days_active": int(r.days_active) if r.days_active else 0,
+            })
+        return {"alerts": results, "count": len(results)}
+    except Exception as exc:
+        logger.warning("[assembly_alerts] %s", exc)
+        return _err_resp("failed to query assembly alerts", request, 500, "Data")
+
+
+# ── Forecast Accuracy ────────────────────────────────────────────────────
+
+
+@router.get(
+    "/intel/forecast-accuracy",
+    summary="PSF forecast accuracy per market (MAPE + last 10 predictions)",
+    tags=["Intel"],
+)
+@limiter.limit("30/minute")
+async def forecast_accuracy(
+    request: Request,
+    market: str = Query(default=None, description="Market filter (optional)"),
+):
+    """Return per-market MAPE and recent predictions from the prediction ledger.
+
+    Uses a single DB round-trip per market (COUNT + SELECT combined via a
+    subquery window) to minimize connection overhead. Empty ledger returns
+    mape=null and last_10_predictions=[].
+    """
+    try:
+        from utils.prediction_tracker import compute_mape
+        from config.settings import TARGET_MARKETS as _VALID_MARKETS
+
+        markets = [m.strip() for m in _VALID_MARKETS]
+        if market:
+            canonical = _normalize_market(market)
+            if not canonical:
+                return _err_resp(f"Unknown market '{market}'. Valid: {sorted(_VALID_MARKETS)}", request, 400, "Data")
+            markets = [canonical]
+
+        result = {}
+        with _get_sa_engine().connect() as conn:
+            for m in markets:
+                mape = compute_mape(m)
+                stats = conn.execute(
+                    _sa_text("""
+                        WITH filtered AS (
+                            SELECT predicted_psf, actual_psf, error_pct,
+                                   predicted_at, measured_at
+                            FROM prediction_ledger_psf
+                            WHERE market = :market AND actual_psf IS NOT NULL
+                        )
+                        SELECT (SELECT COUNT(*) FROM filtered) AS sample_count,
+                               json_agg(
+                                   json_build_object(
+                                       'predicted_psf', predicted_psf,
+                                       'actual_psf', actual_psf,
+                                       'error_pct', error_pct,
+                                       'predicted_at', predicted_at,
+                                       'measured_at', measured_at
+                                   )
+                                   ORDER BY predicted_at DESC
+                               ) FILTER (WHERE row_number() OVER (ORDER BY predicted_at DESC) <= 10)
+                               AS last_10
+                        FROM filtered
+                    """),
+                    {"market": m},
+                ).fetchone()
+
+                sample_count = stats[0] if stats and stats[0] else 0
+                last_10_raw = stats[1] if stats and stats[1] else []
+
+                last_10 = []
+                for entry in last_10_raw:
+                    item = {
+                        "predicted_psf": float(entry["predicted_psf"]) if entry.get("predicted_psf") else None,
+                        "actual_psf": float(entry["actual_psf"]) if entry.get("actual_psf") else None,
+                        "error_pct": float(entry["error_pct"]) if entry.get("error_pct") else None,
+                        "predicted_at": str(entry["predicted_at"]) if entry.get("predicted_at") else None,
+                        "measured_at": str(entry["measured_at"]) if entry.get("measured_at") else None,
+                    }
+                    last_10.append(item)
+
+                result[m] = {
+                    "mape": mape,
+                    "sample_count": sample_count,
+                    "last_10_predictions": last_10,
+                }
+
+        etag = compute_etag(result)
+        _check = check_etag(request, etag)
+        if _check:
+            return _check
+        return JSONResponse(content=result, headers={"ETag": f'"{etag}"'})
+    except Exception as exc:
+        logger.warning("[API] /intel/forecast-accuracy failed: %s", exc)
+        return _err_resp(str(exc), request, 500, "Data")
+
+
 # ── Misc panel pages ────────────────────────────────────────────────────
 
 
@@ -2050,3 +2337,147 @@ async def digest_panel(request: Request):
 @router.get("/projects", summary="Operations Projects dashboard panel")
 def projects_panel(request: Request):
     return templates.TemplateResponse(request, "projects.html")
+
+
+# ── Investor Brief (GATE-143) ──────────────────────────────────────────
+
+# Prometheus metrics
+_investor_brief_requests_total = _counter(
+    "investor_brief_requests_total",
+    "Investor brief requests by market and status",
+    ["market", "status"],
+)
+_investor_brief_duration_seconds = _histogram(
+    "investor_brief_duration_seconds",
+    "Investor brief generation duration in seconds",
+    ["market"],
+    buckets=(1, 2.5, 5, 10, 30, 60, float("inf")),
+)
+_investor_brief_cache_hits_total = _counter(
+    "investor_brief_cache_hits_total",
+    "Investor brief cache hits by market",
+    ["market"],
+)
+
+_INVESTOR_BRIEF_CACHE: dict[str, tuple[str, float]] = {}
+_INVESTOR_BRIEF_CACHE_TTL = 300.0
+_INVESTOR_BRIEF_CACHE_LOCK = threading.Lock()
+
+
+def _cached_brief(key: str) -> str | None:
+    with _INVESTOR_BRIEF_CACHE_LOCK:
+        entry = _INVESTOR_BRIEF_CACHE.get(key)
+        if entry and time.time() - entry[1] < _INVESTOR_BRIEF_CACHE_TTL:
+            return entry[0]
+    return None
+
+
+def _set_cached_brief(key: str, value: str) -> None:
+    with _INVESTOR_BRIEF_CACHE_LOCK:
+        _INVESTOR_BRIEF_CACHE[key] = (value, time.time())
+        if len(_INVESTOR_BRIEF_CACHE) > 100:
+            oldest = min(_INVESTOR_BRIEF_CACHE.items(), key=lambda kv: kv[1][1])
+            _INVESTOR_BRIEF_CACHE.pop(oldest[0], None)
+
+
+@router.get(
+    "/investor/brief/{market}",
+    summary="Investor brief — 6-section market intelligence report",
+    tags=["Investor"],
+)
+@limiter.limit("20/minute")
+async def investor_brief_json(
+    market: str,
+    request: Request,
+    land_cost_cr: float = Query(default=0.0, ge=0, description="Land cost in Cr (min 0)"),
+    area_acres: float = Query(default=0.0, ge=0, description="Land area in acres (min 0)"),
+    project_name: str = Query(default="RE_OS Query", description="Project name for the brief"),
+):
+    canonical = _resolve_market(market)
+    if not canonical:
+        _investor_brief_requests_total.labels(market=market, status="invalid_market").inc()
+        return _err_resp(f"Invalid market: {market}", request, 400, "Investor")
+
+    cache_key = f"{canonical}:{land_cost_cr}:{area_acres}:{project_name}:json"
+    cached = _cached_brief(cache_key)
+    if cached:
+        _investor_brief_cache_hits_total.labels(market=canonical).inc()
+        return json.loads(cached)
+
+    _investor_brief_requests_total.labels(market=canonical, status="miss").inc()
+    t0 = time.time()
+    try:
+        from utils.investor_brief_generator import InvestorBriefGenerator
+
+        gen = InvestorBriefGenerator()
+        brief = gen.generate(
+            market=canonical,
+            project_name=project_name,
+            land_cost_cr=land_cost_cr,
+            area_acres=area_acres,
+        )
+        data = brief.to_dict()
+        data["status"] = "ok"
+        _investor_brief_duration_seconds.labels(market=canonical).observe(time.time() - t0)
+        _set_cached_brief(cache_key, json.dumps(data))
+        logger.debug("[investor_brief] cache miss for %s (%.2fs)", cache_key, time.time() - t0)
+        return data
+    except Exception as exc:
+        _investor_brief_requests_total.labels(market=canonical, status="error").inc()
+        logger.error("[investor_brief] %s", exc)
+        return _err_resp(str(exc), request, 500, "Investor")
+
+
+@router.get(
+    "/investor/brief/{market}/markdown",
+    summary="Investor brief as formatted markdown",
+    tags=["Investor"],
+)
+@limiter.limit("20/minute")
+async def investor_brief_markdown(
+    market: str,
+    request: Request,
+    land_cost_cr: float = Query(default=0.0, ge=0),
+    area_acres: float = Query(default=0.0, ge=0),
+    project_name: str = Query(default="RE_OS Query"),
+):
+    canonical = _resolve_market(market)
+    if not canonical:
+        return _err_resp(f"Invalid market: {market}", request, 400, "Investor")
+
+    cache_key = f"{canonical}:{land_cost_cr}:{area_acres}:{project_name}:md"
+    cached = _cached_brief(cache_key)
+    if cached:
+        _investor_brief_cache_hits_total.labels(market=canonical).inc()
+        return Response(content=cached, media_type="text/markdown")
+
+    _investor_brief_requests_total.labels(market=canonical, status="miss").inc()
+    t0 = time.time()
+    try:
+        from utils.investor_brief_generator import (
+            InvestorBriefGenerator, format_markdown,
+        )
+
+        gen = InvestorBriefGenerator()
+        brief = gen.generate(
+            market=canonical,
+            project_name=project_name,
+            land_cost_cr=land_cost_cr,
+            area_acres=area_acres,
+        )
+        md = format_markdown(brief)
+        _investor_brief_duration_seconds.labels(market=canonical).observe(time.time() - t0)
+        _set_cached_brief(cache_key, md)
+
+        from utils.obsidian_sync import write_investor_brief
+        obsidian_result = write_investor_brief(canonical, md, project_name, land_cost_cr, area_acres)
+        if obsidian_result == "":
+            logger.warning("[investor_brief] Obsidian write failed for %s (I/O error)", canonical)
+        elif obsidian_result is None:
+            logger.debug("[investor_brief] Obsidian vault not mounted — skipped export")
+
+        return Response(content=md, media_type="text/markdown")
+    except Exception as exc:
+        _investor_brief_requests_total.labels(market=canonical, status="error").inc()
+        logger.error("[investor_brief_markdown] %s", exc)
+        return _err_resp(str(exc), request, 500, "Investor")

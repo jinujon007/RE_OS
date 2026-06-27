@@ -1053,3 +1053,53 @@ ON CONFLICT (version_num) DO NOTHING;
 -- Parsed ownership history per survey_no. Daily dedup.
 -- ============================================================
 -- DDL via migration 0061_parcel_ownership_chain.py
+
+-- ============================================================
+-- GATE-136: V_DEED_THROUGHPUT_WEEKLY — Weekly deed counts per market
+-- T-1367: Deed throughput view grouped by ISO week.
+-- Current_week_count, prior_week_count, yoy_count (52-week ago).
+--
+-- Market resolution: uses hobli ILIKE matching (e.g. 'Yalahanka Hobli'
+-- matches 'Yelahanka') with village name fallback. Hobli names are
+-- more reliably correlated to RE_OS market boundaries than village names.
+-- Prior/YoY joins use week_start date arithmetic (not iso_week - 1)
+-- to correctly handle year boundaries (week 52→53→1 transitions).
+-- ============================================================
+CREATE OR REPLACE VIEW v_deed_throughput_weekly AS
+WITH weekly_counts AS (
+    SELECT
+        COALESCE(
+            (SELECT mm.name FROM micro_markets mm
+             WHERE rt.hobli ILIKE '%' || mm.name || '%'
+             LIMIT 1),
+            (SELECT mm.name FROM micro_markets mm
+             WHERE rt.village ILIKE '%' || mm.name || '%'
+             LIMIT 1),
+            'Unknown'
+        ) AS market,
+        DATE_TRUNC('week', rt.reg_date)::date AS week_start,
+        COUNT(*) AS deed_count
+    FROM registered_transactions rt
+    WHERE rt.deed_type ILIKE '%sale%'
+    GROUP BY market, DATE_TRUNC('week', rt.reg_date)
+)
+SELECT
+    w.market,
+    EXTRACT(ISOYEAR FROM w.week_start)::int AS iso_year,
+    EXTRACT(WEEK FROM w.week_start)::int AS iso_week,
+    w.week_start,
+    w.deed_count AS current_week_count,
+    COALESCE(p.deed_count, 0) AS prior_week_count,
+    COALESCE(y.deed_count, 0) AS yoy_count,
+    ROUND(AVG(w.deed_count) OVER (
+        PARTITION BY w.market ORDER BY w.week_start
+        ROWS BETWEEN 11 PRECEDING AND CURRENT ROW
+    ), 1) AS rolling_12wk_avg
+FROM weekly_counts w
+LEFT JOIN weekly_counts p
+    ON p.market = w.market
+    AND p.week_start = w.week_start - INTERVAL '7 days'
+LEFT JOIN weekly_counts y
+    ON y.market = w.market
+    AND y.week_start = w.week_start - INTERVAL '364 days'
+ORDER BY w.market, w.week_start DESC;

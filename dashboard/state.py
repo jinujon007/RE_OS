@@ -510,6 +510,10 @@ _READ_ONLY_PATHS = frozenset(
         "/api/ops/conditional-gates",
         "/api/v1/ops/ledger/accuracy",
         "/api/ops/ledger/accuracy",
+        "/api/v1/mcp/health",
+        "/api/mcp/health",
+        "/api/v1/deeds/throughput",
+        "/api/deeds/throughput",
     }
 )
 _READ_ONLY_PREFIXES = (
@@ -526,7 +530,8 @@ _READ_ONLY_PREFIXES = (
     "/api/v1/content/", "/api/v1/process-audit/", "/api/v1/shareholders/",
     "/api/v1/govt/", "/api/v1/competitive/", "/api/v1/portfolio/",
     "/api/v1/pr/", "/api/v1/optimizer/", "/api/v1/llm/",
-    "/api/v1/intel/propcontext-delta/", "/api/intel/propcontext-delta/",
+    "/api/v1/intel/", "/api/intel/",
+    "/api/v1/investor/", "/api/investor/",
 )
 
 

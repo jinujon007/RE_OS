@@ -1,11 +1,13 @@
 """GATE-129 — Board Room Output Quality: Formatter + GO/NO-GO Decision Flag.
 
-5 assertions (all code-verifiable without Docker):
+7 assertions (all code-verifiable without Docker):
 A1: BoardRoomFormatter importable and exposes 4 key methods
 A2: Legal head NO-GO veto forces overall NO-GO
 A3: board_room.py imports BoardRoomFormatter and persists decision_flag + formatted_md
 A4: GET /board/sessions endpoint extracts decision_flag from ceo_synthesis
-A5: format_discord() output <=2000 chars with decision flag near top
+A5: format_discord() output <=2000 chars with decision flag near top, references /api/v1
+A6a: Template renders '—' placeholder for null decision_flag
+A7: Template defines color + DF_BANNERS dict for all 3 decision_flag states
 """
 
 import ast
@@ -134,7 +136,31 @@ def test_gate129_a5_discord_under_2000():
     assert "GO" in decision_line[0], (
         f"DECISION line should contain flag: {decision_line[0]}"
     )
-    # API reference should be present
-    assert "/api/board/session" in output, (
-        "Discord output should reference the session API endpoint"
+    # API reference should be present (v1 path)
+    assert "/api/v1/board/session" in output, (
+        "Discord output should reference the v1 session API endpoint"
+    )
+
+
+def test_gate129_a6_template_null_badge_renders_placeholder():
+    """A6a: Null/undefined decision_flag renders '—' placeholder, not empty string."""
+    tmpl = (REPO_ROOT / "dashboard" / "templates" / "index.html").read_text(encoding="utf-8")
+    # The null branch must emit a visible placeholder rather than empty string
+    assert "\\u2014" in tmpl or "&mdash" in tmpl or "484f58" in tmpl, (
+        "Null decision_flag must render a visible gray placeholder instead of empty"
+    )
+
+
+def test_gate129_a7_template_renders_decision_flag_badge():
+    """A6: Template HTML includes decision_flag badge with color mapping for all 3 states."""
+    tmpl = (REPO_ROOT / "dashboard" / "templates" / "index.html").read_text(encoding="utf-8")
+    # The template must define color mappings for all 3 decision_flag values
+    assert "'GO'" in tmpl and "'CONDITIONAL'" in tmpl and "'NO-GO'" in tmpl, (
+        "Template missing decision_flag color mapping for all 3 states"
+    )
+    # Null/legacy sessions must show a placeholder
+    assert "null" in tmpl, "Template must handle null decision_flag"
+    # The expanded view must render a decision_flag banner
+    assert "DF_BANNERS" in tmpl, (
+        "Template missing DF_BANNERS for expanded board session"
     )

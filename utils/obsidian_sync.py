@@ -43,6 +43,8 @@ __all__ = [
     "write_board_verdict",
     "write_weekly_digest",
     "write_psf_forecast",
+    "write_decision_journal_entry",
+    "write_investor_brief",
 ]
 
 _VALID_DECISION_FLAGS: frozenset[str] = frozenset({"GO", "NO-GO", "CONDITIONAL"})
@@ -357,3 +359,103 @@ def write_psf_forecast(
     )
     filename = f"(AI) PSF Forecast {market} {date_str}.md"
     return _write_md(filename, content)
+
+
+def write_decision_journal_entry(entry: dict) -> Optional[str]:
+    if not _ensure_sync_dir():
+        return None
+    now = datetime.now(timezone.utc)
+    ts = now.isoformat(timespec="seconds")
+    date_str = now.strftime("%Y-%m-%d")
+    market = entry.get("market", "Unknown")
+    decision_flag = entry.get("decision_flag", "NEUTRAL")
+    context = entry.get("context_summary", "")
+    board_session_id = entry.get("board_session_id")
+    frontmatter_lines = [
+        "---",
+        "type: decision",
+        "area: lls",
+        "ai_generated: true",
+        f"generated_at: {ts}",
+        f"date: {date_str}",
+        f"market: {market}",
+        f"decision_flag: {decision_flag}",
+        f"confidence: {0.85 if decision_flag in ('GO', 'NO-GO') else 0.65}",
+    ]
+    if board_session_id:
+        frontmatter_lines.append(f"board_session_id: {board_session_id}")
+    frontmatter_lines.append("---")
+    body = context or "No context summary available."
+    content = "\n".join(frontmatter_lines) + f"\n\n# Decision Journal — {market}\n\n{body}\n"
+    safe_market = "".join(c if c.isalnum() or c in (" ", "-", "_") else "_" for c in market)
+    safe_flag = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in decision_flag)
+    filename = f"(AI) {date_str}-{safe_market}-{safe_flag}.md"
+    return _write_md(filename, content)
+
+
+def write_investor_brief(
+    market: str,
+    brief_md: str,
+    project_name: str = "RE_OS",
+    land_cost_cr: float = 0.0,
+    area_acres: float = 0.0,
+) -> Optional[str]:
+    """Write an investor brief as an Obsidian note under the VEL or RE_market project.
+
+    Args:
+        market: Micro-market name.
+        brief_md: Formatted markdown body.
+        project_name: Project name for the brief (default RE_OS).
+        land_cost_cr: Land cost in crores (for filename context).
+        area_acres: Land area in acres (for filename context).
+
+    Returns:
+        File path on success, ``None`` if sync path not mounted, ``""`` on write failure.
+    """
+    if not _ensure_sync_dir():
+        return None
+    now = datetime.now(timezone.utc)
+    ts = now.isoformat(timespec="seconds")
+    date_str = now.strftime("%Y-%m-%d")
+
+    is_vel = market.lower() in ("yelahanka", "devanahalli")
+    subdir = "VEL" if is_vel else "RE_market"
+    vault_base = _sync_path()
+    project_dir = os.path.join(vault_base, "03 LLS", "02 Projects", subdir)
+    os.makedirs(project_dir, exist_ok=True)
+
+    safe_market = "".join(c if c.isalnum() or c in (" ", "-", "_") else "_" for c in market)
+    safe_project = "".join(c if c.isalnum() or c in (" ", "-", "_") else "_" for c in project_name)
+
+    fm_lines = [
+        "---",
+        "type: wiki",
+        "area: lls",
+        f"project: {subdir}",
+        "ai_generated: true",
+        f"generated_at: {ts}",
+        f"date: {date_str}",
+        f"market: {market}",
+        f"project_name: {project_name}",
+        f"land_cost_cr: {land_cost_cr}",
+        f"area_acres: {area_acres}",
+        "confidence: 0.8",
+        "---",
+    ]
+    frontmatter = "\n".join(fm_lines)
+    content = f"{frontmatter}\n\n{brief_md}\n"
+    filename = f"(AI) {date_str}-Market-Brief-{safe_market}-{safe_project}.md"
+    filepath = os.path.join(project_dir, filename)
+
+    try:
+        from config.metrics import obsidian_export_total, obsidian_bytes_total
+        encoded = content.encode("utf-8")
+        with open(filepath, "wb") as f:
+            f.write(encoded)
+        _log_write_audit(filename, filepath, content)
+        obsidian_export_total.labels(source="investor_brief").inc()
+        obsidian_bytes_total.labels(source="investor_brief").inc(len(encoded))
+        return filepath
+    except Exception as exc:
+        logger.warning(f"[ObsidianSync] Failed to write investor brief {filename}: {exc}")
+        return ""

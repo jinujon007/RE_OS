@@ -569,6 +569,95 @@ def run_data_floor_refresh():
         logger.warning("[Scheduler] Data floor refresh failed: {}", exc)
 
 
+def run_check_developer_price_moves():
+    """Daily 09:00 IST — Discord + Telegram alert for Grade A price moves > 3%.
+
+    Calls detect_price_moves for each target market. Sends a single
+    Discord #competitive-intel message per market if any moves found.
+    Also sends via Telegram if TELEGRAM_BOT_TOKEN is configured.
+
+    Suppresses duplicate alerts via _ops_already_alerted (23h cooldown).
+    """
+    from utils.pricing_tracker import detect_price_moves
+    from utils.discord_notifier import send
+    from utils.telegram_notifier import send_message as _tg
+    from config.metrics import price_move_alerts_total
+
+    for market in TARGET_MARKETS:
+        try:
+            moves = detect_price_moves(market, threshold_pct=3.0, lookback_days=7)
+        except Exception as exc:
+            logger.warning(
+                "[DevPricing] detect_price_moves failed for {}: {}", market, exc
+            )
+            continue
+        if not isinstance(moves, list):
+            logger.warning(
+                "[DevPricing] detect_price_moves returned non-list for {}: {!r}",
+                market, type(moves).__name__,
+            )
+            continue
+        if not moves:
+            continue
+        lines = []
+        for m in moves:
+            prior = m.get("prior_psf")
+            curr = m["current_psf"]
+            chg = m["change_pct"]
+            prior_str = f"₹{prior:,.0f}" if prior else "N/A"
+            curr_str = f"₹{curr:,.0f}"
+            lines.append(
+                f"📈 {m['developer_name']} raised {m['project_name']} "
+                f"PSF by {chg:.1f}% in {market} "
+                f"({prior_str}→{curr_str})"
+            )
+        if not lines:
+            continue
+        title = f"📊 Price Moves — {market}"
+        dedup_key = f"price_moves_{market}_{date.today()}"
+        if _ops_already_alerted(dedup_key, cooldown_hours=23):
+            logger.info("[DevPricing] Alert already sent for {} today — skipping", market)
+            continue
+        body = "\n".join(lines)
+        try:
+            send("competitive-intel", title, body)
+            price_move_alerts_total.labels(market=market).inc()
+            logger.info(
+                "[DevPricing] Sent {} price move alerts for {}", len(lines), market
+            )
+        except Exception as exc:
+            logger.warning(
+                "[DevPricing] Discord send failed for {}: {}", market, exc
+            )
+        try:
+            _tg(f"{title}\n{body}")
+        except Exception as exc:
+            logger.debug(
+                "[DevPricing] Telegram send skipped for {}: {}", market, exc
+            )
+        # Log to agent_runs for auditability
+        try:
+            with get_engine().begin() as conn:
+                conn.execute(
+                    text("""
+                        INSERT INTO agent_runs
+                            (agent_name, micro_market, event_type, status,
+                             records_inserted, notes)
+                        VALUES ('pricing_tracker', :m, 'price_move_alert',
+                                'success', :n, :notes)
+                    """),
+                    {
+                        "m": market,
+                        "n": len(lines),
+                        "notes": f"{len(lines)} price moves >= 3% detected",
+                    },
+                )
+        except Exception as exc:
+            logger.warning(
+                "[DevPricing] Failed to log price move alert: {}", exc
+            )
+
+
 def run_scraper_health_check():
     """Daily RERA scraper health check — checkpoint mtime staleness (GATE-128, T-1329).
 
@@ -1065,6 +1154,121 @@ def run_kill_criteria_reminder():
         logger.warning("[KillCriteriaReminder] Discord send failed: {}", exc)
 
 
+_TG_MSG_MAX = 4000  # safe under Telegram's 4096 limit — leave room for encoding
+
+
+def _send_split(text: str) -> None:
+    """Send text, splitting into multiple messages if > _TG_MSG_MAX chars."""
+    from utils.telegram_notifier import send_message as _tg
+    while len(text) > _TG_MSG_MAX:
+        split_at = text.rfind("\n", 0, _TG_MSG_MAX)
+        if split_at < _TG_MSG_MAX // 2:
+            split_at = _TG_MSG_MAX
+        _tg(text[:split_at])
+        text = text[split_at:].lstrip("\n")
+    if text:
+        _tg(text)
+
+
+def _digest_market_psf(conn, m: str) -> str:
+    """Return PSF line for one market. Returns 'N/A' line on any error."""
+    from sqlalchemy import text as _st
+    emoji_map = {"Yelahanka": "\U0001f4cd", "Devanahalli": "\u2708\ufe0f", "Hebbal": "\U0001f3d8\ufe0f"}
+    emoji = emoji_map.get(m, "\U0001f4cc")
+    try:
+        psf_row = conn.execute(_st("""
+            WITH ranked AS (
+                SELECT price_min_psf, snapshot_date,
+                       ROW_NUMBER() OVER (ORDER BY snapshot_date DESC) AS rn
+                FROM project_snapshots ps
+                JOIN micro_markets mm ON mm.id = ps.micro_market_id
+                WHERE mm.name ILIKE :m AND price_min_psf IS NOT NULL
+                ORDER BY snapshot_date DESC LIMIT 4
+            )
+            SELECT MAX(price_min_psf) FILTER (WHERE rn = 1) AS current,
+                   MAX(price_min_psf) FILTER (WHERE rn = 4) AS older
+            FROM ranked
+        """), {"m": f"%{m}%"}).fetchone()
+        if psf_row and psf_row[0]:
+            curr = float(psf_row[0])
+            older = float(psf_row[1]) if psf_row[1] else curr
+            arrow = "\u2191" if curr > older * 1.01 else "\u2193" if curr < older * 0.99 else "\u2192"
+            return f"{emoji} {m}: \u20b9{curr:,.0f} {arrow}"
+    except Exception:
+        pass
+    return f"{emoji} {m}: N/A"
+
+
+_TG_DIGEST_SENT = None  # lazy-imported Prometheus Counter
+
+def _digest_metric(status: str) -> None:
+    global _TG_DIGEST_SENT
+    if _TG_DIGEST_SENT is None:
+        from config.metrics import _counter
+        _TG_DIGEST_SENT = _counter("telegram_digest_total", "Weekly Telegram digest send count", ["status"])
+    _TG_DIGEST_SENT.labels(status=status).inc()
+
+
+def send_weekly_telegram_digest():
+    """Weekly Telegram digest — Monday 08:30 IST (GATE-142, T-1399).
+
+    Each section is isolated: a single DB failure does not kill the whole digest.
+    Messages are split at \n boundaries when >4000 chars to stay under Telegram's 4096 limit.
+    """
+    engine = get_engine()
+    parts: list[str] = ["\U0001f4ca RE_OS Weekly Digest"]
+
+    try:
+        with engine.connect() as conn:
+            for m in TARGET_MARKETS:
+                parts.append(_digest_market_psf(conn, m))
+
+            try:
+                opp = conn.execute(text("SELECT survey_no, score, next_action FROM opportunity_scores ORDER BY score DESC LIMIT 1")).fetchone()
+                parts.append(f"\n\U0001f3c6 Top: {opp[0]} ({opp[1]:.2f}) \u2014 {opp[2][:60]}" if opp else "\n\U0001f3c6 Top: N/A")
+            except Exception:
+                parts.append("\n\U0001f3c6 Top: N/A")
+
+            try:
+                asm = conn.execute(text("SELECT COUNT(*) FROM assembly_signals WHERE status != 'resolved'")).scalar() or 0
+                parts.append(f"\U0001f514 Assemblies: {asm} open")
+            except Exception:
+                parts.append("\U0001f514 Assemblies: N/A")
+
+            try:
+                mape = conn.execute(text("""
+                    SELECT AVG(ABS(COALESCE(actual_value, 0) - COALESCE(predicted_value, 0))
+                        / NULLIF(ABS(predicted_value), 0))
+                    FROM prediction_ledger
+                    WHERE verdict IS NOT NULL AND predicted_value IS NOT NULL AND predicted_value != 0
+                """)).scalar()
+                parts.append(f"\U0001f4ca Prediction MAPE: {float(mape)*100:.0f}%" if mape else "\U0001f4ca Prediction MAPE: N/A")
+            except Exception:
+                parts.append("\U0001f4ca Prediction MAPE: N/A")
+
+            try:
+                deed = conn.execute(text("""
+                    SELECT COUNT(*)::float
+                        / GREATEST(EXTRACT(EPOCH FROM (NOW() - COALESCE(MIN(created_at), NOW()))), 86400)
+                        * 604800.0
+                    FROM registered_transactions WHERE deed_type = 'Sale'
+                """)).fetchone()
+                dw = round(float(deed[0]), 0) if deed and deed[0] else 0
+                parts.append(f"\U0001f4c4 Deeds/wk: {dw:.0f} / 50 target")
+            except Exception:
+                parts.append("\U0001f4c4 Deeds/wk: N/A")
+    except Exception as exc:
+        logger.warning("[TelegramDigest] Connection failed: {}", exc)
+        parts.append("(DB unavailable)")
+
+    try:
+        _send_split("\n".join(parts))
+        _digest_metric("sent")
+    except Exception as exc:
+        logger.warning("[TelegramDigest] Send failed: {}", exc)
+        _digest_metric("failed")
+
+
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
     """Register maintenance-related scheduler jobs."""
     from apscheduler.triggers.cron import CronTrigger
@@ -1277,5 +1481,21 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         CronTrigger(hour=6, minute=30, timezone="UTC"),
         id="scraper_health_check",
         name="Daily RERA Scraper Health Check (checkpoint mtime, stale alert)",
+        misfire_grace_time=3600,
+    )
+    # Weekly Telegram digest — Monday 08:30 IST (GATE-142, T-1399)
+    scheduler.add_job(
+        lambda: safe_job(send_weekly_telegram_digest, "weekly_telegram_digest"),
+        CronTrigger(day_of_week="mon", hour=8, minute=30),
+        id="weekly_telegram_digest",
+        name="Weekly Telegram Digest (PSF, top opp, assembly count, prediction MAPE)",
+        misfire_grace_time=7200,
+    )
+    # Daily developer price move check — 09:00 IST (GATE-141, T-1394)
+    scheduler.add_job(
+        lambda: safe_job(run_check_developer_price_moves, "check_developer_price_moves"),
+        CronTrigger(hour=9, minute=0),
+        id="check_developer_price_moves",
+        name="Daily Developer Price Move Alert (Discord #competitive-intel if >3% change)",
         misfire_grace_time=3600,
     )

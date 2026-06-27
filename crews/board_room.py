@@ -1219,6 +1219,40 @@ def _run_board_session_bg(session_id: str, pitch: str, market: str) -> None:
             transcript["formatted_discord"] = transcript.get("formatted_discord", "")
 
         _update_session_row(session_id, "complete", transcript)
+
+        decision_flag = transcript.get("decision_flag")
+        if decision_flag in ("GO", "NO-GO"):
+            try:
+                from utils.telegram_notifier import send_message as _tg_send
+                dept_count = sum(1 for v in transcript.get("responses", {}).values() if v)
+                raw = (transcript.get("formatted_md", "") or transcript.get("ceo_decomposition", "") or "")
+                findings = raw[:300].replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
+                _tg_send(
+                    f"\U0001f3db Board Room \u2014 {market}\n"
+                    f"{decision_flag} | {dept_count} depts\n"
+                    f"{findings[:200]}\n"
+                    f"/verdict {session_id}"
+                )
+            except Exception as _tg_exc:
+                logger.warning("[board_room] Telegram notification skipped: {}", _tg_exc)
+
+        if decision_flag in ("GO", "NO-GO", "CONDITIONAL"):
+            try:
+                from utils.decision_journal import create_entry as _dj_create
+                _summary = (transcript.get("formatted_md", "") or
+                            transcript.get("ceo_decomposition", "") or pitch)[:500]
+                _entry_id = _dj_create(market, decision_flag, _summary, board_session_id=session_id)
+                if _entry_id > 0:
+                    from utils.obsidian_sync import write_decision_journal_entry as _dj_obsidian
+                    _entry_dict = {
+                        "market": market,
+                        "decision_flag": decision_flag,
+                        "context_summary": _summary,
+                        "board_session_id": session_id,
+                    }
+                    _dj_obsidian(_entry_dict)
+            except Exception as _dj_exc:
+                logger.warning("[board_room] Decision journal entry skipped: {}", _dj_exc)
     except (ImportError, KeyError, AttributeError, TypeError) as exc:
         logger.error(f"board_room bg worker PERMANENT FAILURE for {session_id}: {exc}")
         _update_session_row(
