@@ -50,6 +50,7 @@ __all__ = [
     "run_weekly_deed_threshold_check",
     "run_assembly_detection",
     "run_kaveri_download_reminder",
+    "run_weekly_kill_criteria_report",
     "register_jobs",
 ]
 
@@ -452,10 +453,31 @@ def run_kaveri_download_reminder():
 
     priorities.sort(key=_sort_key)
 
+    # T-1454: append priority villages from assembly signal density
+    priority_lines: list[str] = []
+    try:
+        from utils.deed_progress import get_priority_villages
+        top_villages = get_priority_villages(top_n=3)
+        if top_villages:
+            priority_lines.append("")
+            priority_lines.append("**\U0001f4cb Top 3 villages to download this week:**")
+            for i, pv in enumerate(top_villages, 1):
+                vn = pv.get("village", "Unknown")
+                pc = pv.get("assembly_signal_count", 0)
+                sc = pv.get("priority_score", 0)
+                priority_lines.append(f"{i}. **{vn}** — {pc} signals (score: {sc:.1f})")
+            priority_lines.append(
+                "Kaveri Online → Form 17 Index II → filter by village name above."
+            )
+    except Exception as exc:
+        logger.warning("[DeedJobs] Failed to fetch priority villages: {}", exc)
+
     lines = [
         "**Kaveri Form 17 Download Due**",
         "Place new PDFs in `data/kaveri_deeds/inbox/form17/`.\n",
     ]
+    if priority_lines:
+        lines.extend(priority_lines)
     for i, (mkt, vlg, sro_str, last) in enumerate(priorities, 1):
         last_str = last if last else "*no deeds yet*"
         lines.append(
@@ -513,6 +535,116 @@ def _send_generic_reminder() -> None:
     logger.info("[DeedJobs] Generic Kaveri download reminder sent")
 
 
+_REPORT_RUNNING = False
+_REPORT_LOCK_MSG = "[DeedJobs] kill_criteria_report already running, skipping concurrent invocation"
+# ponytail: single global flag blocks all-encompassing. If per-market reports
+# are needed (e.g. separate Mon morning report for each of 12 micro-markets),
+# replace with a dict[str, bool] keyed by market name + use threading.Lock.
+
+try:
+    from prometheus_client import Counter as _PromCounter
+    _kill_criteria_report_runs = _PromCounter(
+        "kill_criteria_report_runs_total", "Kill criteria weekly report runs", ["status"],
+    )
+except ImportError:
+    _kill_criteria_report_runs = None
+
+
+def run_weekly_kill_criteria_report() -> None:
+    """Weekly kill criteria report — Monday 10:00 IST (GATE-150, T-1436).
+
+    Fetches throughput projection and sends summary to Telegram + Discord.
+    Overlap guard prevents concurrent runs.
+    """
+    global _REPORT_RUNNING
+    if _REPORT_RUNNING:
+        logger.warning(_REPORT_LOCK_MSG)
+        return
+
+    _REPORT_RUNNING = True
+    try:
+        _do_kill_criteria_report()
+    finally:
+        _REPORT_RUNNING = False
+
+
+def _do_kill_criteria_report() -> None:
+    """Execute kill criteria report logic — called by overlap-guarded wrapper.
+
+    Fetches throughput projection, sends Telegram + Discord alerts,
+    logs to agent_runs. Safe against any failure (non-fatal).
+    """
+    from utils.deed_progress import compute_throughput_projection
+    from utils.telegram_notifier import send_message as _tg_send
+    from utils.discord_notifier import send_ops_alert
+
+    try:
+        proj = compute_throughput_projection()
+    except Exception as exc:
+        logger.warning("[DeedJobs] kill_criteria_report throughput projection failed: {}", exc)
+        if _kill_criteria_report_runs:
+            _kill_criteria_report_runs.labels(status="error").inc()
+        try:
+            with get_engine().begin() as conn:
+                conn.execute(
+                    text("""
+                        INSERT INTO agent_runs
+                            (agent_name, micro_market, event_type, status, notes)
+                        VALUES ('weekly_kill_criteria_report', 'system', 'kill_criteria_report',
+                                'failed', :notes)
+                    """),
+                    {"notes": f"compute_throughput_projection error: {exc}"},
+                )
+        except Exception:
+            pass
+        return
+
+    verdict = proj.get("projection_verdict", "unknown")
+    weeks_remaining = proj.get("weeks_remaining") if "weeks_remaining" in proj else None
+    avg_4wk = proj.get("avg_4wk", 0.0)
+
+    if weeks_remaining is None:
+        deadline_label = "deadline unknown"
+    elif weeks_remaining < 0:
+        deadline_label = "past deadline"
+    else:
+        deadline_label = f"{weeks_remaining} weeks to 2026-08-15"
+
+    msg = (
+        f"\U0001f4ca **Kill Criteria Report**\n"
+        f"\u2022 Throughput: {avg_4wk:.1f}/week (target 50)\n"
+        f"\u2022 Verdict: {verdict}\n"
+        f"\u2022 Deadline: {deadline_label}"
+    )
+
+    try:
+        send_ops_alert("KILL_CRITERIA_WEEKLY", msg)
+    except Exception as exc:
+        logger.warning("[DeedJobs] Discord kill_criteria_report failed: {}", exc)
+
+    try:
+        _tg_send(msg)
+    except Exception as exc:
+        logger.warning("[DeedJobs] Telegram kill_criteria_report failed: {}", exc)
+
+    if _kill_criteria_report_runs:
+        _kill_criteria_report_runs.labels(status="sent").inc()
+
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO agent_runs
+                        (agent_name, micro_market, event_type, status, notes)
+                    VALUES ('weekly_kill_criteria_report', 'system', 'kill_criteria_report',
+                            'success', :notes)
+                """),
+                {"notes": msg},
+            )
+    except Exception as exc:
+        logger.debug("[DeedJobs] agent_runs log failed: {}", exc)
+
+
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
     """Register deed pipeline scheduler jobs."""
 
@@ -550,4 +682,14 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         id="kaveri_download_reminder",
         name="Weekly Kaveri Form 17 Download Reminder (Mon 09:00 IST)",
         misfire_grace_time=7200,
+    )
+
+    # Weekly kill criteria report — Monday 10:00 IST = 04:30 UTC (GATE-150, T-1436)
+    scheduler.add_job(
+        lambda: safe_job(run_weekly_kill_criteria_report, "weekly_kill_criteria_report"),
+        CronTrigger(day_of_week="mon", hour=4, minute=30, timezone="UTC"),
+        id="weekly_kill_criteria_report",
+        name="Weekly Kill Criteria Report — Telegram + Discord (Mon 10:00 IST / 04:30 UTC)",
+        misfire_grace_time=3600,
+        replace_existing=True,
     )

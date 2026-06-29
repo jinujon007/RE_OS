@@ -3,8 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://cdn.jsdelivr.net https://api.github.com;">
 <title>Assembly Signals — LLS</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
+        integrity="sha384-QSs4R2WQYfCQCiJAD5cQ1M6lqI0Hq2N5jn0gOQ7nhSO4lBfFiINYHGxhC1+3KFQ"
+        crossorigin="anonymous"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -96,6 +99,7 @@ tr.detail-row td { color: #8b949e; font-size: 12px; line-height: 1.6; }
 
 <div class="toolbar">
   <button id="refresh-btn" style="background:#161b2e;border:1px solid #2a3a55;color:#8b949e;padding:6px 12px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:4px;">⟳ Refresh</button>
+  <button id="timeline-toggle-btn" style="background:#161b2e;border:1px solid #2a3a55;color:#8b949e;padding:6px 12px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:4px;">📈 Timeline</button>
 </div>
 
 <div class="panel">
@@ -160,6 +164,21 @@ tr.detail-row td { color: #8b949e; font-size: 12px; line-height: 1.6; }
   <div class="detail-area" id="detail-area" style="display:none;margin-top:12px;padding:12px;background:#0a0e1a;border:1px solid #1a2540;border-radius:4px;"></div>
 </div>
 
+<div class="panel" id="timeline-panel" style="display:none;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+    <span style="color:#8b949e;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Assembly Timeline (6-month rolling windows)</span>
+    <span style="color:#6b7280;font-size:10px;" id="timeline-summary"></span>
+  </div>
+  <div id="timeline-spinner" style="display:none;color:#2a3a55;font-size:12px;text-align:center;padding:12px;">⟳ Loading timeline...</div>
+  <div style="position:relative;width:100%;height:240px;">
+    <canvas id="assemblyTimeline" style="width:100%;height:100%;"></canvas>
+  </div>
+  <div id="timeline-error" style="display:none;color:#f85149;font-size:12px;text-align:center;padding:12px;">
+    <span id="timeline-error-text">Failed to load timeline</span>
+    <button onclick="loadTimeline()" style="background:#3a1a1a;border:1px solid #f85149;color:#f85149;padding:4px 12px;font-family:inherit;font-size:11px;cursor:pointer;border-radius:4px;margin-left:8px;">Retry</button>
+  </div>
+</div>
+
 <div class="spinner" id="spinner">⟳ Loading...</div>
 <div class="error-msg" id="error-msg" style="display:none;"></div>
 
@@ -169,6 +188,7 @@ tr.detail-row td { color: #8b949e; font-size: 12px; line-height: 1.6; }
 let expandedIndex = -1;
 let signalData = [];
 let autoRefreshTimer = null;
+let timelineChart = null;
 const AUTO_REFRESH_MS = 60000;
 
 function escapeHtml(value) {
@@ -204,9 +224,21 @@ function stopAutoRefresh() {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-  document.getElementById('market-filter').addEventListener('change', function() { expandedIndex = -1; loadSignals(); });
+  document.getElementById('market-filter').addEventListener('change', function() {
+    expandedIndex = -1; loadSignals();
+    if (document.getElementById('timeline-panel').style.display !== 'none') { loadTimeline(); }
+  });
   document.getElementById('min-conf-filter').addEventListener('change', function() { expandedIndex = -1; loadSignals(); });
   document.getElementById('refresh-btn').addEventListener('click', function() { loadSignals(); });
+  document.getElementById('timeline-toggle-btn').addEventListener('click', function() {
+    const panel = document.getElementById('timeline-panel');
+    if (panel.style.display === 'none') {
+      panel.style.display = 'block';
+      loadTimeline();
+    } else {
+      panel.style.display = 'none';
+    }
+  });
   loadSignals();
   startAutoRefresh();
 });
@@ -307,6 +339,120 @@ async function loadSignals() {
 function toggleDetail(idx) {
   expandedIndex = expandedIndex === idx ? -1 : idx;
   loadSignals();
+}
+
+let lastTimelineMarket = '';
+
+async function loadTimeline() {
+  const canvas = document.getElementById('assemblyTimeline');
+  const summary = document.getElementById('timeline-summary');
+  const spinner = document.getElementById('timeline-spinner');
+  const errorDiv = document.getElementById('timeline-error');
+  const errorText = document.getElementById('timeline-error-text');
+  const market = document.getElementById('market-filter').value || 'Yelahanka';
+
+  if (market === lastTimelineMarket && timelineChart) { return; }
+  lastTimelineMarket = market;
+
+  errorDiv.style.display = 'none';
+  spinner.style.display = 'block';
+  summary.textContent = '';
+
+  try {
+    const resp = await fetch('/api/v1/intel/assembly-timeline?market=' + encodeURIComponent(market));
+    spinner.style.display = 'none';
+    if (!resp.ok) {
+      errorText.textContent = 'Failed to load (HTTP ' + resp.status + ')';
+      errorDiv.style.display = 'block';
+      return;
+    }
+    const data = await resp.json();
+    const timeline = data.timeline || [];
+
+    if (!timeline.length) {
+      summary.textContent = 'No time-series data for ' + market;
+      if (timelineChart) { timelineChart.destroy(); timelineChart = null; }
+      return;
+    }
+
+    const labels = timeline.map(function(t) { return t.week_start; });
+    const clusterCounts = timeline.map(function(t) { return t.cluster_count; });
+    const highConfCounts = timeline.map(function(t) { return t.high_confidence_count; });
+    const totalClusters = clusterCounts.reduce(function(a, b) { return a + b; }, 0);
+    summary.textContent = market + ' — ' + totalClusters + ' clusters, ' + timeline.length + ' weeks';
+
+    if (timelineChart) { timelineChart.destroy(); }
+
+    timelineChart = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Cluster Count',
+          data: clusterCounts,
+          borderColor: '#3fb950',
+          backgroundColor: 'rgba(63,185,80,0.08)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 3,
+          pointHoverRadius: 6,
+          pointHoverBackgroundColor: '#3fb950',
+        }, {
+          label: 'High Confidence',
+          data: highConfCounts,
+          borderColor: '#f0a020',
+          backgroundColor: 'rgba(240,160,32,0.08)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 3,
+          pointHoverRadius: 6,
+          pointHoverBackgroundColor: '#f0a020',
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            labels: { color: '#8b949e', font: { size: 11 }, usePointStyle: true, padding: 16 }
+          },
+          tooltip: {
+            backgroundColor: '#0f1520',
+            titleColor: '#c9d1d9',
+            bodyColor: '#8b949e',
+            borderColor: '#2a3a55',
+            borderWidth: 1,
+            padding: 10,
+            cornerRadius: 4,
+            callbacks: {
+              title: function(items) {
+                return 'Week: ' + items[0].label;
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: {
+              color: '#6b7280', font: { size: 9 },
+              maxTicksLimit: 12, maxRotation: 45
+            },
+            grid: { color: '#1a2540', drawBorder: false }
+          },
+          y: {
+            beginAtZero: true,
+            ticks: { color: '#6b7280', font: { size: 9 }, stepSize: 1, precision: 0 },
+            grid: { color: '#1a2540', drawBorder: false }
+          }
+        }
+      }
+    });
+  } catch (e) {
+    spinner.style.display = 'none';
+    errorText.textContent = 'Network error: ' + e.message;
+    errorDiv.style.display = 'block';
+  }
 }
 </script>
 </body>

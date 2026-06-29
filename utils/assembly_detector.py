@@ -420,6 +420,70 @@ class AssemblyDetector:
         a_factor = min(1.0, ar / 5000.0)
         return round(p_factor * d_factor * a_factor, 3)
 
+    def detect_time_series(
+        self, market: str, lookback_months: int = 12, step_months: int = 1
+    ) -> list[dict]:
+        """Time-series of assembly cluster counts over rolling 6-month windows.
+
+        Walks back from today in step_months increments. Each window is 6 months
+        wide (detected_at BETWEEN window_end-180d AND window_end). Consecutive
+        windows overlap by (6 - step_months) months by design — this produces a
+        smoothed trend that dampens weekly noise.
+
+        Args:
+            market: Canonical market name (Yelahanka/Devanahalli/Hebbal).
+            lookback_months: How far back to walk (default 12).
+            step_months: Step size between windows (default 1).
+
+        Returns:
+            List sorted ascending by week_start, each with week_start (ISO date),
+            cluster_count, avg_confidence, high_confidence_count.
+            Empty list on DB failure (never raises).
+        """
+        from statistics import mean
+
+        today = date.today()
+        results: list[dict] = []
+
+        try:
+            engine = get_engine()
+            with engine.connect() as conn:
+                for step in range(0, lookback_months + 1, step_months):
+                    window_end = today - timedelta(days=step * 30)
+                    window_start = window_end - timedelta(days=6 * 30)
+
+                    rows = conn.execute(
+                        text("""
+                            SELECT confidence_score FROM assembly_signals
+                            WHERE market = :market
+                              AND detected_at BETWEEN :start AND :end
+                        """),
+                        {
+                            "market": market,
+                            "start": window_start,
+                            "end": window_end,
+                        },
+                    ).fetchall()
+
+                    scores = [
+                        float(r.confidence_score)
+                        for r in rows
+                        if r.confidence_score is not None
+                    ]
+                    results.append({
+                        "week_start": window_end.isoformat(),
+                        "cluster_count": len(rows),
+                        "avg_confidence": round(mean(scores), 3) if scores else 0.0,
+                        "high_confidence_count": sum(1 for s in scores if s > 0.7),
+                    })
+
+            results.sort(key=lambda r: r["week_start"])
+            return results
+
+        except Exception as exc:
+            logger.warning("[AssemblyDetector.detect_time_series] failed: {}", exc)
+            return []
+
     def _upsert_clusters(self, market: str, clusters: list[dict]) -> None:
         """Write/update cluster signals to assembly_signals table."""
         if not clusters:

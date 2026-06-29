@@ -74,7 +74,7 @@ _MCP_CACHE_LOCK = threading.Lock()
 _MCP_CACHE_TTL: float = 300.0
 _MCP_CACHE_MAX: int = 500
 
-_CACHED_TOOL_NAMES: frozenset = frozenset({"psf_forecast", "corridor_score", "investor_brief"})
+_CACHED_TOOL_NAMES: frozenset = frozenset({"psf_forecast", "corridor_score", "investor_brief", "vel_competitive_report"})
 
 
 def _cache_key(tool_name: str, arguments: dict) -> str:
@@ -548,6 +548,121 @@ def _investor_brief(market: str = "Yelahanka", land_cost_cr: float = 0.0,
         return json.dumps({"status": "error", "error": str(exc)})
 
 
+def _vel_competitive_report(market: str = "Yelahanka") -> str:
+    """VEL competitive report — Grade A devs, PSF trend, absorption, pipeline."""
+    args = {"market": market}
+    cached = _mcp_cache_get("vel_competitive_report", args)
+    if cached is not None:
+        return cached
+
+    valid_markets = {"Yelahanka", "Devanahalli", "Hebbal"}
+    if market not in valid_markets:
+        return json.dumps({
+            "status": "validation_error",
+            "errors": [f"market must be one of {sorted(valid_markets)}, got '{market}'"],
+        })
+
+    try:
+        grade_a: list[dict] = []
+        rows = _run_query(
+            """
+                SELECT d.name, COUNT(*) AS project_count
+                FROM rera_projects rp
+                JOIN micro_markets mm ON mm.id = rp.micro_market_id
+                JOIN developers d ON d.id = rp.developer_id
+                WHERE mm.name = :market
+                  AND rp.project_status = 'ongoing'
+                  AND d.grade = 'A'
+                GROUP BY d.name
+                ORDER BY project_count DESC
+            """,
+            {"market": market},
+        )
+        if rows:
+            grade_a = [{"developer": str(r[0]), "project_count": int(r[1])} for r in rows]
+
+        psf_trend = {"current": None, "prior": None, "change_pct": None}
+        psf_current_rows = _run_query(
+            """
+                SELECT AVG(avg_psf) FROM project_snapshots ps
+                JOIN micro_markets mm ON mm.id = ps.micro_market_id
+                WHERE mm.name = :mkt
+                  AND ps.snapshot_date >= DATE_TRUNC('month', NOW()) - INTERVAL '1 month'
+                  AND ps.avg_psf IS NOT NULL
+            """,
+            {"mkt": market},
+        )
+        psf_prior_rows = _run_query(
+            """
+                SELECT AVG(avg_psf) FROM project_snapshots ps
+                JOIN micro_markets mm ON mm.id = ps.micro_market_id
+                WHERE mm.name = :mkt
+                  AND ps.snapshot_date >= DATE_TRUNC('month', NOW()) - INTERVAL '4 months'
+                  AND ps.snapshot_date < DATE_TRUNC('month', NOW()) - INTERVAL '2 months'
+                  AND ps.avg_psf IS NOT NULL
+            """,
+            {"mkt": market},
+        )
+        if psf_current_rows and psf_current_rows[0][0] is not None:
+            psf_trend["current"] = round(float(psf_current_rows[0][0]), 0)
+        if psf_prior_rows and psf_prior_rows[0][0] is not None:
+            psf_trend["prior"] = round(float(psf_prior_rows[0][0]), 0)
+        if (psf_trend["current"] is not None and psf_trend["prior"] is not None
+                and psf_trend["prior"] > 0):
+            psf_trend["change_pct"] = round(
+                (psf_trend["current"] - psf_trend["prior"]) / psf_trend["prior"] * 100, 1
+            )
+
+        pipeline_units = 0
+        pipeline_rows = _run_query(
+            """
+                SELECT COALESCE(SUM(sp.estimated_units), 0)
+                FROM supply_pipeline sp
+                WHERE sp.market ILIKE :market
+                  AND sp.status IN ('registered', 'pre_launch', 'upcoming')
+            """,
+            {"market": market},
+        )
+        if pipeline_rows:
+            pipeline_units = int(pipeline_rows[0][0])
+
+        absorption = None
+        abs_rows = _run_query(
+            """
+                SELECT absorption_rate FROM v_market_brief
+                WHERE micro_market ILIKE :market LIMIT 1
+            """,
+            {"market": market},
+        )
+        if abs_rows and abs_rows[0][0] is not None:
+            absorption = round(float(abs_rows[0][0]), 2)
+
+        cp = psf_trend.get("change_pct")
+        if cp is not None and cp > 5:
+            rec = "PREMIUM_WINDOW"
+        elif cp is not None and cp > 0:
+            rec = "STEADY"
+        else:
+            rec = "PRICE_PRESSURE"
+
+        result = json.dumps({
+            "status": "ok",
+            "result": {
+                "market": market,
+                "grade_a_competitors": grade_a,
+                "psf_trend_3m": psf_trend,
+                "absorption_rate": absorption,
+                "launch_pipeline_units": pipeline_units,
+                "recommendation": rec,
+            },
+        })
+        _mcp_cache_set("vel_competitive_report", args, result)
+        return result
+    except Exception as exc:
+        logger.warning("[mcp] vel_competitive_report failed: %s", exc)
+        return json.dumps({"status": "error", "error": str(exc)})
+
+
 # ── Tool registry ───────────────────────────────────────────────────────────
 
 TOOLS: dict[str, dict] = {
@@ -617,6 +732,18 @@ TOOLS: dict[str, dict] = {
                 "project_name": {"type": "string", "description": "Optional project name for the brief", "default": "RE_OS Query"},
             },
             "required": ["market", "land_cost_cr", "area_acres"],
+        },
+    },
+    "vel_competitive_report": {
+        "name": "vel_competitive_report",
+        "description": "VEL competitive report for a target market. Returns Grade A developer competitors with project counts, 3-month PSF trend (current, prior, change_pct), absorption rate, launch pipeline units, and a recommendation (PREMIUM_WINDOW/STEADY/PRICE_PRESSURE). No LLM calls — deterministic from DB.",
+        "handler": _vel_competitive_report,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "market": {"type": "string", "description": "Market name: Yelahanka, Devanahalli, or Hebbal", "default": "Yelahanka"},
+            },
+            "required": [],
         },
     },
 }

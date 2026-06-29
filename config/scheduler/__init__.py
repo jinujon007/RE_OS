@@ -71,6 +71,7 @@ from config.scheduler.deed_jobs import (
     run_daily_deed_scrape,
     run_weekly_deed_threshold_check,
     run_assembly_detection,
+    run_weekly_kill_criteria_report,
 )
 
 from config.scheduler.forecast_jobs import (
@@ -97,6 +98,8 @@ from config.scheduler.maintenance_jobs import (
     run_kill_criteria_reminder,
     run_scraper_health_check,
     run_check_developer_price_moves,
+    run_alembic_health_check,
+    run_dlq_drain_check,
     _ops_already_alerted,
     _bd_already_alerted,
 )
@@ -106,6 +109,7 @@ __all__ = [
     "run_daily_deed_scrape",
     "run_weekly_deed_threshold_check",
     "run_assembly_detection",
+    "run_weekly_kill_criteria_report",
     "run_kaveri_deeds_weekly",
     "run_kaveri_weekly_orchestration",
     "run_bhoomi_auto_survey",
@@ -160,6 +164,8 @@ __all__ = [
     "run_kill_criteria_reminder",
     "run_scraper_health_check",
     "run_check_developer_price_moves",
+    "run_alembic_health_check",
+    "run_dlq_drain_check",
     "run_update_actuals",
     "start_scheduler",
 ]

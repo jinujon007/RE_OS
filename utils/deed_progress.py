@@ -3,12 +3,19 @@ RE_OS — Deed Pipeline Progress Tracker (GATE-145, T-1412/T-1413)
 ───────────────────────────────────────────────────────────────
 Scans inbox PDFs, tracks ingested vs pending, and computes
 throughput projection against the 50/week kill-criteria deadline.
+
+Public API:
+  - get_inbox_progress(market?) → inbox/ingest/pending stats
+  - compute_throughput_projection() → rolling avg + verdict
+  - get_priority_villages(market?, top_n) → ranked download guide
 """
 
-import json
+from __future__ import annotations
+
 import math
 from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
+from typing import TypedDict
 
 from loguru import logger
 from sqlalchemy import text
@@ -18,11 +25,25 @@ from utils.db import get_engine
 __all__ = [
     "get_inbox_progress",
     "compute_throughput_projection",
+    "get_priority_villages",
 ]
 
 _INBOX_BASE = Path("data/kaveri_deeds/inbox")
 _FORM17_DIR = _INBOX_BASE / "form17"
 _DEADLINE = date(2026, 8, 15)
+
+_PRIORITY_TOP_N_MAX = 100
+_PRIORITY_TOP_N_MIN = 1
+
+
+class PriorityVillage(TypedDict):
+    village: str
+    market: str
+    assembly_signal_count: int
+    max_confidence: float
+    last_deed_ingested: str | None
+    priority_score: float
+    kaveri_url_hint: str
 
 
 def get_inbox_progress(market: str | None = None) -> dict:
@@ -172,3 +193,77 @@ def compute_throughput_projection() -> dict:
         "weeks_to_target": weeks_to_target,
         "deadline": _DEADLINE.isoformat(),
     }
+
+
+def _format_date(raw_date: object) -> str | None:
+    """Safely format a DB date value to ISO string."""
+    if raw_date is None:
+        return None
+    if hasattr(raw_date, "isoformat"):
+        return raw_date.isoformat()
+    if isinstance(raw_date, str):
+        return raw_date
+    return str(raw_date)
+
+
+def _parse_village_row(row) -> PriorityVillage:
+    """Map a DB row from v_deed_village_priority to a PriorityVillage dict."""
+    m = row._mapping
+    village = str(m["village"] or "")
+    return PriorityVillage(
+        village=village,
+        market=str(m["market"] or ""),
+        assembly_signal_count=int(m["assembly_signal_count"]) if m["assembly_signal_count"] else 0,
+        max_confidence=float(m["max_confidence"]) if m["max_confidence"] else 0.0,
+        last_deed_ingested=_format_date(m["last_deed_ingested"]),
+        priority_score=float(m["priority_score"]) if m["priority_score"] else 0.0,
+        kaveri_url_hint=(
+            f"https://kaverionline.karnataka.gov.in → "
+            f"Form 17 Index II → Village: {village}"
+        ),
+    )
+
+
+def get_priority_villages(
+    market: str | None = None,
+    top_n: int = 5,
+) -> list[PriorityVillage]:
+    """Query v_deed_village_priority for villages ranked by assembly signal density.
+
+    Priority score = (signal_count × max_confidence) - days_since_last_deed.
+    Higher score → more intelligence value in downloading this week.
+
+    Args:
+        market: Optional case-insensitive substring filter (e.g., "Yelahanka").
+        top_n:  Max results (default 5, clamped to [{_PRIORITY_TOP_N_MIN}, {_PRIORITY_TOP_N_MAX}]).
+
+    Returns:
+        List of PriorityVillage dicts sorted by descending priority_score.
+        Empty list on DB failure — caller should handle gracefully.
+    """
+    top_n = max(_PRIORITY_TOP_N_MIN, min(top_n, _PRIORITY_TOP_N_MAX))
+    try:
+        with get_engine().connect() as conn:
+            # SAFETY: where is either "WHERE 1=1" or "WHERE asm.market ILIKE :market"
+            # — only two hardcoded values, never user interpolation.
+            where = "WHERE 1=1"
+            params: dict[str, object] = {}
+            if market:
+                where = "WHERE asm.market ILIKE :market"
+                params["market"] = f"%{market}%"
+            rows = conn.execute(
+                text(f"""
+                    SELECT village, market, assembly_signal_count,
+                           max_confidence, last_deed_ingested, priority_score
+                    FROM v_deed_village_priority asm
+                    {where}
+                    ORDER BY priority_score DESC
+                    LIMIT :limit
+                """),
+                {"limit": top_n, **params},
+            ).fetchall()
+    except Exception as exc:
+        logger.warning("[DeedProgress] get_priority_villages failed: {}", exc)
+        return []
+
+    return [_parse_village_row(row) for row in rows]

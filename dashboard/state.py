@@ -520,6 +520,8 @@ _READ_ONLY_PATHS = frozenset(
         "/api/deeds/inbox-progress",
         "/api/v1/deeds/projection",
         "/api/deeds/projection",
+        "/api/v1/deeds/download-guide",
+        "/api/deeds/download-guide",
         "/api/v1/dashboard/badges",
         "/api/dashboard/badges",
         "/api/v1/intel/assembly-alerts",

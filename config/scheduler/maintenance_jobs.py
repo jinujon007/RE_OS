@@ -4,6 +4,7 @@ RE_OS — Maintenance Jobs
 Memory decay, backup, heartbeat, staleness checks, and board session recovery.
 """
 
+import os
 from collections.abc import Callable
 from datetime import date
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -15,6 +16,22 @@ from scrapers.mobility_scout import run_mobility_scout
 from utils.parcel_linker import run_parcel_linker_nightly, run_parcel_ownership_enrichment
 from utils.assembly_detector import run_assembly_detection
 from utils.alembic_check import run_alembic_check
+
+_ALEMBIC_CWD = os.environ.get("ALEMBIC_PROJECT_DIR", "/app")
+_DLQ_STALE_THRESHOLD = 10
+_DLQ_PENDING_STATUS = "pending"
+_DLQ_STALE_INTERVAL_DAYS = 7
+
+try:
+    from prometheus_client import Counter as _PromCounter
+    _dlq_drain_runs = _PromCounter(
+        "dlq_drain_runs_total", "DLQ drain check runs", ["status"],
+    )
+    _alembic_health_runs = _PromCounter(
+        "alembic_health_runs_total", "Alembic health check runs", ["status"],
+    )
+except ImportError:
+    _dlq_drain_runs = _alembic_health_runs = None
 
 
 def _ops_already_alerted(title: str, cooldown_hours: int = 23) -> bool:
@@ -1269,6 +1286,124 @@ def send_weekly_telegram_digest():
         _digest_metric("failed")
 
 
+def _log_agent_run(agent_name: str, event_type: str, status: str, notes: str) -> None:
+    """Log job execution to agent_runs for audit trail. Never raises."""
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO agent_runs
+                        (agent_name, micro_market, event_type, status, notes)
+                    VALUES (:name, 'system', :event, :status, :notes)
+                """),
+                {"name": agent_name, "event": event_type, "status": status, "notes": notes[:500]},
+            )
+    except Exception as exc:
+        logger.debug("[AgentRun] Log failed: {}", exc)
+
+
+def run_alembic_health_check():
+    """Alembic migration health check — Monday 06:30 UTC = 12:00 IST (GATE-150, T-1437).
+
+    Runs 'alembic current' and checks the last line of stdout for '(head)' marker.
+    Fires Discord ALEMBIC_DRIFT alert if head mismatch. Never raises.
+    Uses ALEMBIC_PROJECT_DIR env var (default /app) for alembic.ini discovery.
+    Logs execution to agent_runs.
+    """
+    import shutil as _shutil
+    import subprocess as _sp
+
+    if _shutil.which("alembic") is None:
+        logger.warning("[AlembicHealth] alembic CLI not found — skipping check")
+        if _alembic_health_runs:
+            _alembic_health_runs.labels(status="skipped").inc()
+        _log_agent_run("alembic_health_check", "alembic_health", "skipped", "alembic CLI not found")
+        return
+
+    try:
+        result = _sp.run(
+            ["alembic", "current"],
+            capture_output=True, text=True, timeout=30, cwd=_ALEMBIC_CWD,
+        )
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+        non_empty = [line for line in stdout.split("\n") if line.strip()]
+        last_line = non_empty[-1].strip() if non_empty else ""
+        is_head = "(head)" in last_line
+
+        if not is_head:
+            detail = stdout or stderr or "(empty output)"
+            logger.warning("[AlembicHealth] head mismatch — stdout: %s | stderr: %s", stdout, stderr)
+            try:
+                if not _ops_already_alerted("alembic_migration_drift", cooldown_hours=168):
+                    from utils.discord_notifier import send_ops_alert
+                    send_ops_alert("ALEMBIC_DRIFT", f"Alembic head mismatch: {detail}")
+            except Exception as _dexc:
+                logger.warning("[AlembicHealth] Discord alert failed: %s", _dexc)
+            if _alembic_health_runs:
+                _alembic_health_runs.labels(status="drift").inc()
+            _log_agent_run("alembic_health_check", "alembic_health", "drift", f"head mismatch: {detail}")
+        else:
+            logger.info("[AlembicHealth] head OK: %s", last_line)
+            if _alembic_health_runs:
+                _alembic_health_runs.labels(status="ok").inc()
+            _log_agent_run("alembic_health_check", "alembic_health", "success", f"head OK: {last_line}")
+    except Exception as exc:
+        logger.warning("[AlembicHealth] check failed: %s", exc)
+        if _alembic_health_runs:
+            _alembic_health_runs.labels(status="error").inc()
+        _log_agent_run("alembic_health_check", "alembic_health", "failed", str(exc))
+
+
+def run_dlq_drain_check():
+    """DLQ drain check — Monday 09:30 UTC = 15:00 IST (GATE-150, T-1438).
+
+    Queries dead_letter_queue for records stale >{_DLQ_STALE_INTERVAL_DAYS} days
+    with pending status. Fires Discord DLQ_STALE alert if count exceeds threshold.
+    Uses 168h cooldown to prevent weekly re-alert. Never raises.
+    Logs execution to agent_runs.
+    """
+    try:
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text(f"""
+                    SELECT COUNT(*) FROM dead_letter_queue
+                    WHERE created_at < NOW() - INTERVAL '{_DLQ_STALE_INTERVAL_DAYS} days'
+                      AND status = :status
+                """),
+                {"status": _DLQ_PENDING_STATUS},
+            ).fetchone()
+        count = row[0] if row else 0
+
+        if count > _DLQ_STALE_THRESHOLD:
+            if not _ops_already_alerted("dlq_drain_stale", cooldown_hours=168):
+                try:
+                    from utils.discord_notifier import send_ops_alert
+                    send_ops_alert(
+                        "DLQ_STALE",
+                        f"DLQ drain check: {count} records stale >{_DLQ_STALE_INTERVAL_DAYS} days "
+                        f"(threshold >{_DLQ_STALE_THRESHOLD})",
+                    )
+                except Exception as _dexc:
+                    logger.warning("[DLQDrain] Discord alert failed: %s", _dexc)
+                _log_agent_run("dlq_drain_check", "dlq_drain", "alert",
+                               f"{count} stale DLQ records (threshold >{_DLQ_STALE_THRESHOLD})")
+            else:
+                logger.info("[DLQDrain] alert suppressed (cooldown active): {} stale records", count)
+            if _dlq_drain_runs:
+                _dlq_drain_runs.labels(status="alert").inc()
+        else:
+            if _dlq_drain_runs:
+                _dlq_drain_runs.labels(status="ok").inc()
+            _log_agent_run("dlq_drain_check", "dlq_drain", "ok", f"{count} stale records, below threshold")
+        logger.info("[DLQDrain] check complete: {} stale records (threshold >{})", count, _DLQ_STALE_THRESHOLD)
+    except Exception as exc:
+        logger.warning("[DLQDrain] check failed: %s", exc)
+        if _dlq_drain_runs:
+            _dlq_drain_runs.labels(status="error").inc()
+        _log_agent_run("dlq_drain_check", "dlq_drain", "failed", str(exc))
+
+
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
     """Register maintenance-related scheduler jobs."""
     from apscheduler.triggers.cron import CronTrigger
@@ -1498,4 +1633,23 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         id="check_developer_price_moves",
         name="Daily Developer Price Move Alert (Discord #competitive-intel if >3% change)",
         misfire_grace_time=3600,
+    )
+
+    # Weekly Alembic health check — Monday 06:30 UTC = 12:00 IST (GATE-150, T-1437)
+    scheduler.add_job(
+        lambda: safe_job(run_alembic_health_check, "weekly_alembic_health_check"),
+        CronTrigger(day_of_week="mon", hour=6, minute=30, timezone="UTC"),
+        id="weekly_alembic_health_check",
+        name="Weekly Alembic Migration Health Check (Mon 06:30 UTC / 12:00 IST)",
+        misfire_grace_time=3600,
+        replace_existing=True,
+    )
+    # Weekly DLQ drain check — Monday 09:30 UTC = 15:00 IST (GATE-150, T-1438)
+    scheduler.add_job(
+        lambda: safe_job(run_dlq_drain_check, "weekly_dlq_drain_check"),
+        CronTrigger(day_of_week="mon", hour=9, minute=30, timezone="UTC"),
+        id="weekly_dlq_drain_check",
+        name="Weekly DLQ Drain Check (Mon 09:30 UTC / 15:00 IST)",
+        misfire_grace_time=3600,
+        replace_existing=True,
     )

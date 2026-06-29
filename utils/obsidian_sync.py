@@ -46,6 +46,7 @@ __all__ = [
     "write_decision_journal_entry",
     "write_investor_brief",
     "write_assembly_signal",
+    "write_vel_pack",
 ]
 
 _VALID_DECISION_FLAGS: frozenset[str] = frozenset({"GO", "NO-GO", "CONDITIONAL"})
@@ -681,4 +682,69 @@ def _write_investor_brief_from_dict(market: str, brief_dict: dict) -> Optional[s
         return filepath
     except Exception as exc:
         logger.warning(f"[ObsidianSync] Failed to write investor brief {filename}: {exc}")
+        return ""
+
+
+def write_vel_pack(market: str, md_content: str) -> Optional[str]:
+    """Write a VEL Intel Pack to the Obsidian vault.
+
+    Args:
+        market: Market name (used in filename and frontmatter).
+        md_content: Full markdown content of the VEL pack.
+
+    Returns:
+        File path on success, ``None`` if sync path not mounted,
+        ``""`` on write failure.
+    """
+    if not _ensure_sync_dir():
+        return None
+
+    now = datetime.now(timezone.utc)
+    date_str = now.strftime("%Y-%m-%d")
+    vault_base = _sync_path()
+    project_dir = os.path.join(vault_base, "03 LLS", "02 Projects", "VEL")
+    os.makedirs(project_dir, exist_ok=True)
+
+    safe_market = "".join(c if c.isalnum() or c in (" ", "-", "_") else "_" for c in market)
+    filename = f"(AI) VEL Intel Pack {safe_market} {date_str}.md"
+    filepath = os.path.join(project_dir, filename)
+
+    frontmatter_lines = [
+        "---",
+        "type: project",
+        "area: lls",
+        "project: VEL",
+        "ai_generated: true",
+        f"generated_at: {now.isoformat(timespec='seconds')}",
+        f"date: {date_str}",
+        f"market: {market}",
+        "status: active",
+        "---",
+    ]
+    frontmatter = "\n".join(frontmatter_lines)
+    full_content = f"{frontmatter}\n\n{md_content}\n"
+
+    encoded = full_content.encode("utf-8")
+    if len(encoded) > _MAX_CONTENT_BYTES:
+        logger.warning(
+            f"[ObsidianSync] VEL pack too large: {len(encoded)}B (max {_MAX_CONTENT_BYTES}B)"
+        )
+        return ""
+
+    try:
+        _check_disk_space(filepath)
+    except OSError as exc:
+        logger.warning(f"[ObsidianSync] Disk space check failed for VEL pack: {exc}")
+        return ""
+
+    try:
+        from config.metrics import obsidian_export_total, obsidian_bytes_total
+        with open(filepath, "wb") as f:
+            f.write(encoded)
+        _log_write_audit(filename, filepath, full_content)
+        obsidian_export_total.labels(source="vel_pack").inc()
+        obsidian_bytes_total.labels(source="vel_pack").inc(len(encoded))
+        return filepath
+    except Exception as exc:
+        logger.warning(f"[ObsidianSync] Failed to write VEL pack {filename}: {exc}")
         return ""

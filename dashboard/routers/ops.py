@@ -2031,6 +2031,7 @@ class KillCriteriaDeedThroughput(BaseModel):
     deadline: str = "2026-08-15"
     status: str = "unknown"
     weeks_remaining: int = 0
+    weeks_remaining_label: str = ""
     error: str | None = None
 
 
@@ -2060,12 +2061,21 @@ async def kill_criteria(request: Request):
 
     try:
         proj = compute_throughput_projection()
+        weeks_rem = proj.get("weeks_remaining") if "weeks_remaining" in proj else None
+        label = (
+            "unknown"
+            if weeks_rem is None
+            else "past deadline"
+            if weeks_rem < 0
+            else f"{weeks_rem} weeks (2026-08-15)"
+        )
         dt = KillCriteriaDeedThroughput(
             current_avg_4wk=proj.get("avg_4wk", 0.0),
             target=50,
             deadline="2026-08-15",
             status=proj.get("projection_verdict", "unknown"),
-            weeks_remaining=proj.get("weeks_remaining", 0),
+            weeks_remaining=weeks_rem or 0,
+            weeks_remaining_label=label,
         )
     except Exception as exc:
         logger.error("[kill_criteria] deed_throughput failed: %s", exc)

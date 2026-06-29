@@ -753,7 +753,31 @@ def _run_dept_heads(
 
             # Assembly context injection (T-1419)
             assembly_context = _build_assembly_context(market_safe)
-            dept_question = assembly_context + gv_source_context + irr_context + dept_question
+
+            # Corridor backtest context (T-1449)
+            corridor_context = ""
+            if market_safe:
+                try:
+                    from utils.corridor_scorer import CorridorScorer
+                    bt_results = CorridorScorer().backtest_psf_history(market_safe, lookback_months=24)
+                    valid = [r for r in bt_results if r["actual_change_pct"] is not None]
+                    if len(valid) >= 2:
+                        mape = round(
+                            sum(abs(r["actual_change_pct"]) for r in valid) / len(valid), 1
+                        )
+                        best = max(valid, key=lambda r: r["actual_change_pct"])
+                        signal = "high" if mape < 10 else "moderate" if mape < 20 else "low"
+                        corridor_context = (
+                            f"\n[Corridor accuracy (last 24mo): best={best['corridor']} "
+                            f"({mape:.1f}% MAPE). "
+                            f"Accuracy signal: {signal}.]\n"
+                        )
+                except Exception:
+                    logger.debug(
+                        "[board_room] Corridor backtest lookup failed for %s", market_safe
+                    )
+
+            dept_question = corridor_context + assembly_context + gv_source_context + irr_context + dept_question
 
         if key == "legal":
             legal_context = ""

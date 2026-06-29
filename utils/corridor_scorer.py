@@ -721,6 +721,116 @@ class CorridorScorer:
         from utils.db import get_engine
         return get_engine()
 
+    # ── Per-market corridor backtest (GATE-152 / T-1446) ────────────────────
+
+    _BACKTEST_DEED_TYPES = (
+        "'Sale', 'Sale Deed', 'Absolute Sale', "
+        "'Sale Agreement', 'Sale Agreement with Possession', "
+        "'Sale Deed with Possession'"
+    )
+
+    @staticmethod
+    def _months_ago(d: date, months: int) -> date:
+        from calendar import monthrange
+        m = d.month - 1 - months
+        y = d.year + m // 12
+        m = m % 12 + 1
+        max_d = monthrange(y, m)[1]
+        return d.replace(year=y, month=m, day=min(d.day, max_d))
+
+    def backtest_psf_history(
+        self,
+        market: str,
+        lookback_months: int = 24,
+    ) -> list[dict]:
+        """Backtest corridor scores against actual transaction PSF history.
+
+        For each corridor in the market, queries registered_transactions for
+        avg PSF at (now - lookback_months), (now - 12 months), and last 30 days.
+        Returns list sorted by absolute actual_change_pct descending.
+
+        Returns [] on any DB failure or empty market string.
+        """
+        if not market or not market.strip():
+            return []
+
+        try:
+            as_of = date.today()
+            corridors = [c for c in CORRIDOR_DEFINITIONS if c["market"] == market]
+            if not corridors:
+                return []
+
+            engine = self._get_engine()
+            from sqlalchemy import text
+
+            t24_start = self._months_ago(as_of, lookback_months)
+            t24_end = self._months_ago(as_of, lookback_months - 1)
+            t12_start = self._months_ago(as_of, 12)
+            t12_end = self._months_ago(as_of, 11)
+            now_start = as_of - timedelta(days=30)
+            now_end = as_of
+
+            date_clause = (
+                "(reg_date BETWEEN :t24_s AND :t24_e "
+                "OR reg_date BETWEEN :t12_s AND :t12_e "
+                "OR reg_date BETWEEN :now_s AND :now_e)"
+            )
+            backtest_sql = (
+                "SELECT :cid AS corridor_id, :cname AS corridor_name, "
+                "AVG(psf) FILTER (WHERE reg_date BETWEEN :t24_s AND :t24_e) AS psf_t24, "
+                "AVG(psf) FILTER (WHERE reg_date BETWEEN :t12_s AND :t12_e) AS psf_t12, "
+                "AVG(psf) FILTER (WHERE reg_date BETWEEN :now_s AND :now_e) AS psf_now "
+                "FROM registered_transactions "
+                "WHERE village = ANY(:villages) "
+                f"AND deed_type IN ({self._BACKTEST_DEED_TYPES}) "
+                "AND psf BETWEEN 500 AND 50000 "
+                f"AND ({date_clause})"
+            )
+
+            results: list[dict] = []
+            with engine.connect() as conn:
+                for i, corr in enumerate(corridors):
+                    row = conn.execute(
+                        text(backtest_sql),
+                        {
+                            "cid": corr["id"],
+                            "cname": corr["name"],
+                            "villages": corr["villages"],
+                            "t24_s": t24_start,
+                            "t24_e": t24_end,
+                            "t12_s": t12_start,
+                            "t12_e": t12_end,
+                            "now_s": now_start,
+                            "now_e": now_end,
+                        },
+                    ).fetchone()
+                    if not row:
+                        continue
+                    psf_t24 = float(row.psf_t24) if row.psf_t24 is not None else None
+                    psf_t12 = float(row.psf_t12) if row.psf_t12 is not None else None
+                    psf_now = float(row.psf_now) if row.psf_now is not None else None
+
+                    actual_change_pct = None
+                    if psf_t24 and psf_now:
+                        actual_change_pct = round((psf_now - psf_t24) / psf_t24 * 100, 1)
+
+                    results.append({
+                        "corridor": str(row.corridor_name),
+                        "corridor_id": str(row.corridor_id),
+                        "psf_t24": psf_t24,
+                        "psf_t12": psf_t12,
+                        "psf_now": psf_now,
+                        "actual_change_pct": actual_change_pct,
+                    })
+
+            valid = [r for r in results if r["actual_change_pct"] is not None]
+            invalid = [r for r in results if r["actual_change_pct"] is None]
+            valid.sort(key=lambda r: abs(r["actual_change_pct"]), reverse=True)
+            return valid + invalid
+        except Exception as exc:
+            logger.warning("[CorridorScorer] backtest failed for {}: {}", market, exc)
+            return []
+
     # ── Backtest report writer ────────────────────────────────────────────────
 
     def _write_backtest_report(self, result: dict[str, Any], path: Path) -> None:

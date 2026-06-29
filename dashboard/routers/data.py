@@ -59,6 +59,23 @@ class OwnershipChainResponse(BaseModel):
     parser_completeness_score: float | None = None
 
 
+class VillagePriorityItem(BaseModel):
+    village: str
+    market: str
+    assembly_signal_count: int = 0
+    max_confidence: float = 0.0
+    last_deed_ingested: str | None = None
+    priority_score: float = 0.0
+    priority_rank: int | None = None
+    kaveri_url_hint: str
+
+
+class DownloadGuideResponse(BaseModel):
+    villages: list[VillagePriorityItem]
+    generated_at: str
+    guide_message: str
+
+
 # ── Metrics ─────────────────────────────────────────────────────────────
 
 
@@ -1133,6 +1150,116 @@ def assembly_signals_panel(request: Request):
     return templates.TemplateResponse(request, "assembly_signals.html")
 
 
+# ── Assembly Timeline Time-Series (T-1443) ──────────────────────────────
+
+
+class AssemblyTimelineItem(BaseModel):
+    week_start: str
+    cluster_count: int
+    avg_confidence: float
+    high_confidence_count: int
+
+
+class AssemblyTimelineResponse(BaseModel):
+    market: str
+    timeline: list[AssemblyTimelineItem]
+    total_weeks: int
+    generated_at: str
+    source: str = "view"
+
+
+_assembly_timeline_requests_total = _counter(
+    "assembly_timeline_requests_total", "Assembly timeline requests", ["source", "status"],
+)
+_assembly_timeline_duration_seconds = _histogram(
+    "assembly_timeline_duration_seconds", "Assembly timeline query duration",
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+)
+
+
+@router.get(
+    "/intel/assembly-timeline",
+    response_model=AssemblyTimelineResponse,
+    summary="Assembly cluster count time-series by market (weekly windows, 1 year)",
+    tags=["Assembly"],
+)
+@limiter.limit("60/minute")
+async def assembly_timeline(
+    request: Request,
+    market: str = Query(..., min_length=2, description="Market name (Yelahanka/Devanahalli/Hebbal)"),
+):
+    t0 = time.time()
+    try:
+        from utils.assembly_detector import AssemblyDetector
+        from sqlalchemy import text as sa_text
+
+        canonical = _resolve_market(market)
+        if not canonical:
+            _assembly_timeline_requests_total.labels(source="request", status="invalid_market").inc()
+            return _err_resp(f"unknown market: {market}", request, 400, "Assembly")
+
+        engine = _get_sa_engine()
+        timeline: list[dict] = []
+        source = "view"
+
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(
+                    sa_text("""
+                        SELECT week_start, cluster_count, avg_confidence, high_confidence_count
+                        FROM v_assembly_weekly_trend
+                        WHERE market ILIKE :mkt
+                        ORDER BY week_start ASC
+                        LIMIT 52
+                    """),
+                    {"mkt": canonical},
+                ).fetchall()
+                for r in rows:
+                    timeline.append({
+                        "week_start": str(r.week_start),
+                        "cluster_count": int(r.cluster_count),
+                        "avg_confidence": float(r.avg_confidence) if r.avg_confidence is not None else 0.0,
+                        "high_confidence_count": int(r.high_confidence_count),
+                    })
+        except Exception:
+            logger.debug("[assembly_timeline] view query failed, falling back to detect_time_series")
+            timeline = []
+
+        if not timeline:
+            source = "detector"
+            detector = AssemblyDetector()
+            ts = detector.detect_time_series(canonical)
+            timeline = [{
+                "week_start": t["week_start"],
+                "cluster_count": t["cluster_count"],
+                "avg_confidence": t["avg_confidence"],
+                "high_confidence_count": t["high_confidence_count"],
+            } for t in ts]
+
+        elapsed = time.time() - t0
+        _assembly_timeline_duration_seconds.observe(elapsed)
+        _assembly_timeline_requests_total.labels(source=source, status="ok").inc()
+
+        return JSONResponse(
+            content=AssemblyTimelineResponse(
+                market=canonical,
+                timeline=[AssemblyTimelineItem(**t) for t in timeline],
+                total_weeks=len(timeline),
+                generated_at=datetime.now(timezone.utc).isoformat(),
+                source=source,
+            ).model_dump(),
+            headers={
+                "Cache-Control": "private, max-age=60, must-revalidate",
+                "X-Source": source,
+            },
+        )
+    except Exception as exc:
+        elapsed = time.time() - t0
+        _assembly_timeline_requests_total.labels(source="error", status="internal_error").inc()
+        logger.error("[assembly_timeline] %s (elapsed=%.2fs)", exc, elapsed)
+        return _err_resp(str(exc), request, 500, "Assembly")
+
+
 # ── Dashboard Badges (T-1409) ────────────────────────────────────────────
 
 
@@ -1765,6 +1892,565 @@ async def vel_analysis(
         return _err_resp(str(exc), request, 500, "Investor")
 
 
+# ── VEL Competitive Report (T-1456) ──────────────────────────────────
+
+
+_vel_competitive_report_requests_total = _counter(
+    "vel_competitive_report_requests_total",
+    "VEL competitive report requests by market and status",
+    ["market", "status"],
+)
+_vel_competitive_report_duration_seconds = _histogram(
+    "vel_competitive_report_duration_seconds",
+    "VEL competitive report query duration in seconds",
+    ["market"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+_vel_competitive_report_cache_hits_total = _counter(
+    "vel_competitive_report_cache_hits_total",
+    "VEL competitive report cache hits by market",
+    ["market"],
+)
+
+_VEL_COMPETITIVE_REPORT_CACHE: dict[str, tuple[str, float]] = {}
+_VEL_COMPETITIVE_REPORT_CACHE_TTL = 120.0
+_VEL_COMPETITIVE_REPORT_CACHE_LOCK = threading.Lock()
+
+
+def _cached_vel_comp(key: str) -> str | None:
+    with _VEL_COMPETITIVE_REPORT_CACHE_LOCK:
+        entry = _VEL_COMPETITIVE_REPORT_CACHE.get(key)
+        if entry and time.time() - entry[1] < _VEL_COMPETITIVE_REPORT_CACHE_TTL:
+            return entry[0]
+    return None
+
+
+def _set_cached_vel_comp(key: str, value: str) -> None:
+    with _VEL_COMPETITIVE_REPORT_CACHE_LOCK:
+        _VEL_COMPETITIVE_REPORT_CACHE[key] = (value, time.time())
+        if len(_VEL_COMPETITIVE_REPORT_CACHE) > 50:
+            oldest = min(_VEL_COMPETITIVE_REPORT_CACHE.items(), key=lambda kv: kv[1][1])
+            _VEL_COMPETITIVE_REPORT_CACHE.pop(oldest[0], None)
+
+
+@router.get(
+    "/intel/vel/competitive-report",
+    summary="VEL competitive report — Grade A devs, PSF trend, absorption, pipeline",
+    tags=["VEL"],
+)
+@limiter.limit("20/minute")
+async def vel_competitive_report(
+    request: Request,
+    target_market: str = Query(default="Yelahanka", min_length=2, description="Target market name"),
+):
+    t0 = time.time()
+    try:
+        canonical = _resolve_market(target_market)
+        if not canonical:
+            _vel_competitive_report_requests_total.labels(market=target_market, status="invalid_market").inc()
+            return _err_resp(f"unknown market: {target_market}", request, 400, "VEL")
+
+        cache_key = f"vel_comp:{canonical}"
+        cached = _cached_vel_comp(cache_key)
+        if cached:
+            _vel_competitive_report_cache_hits_total.labels(market=canonical).inc()
+            _vel_competitive_report_requests_total.labels(market=canonical, status="hit").inc()
+            return JSONResponse(
+                content=json.loads(cached),
+                headers={"Cache-Control": "private, max-age=120, stale-while-revalidate=60"},
+            )
+
+        engine = _get_sa_engine()
+        grade_a_competitors: list[dict] = []
+        psf_trend_3m: dict = {"current": None, "prior": None, "change_pct": None}
+        absorption_rate: float | None = None
+        launch_pipeline_units: int = 0
+
+        # (1) Grade A devs with active RERA projects
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(
+                    _sa_text("""
+                        SELECT d.name, COUNT(*) AS project_count
+                        FROM rera_projects rp
+                        JOIN micro_markets mm ON mm.id = rp.micro_market_id
+                        JOIN developers d ON d.id = rp.developer_id
+                        WHERE mm.name = :mkt
+                          AND rp.project_status = 'ongoing'
+                          AND d.grade = 'A'
+                        GROUP BY d.name
+                        ORDER BY project_count DESC
+                    """),
+                    {"mkt": canonical},
+                ).fetchall()
+            grade_a_competitors = [
+                {"developer": str(r[0]), "project_count": int(r[1])}
+                for r in rows
+            ]
+        except Exception as exc:
+            logger.debug("[vel_competitive_report] grade A query: %s", exc)
+
+        # (2) PSF trend 3mo from project_snapshots
+        try:
+            with engine.connect() as conn:
+                this_month = conn.execute(
+                    _sa_text("""
+                        SELECT AVG(avg_psf)
+                        FROM project_snapshots ps
+                        JOIN micro_markets mm ON mm.id = ps.micro_market_id
+                        WHERE mm.name = :mkt
+                          AND ps.snapshot_date >= DATE_TRUNC('month', NOW()) - INTERVAL '1 month'
+                          AND ps.avg_psf IS NOT NULL
+                    """),
+                    {"mkt": canonical},
+                ).scalar()
+                prior_month = conn.execute(
+                    _sa_text("""
+                        SELECT AVG(avg_psf)
+                        FROM project_snapshots ps
+                        JOIN micro_markets mm ON mm.id = ps.micro_market_id
+                        WHERE mm.name = :mkt
+                          AND ps.snapshot_date >= DATE_TRUNC('month', NOW()) - INTERVAL '4 months'
+                          AND ps.snapshot_date < DATE_TRUNC('month', NOW()) - INTERVAL '2 months'
+                          AND ps.avg_psf IS NOT NULL
+                    """),
+                    {"mkt": canonical},
+                ).scalar()
+            if this_month is not None:
+                psf_trend_3m["current"] = round(float(this_month), 0)
+            if prior_month is not None:
+                psf_trend_3m["prior"] = round(float(prior_month), 0)
+            if this_month is not None and prior_month is not None and float(prior_month) > 0:
+                psf_trend_3m["change_pct"] = round(
+                    (float(this_month) - float(prior_month)) / float(prior_month) * 100, 1
+                )
+        except Exception as exc:
+            logger.debug("[vel_competitive_report] PSF trend query: %s", exc)
+
+        # (3) Launch pipeline: upcoming projects sum units
+        try:
+            with engine.connect() as conn:
+                pipeline_row = conn.execute(
+                    _sa_text("""
+                        SELECT COALESCE(SUM(sp.estimated_units), 0)
+                        FROM supply_pipeline sp
+                        WHERE sp.market ILIKE :mkt
+                          AND sp.status IN ('registered', 'pre_launch', 'upcoming')
+                    """),
+                    {"mkt": canonical},
+                ).scalar()
+            launch_pipeline_units = int(pipeline_row or 0)
+        except Exception as exc:
+            logger.debug("[vel_competitive_report] pipeline query: %s", exc)
+
+        # (4) Absorption rate from v_market_brief
+        try:
+            with engine.connect() as conn:
+                abs_row = conn.execute(
+                    _sa_text("""
+                        SELECT absorption_rate FROM v_market_brief
+                        WHERE micro_market ILIKE :mkt
+                        LIMIT 1
+                    """),
+                    {"mkt": canonical},
+                ).scalar()
+            if abs_row is not None:
+                absorption_rate = round(float(abs_row), 2)
+        except Exception as exc:
+            logger.debug("[vel_competitive_report] absorption query: %s", exc)
+
+        change_pct = psf_trend_3m.get("change_pct")
+        if change_pct is not None and change_pct > 5:
+            recommendation = "PREMIUM_WINDOW"
+        elif change_pct is not None and change_pct > 0:
+            recommendation = "STEADY"
+        else:
+            recommendation = "PRICE_PRESSURE"
+
+        _vel_competitive_report_duration_seconds.labels(market=canonical).observe(time.time() - t0)
+        _vel_competitive_report_requests_total.labels(market=canonical, status="ok").inc()
+
+        body = {
+            "grade_a_competitors": grade_a_competitors,
+            "psf_trend_3m": psf_trend_3m,
+            "absorption_rate": absorption_rate,
+            "launch_pipeline_units": launch_pipeline_units,
+            "recommendation": recommendation,
+            "market": canonical,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _set_cached_vel_comp(cache_key, json.dumps(body))
+        return JSONResponse(
+            content=body,
+            headers={"Cache-Control": "private, max-age=120, stale-while-revalidate=60"},
+        )
+    except Exception as exc:
+        _vel_competitive_report_requests_total.labels(market=target_market, status="error").inc()
+        logger.error("[vel_competitive_report] %s", exc)
+        return _err_resp(str(exc), request, 500, "VEL")
+
+
+# ── VEL Pricing Sensitivity (T-1457) ─────────────────────────────────
+
+
+_vel_pricing_sensitivity_requests_total = _counter(
+    "vel_pricing_sensitivity_requests_total",
+    "VEL pricing sensitivity requests by market and status",
+    ["market", "status"],
+)
+
+
+@router.get(
+    "/intel/vel/pricing-sensitivity",
+    summary="VEL pricing sensitivity — PSF distribution, absorption shift, risk band",
+    tags=["VEL"],
+)
+@limiter.limit("20/minute")
+async def vel_pricing_sensitivity(
+    request: Request,
+    market: str = Query(..., min_length=2, description="Market name"),
+    target_psf: float = Query(..., gt=0, description="Target selling PSF"),
+):
+    try:
+        canonical = _resolve_market(market)
+        if not canonical:
+            _vel_pricing_sensitivity_requests_total.labels(market=market, status="invalid_market").inc()
+            return _err_resp(f"unknown market: {market}", request, 400, "VEL")
+
+        engine = _get_sa_engine()
+        psf_values: list[float] = []
+
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(
+                    _sa_text("""
+                        SELECT ps.avg_psf
+                        FROM project_snapshots ps
+                        JOIN micro_markets mm ON mm.id = ps.micro_market_id
+                        WHERE mm.name = :mkt
+                          AND ps.snapshot_date >= NOW() - INTERVAL '90 days'
+                          AND ps.avg_psf IS NOT NULL
+                          AND ps.avg_psf > 1000
+                          AND ps.avg_psf < 50000
+                        ORDER BY ps.avg_psf
+                    """),
+                    {"mkt": canonical},
+                ).fetchall()
+            psf_values = sorted([float(r[0]) for r in rows if r[0] is not None])
+        except Exception as exc:
+            logger.debug("[vel_pricing_sensitivity] PSF query: %s", exc)
+
+        _PSF_FALLBACK_P25 = 4500.0
+        _PSF_FALLBACK_P50 = 5500.0
+        _PSF_FALLBACK_P75 = 7000.0
+
+        note = ""
+        if len(psf_values) < 3:
+            note = "Insufficient PSF data — using market-wide fallback estimates"
+            p25 = _PSF_FALLBACK_P25
+            p50 = _PSF_FALLBACK_P50
+            p75 = _PSF_FALLBACK_P75
+        else:
+            def _linear_percentile(sorted_vals: list[float], p: float) -> float:
+                n = len(sorted_vals)
+                k = (n - 1) * p
+                f = int(k)
+                c = f + 1 if f + 1 < n else f
+                return sorted_vals[f] + (k - f) * (sorted_vals[c] - sorted_vals[f])
+            n = len(psf_values)
+            p25 = _linear_percentile(psf_values, 0.25)
+            p50 = _linear_percentile(psf_values, 0.50)
+            p75 = _linear_percentile(psf_values, 0.75)
+
+        absorption_shift_psf = round(p75 * 1.1, 0)
+
+        if target_psf <= p50:
+            risk_band = "LOW"
+        elif target_psf <= p75:
+            risk_band = "MODERATE"
+        else:
+            risk_band = "HIGH"
+
+        premium_over_median_pct = round((target_psf - p50) / p50 * 100, 1) if p50 > 0 else 0.0
+
+        _vel_pricing_sensitivity_requests_total.labels(market=canonical, status="ok").inc()
+
+        return {
+            "target_psf": target_psf,
+            "p25": round(p25, 0),
+            "p50": round(p50, 0),
+            "p75": round(p75, 0),
+            "absorption_shift_psf": absorption_shift_psf,
+            "risk_band": risk_band,
+            "premium_over_median_pct": premium_over_median_pct,
+            "note": note,
+            "market": canonical,
+            "data_points": len(psf_values),
+        }
+    except Exception as exc:
+        _vel_pricing_sensitivity_requests_total.labels(market=market, status="error").inc()
+        logger.error("[vel_pricing_sensitivity] %s", exc)
+        return _err_resp(str(exc), request, 500, "VEL")
+
+
+# ── VEL Obsidian Pack Export (T-1458) ─────────────────────────────────
+
+
+class VELExportObsidianRequest(BaseModel):
+    target_market: str
+    land_cost_cr: float | None = None
+    area_acres: float | None = None
+    target_psf: float | None = None
+
+
+@router.post(
+    "/intel/vel/export-obsidian",
+    summary="Export VEL competitive + pricing + brief as Obsidian markdown pack",
+    tags=["VEL"],
+)
+@limiter.limit("10/minute")
+async def vel_export_obsidian(
+    request: Request,
+    body: VELExportObsidianRequest,
+):
+    try:
+        market = body.target_market.strip()
+        if not market:
+            return _err_resp("target_market required", request, 400, "VEL")
+
+        canonical = _resolve_market(market)
+        if not canonical:
+            return _err_resp(f"unknown market: {market}", request, 400, "VEL")
+
+        from utils.investor_brief_generator import InvestorBriefGenerator
+        from utils.obsidian_sync import write_vel_pack
+
+        now = datetime.now(timezone.utc)
+        date_str = now.strftime("%Y-%m-%d")
+
+        # Build competitive report + pricing sensitivity (single connection)
+        engine = _get_sa_engine()
+        grade_a_rows: list[dict] = []
+        p50_val = 5500.0
+        risk_val = "MODERATE"
+
+        try:
+            with engine.connect() as conn:
+                grade_rows = conn.execute(
+                    _sa_text("""
+                        SELECT d.name, COUNT(*) AS project_count
+                        FROM rera_projects rp
+                        JOIN micro_markets mm ON mm.id = rp.micro_market_id
+                        JOIN developers d ON d.id = rp.developer_id
+                        WHERE mm.name = :mkt
+                          AND rp.project_status = 'ongoing'
+                          AND d.grade = 'A'
+                        GROUP BY d.name
+                        ORDER BY project_count DESC
+                    """),
+                    {"mkt": canonical},
+                ).fetchall()
+                grade_a_rows = [{"developer": str(r[0]), "project_count": int(r[1])} for r in grade_rows]
+
+                psf_rows = conn.execute(
+                    _sa_text("""
+                        SELECT avg_psf FROM project_snapshots ps
+                        JOIN micro_markets mm ON mm.id = ps.micro_market_id
+                        WHERE mm.name = :mkt
+                          AND ps.snapshot_date >= NOW() - INTERVAL '90 days'
+                          AND ps.avg_psf IS NOT NULL
+                          AND ps.avg_psf > 1000 AND ps.avg_psf < 50000
+                        ORDER BY ps.avg_psf
+                    """),
+                    {"mkt": canonical},
+                ).fetchall()
+                p_vals = sorted([float(r[0]) for r in psf_rows if r[0] is not None])
+                if len(p_vals) >= 3:
+                    n = len(p_vals)
+                    p50_val = p_vals[int(n * 0.50)]
+                    p75_val = p_vals[int(n * 0.75)]
+                    tp = body.target_psf or p50_val * 1.2
+                    risk_val = "LOW" if tp <= p50_val else "MODERATE" if tp <= p75_val else "HIGH"
+        except Exception:
+            pass
+
+        # Investor brief
+        brief_md = ""
+        try:
+            gen = InvestorBriefGenerator()
+            brief = gen.generate(market=canonical)
+            from utils.investor_brief_generator import format_markdown
+            brief_md = format_markdown(brief)
+        except Exception:
+            brief_md = "*Investor brief data unavailable.*"
+
+        ga_lines = "\n".join(
+            f"- **{g['developer']}** — {g['project_count']} projects"
+            for g in grade_a_rows[:10]
+        ) if grade_a_rows else "*No Grade A developer data.*"
+
+        isoTs = now.isoformat(timespec="seconds")
+        sections = [
+            f"# VEL Intel Pack — {canonical}",
+            "",
+            f"**Generated:** {isoTs}",
+            "",
+            "## 1. Competitive Report",
+            "",
+            "### Grade A Developers",
+            ga_lines,
+            "",
+            "## 2. Pricing Sensitivity",
+            "",
+            f"- **Market Median PSF:** ₹{p50_val:,.0f}",
+            f"- **Risk Band:** {risk_val}",
+            "",
+            "## 3. Investor Brief",
+            "",
+            brief_md,
+            "",
+        ]
+        md_content = "\n".join(sections)
+
+        result = write_vel_pack(canonical, md_content)
+        if result:
+            return {
+                "obsidian_path": result,
+                "generated_at": now.isoformat(timespec="seconds"),
+            }
+
+        placeholder = (
+            f"03 LLS/02 Projects/VEL/(AI) VEL Intel Pack {canonical} {date_str}.md"
+        )
+        return {
+            "obsidian_path": placeholder,
+            "generated_at": now.isoformat(timespec="seconds"),
+            "note": "OBSIDIAN_VAULT_PATH not set — placeholder path returned",
+        }
+    except Exception as exc:
+        logger.error("[vel_export_obsidian] %s", exc)
+        return _err_resp(str(exc), request, 500, "VEL")
+
+
+# ── Corridor Backtest Accuracy (T-1448) ──────────────────────────────
+
+
+_backtest_accuracy_requests_total = _counter(
+    "backtest_accuracy_requests_total",
+    "Corridor backtest accuracy requests by market and status",
+    ["market", "status"],
+)
+_backtest_accuracy_duration_seconds = _histogram(
+    "backtest_accuracy_duration_seconds",
+    "Corridor backtest accuracy query duration in seconds",
+    ["market"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+
+
+class CorridorBacktestItem(BaseModel):
+    corridor: str
+    corridor_id: str
+    psf_t24: float | None = None
+    psf_t12: float | None = None
+    psf_now: float | None = None
+    actual_change_pct: float | None = None
+
+
+class CorridorBacktestResponse(BaseModel):
+    market: str
+    corridors: list[CorridorBacktestItem]
+    overall_mape: float | None = None
+    best_corridor: str | None = None
+    worst_corridor: str | None = None
+    data_points: int = 0
+    lookback_months: int = 24
+    generated_at: str = ""
+
+
+@router.get(
+    "/intel/corridors/backtest-accuracy",
+    response_model=CorridorBacktestResponse,
+    summary="Corridor backtest accuracy — historical PSF change per corridor vs actual",
+    tags=["Corridors"],
+)
+@limiter.limit("20/minute")
+async def corridor_backtest_accuracy(
+    request: Request,
+    market: str = Query(..., min_length=2, description="Market name (Yelahanka/Devanahalli/Hebbal)"),
+    lookback_months: int = Query(default=24, ge=6, le=60, description="Backtest window in months (6-60)"),
+):
+    t0 = time.time()
+    generated_at = datetime.now(timezone.utc).isoformat()
+    try:
+        canonical = _resolve_market(market)
+        if not canonical:
+            _backtest_accuracy_requests_total.labels(market=market, status="invalid_market").inc()
+            return _err_resp(f"unknown market: {market}", request, 400, "Corridors")
+
+        from utils.corridor_scorer import CorridorScorer
+
+        scorer = CorridorScorer()
+        results = scorer.backtest_psf_history(canonical, lookback_months=lookback_months)
+
+        valid_changes = [
+            r for r in results if r["actual_change_pct"] is not None
+        ]
+        overall_mape = (
+            round(sum(abs(r["actual_change_pct"]) for r in valid_changes) / len(valid_changes), 1)
+            if len(valid_changes) >= 1
+            else None
+        )
+
+        best_corr_str = worst_corr_str = None
+        if valid_changes:
+            best = max(valid_changes, key=lambda r: r["actual_change_pct"])
+            worst = min(valid_changes, key=lambda r: r["actual_change_pct"])
+            best_corr_str = f"{best['corridor']} ({best['actual_change_pct']:+.1f}%)"
+            worst_corr_str = f"{worst['corridor']} ({worst['actual_change_pct']:+.1f}%)"
+
+        corridors_model = [
+            CorridorBacktestItem(
+                corridor=r["corridor"],
+                corridor_id=r["corridor_id"],
+                psf_t24=r["psf_t24"],
+                psf_t12=r["psf_t12"],
+                psf_now=r["psf_now"],
+                actual_change_pct=r["actual_change_pct"],
+            )
+            for r in results
+        ]
+
+        response = CorridorBacktestResponse(
+            market=canonical,
+            corridors=corridors_model,
+            overall_mape=overall_mape,
+            best_corridor=best_corr_str,
+            worst_corridor=worst_corr_str,
+            data_points=len(valid_changes),
+            lookback_months=lookback_months,
+            generated_at=generated_at,
+        )
+
+        _backtest_accuracy_duration_seconds.labels(market=canonical).observe(time.time() - t0)
+        _backtest_accuracy_requests_total.labels(market=canonical, status="ok").inc()
+
+        json_body = response.model_dump_json()
+        etag = compute_etag(json_body)
+        etag_resp = check_etag(request, etag)
+        if etag_resp:
+            return etag_resp
+
+        return JSONResponse(
+            content=json.loads(json_body),
+            headers={"ETag": f'"{etag}"', "Cache-Control": "private, max-age=30"},
+        )
+    except Exception as exc:
+        _backtest_accuracy_requests_total.labels(market=market, status="error").inc()
+        logger.error("[corridor_backtest_accuracy] %s", exc)
+        return _err_resp(str(exc), request, 500, "Corridors")
+
+
 # ── Export to Obsidian (T-1428) ───────────────────────────────────────
 
 
@@ -1832,3 +2518,52 @@ async def export_obsidian(
 @router.get("/investor-brief", tags=["Investor"], summary="Investor Brief dashboard panel")
 async def investor_brief_panel(request: Request):
     return templates.TemplateResponse(request, "investor_brief.html")
+
+
+# ── Deed Download Guide (T-1453) ──────────────────────────────────────
+
+_download_guide_requests_total = _counter(
+    "download_guide_requests_total",
+    "Download guide requests by market and status",
+    ["market", "status"],
+)
+
+
+@router.get(
+    "/deeds/download-guide",
+    response_model=DownloadGuideResponse,
+    summary="Priority villages for Form 17 deed downloads this week — ranked by assembly signal density",
+    tags=["Deeds"],
+    responses={
+        200: {"description": "List of priority villages sorted by intelligence value"},
+        401: {"description": "Missing or invalid API key"},
+        500: {"description": "Internal error"},
+    },
+)
+@limiter.limit("20/minute")
+async def download_guide(
+    request: Request,
+    market: str | None = Query(default=None, min_length=2, description="Market filter (optional) — case-insensitive substring match"),
+    top_n: int = Query(default=5, ge=1, le=10, description="Max villages to return (1-10)"),
+):
+    try:
+        from utils.deed_progress import get_priority_villages
+
+        villages = get_priority_villages(market=market, top_n=top_n)
+        for i, v in enumerate(villages, 1):
+            v["priority_rank"] = i
+
+        _download_guide_requests_total.labels(market=market or "all", status="success").inc()
+        return DownloadGuideResponse(
+            villages=villages,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            guide_message=(
+                "This week: download Form 17 Index II for these villages "
+                "in Kaveri Online Services. Highest assembly signal density "
+                "→ highest deed intelligence value."
+            ),
+        )
+    except Exception as exc:
+        _download_guide_requests_total.labels(market=market or "all", status="error").inc()
+        logger.error("[download_guide] %s", exc)
+        return _err_resp(str(exc), request, 500, "Deeds")
