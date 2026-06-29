@@ -17,10 +17,22 @@ from utils.parcel_linker import run_parcel_linker_nightly, run_parcel_ownership_
 from utils.assembly_detector import run_assembly_detection
 from utils.alembic_check import run_alembic_check
 
+__all__ = [
+    "run_alembic_health_check",
+    "run_digest_quality_check",
+    "run_dlq_drain_check",
+]
+
 _ALEMBIC_CWD = os.environ.get("ALEMBIC_PROJECT_DIR", "/app")
 _DLQ_STALE_THRESHOLD = 10
 _DLQ_PENDING_STATUS = "pending"
 _DLQ_STALE_INTERVAL_DAYS = 7
+_DIGEST_QUALITY_RUNNING = False
+_DIGEST_QUALITY_LOCK_MSG = "[MaintenanceJobs] digest_quality_check already running, skipping concurrent invocation"
+_DIGEST_QUALITY_SUPPRESSION_DAYS = 7
+
+_DIGEST_QUALITY_ALERT_TITLE = "DIGEST_QUALITY_FAIL"
+_DIGEST_QUALITY_JOB_NAME = "digest_quality_check"
 
 try:
     from prometheus_client import Counter as _PromCounter
@@ -30,8 +42,11 @@ try:
     _alembic_health_runs = _PromCounter(
         "alembic_health_runs_total", "Alembic health check runs", ["status"],
     )
+    _digest_quality_runs = _PromCounter(
+        "digest_quality_runs_total", "Digest quality check runs", ["status"],
+    )
 except ImportError:
-    _dlq_drain_runs = _alembic_health_runs = None
+    _dlq_drain_runs = _alembic_health_runs = _digest_quality_runs = None
 
 
 def _ops_already_alerted(title: str, cooldown_hours: int = 23) -> bool:
@@ -1404,6 +1419,71 @@ def run_dlq_drain_check():
         _log_agent_run("dlq_drain_check", "dlq_drain", "failed", str(exc))
 
 
+def run_digest_quality_check():
+    """Digest quality check — Saturday 08:00 UTC (GATE-158, T-1477).
+
+    Validates digest quality for each target market. Fires Discord
+    DIGEST_QUALITY_FAIL alert if any market verdict == FAIL.
+    Never raises — logs on error.
+    Logs execution to agent_runs.
+    """
+    global _DIGEST_QUALITY_RUNNING
+    if _DIGEST_QUALITY_RUNNING:
+        logger.warning(_DIGEST_QUALITY_LOCK_MSG)
+        return
+
+    _DIGEST_QUALITY_RUNNING = True
+    try:
+        from utils.digest_validator import validate_digest
+        from utils.discord_notifier import send_ops_alert
+
+        markets = [m.strip() for m in TARGET_MARKETS]
+        failures: list[str] = []
+
+        for market in markets:
+            try:
+                result = validate_digest(market)
+                verdict = result.get("verdict", "FAIL")
+                coverage = result.get("market_coverage", False)
+                fresh = result.get("freshness_ok", False)
+                signals = result.get("signal_count", 0)
+                logger.info(
+                    "[DigestQuality] %s: verdict=%s coverage=%s freshness=%s signals=%d",
+                    market, verdict, coverage, fresh, signals,
+                )
+                if verdict == "FAIL":
+                    failures.append(
+                        f"{market}: {verdict} — market_coverage={coverage}, "
+                        f"freshness={fresh}, signals={signals}"
+                    )
+            except Exception as exc:
+                logger.warning("[DigestQuality] validate_digest failed for %s: %s", market, exc)
+
+        if failures:
+            msg = "; ".join(failures)
+            try:
+                if not _ops_already_alerted(
+                    _DIGEST_QUALITY_ALERT_TITLE, cooldown_hours=_DIGEST_QUALITY_SUPPRESSION_DAYS * 24
+                ):
+                    send_ops_alert(_DIGEST_QUALITY_ALERT_TITLE, msg)
+            except Exception as _dexc:
+                logger.warning("[DigestQuality] Discord alert failed: %s", _dexc)
+            _log_agent_run(_DIGEST_QUALITY_JOB_NAME, "digest_quality", "failed", msg)
+            if _digest_quality_runs:
+                _digest_quality_runs.labels(status="alert").inc()
+        else:
+            _log_agent_run(_DIGEST_QUALITY_JOB_NAME, "digest_quality", "success", "all markets PASS")
+            if _digest_quality_runs:
+                _digest_quality_runs.labels(status="ok").inc()
+    except Exception as exc:
+        logger.warning("[DigestQuality] check failed: %s", exc)
+        _log_agent_run(_DIGEST_QUALITY_JOB_NAME, "digest_quality", "errored", str(exc))
+        if _digest_quality_runs:
+            _digest_quality_runs.labels(status="error").inc()
+    finally:
+        _DIGEST_QUALITY_RUNNING = False
+
+
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
     """Register maintenance-related scheduler jobs."""
     from apscheduler.triggers.cron import CronTrigger
@@ -1650,6 +1730,15 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         CronTrigger(day_of_week="mon", hour=9, minute=30, timezone="UTC"),
         id="weekly_dlq_drain_check",
         name="Weekly DLQ Drain Check (Mon 09:30 UTC / 15:00 IST)",
+        misfire_grace_time=3600,
+        replace_existing=True,
+    )
+    # Weekly digest quality check — Saturday 08:00 UTC (GATE-158, T-1477)
+    scheduler.add_job(
+        lambda: safe_job(run_digest_quality_check, "digest_quality_check"),
+        CronTrigger(day_of_week="sat", hour=8, minute=0, timezone="UTC"),
+        id="digest_quality_check",
+        name="Weekly Digest Quality Check (Sat 08:00 UTC — validates intel digest completeness)",
         misfire_grace_time=3600,
         replace_existing=True,
     )

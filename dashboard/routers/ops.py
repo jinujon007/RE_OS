@@ -2795,3 +2795,168 @@ async def ops_corridor_backtest(request: Request):
     except Exception as exc:
         logger.error("[ops_corridor_backtest] %s", exc)
         return _err_resp(str(exc), request, 500, "Ops")
+
+
+# ── Intelligence Calibration (GATE-157, T-1474) ──────────────────────────────
+
+
+class CalibrationMarketItem(BaseModel):
+    market: str
+    mape_4wk: float | None = None
+    mape_trend: str | None = None
+    stale_memory_count: int = 0
+    computed_at: str | None = None
+
+
+class CalibrationResponse(BaseModel):
+    markets: list[CalibrationMarketItem]
+    overall_health: str
+    generated_at: str
+
+
+def _calibration_markets():
+    from config.settings import TARGET_MARKETS
+    return [m.strip() for m in TARGET_MARKETS]
+
+
+def _compute_overall_health(items: list[CalibrationMarketItem]) -> str:
+    if not items:
+        return "unknown"
+    any_degrading = any(i.mape_trend == "degrading" for i in items)
+    any_high_mape = any(i.mape_4wk is not None and i.mape_4wk > 25 for i in items)
+    if any_degrading or any_high_mape:
+        return "degrading"
+    items_with_data = [i for i in items if i.mape_4wk is not None]
+    if not items_with_data:
+        return "unknown"
+    all_good = all(i.mape_4wk <= 15 and i.mape_trend != "degrading" for i in items_with_data)
+    return "good" if all_good else "unknown"
+
+
+@router.get(
+    "/ops/calibration",
+    response_model=CalibrationResponse,
+    summary="Latest intelligence calibration snapshot per market",
+)
+@limiter.limit("30/minute")
+async def ops_calibration(request: Request):
+    try:
+        items: list[CalibrationMarketItem] = []
+        markets = _calibration_markets()
+        try:
+            with _get_sa_engine().connect() as conn:
+                for market in markets:
+                    try:
+                        row = conn.execute(
+                            _sa_text("""
+                                SELECT mape_4wk, mape_trend, stale_memory_count, computed_at
+                                FROM calibration_snapshots
+                                WHERE market = :market
+                                ORDER BY computed_at DESC
+                                LIMIT 1
+                            """),
+                            {"market": market},
+                        ).fetchone()
+                        if row:
+                            items.append(CalibrationMarketItem(
+                                market=market,
+                                mape_4wk=float(row[0]) if row[0] is not None else None,
+                                mape_trend=row[1],
+                                stale_memory_count=int(row[2]) if row[2] is not None else 0,
+                                computed_at=row[3].isoformat() if row[3] else None,
+                            ))
+                        else:
+                            items.append(CalibrationMarketItem(market=market))
+                    except Exception as exc:
+                        logger.warning("[ops_calibration] query failed for %s: %s", market, exc)
+                        items.append(CalibrationMarketItem(market=market))
+        except Exception as exc:
+            logger.warning("[ops_calibration] DB connection failed: %s", exc)
+            items = [CalibrationMarketItem(market=m) for m in markets]
+
+        overall_health = _compute_overall_health(items)
+        data = CalibrationResponse(
+            markets=items,
+            overall_health=overall_health,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+        )
+        etag = compute_etag(data.model_dump())
+        _check = check_etag(request, etag)
+        if _check:
+            return _check
+        return JSONResponse(content=data.model_dump(), headers={"ETag": f'"{etag}"'})
+    except Exception as exc:
+        logger.error("[ops_calibration] %s", exc)
+        return _err_resp(str(exc), request, 500, "Ops")
+
+
+# ── Digest Quality (GATE-158, T-1478) ──────────────────────────────────────
+
+
+class DigestQualityMarketItem(BaseModel):
+    market: str
+    verdict: str = "FAIL"
+    signal_count: int = 0
+    freshness_ok: bool = False
+    avg_confidence_pct: float = 0.0
+
+
+class DigestQualityResponse(BaseModel):
+    markets: list[DigestQualityMarketItem]
+    any_failures: bool
+    generated_at: str
+
+
+# ponytail: at >30 markets add pagination and Redis cache. At >100 req/min add
+# materialized view v_digest_quality refreshed by scheduler.
+
+def _digest_quality_markets():
+    from config.settings import TARGET_MARKETS
+    return [m.strip() for m in TARGET_MARKETS]
+
+
+@router.get(
+    "/ops/digest-quality",
+    response_model=DigestQualityResponse,
+    summary="Digest quality check — validates intel digest completeness per market",
+)
+@limiter.limit("30/minute")
+async def ops_digest_quality(request: Request):
+    try:
+        from utils.digest_validator import validate_digest
+
+        items: list[DigestQualityMarketItem] = []
+        for market in _digest_quality_markets():
+            try:
+                result = validate_digest(market)
+                items.append(DigestQualityMarketItem(
+                    market=market,
+                    verdict=result.get("verdict", "FAIL"),
+                    signal_count=result.get("signal_count", 0),
+                    freshness_ok=result.get("freshness_ok", False),
+                    avg_confidence_pct=result.get("avg_confidence_pct", 0.0),
+                ))
+            except Exception as exc:
+                logger.warning("[digest_quality] validate_digest failed for %s: %s", market, exc)
+                items.append(DigestQualityMarketItem(market=market))
+
+        any_failures = any(i.verdict == "FAIL" for i in items)
+        data = DigestQualityResponse(
+            markets=items,
+            any_failures=any_failures,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+        )
+        etag = compute_etag(data.model_dump())
+        _check = check_etag(request, etag)
+        if _check:
+            return _check
+        return JSONResponse(
+            content=data.model_dump(),
+            headers={
+                "ETag": f'"{etag}"',
+                "Cache-Control": "private, max-age=30, stale-while-revalidate=60",
+            },
+        )
+    except Exception as exc:
+        logger.error("[digest_quality] %s", exc)
+        return _err_resp(str(exc), request, 500, "Ops")

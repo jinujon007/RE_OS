@@ -1,0 +1,134 @@
+[
+  {
+    "id": "yelahanka-metro",
+    "name": "Yelahanka",
+    "line": "Namma Metro: Yellow Line (Phase 3)",
+    "type": "metro",
+    "lat": 13.101,
+    "lon": 77.593,
+    "opening_year": 2029,
+    "opening_quarter": "Q1",
+    "status": "planned"
+  },
+  {
+    "id": "airport-strr",
+    "name": "Kempegowda International Airport",
+    "line": "STRR: Airport Line",
+    "type": "suburban",
+    "lat": 13.198,
+    "lon": 77.706,
+    "opening_year": 2028,
+    "opening_quarter": "Q4",
+    "status": "under_construction"
+  },
+  {
+    "id": "hebbal-metro",
+    "name": "Hebbal",
+    "line": "Namma Metro: Purple Line Extension (Phase 3)",
+    "type": "metro",
+    "lat": 13.058,
+    "lon": 77.597,
+    "opening_year": 2028,
+    "opening_quarter": "Q3",
+    "status": "under_construction"
+  },
+  {
+    "id": "devanahalli-strr",
+    "name": "Devanahalli Town",
+    "line": "STRR: Airport Line",
+    "type": "suburban",
+    "lat": 13.248,
+    "lon": 77.712,
+    "opening_year": 2028,
+    "opening_quarter": "Q4",
+    "status": "under_construction"
+  },
+  {
+    "id": "thanisandra-metro",
+    "name": "Thanisandra",
+    "line": "Namma Metro: Yellow Line (Phase 3)",
+    "type": "metro",
+    "lat": 13.059,
+    "lon": 77.621,
+    "opening_year": 2029,
+    "opening_quarter": "Q1",
+    "status": "planned"
+  },
+  {
+    "id": "bagalagunte-metro",
+    "name": "Bagalagunte",
+    "line": "Namma Metro: Yellow Line (Phase 3)",
+    "type": "metro",
+    "lat": 13.065,
+    "lon": 77.575,
+    "opening_year": 2029,
+    "opening_quarter": "Q1",
+    "status": "planned"
+  },
+  {
+    "id": "kodigehalli-strr",
+    "name": "Kodigehalli",
+    "line": "STRR: Airport Line",
+    "type": "suburban",
+    "lat": 13.078,
+    "lon": 77.610,
+    "opening_year": 2028,
+    "opening_quarter": "Q3",
+    "status": "under_construction"
+  },
+  {
+    "id": "bettahalasuru-metro",
+    "name": "Bettahalasuru",
+    "line": "Namma Metro: Yellow Line (Phase 3)",
+    "type": "metro",
+    "lat": 13.132,
+    "lon": 77.618,
+    "opening_year": 2029,
+    "opening_quarter": "Q2",
+    "status": "planned"
+  },
+  {
+    "id": "doddaballapur-road-strr",
+    "name": "Doddaballapur Road",
+    "line": "STRR: Airport Line",
+    "type": "suburban",
+    "lat": 13.153,
+    "lon": 77.582,
+    "opening_year": 2028,
+    "opening_quarter": "Q3",
+    "status": "under_construction"
+  },
+  {
+    "id": "yelahanka-air-force-strr",
+    "name": "Yelahanka Air Force Base",
+    "line": "STRR: Airport Line",
+    "type": "suburban",
+    "lat": 13.122,
+    "lon": 77.603,
+    "opening_year": 2028,
+    "opening_quarter": "Q3",
+    "status": "under_construction"
+  },
+  {
+    "id": "nagavara-metro",
+    "name": "Nagavara",
+    "line": "Namma Metro: Purple Line Extension (Phase 3)",
+    "type": "metro",
+    "lat": 13.045,
+    "lon": 77.614,
+    "opening_year": 2028,
+    "opening_quarter": "Q3",
+    "status": "under_construction"
+  },
+  {
+    "id": "byrathi-metro",
+    "name": "Byrathi",
+    "line": "Namma Metro: Purple Line Extension (Phase 3)",
+    "type": "metro",
+    "lat": 13.038,
+    "lon": 77.631,
+    "opening_year": 2028,
+    "opening_quarter": "Q3",
+    "status": "under_construction"
+  }
+]

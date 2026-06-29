@@ -2567,3 +2567,358 @@ async def download_guide(
         _download_guide_requests_total.labels(market=market or "all", status="error").inc()
         logger.error("[download_guide] %s", exc)
         return _err_resp(str(exc), request, 500, "Deeds")
+
+
+# ── Parcel Graph (T-1463) ─────────────────────────────────────────────
+
+_parcel_graph_requests_total = _counter(
+    "parcel_graph_requests_total",
+    "Parcel graph requests by market and status",
+    ["market", "status"],
+)
+_parcel_graph_duration_seconds = _histogram(
+    "parcel_graph_duration_seconds",
+    "Parcel graph build duration in seconds",
+    ["market"],
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+
+_MAX_PARCEL_GRAPH_NODES = 500
+_PARCEL_GRAPH_SUMMARY_TIMEOUT = 5.0
+
+_PARCEL_GRAPH_SUMMARY_REQUESTS_TOTAL = _counter(
+    "parcel_graph_summary_requests_total",
+    "Parcel graph summary requests by market and status",
+    ["market", "status"],
+)
+_PARCEL_GRAPH_SUMMARY_DURATION_SECONDS = _histogram(
+    "parcel_graph_summary_duration_seconds",
+    "Parcel graph summary duration in seconds",
+    ["market"],
+    buckets=(0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
+)
+
+
+def _trim_graph_to_high_degree(graph: dict) -> dict:
+    """Trim graph to nodes with degree >= 2 when total nodes exceed _MAX_PARCEL_GRAPH_NODES."""
+    node_set: set[str] = set()
+    degree: dict[str, int] = {}
+    for e in graph["edges"]:
+        degree[e["survey_a"]] = degree.get(e["survey_a"], 0) + 1
+        degree[e["survey_b"]] = degree.get(e["survey_b"], 0) + 1
+    for n in graph["nodes"]:
+        if degree.get(n, 0) >= 2:
+            node_set.add(n)
+    keep_nodes = node_set
+    graph["nodes"] = sorted(keep_nodes)
+    graph["edges"] = [
+        e for e in graph["edges"]
+        if e["survey_a"] in keep_nodes and e["survey_b"] in keep_nodes
+    ]
+    graph["hotspot_score"] = len(graph["edges"]) / max(len(graph["nodes"]), 1)
+    graph["note"] = f"Trimmed to nodes with degree >= 2 (was >{_MAX_PARCEL_GRAPH_NODES} total)"
+    return graph
+
+
+@router.get(
+    "/intel/parcel-graph",
+    summary="Parcel graph for a village — survey number edges by shared buyer + adjacency",
+    tags=["Parcel"],
+)
+@limiter.limit("20/minute")
+async def parcel_graph(
+    request: Request,
+    market: str = Query(..., min_length=2, description="Market name (Yelahanka/Devanahalli/Hebbal)"),
+    village: str = Query(..., min_length=1, description="Village name"),
+):
+    t0 = time.time()
+    canonical = _resolve_market(market)
+    if not canonical:
+        _parcel_graph_requests_total.labels(market=market, status="invalid_market").inc()
+        return _err_resp(f"Unknown market: {market}", request, 400, "Parcel")
+
+    try:
+        from utils.parcel_graph import ParcelGraph
+
+        result = ParcelGraph().build(canonical, village)
+        elapsed = time.time() - t0
+        _parcel_graph_duration_seconds.labels(market=canonical).observe(elapsed)
+
+        if not result["nodes"]:
+            _parcel_graph_requests_total.labels(market=canonical, status="empty").inc()
+            return JSONResponse(
+                content={"nodes": [], "edges": [], "hotspot_score": 0.0,
+                         "note": "No transactions found for this village."},
+                headers={"Cache-Control": "private, max-age=300"},
+            )
+
+        if len(result["nodes"]) > _MAX_PARCEL_GRAPH_NODES:
+            result = _trim_graph_to_high_degree(result)
+            _parcel_graph_requests_total.labels(market=canonical, status="trimmed").inc()
+            return JSONResponse(
+                content=result,
+                headers={"Cache-Control": "private, max-age=60"},
+            )
+
+        _parcel_graph_requests_total.labels(market=canonical, status="ok").inc()
+        return JSONResponse(
+            content=result,
+            headers={"Cache-Control": "private, max-age=300, stale-while-revalidate=60"},
+        )
+    except Exception as exc:
+        _parcel_graph_requests_total.labels(market=market, status="error").inc()
+        logger.error("[parcel_graph] market=%s village=%s err=%s", market, village, exc)
+        return _err_resp(str(exc), request, 500, "Parcel")
+
+
+# ── Parcel Graph Summary (T-1464) ──────────────────────────────────────
+
+
+@router.get(
+    "/intel/parcel-graph/summary",
+    summary="Parcel graph summary — hotspot score per village for a market",
+    tags=["Parcel"],
+)
+@limiter.limit("10/minute")
+async def parcel_graph_summary(
+    request: Request,
+    market: str = Query(..., min_length=2, description="Market name (Yelahanka/Devanahalli/Hebbal)"),
+):
+    t0 = time.time()
+    canonical = _resolve_market(market)
+    if not canonical:
+        _PARCEL_GRAPH_SUMMARY_REQUESTS_TOTAL.labels(market=market, status="invalid_market").inc()
+        return _err_resp(f"Unknown market: {market}", request, 400, "Parcel")
+
+    try:
+        from utils.parcel_graph import ParcelGraph
+
+        villages_raw: list[str] = []
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text("""
+                    SELECT village FROM v_deed_village_priority
+                    WHERE market ILIKE :m
+                    LIMIT 10
+                """),
+                {"m": f"%{canonical}%"},
+            ).fetchall()
+            villages_raw = [str(r[0]) for r in rows if r[0]]
+
+        if not villages_raw:
+            _PARCEL_GRAPH_SUMMARY_REQUESTS_TOTAL.labels(market=canonical, status="no_villages").inc()
+            return JSONResponse(
+                content={
+                    "market": canonical, "villages": [],
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+
+        pg = ParcelGraph()
+        import concurrent.futures
+
+        villages_out: list[dict] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {
+                pool.submit(pg.build, canonical, vname): vname
+                for vname in villages_raw
+            }
+            for future in concurrent.futures.as_completed(futures, timeout=_PARCEL_GRAPH_SUMMARY_TIMEOUT + 2.0):
+                vname = futures[future]
+                try:
+                    result = future.result(timeout=_PARCEL_GRAPH_SUMMARY_TIMEOUT)
+                    villages_out.append({
+                        "village": vname,
+                        "connectivity_score": result["hotspot_score"],
+                        "node_count": len(result["nodes"]),
+                        "edge_count": len(result["edges"]),
+                    })
+                except concurrent.futures.TimeoutError:
+                    logger.warning("[parcel_graph_summary] timeout for %s/%s (>{:.1f}s)", canonical, vname, _PARCEL_GRAPH_SUMMARY_TIMEOUT)
+                except Exception as exc:
+                    logger.debug("[parcel_graph_summary] skip %s/%s: %s", canonical, vname, exc)
+
+        villages_out.sort(key=lambda v: v["connectivity_score"], reverse=True)
+
+        elapsed = time.time() - t0
+        _PARCEL_GRAPH_SUMMARY_DURATION_SECONDS.labels(market=canonical).observe(elapsed)
+        _PARCEL_GRAPH_SUMMARY_REQUESTS_TOTAL.labels(market=canonical, status="ok").inc()
+
+        return JSONResponse(
+            content={
+                "market": canonical,
+                "villages": villages_out,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+    except Exception as exc:
+        _PARCEL_GRAPH_SUMMARY_REQUESTS_TOTAL.labels(market=market, status="error").inc()
+        logger.error("[parcel_graph_summary] market=%s err=%s", market, exc)
+        return _err_resp(str(exc), request, 500, "Parcel")
+
+
+# ── STRR Overlay (T-1468) ───────────────────────────────────────────
+
+_strr_overlay_requests_total = _counter(
+    "strr_overlay_requests_total",
+    "STRR overlay requests by market and status",
+    ["market", "status"],
+)
+_strr_overlay_duration_seconds = _histogram(
+    "strr_overlay_duration_seconds",
+    "STRR overlay query duration in seconds",
+    ["market"],
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0),
+)
+_strr_overlay_cache_hits_total = _counter(
+    "strr_overlay_cache_hits_total",
+    "STRR overlay cache hits by market",
+    ["market"],
+)
+
+_STRR_OVERLAY_CACHE: dict[str, tuple[str, float]] = {}
+_STRR_OVERLAY_CACHE_TTL = 300.0  # 5 min — stations are static data
+_STRR_OVERLAY_CACHE_LOCK = threading.Lock()
+_STRR_OVERLAY_CACHE_MAX = 50
+
+
+def _cached_strr(key: str) -> str | None:
+    with _STRR_OVERLAY_CACHE_LOCK:
+        entry = _STRR_OVERLAY_CACHE.get(key)
+        if entry and time.time() - entry[1] < _STRR_OVERLAY_CACHE_TTL:
+            return entry[0]
+    return None
+
+
+def _set_cached_strr(key: str, value: str) -> None:
+    with _STRR_OVERLAY_CACHE_LOCK:
+        _STRR_OVERLAY_CACHE[key] = (value, time.time())
+        if len(_STRR_OVERLAY_CACHE) > _STRR_OVERLAY_CACHE_MAX:
+            oldest = min(_STRR_OVERLAY_CACHE.items(), key=lambda kv: kv[1][1])
+            _STRR_OVERLAY_CACHE.pop(oldest[0], None)
+
+
+@router.get(
+    "/intel/strr-overlay",
+    summary="STRR / Namma Metro station proximity for a market",
+    tags=["Intel"],
+    responses={
+        200: {"description": "STRR station overlay for market"},
+        401: {"description": "Missing or invalid API key"},
+        500: {"description": "Internal error"},
+    },
+)
+@limiter.limit("30/minute")
+async def strr_overlay(
+    request: Request,
+    market: str = Query(min_length=2, description="Market name — case-insensitive substring match"),
+    radius_km: float = Query(default=5.0, ge=1.0, le=20.0, description="Search radius in km (default 5.0)"),
+):
+    t0 = time.time()
+    cache_key = f"strr:{market.lower()}|{radius_km}"
+    cached = _cached_strr(cache_key)
+    if cached:
+        _strr_overlay_cache_hits_total.labels(market=market).inc()
+        _strr_overlay_requests_total.labels(market=market, status="hit").inc()
+        return JSONResponse(
+            content=json.loads(cached),
+            headers={"Cache-Control": "private, max-age=300, stale-while-revalidate=60"},
+        )
+
+    try:
+        from utils.strr_overlay import STRROverlay
+
+        canonical = _resolve_market(market)
+        if not canonical:
+            _strr_overlay_requests_total.labels(market=market, status="invalid_market").inc()
+            return _err_resp(f"Unknown market: {market}", request, 404, "STRR")
+
+        overlay = STRROverlay()
+        stations = overlay.stations_near(canonical, radius_km=radius_km)
+
+        nearest_station = stations[0]["name"] if stations else None
+        nearest_distance_km = stations[0]["distance_km"] if stations else None
+        transit_demand_signal = STRROverlay.transit_signal(stations)
+
+        result = {
+            "market": canonical,
+            "stations": stations,
+            "nearest_station": nearest_station,
+            "nearest_distance_km": nearest_distance_km,
+            "transit_demand_signal": transit_demand_signal,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        _strr_overlay_duration_seconds.labels(market=canonical).observe(time.time() - t0)
+        _strr_overlay_requests_total.labels(market=canonical, status="ok").inc()
+        _set_cached_strr(cache_key, json.dumps(result))
+        return JSONResponse(
+            content=result,
+            headers={"Cache-Control": "private, max-age=300, stale-while-revalidate=60"},
+        )
+    except Exception as exc:
+        _strr_overlay_requests_total.labels(market=market, status="error").inc()
+        logger.error("[strr_overlay] %s", exc)
+        return _err_resp(str(exc), request, 500, "STRR")
+
+
+# ── Latest Intel Digest (GATE-158, T-1479) ───────────────────────────────
+
+# ponytail: at >500 req/min add Redis caching by market key with 2-min TTL.
+# At >1k req/min add vw_latest_digest materialized view.
+
+class IntelDigestLatestResponse(BaseModel):
+    market: str
+    digest_text: str | None = None
+    generated_at: str | None = None
+    note: str | None = None
+
+
+@router.get(
+    "/intel/digest/latest",
+    response_model=IntelDigestLatestResponse,
+    summary="Latest intel digest text from agent_runs for a market",
+    tags=["Digest"],
+)
+@limiter.limit("30/minute")
+async def intel_digest_latest(
+    request: Request,
+    market: str = Query(..., min_length=2, description="Market name (Yelahanka/Devanahalli/Hebbal)"),
+):
+    try:
+        with _get_sa_engine().connect() as conn:
+            row = conn.execute(
+                _sa_text("""
+                    SELECT summary, created_at FROM agent_runs
+                    WHERE micro_market ILIKE :m
+                      AND event_type = 'intel_digest'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """),
+                {"m": f"%{market}%"},
+            ).fetchone()
+        if row:
+            data = IntelDigestLatestResponse(
+                market=market,
+                digest_text=row[0],
+                generated_at=row[1].isoformat() if row[1] else None,
+            )
+        else:
+            data = IntelDigestLatestResponse(
+                market=market,
+                note="No digest found",
+            )
+        etag = compute_etag(data.model_dump())
+        _check = check_etag(request, etag)
+        if _check:
+            return _check
+        return JSONResponse(
+            content=data.model_dump(),
+            headers={
+                "ETag": f'"{etag}"',
+                "Cache-Control": "private, max-age=60, stale-while-revalidate=300",
+            },
+        )
+    except Exception as exc:
+        logger.error("[intel_digest_latest] %s", exc)
+        return _err_resp(str(exc), request, 500, "Digest")

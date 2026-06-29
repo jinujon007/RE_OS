@@ -109,6 +109,14 @@ def _query_market_supply(market: str) -> tuple[str, str]:
     return "N/A", "N/A"
 
 
+def _derive_transit_signal(stations: list[dict]) -> str:
+    """Return STRONG/MODERATE/WEAK for a list of nearby stations.
+    Delegates to STRROverlay.transit_signal() — single source of truth.
+    """
+    from utils.strr_overlay import STRROverlay
+    return STRROverlay.transit_signal(stations)
+
+
 def _extract_pitch_params(pitch: str) -> dict:
     """Single-pass extraction of area and PSF from a pitch string.
     Returns dict with 'area_sqft' (float or None), 'acreage' (float or None), 'psf' (float or None)."""
@@ -517,6 +525,29 @@ def _run_dept_heads(
                         f"\n[INVENTORY SIGNAL — {market_safe}] "
                         f"Inventory signal: {mos_val} months ({mos_label})\n"
                     )
+
+            # STRR / Namma Metro overlay for BD (T-1469)
+            if market_safe:
+                try:
+                    from utils.strr_overlay import STRROverlay
+
+                    _strr = STRROverlay()
+                    _strr_stations = _strr.stations_near(market_safe, radius_km=3.0)
+                    if _strr_stations:
+                        s = _strr_stations[0]
+                        opening = str(s["opening_year"]) if s["opening_year"] else "TBD"
+                        signal = STRROverlay.transit_signal(_strr_stations)
+                        bd_context += (
+                            f"\n[TRANSIT ACCESS — {market_safe}] "
+                            f"Nearest metro/STRR: {s['name']} ({s['distance_km']}km, {s['status']}, {opening}). "
+                            f"Signal: {signal}.\n"
+                        )
+                        logger.info(
+                            "[board_room] STRR overlay: %d station(s) in %s, nearest=%s (%.2fkm, %s)",
+                            len(_strr_stations), market_safe, s['name'], s['distance_km'], signal,
+                        )
+                except Exception:
+                    logger.debug("[board_room] STRR overlay failed for %s", market_safe)
 
             dept_question = bd_context + dept_question
 
