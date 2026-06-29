@@ -458,5 +458,9 @@ ASSEMBLY_ALERT_THRESHOLDS: dict[str, float] = {
     "medium": float(os.getenv("ASSEMBLY_ALERT_MEDIUM", "0.5")),
 }
 
+# ── STRR THRESHOLDS (GATE-160, T-1487) ─────────────────────────────────────────
+STRR_STRONG_KM: float = float(os.getenv("STRR_STRONG_KM", "1.0"))
+STRR_MODERATE_KM: float = float(os.getenv("STRR_MODERATE_KM", "3.0"))
+
 # ── AGENT RUN STATUSES ────────────────────────────────────────────────────────
 AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]

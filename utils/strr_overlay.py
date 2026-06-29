@@ -17,8 +17,18 @@ import json
 import logging
 import math
 import pathlib
+import threading
+import time
+
+from config.metrics import _counter
 
 logger = logging.getLogger("re_os.strr_overlay")
+
+_centroid_failures_total = _counter(
+    "strr_centroid_failures_total",
+    "STRR centroid DB lookup failures",
+    ["reason"],
+)
 
 __all__ = ["STRROverlay"]
 
@@ -26,7 +36,8 @@ _STATIONS_PATH = pathlib.Path(__file__).resolve().parent.parent / "data" / "strr
 
 _STATIONS: list[dict] | None = None
 _STATIONS_MTIME: float = 0.0
-_STATIONS_RELOAD_INTERVAL: float = 3600.0  # 1 hour — allows hot-reloading without restart
+_STATIONS_RELOAD_INTERVAL: float = 3600.0
+_STATIONS_LOCK = threading.Lock()
 _STATION_REQUIRED_FIELDS = frozenset({"name", "line", "lat", "lon", "status"})
 
 _MARKET_COORDS: dict[str, tuple[float, float]] = {
@@ -34,6 +45,34 @@ _MARKET_COORDS: dict[str, tuple[float, float]] = {
     "devanahalli": (13.248, 77.712),
     "hebbal": (13.058, 77.597),
 }
+
+
+def _market_key(raw: str) -> str:
+    return raw.strip().lower()
+
+
+def _db_centroid(market: str) -> tuple[float, float] | None:
+    """Query geometry centroid from micro_markets table.
+
+    Returns (lat, lon) or None if DB unavailable, no matching row,
+    or centroid_geom is NULL.
+    """
+    try:
+        from utils.db import get_engine
+        from sqlalchemy import text
+        with get_engine().connect() as conn:
+            row = conn.execute(
+                text("SELECT ST_Y(centroid_geom), ST_X(centroid_geom) FROM micro_markets WHERE name ILIKE :m LIMIT 1"),
+                {"m": _market_key(market)},
+            ).fetchone()
+        if row and row[0] is not None and row[1] is not None:
+            return (float(row[0]), float(row[1]))
+        _centroid_failures_total.labels(reason="null_geometry").inc()
+        logger.debug("[STRR] _db_centroid: row missing or NULL geometry for %s", market)
+    except Exception as exc:
+        _centroid_failures_total.labels(reason="query_failed").inc()
+        logger.debug("[STRR] _db_centroid query failed for %s: %s", market, exc)
+    return None
 
 
 def _validate_station(entry: dict) -> bool:
@@ -55,36 +94,40 @@ def _validate_station(entry: dict) -> bool:
 
 def _load_stations() -> list[dict]:
     global _STATIONS, _STATIONS_MTIME
-    now = math.floor(pathlib.Path().stat().st_mtime) if _STATIONS else 0
 
-    if _STATIONS is not None:
+    with _STATIONS_LOCK:
+        if _STATIONS is not None:
+            if time.time() - _STATIONS_MTIME > _STATIONS_RELOAD_INTERVAL:
+                _STATIONS = None
+                logger.debug("[STRR] TTL expired — forcing station reload")
+            else:
+                try:
+                    current_mtime = _STATIONS_PATH.stat().st_mtime
+                    if current_mtime <= _STATIONS_MTIME:
+                        return _STATIONS
+                except OSError:
+                    return _STATIONS
+
         try:
-            current_mtime = _STATIONS_PATH.stat().st_mtime
-            if current_mtime <= _STATIONS_MTIME:
+            if not _STATIONS_PATH.exists():
+                _STATIONS = []
+                logger.warning("[STRR] Stations file not found at %s", _STATIONS_PATH)
                 return _STATIONS
-        except OSError:
-            return _STATIONS
 
-    try:
-        if not _STATIONS_PATH.exists():
-            _STATIONS = []
-            logger.warning("[STRR] Stations file not found at %s", _STATIONS_PATH)
-            return _STATIONS
+            raw = json.loads(_STATIONS_PATH.read_text(encoding="utf-8"))
+            valid = [s for s in raw if _validate_station(s)]
+            invalid_count = len(raw) - len(valid)
+            if invalid_count:
+                logger.warning("[STRR] Skipped %d invalid station entries", invalid_count)
 
-        raw = json.loads(_STATIONS_PATH.read_text(encoding="utf-8"))
-        valid = [s for s in raw if _validate_station(s)]
-        invalid_count = len(raw) - len(valid)
-        if invalid_count:
-            logger.warning("[STRR] Skipped %d invalid station entries", invalid_count)
-
-        _STATIONS = valid
-        _STATIONS_MTIME = _STATIONS_PATH.stat().st_mtime
-        logger.info("[STRR] Loaded %d stations (skipped %d invalid)", len(valid), invalid_count)
-    except Exception as exc:
-        if _STATIONS is None:
-            _STATIONS = []
-        logger.warning("[STRR] Failed to load stations: %s", exc)
-    return _STATIONS
+            _STATIONS = valid
+            _STATIONS_MTIME = _STATIONS_PATH.stat().st_mtime
+            logger.info("[STRR] Loaded %d stations (skipped %d invalid)", len(valid), invalid_count)
+        except Exception as exc:
+            if _STATIONS is None:
+                _STATIONS = []
+            logger.warning("[STRR] Failed to load stations: %s", exc)
+        return _STATIONS
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -105,17 +148,21 @@ class STRROverlay:
     def transit_signal(stations: list[dict]) -> str:
         """Return transit demand signal strength for a list of nearby stations.
 
+        Thresholds read from ``config.settings.STRR_STRONG_KM`` and
+        ``config.settings.STRR_MODERATE_KM`` (defaults: 1.0 and 3.0 km).
+
         Threshold mapping:
-            STRONG   — at least one operational station within 1 km
-            MODERATE — at least one station (any status) within 3 km
-            WEAK     — no stations within 3 km or empty list
+            STRONG   — at least one operational station within STRR_STRONG_KM
+            MODERATE — at least one station (any status) within STRR_MODERATE_KM
+            WEAK     — no stations within STRR_MODERATE_KM or empty list
 
         These thresholds are calibrated for North Bengaluru urban morphology;
         revisit if applying to denser (CBD) or sparser (rural) markets.
         """
-        if any(s["distance_km"] < 1 and s["status"] == "operational" for s in stations):
+        from config.settings import STRR_STRONG_KM, STRR_MODERATE_KM
+        if any(s["distance_km"] < STRR_STRONG_KM and s["status"] == "operational" for s in stations):
             return "STRONG"
-        if any(s["distance_km"] < 3 for s in stations):
+        if any(s["distance_km"] < STRR_MODERATE_KM for s in stations):
             return "MODERATE"
         return "WEAK"
 
@@ -126,11 +173,15 @@ class STRROverlay:
         Returns [] if market is unknown, stations file is missing/empty, or no stations
         are within radius.
         """
-        market_key = market.strip().lower()
-        coords = _MARKET_COORDS.get(market_key)
-        if coords is None:
-            return []
-        lat, lon = coords
+        market_key = _market_key(market)
+        db_coords = _db_centroid(market)
+        if db_coords is not None:
+            lat, lon = db_coords
+        else:
+            coords = _MARKET_COORDS.get(market_key)
+            if coords is None:
+                return []
+            lat, lon = coords
         stations = _load_stations()
         if not stations:
             return []

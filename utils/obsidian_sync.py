@@ -47,6 +47,7 @@ __all__ = [
     "write_investor_brief",
     "write_assembly_signal",
     "write_vel_pack",
+    "write_note",
 ]
 
 _VALID_DECISION_FLAGS: frozenset[str] = frozenset({"GO", "NO-GO", "CONDITIONAL"})
@@ -748,3 +749,55 @@ def write_vel_pack(market: str, md_content: str) -> Optional[str]:
     except Exception as exc:
         logger.warning(f"[ObsidianSync] Failed to write VEL pack {filename}: {exc}")
         return ""
+
+
+def write_note(rel_path: str, content: str) -> Optional[str]:
+    """Write a generic markdown note to the Obsidian vault at a relative path.
+
+    Uses atomic tempfile+rename — crash during write produces a truncated temp
+    file that is never moved to the target, not a corrupt note.
+
+    Args:
+        rel_path: Relative path under vault root, e.g.
+                  ``"03 LLS/02 Projects/VEL/(AI) Weekly Investor Digest 2026-06-29.md"``.
+        content: Full markdown content.
+
+    Returns:
+        File path on success, ``None`` if sync path not mounted, ``""`` on write failure.
+    """
+    if not _ensure_sync_dir():
+        return None
+    vault_base = _sync_path()
+    filepath = os.path.join(vault_base, rel_path)
+    encoded = content.encode("utf-8")
+    if len(encoded) > _MAX_CONTENT_BYTES:
+        logger.warning(f"[ObsidianSync] Note too large: {len(encoded)}B (max {_MAX_CONTENT_BYTES}B)")
+        return ""
+    try:
+        _check_disk_space(filepath)
+    except OSError as exc:
+        logger.warning(f"[ObsidianSync] Disk space check failed: {exc}")
+        return ""
+    filename = os.path.basename(filepath)
+    tmp = None
+    try:
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(filepath), prefix=".obsidian_tmp_")
+        with os.fdopen(fd, "wb") as f:
+            f.write(encoded)
+        os.replace(tmp, filepath)
+        tmp = None
+        _log_write_audit(filename, filepath, content)
+        from config.metrics import obsidian_export_total, obsidian_bytes_total
+        obsidian_export_total.labels(source="write_note").inc()
+        obsidian_bytes_total.labels(source="write_note").inc(len(encoded))
+        return filepath
+    except Exception as exc:
+        logger.warning(f"[ObsidianSync] Failed to write note {filename}: {exc}")
+        return ""
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except Exception:
+                pass

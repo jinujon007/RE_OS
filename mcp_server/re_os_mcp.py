@@ -74,7 +74,7 @@ _MCP_CACHE_LOCK = threading.Lock()
 _MCP_CACHE_TTL: float = 300.0
 _MCP_CACHE_MAX: int = 500
 
-_CACHED_TOOL_NAMES: frozenset = frozenset({"psf_forecast", "corridor_score", "investor_brief", "vel_competitive_report"})
+_CACHED_TOOL_NAMES: frozenset = frozenset({"psf_forecast", "corridor_score", "investor_brief", "vel_competitive_report", "deal_score"})
 
 
 def _cache_key(tool_name: str, arguments: dict) -> str:
@@ -663,6 +663,37 @@ def _vel_competitive_report(market: str = "Yelahanka") -> str:
         return json.dumps({"status": "error", "error": str(exc)})
 
 
+def _deal_score(market: str = "Yelahanka", land_cost_cr: float = 0.0,
+                area_acres: float = 0.0) -> str:
+    """Score a land deal across assembly, corridor, STRR, IRR, and kill-criteria.
+
+    Returns GO/CAUTIOUS/NO-GO with per-signal breakdown and reasoning.
+    """
+    errors: list[str] = []
+    valid_markets = {"Yelahanka", "Devanahalli", "Hebbal"}
+    if market not in valid_markets:
+        errors.append(f"market must be one of {sorted(valid_markets)}, got '{market}'")
+    err = _validate_bounds("land_cost_cr", land_cost_cr, 0.01, 1_000_000.0)
+    if err:
+        errors.append(err)
+    err = _validate_bounds("area_acres", area_acres, 0.01, 10_000.0)
+    if err:
+        errors.append(err)
+    if errors:
+        return json.dumps({"status": "validation_error", "errors": errors})
+
+    try:
+        from utils.deal_scorer import score_deal
+        result = score_deal(market, land_cost_cr, area_acres)
+        return json.dumps({"status": "ok", "result": result})
+    except ValueError as exc:
+        logger.warning("[mcp] deal_score validation error: %s", exc)
+        return json.dumps({"status": "validation_error", "errors": [str(exc)]})
+    except Exception as exc:
+        logger.warning("[mcp] deal_score failed: %s", exc)
+        return json.dumps({"status": "error", "error": str(exc)})
+
+
 # ── Tool registry ───────────────────────────────────────────────────────────
 
 TOOLS: dict[str, dict] = {
@@ -744,6 +775,20 @@ TOOLS: dict[str, dict] = {
                 "market": {"type": "string", "description": "Market name: Yelahanka, Devanahalli, or Hebbal", "default": "Yelahanka"},
             },
             "required": [],
+        },
+    },
+    "deal_score": {
+        "name": "deal_score",
+        "description": "Score a land deal across assembly, corridor, STRR, IRR, and kill-criteria signals. Returns GO/CAUTIOUS/NO-GO verdict with confidence score, per-signal breakdown, and plain-English reasoning.",
+        "handler": _deal_score,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "market": {"type": "string", "description": "Market name: Yelahanka, Devanahalli, or Hebbal"},
+                "land_cost_cr": {"type": "number", "description": "Land cost in crores INR (0.01–1,000,000)"},
+                "area_acres": {"type": "number", "description": "Land area in acres (0.01–10,000)"},
+            },
+            "required": ["market", "land_cost_cr", "area_acres"],
         },
     },
 }

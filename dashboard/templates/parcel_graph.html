@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parcel Graph — LLS Operations Center</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.29.2/cytoscape.min.js" integrity="sha512-8dil4eCJhT5x4uRlR+pBuFiutbKJTg2pBm9bljBGF7ySxQ8Fy7L+n95Th1LsE2U/FX4y3LPH0CzYLQm9z+F0A==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0e1a; color: #c9d1d9; font-family: 'Courier New', Courier, monospace; font-size: 13px; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+.header { background: #0f1520; border-bottom: 2px solid #2a3a55; padding: 12px 20px; display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+.logo { font-family: 'Press Start 2P', cursive; color: #f0a020; font-size: 12px; letter-spacing: 1px; }
+.back-link { color: #58a6ff; font-size: 10px; text-decoration: none; font-family: 'Press Start 2P', cursive; font-size: 7px; }
+.back-link:hover { text-decoration: underline; }
+.controls { display: flex; gap: 12px; align-items: center; margin-left: auto; }
+.controls select { background: #0f1520; border: 1px solid #2a3a55; color: #c9d1d9; padding: 5px 8px; font-family: 'Courier New', monospace; font-size: 11px; border-radius: 4px; cursor: pointer; }
+.controls select:focus { outline: none; border-color: #3a5a85; }
+.hotspot-badge { font-family: 'Press Start 2P', cursive; font-size: 8px; padding: 4px 10px; border-radius: 4px; display: none; }
+.hotspot-badge.high { background: #3a1a1a; color: #f85149; border: 1px solid #f85149; display: inline-block; }
+.hotspot-badge.medium { background: #3a2a1a; color: #f0a020; border: 1px solid #f0a020; display: inline-block; }
+.hotspot-badge.low { background: #1a2a1a; color: #3fb950; border: 1px solid #3fb950; display: inline-block; }
+.canvas-wrap { flex: 1; padding: 12px; position: relative; }
+#parcel-graph-canvas { width: 100%; height: 100%; background: #0a0e1a; border: 1px solid #2a3a55; border-radius: 6px; }
+.empty-state { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #484f58; font-style: italic; font-size: 14px; text-align: center; }
+.empty-state.visible { display: block; }
+.loading { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #58a6ff; font-size: 12px; }
+.loading.visible { display: block; }
+.status-bar { background: #0f1520; border-top: 1px solid #2a3a55; padding: 6px 20px; display: flex; gap: 16px; font-size: 10px; color: #8b949e; flex-shrink: 0; }
+.status-item { color: #8b949e; }
+.status-item strong { color: #c9d1d9; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a3a55; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <a href="/" class="back-link">← OPS CENTER</a>
+    <div class="logo">PARCEL GRAPH</div>
+  </div>
+  <div class="controls">
+    <select id="market-select"><option value="">Select market…</option></select>
+    <select id="village-select" disabled><option value="">Select village…</option></select>
+    <span id="hotspot-badge" class="hotspot-badge" role="status" aria-live="polite" aria-label="Hotspot status"></span>
+  </div>
+</div>
+<div class="canvas-wrap">
+  <div id="parcel-graph-canvas"></div>
+  <div id="loading" class="loading">⟳ Loading parcel graph…</div>
+  <div id="empty-state" class="empty-state">No transactions found for this village.</div>
+</div>
+<div class="status-bar" role="status" aria-live="polite" aria-label="Parcel graph statistics">
+  <span class="status-item">Nodes: <strong id="node-count" aria-label="Node count">—</strong></span>
+  <span class="status-item">Edges: <strong id="edge-count" aria-label="Edge count">—</strong></span>
+  <span class="status-item">Hotspot Score: <strong id="hotspot-score" aria-label="Hotspot score">—</strong></span>
+</div>
+<script>
+(function() {
+  const marketSel = document.getElementById('market-select');
+  const villageSel = document.getElementById('village-select');
+  const cyContainer = document.getElementById('parcel-graph-canvas');
+  const loadingEl = document.getElementById('loading');
+  const emptyEl = document.getElementById('empty-state');
+  const nodeCount = document.getElementById('node-count');
+  const edgeCount = document.getElementById('edge-count');
+  const hotspotScore = document.getElementById('hotspot-score');
+  const hotspotBadge = document.getElementById('hotspot-badge');
+  let cy = null;
+
+  // Populate market dropdown from DB state endpoint
+  async function loadMarkets() {
+    loadingEl.classList.add('visible');
+    loadingEl.textContent = '⟳ Loading markets…';
+    try {
+      const resp = await fetch('/api/v1/db/state');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      (data.markets || []).forEach(function(m) {
+        const opt = document.createElement('option');
+        opt.value = m.name;
+        opt.textContent = m.name;
+        marketSel.appendChild(opt);
+      });
+    } catch (e) {
+      // Fallback: hardcoded market list if API unavailable
+      ['Yelahanka', 'Devanahalli', 'Hebbal'].forEach(function(m) {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m;
+        marketSel.appendChild(opt);
+      });
+    } finally {
+      loadingEl.classList.remove('visible');
+      loadingEl.textContent = '⟳ Loading parcel graph…';
+    }
+  }
+
+  // Populate village dropdown for selected market
+  async function loadVillages(market) {
+    villageSel.innerHTML = '<option value="">Loading…</option>';
+    villageSel.disabled = true;
+    try {
+      const resp = await fetch('/api/v1/intel/parcel-graph/summary?market=' + encodeURIComponent(market));
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      villageSel.innerHTML = '<option value="">Select village…</option>';
+      (data.villages || []).forEach(function(v) {
+        const opt = document.createElement('option');
+        opt.value = v.village;
+        opt.textContent = v.village + ' (score: ' + v.connectivity_score.toFixed(2) + ')';
+        villageSel.appendChild(opt);
+      });
+      villageSel.disabled = false;
+      // Auto-select first village after brief delay for UX
+      if (villageSel.options.length > 1) {
+        villageSel.selectedIndex = 1;
+        var m = marketSel.value;
+        var v = villageSel.value;
+        if (m && v) renderGraph(m, v);
+      }
+    } catch (e) {
+      villageSel.innerHTML = '<option value="">Error loading villages</option>';
+    }
+  }
+
+  // Render parcel graph with Cytoscape.js
+  async function renderGraph(market, village) {
+    if (cy) { cy.destroy(); cy = null; }
+    cyContainer.innerHTML = '';
+    loadingEl.classList.add('visible');
+    emptyEl.classList.remove('visible');
+    nodeCount.textContent = '—';
+    edgeCount.textContent = '—';
+    hotspotScore.textContent = '—';
+    hotspotBadge.className = 'hotspot-badge';
+    hotspotBadge.style.display = 'none';
+
+    try {
+      const resp = await fetch('/api/v1/intel/parcel-graph?market=' + encodeURIComponent(market) + '&village=' + encodeURIComponent(village));
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      loadingEl.classList.remove('visible');
+
+      if (!data.nodes || data.nodes.length === 0) {
+        emptyEl.classList.add('visible');
+        return;
+      }
+
+      nodeCount.textContent = data.nodes.length;
+      edgeCount.textContent = data.edges.length;
+      hotspotScore.textContent = data.hotspot_score.toFixed(3);
+
+      // Set hotspot badge
+      var hs = data.hotspot_score || 0;
+      hotspotBadge.textContent = 'HOTSPOT ' + hs.toFixed(2);
+      hotspotBadge.className = 'hotspot-badge';
+      if (hs > 0.5) hotspotBadge.classList.add('high');
+      else if (hs > 0.2) hotspotBadge.classList.add('medium');
+      else hotspotBadge.classList.add('low');
+      hotspotBadge.style.display = 'inline-block';
+
+      // Compute node degree for sizing
+      var degree = {};
+      data.edges.forEach(function(e) {
+        degree[e.survey_a] = (degree[e.survey_a] || 0) + 1;
+        degree[e.survey_b] = (degree[e.survey_b] || 0) + 1;
+      });
+      var maxDeg = Math.max(1, Math.max.apply(null, Object.values(degree)));
+
+      var elements = [];
+      data.nodes.forEach(function(n) {
+        var d = degree[n] || 1;
+        var size = 20 + (d / maxDeg) * 40;
+        elements.push({
+          data: { id: n, label: n, deg: d },
+          style: { width: size, height: size }
+        });
+      });
+      data.edges.forEach(function(e) {
+        var color = e.shared_buyer ? '#f85149' : '#484f58';
+        var width = Math.max(1, (e.edge_weight || 0.1) * 6);
+        elements.push({
+          data: { id: e.survey_a + '-' + e.survey_b, source: e.survey_a, target: e.survey_b },
+          style: { width: width, 'line-color': color, 'target-arrow-color': color }
+        });
+      });
+
+      var layoutConfig = data.nodes.length > 50
+        ? { name: 'grid', animate: false, rows: Math.ceil(Math.sqrt(data.nodes.length)), padding: 20 }
+        : { name: 'cose', animate: false, nodeRepulsion: 8000, idealEdgeLength: 100, nodeOverlap: 10 };
+
+      cy = cytoscape({
+        container: cyContainer,
+        elements: elements,
+        style: [
+          { selector: 'node', style: { 'background-color': '#3a5a85', color: '#c9d1d9', 'font-size': '9px', 'text-valign': 'bottom', 'text-halign': 'center', 'text-margin-y': 4, label: 'data(label)' } },
+          { selector: 'edge', style: { width: 'mapData(width, 0, 6, 1, 6)', 'line-color': '#484f58', 'target-arrow-color': '#484f58', 'curve-style': 'bezier' } }
+        ],
+        layout: layoutConfig,
+        wheelSensitivity: 0.5
+      });
+
+      // Edge tooltips on hover
+      cy.on('mouseover', 'edge', function(evt) {
+        var e = evt.target.json();
+        var d = e.data;
+        var color = e.style && e.style['line-color'] === '#f85149' ? 'Shared buyer' : 'Adjacent';
+        cyContainer.title = color + ': ' + d.source + ' ↔ ' + d.target;
+      });
+      cy.on('mouseout', 'edge', function() {
+        cyContainer.title = '';
+      });
+    } catch (e) {
+      loadingEl.classList.remove('visible');
+      emptyEl.textContent = 'Error loading parcel graph: ' + (e.message || 'unknown');
+      emptyEl.classList.add('visible');
+    }
+  }
+
+  // Event handlers
+  marketSel.addEventListener('change', function() {
+    var m = marketSel.value;
+    if (m) loadVillages(m);
+    else { villageSel.innerHTML = '<option value="">Select village…</option>'; villageSel.disabled = true; }
+  });
+
+  villageSel.addEventListener('change', function() {
+    var m = marketSel.value;
+    var v = villageSel.value;
+    if (m && v) renderGraph(m, v);
+  });
+
+  loadMarkets();
+})();
+</script>
+</body>
+</html>

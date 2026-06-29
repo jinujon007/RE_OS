@@ -2569,6 +2569,15 @@ async def download_guide(
         return _err_resp(str(exc), request, 500, "Deeds")
 
 
+# ── Parcel Graph Panel (T-1481) ─────────────────────────────────────────
+
+
+@router.get("/parcel-graph", tags=["Parcel"], summary="Parcel Graph dashboard panel (Cytoscape.js)")
+@limiter.limit("30/minute")
+async def parcel_graph_panel(request: Request):
+    return templates.TemplateResponse(request, "parcel_graph.html")
+
+
 # ── Parcel Graph (T-1463) ─────────────────────────────────────────────
 
 _parcel_graph_requests_total = _counter(
@@ -2757,6 +2766,248 @@ async def parcel_graph_summary(
         return _err_resp(str(exc), request, 500, "Parcel")
 
 
+# ── Parcel Graph Hotspot Alert (T-1483) ──────────────────────────────
+
+_parcel_hotspot_requests_total = _counter(
+    "parcel_hotspot_requests_total",
+    "Parcel graph hotspot alert requests",
+    ["status"],
+)
+_PARCEL_HOTSPOT_EDGE_WEIGHT_THRESHOLD = 0.5
+
+_parcel_hotspot_last_run: dict[str, set[str]] = {}
+_parcel_hotspot_lock = threading.Lock()
+_PARCEL_HOTSPOT_LOCK_INITED = False
+
+
+def _init_parcel_hotspot_last_run():
+    """Load last run's hotspot village set from agent_runs, so in-memory
+    state survives server restart and doesn't re-fire stale alerts."""
+    global _PARCEL_HOTSPOT_LOCK_INITED
+    if _PARCEL_HOTSPOT_LOCK_INITED:
+        return
+    try:
+        with _get_sa_engine().connect() as conn:
+            row = conn.execute(
+                _sa_text("""
+                    SELECT notes FROM agent_runs
+                    WHERE event_type = 'parcel_hotspot_check'
+                    ORDER BY created_at DESC LIMIT 1
+                """),
+            ).fetchone()
+        if row and row[0]:
+            notes = str(row[0])
+            known: set[str] = set()
+            # Try to reconstruct known hotspots from notes like "2 hotspots, 2 new"
+            import re as _re
+            m = _re.search(r"(\d+)\s+hotspots", notes)
+            if m:
+                count = int(m.group(1))
+                if count > 0:
+                    # We can't reconstruct exact names from notes alone,
+                    # but a non-zero count means some existed at last check.
+                    # To avoid re-fire: re-query parcel_graph_edges for the
+                    # current hotspot set and treat them as already-seen.
+                    try:
+                        with _get_sa_engine().connect() as conn2:
+                            known_rows = conn2.execute(
+                                _sa_text("""
+                                    SELECT DISTINCT market, village FROM parcel_graph_edges
+                                    GROUP BY market, village
+                                    HAVING AVG(edge_weight) > :threshold
+                                """),
+                                {"threshold": _PARCEL_HOTSPOT_EDGE_WEIGHT_THRESHOLD},
+                            ).fetchall()
+                            for kr in known_rows:
+                                known.add(f"{str(kr[0])}::{str(kr[1])}")
+                    except Exception:
+                        pass  # Fall through — one re-fire acceptable
+            _parcel_hotspot_last_run["parcel_hotspot_check"] = known
+        _PARCEL_HOTSPOT_LOCK_INITED = True
+    except Exception:
+        logger.debug("[parcel_hotspot] init failed — will use empty baseline")
+
+
+@router.get(
+    "/intel/parcel-graph/hotspot-alert",
+    summary="Hotspot villages from parcel_graph_edges — fires Discord alert for new hotspots",
+    tags=["Parcel"],
+)
+@limiter.limit("10/minute")
+async def parcel_graph_hotspot_alert(request: Request):
+    try:
+        _init_parcel_hotspot_last_run()
+        with _get_sa_engine().connect() as conn:
+            try:
+                rows = conn.execute(
+                    _sa_text("""
+                        SELECT market, village, AVG(edge_weight) AS avg_weight, COUNT(*) AS edge_count
+                        FROM parcel_graph_edges
+                        GROUP BY market, village
+                        HAVING AVG(edge_weight) > :threshold
+                        ORDER BY avg_weight DESC
+                    """),
+                    {"threshold": _PARCEL_HOTSPOT_EDGE_WEIGHT_THRESHOLD},
+                ).fetchall()
+            except Exception:
+                logger.debug("[parcel_hotspot] parcel_graph_edges table may not exist yet")
+                return JSONResponse(content={
+                    "hotspot_villages": [],
+                    "new_since_last_run": 0,
+                    "note": "parcel_graph_edges table not found — run materialize job first (Sun 01:00 UTC)",
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+        hotspot_villages = [
+            {"market": str(r[0]), "village": str(r[1]),
+             "avg_edge_weight": float(r[2]), "edge_count": int(r[3])}
+            for r in rows
+        ]
+
+        # Belt-and-suspenders: prevent unbounded growth of in-memory state
+        if len(_parcel_hotspot_last_run) > 100:
+            oldest_key = next(iter(_parcel_hotspot_last_run))
+            del _parcel_hotspot_last_run[oldest_key]
+
+        # Compare to last run to find new hotspots
+        current_hotspot_keys: set[str] = set()
+        for hv in hotspot_villages:
+            current_hotspot_keys.add(f"{hv['market']}::{hv['village']}")
+
+        new_hotspots: list[dict] = []
+        with _parcel_hotspot_lock:
+            last_run_key = "parcel_hotspot_check"
+            prev = _parcel_hotspot_last_run.get(last_run_key, set())
+            for hv in hotspot_villages:
+                key = f"{hv['market']}::{hv['village']}"
+                if key not in prev:
+                    new_hotspots.append(hv)
+            _parcel_hotspot_last_run[last_run_key] = current_hotspot_keys
+
+        # Fire Discord alert for new hotspots
+        if new_hotspots:
+            try:
+                from utils.discord_notifier import send_ops_alert
+                msg_lines = [f"{h['market']}/{h['village']} (avg_weight={h['avg_edge_weight']:.2f}, {h['edge_count']} edges)" for h in new_hotspots]
+                body = "New parcel hotspots detected:\n" + "\n".join(msg_lines)
+                if len(body) > 1900:
+                    body = body[:1900] + f"\n…and {len(new_hotspots) - 5} more (truncated)" if len(new_hotspots) > 5 else body[:1900] + "\n…(truncated)"
+                send_ops_alert("PARCEL_HOTSPOT", body)
+            except Exception as exc:
+                logger.warning("[parcel_hotspot] Discord alert failed: %s", exc)
+
+        # Log to agent_runs for tracking
+        try:
+            with _get_sa_engine().begin() as conn:
+                conn.execute(
+                    _sa_text("""
+                        INSERT INTO agent_runs
+                            (agent_name, micro_market, event_type, status, records_inserted, notes)
+                        VALUES ('parcel_hotspot_check', 'system', 'parcel_hotspot_check',
+                                'success', :n, :notes)
+                    """),
+                    {"n": len(hotspot_villages),
+                     "notes": f"{len(hotspot_villages)} hotspots, {len(new_hotspots)} new"},
+                )
+        except Exception as exc:
+            logger.debug("[parcel_hotspot] agent_runs log failed: %s", exc)
+
+        _parcel_hotspot_requests_total.labels(status="ok").inc()
+        resp = {
+            "hotspot_villages": hotspot_villages,
+            "new_since_last_run": len(new_hotspots),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if not hotspot_villages:
+            resp["note"] = "No hotspots found — parcel_graph_edges may be empty (materialize job runs Sun 01:00 UTC)"
+        return JSONResponse(content=resp)
+    except Exception as exc:
+        _parcel_hotspot_requests_total.labels(status="error").inc()
+        logger.error("[parcel_hotspot_alert] %s", exc)
+        return _err_resp(str(exc), request, 500, "Parcel")
+
+
+# ── Parcel Graph Stats (T-1498) ─────────────────────────────────────
+
+_PARCEL_GRAPH_STATS_CACHE: dict[str, tuple[bytes, float]] = {}
+_PARCEL_GRAPH_STATS_CACHE_TTL = 300.0
+_PARCEL_GRAPH_STATS_CACHE_LOCK = threading.Lock()
+_PARCEL_GRAPH_STATS_MAX = 10
+
+_parcel_graph_stats_requests_total = _counter(
+    "parcel_graph_stats_requests_total",
+    "Parcel graph stats requests by status",
+    ["status"],
+)
+_parcel_graph_stats_duration_seconds = _histogram(
+    "parcel_graph_stats_duration_seconds",
+    "Parcel graph stats query duration in seconds",
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+)
+
+
+def _scalar_or(conn, sql: str, fallback=0):
+    """Execute SQL scalar query, return fallback on any failure."""
+    try:
+        return conn.execute(_sa_text(sql)).scalar() or fallback
+    except Exception:
+        return fallback
+
+
+@router.get(
+    "/intel/parcel-graph/stats",
+    summary="Parcel graph materialization stats — edges, villages, coverage",
+    tags=["Parcel"],
+)
+@limiter.limit("10/minute")
+async def parcel_graph_stats(request: Request):
+    t0 = time.time()
+    try:
+        with _PARCEL_GRAPH_STATS_CACHE_LOCK:
+            cached = _PARCEL_GRAPH_STATS_CACHE.get(b"stats")
+            if cached and time.time() - cached[1] < _PARCEL_GRAPH_STATS_CACHE_TTL:
+                _parcel_graph_stats_requests_total.labels(status="hit").inc()
+                _parcel_graph_stats_duration_seconds.observe(time.time() - t0)
+                return JSONResponse(
+                    content=json.loads(cached[0]),
+                    headers={"Cache-Control": "private, max-age=300"},
+                )
+
+        _parcel_graph_stats_requests_total.labels(status="miss").inc()
+        with _get_sa_engine().connect() as conn:
+            total_edges = _scalar_or(conn, "SELECT COUNT(*) FROM parcel_graph_edges")
+            total_villages = _scalar_or(conn, "SELECT COUNT(DISTINCT village) FROM parcel_graph_edges")
+            last_val = _scalar_or(conn, "SELECT MAX(computed_at) FROM parcel_graph_edges", fallback=None)
+            last_materialized = last_val.isoformat() if last_val and hasattr(last_val, "isoformat") else None
+            priority_villages = _scalar_or(conn, "SELECT COUNT(DISTINCT village) FROM v_deed_village_priority")
+
+        materialization_coverage_pct = (
+            round(total_villages / priority_villages * 100, 1)
+            if priority_villages > 0
+            else 0.0
+        )
+        body = {
+            "total_edges": total_edges,
+            "total_villages": total_villages,
+            "last_materialized": last_materialized,
+            "materialization_coverage_pct": materialization_coverage_pct,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        with _PARCEL_GRAPH_STATS_CACHE_LOCK:
+            _PARCEL_GRAPH_STATS_CACHE[b"stats"] = (json.dumps(body).encode(), time.time())
+
+        _parcel_graph_stats_duration_seconds.observe(time.time() - t0)
+        return JSONResponse(
+            content=body,
+            headers={"Cache-Control": "private, max-age=300"},
+        )
+    except Exception as exc:
+        _parcel_graph_stats_requests_total.labels(status="error").inc()
+        _parcel_graph_stats_duration_seconds.observe(time.time() - t0)
+        logger.error("[parcel_graph_stats] %s", exc)
+        return _err_resp(str(exc), request, 500, "Parcel")
+
+
 # ── STRR Overlay (T-1468) ───────────────────────────────────────────
 
 _strr_overlay_requests_total = _counter(
@@ -2922,3 +3173,361 @@ async def intel_digest_latest(
     except Exception as exc:
         logger.error("[intel_digest_latest] %s", exc)
         return _err_resp(str(exc), request, 500, "Digest")
+
+
+# ── Weekly Investor Digest (GATE-160, T-1489) ────────────────────────────
+
+_WEEKLY_DIGEST_CACHE: dict[str, tuple[str, float]] = {}
+_WEEKLY_DIGEST_CACHE_TTL = 86400.0
+_WEEKLY_DIGEST_CACHE_LOCK = threading.Lock()
+_WEEKLY_DIGEST_CACHE_MAX = 10
+_INVESTOR_DIGEST_MARKETS = ["Yelahanka", "Devanahalli", "Hebbal"]
+
+_weekly_digest_requests_total = _counter(
+    "weekly_digest_requests_total",
+    "Weekly investor digest requests by source and status",
+    ["source", "status"],
+)
+_weekly_digest_duration_seconds = _histogram(
+    "weekly_digest_duration_seconds",
+    "Weekly investor digest query duration in seconds",
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+)
+_weekly_digest_cache_hits_total = _counter(
+    "weekly_digest_cache_hits_total",
+    "Weekly investor digest cache hits",
+)
+
+
+@router.get(
+    "/intel/investor/weekly-digest",
+    summary="Latest weekly investor digest — multi-market markdown overview",
+    tags=["Investor"],
+)
+@limiter.limit("10/minute")
+async def weekly_investor_digest(
+    request: Request,
+):
+    t0 = time.time()
+    now = datetime.now(timezone.utc)
+    generated_at = now.isoformat()
+
+    # Check cache
+    with _WEEKLY_DIGEST_CACHE_LOCK:
+        cached = _WEEKLY_DIGEST_CACHE.get("digest")
+        if cached and time.time() - cached[1] < _WEEKLY_DIGEST_CACHE_TTL:
+            _weekly_digest_cache_hits_total.inc()
+            _weekly_digest_requests_total.labels(source="cache", status="hit").inc()
+            _weekly_digest_duration_seconds.observe(time.time() - t0)
+            etag_cached = compute_etag(cached[0])
+            etag_resp = check_etag(request, etag_cached)
+            if etag_resp:
+                return etag_resp
+            return JSONResponse(
+                content=json.loads(cached[0]),
+                headers={
+                    "Cache-Control": "private, max-age=3600, stale-while-revalidate=3600",
+                    "ETag": f'"{etag_cached}"',
+                    "X-Source": "memory-cache",
+                    "X-Process-Time": f"{(time.time() - t0) * 1000:.0f}ms",
+                },
+            )
+
+    # Try DB first
+    try:
+        with _get_sa_engine().connect() as conn:
+            row = conn.execute(
+                _sa_text("""
+                    SELECT summary, created_at FROM agent_runs
+                    WHERE event_type = 'investor_weekly_digest'
+                      AND created_at > NOW() - INTERVAL '8 days'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """),
+            ).fetchone()
+        if row:
+            data = {
+                "digest_markdown": row[0],
+                "markets_covered": _INVESTOR_DIGEST_MARKETS,
+                "generated_at": row[1].isoformat() if row[1] else generated_at,
+                "source": "cache",
+            }
+            etag = compute_etag(json.dumps(data))
+            etag_resp = check_etag(request, etag)
+            if etag_resp:
+                return etag_resp
+            with _WEEKLY_DIGEST_CACHE_LOCK:
+                _WEEKLY_DIGEST_CACHE["digest"] = (json.dumps(data), time.time())
+                if len(_WEEKLY_DIGEST_CACHE) > _WEEKLY_DIGEST_CACHE_MAX:
+                    oldest = min(_WEEKLY_DIGEST_CACHE.items(), key=lambda kv: kv[1][1])
+                    _WEEKLY_DIGEST_CACHE.pop(oldest[0], None)
+            _weekly_digest_requests_total.labels(source="db", status="ok").inc()
+            _weekly_digest_duration_seconds.observe(time.time() - t0)
+            return JSONResponse(
+                content=data,
+                headers={
+                    "ETag": f'"{etag}"',
+                    "Cache-Control": "private, max-age=3600, stale-while-revalidate=3600",
+                    "X-Source": "db",
+                    "X-Process-Time": f"{(time.time() - t0) * 1000:.0f}ms",
+                },
+            )
+    except Exception as exc:
+        logger.debug("[weekly_investor_digest] DB query failed: %s", exc)
+        _weekly_digest_requests_total.labels(source="db", status="error").inc()
+
+    # Fallback: generate live (sync, with timeout)
+    elapsed = time.time() - t0
+    try:
+        import concurrent.futures
+        from config.scheduler.forecast_jobs import run_weekly_investor_digest
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(run_weekly_investor_digest)
+            future.result(timeout=60)
+        _weekly_digest_requests_total.labels(source="live", status="ok").inc()
+        _weekly_digest_duration_seconds.observe(elapsed)
+        return JSONResponse(
+            content={
+                "digest_markdown": "Generated live — refresh to view",
+                "markets_covered": _INVESTOR_DIGEST_MARKETS,
+                "generated_at": generated_at,
+                "source": "live",
+            },
+            headers={
+                "X-Source": "live",
+                "X-Process-Time": f"{elapsed * 1000:.0f}ms",
+            },
+        )
+    except concurrent.futures.TimeoutError:
+        logger.warning("[weekly_investor_digest] live generation timed out after 60s")
+        _weekly_digest_requests_total.labels(source="live", status="timeout").inc()
+        _weekly_digest_duration_seconds.observe(elapsed)
+        return JSONResponse(
+            content={
+                "digest_markdown": "Live generation timed out — digest being computed asynchronously",
+                "markets_covered": _INVESTOR_DIGEST_MARKETS,
+                "generated_at": generated_at,
+                "source": "live",
+            },
+            headers={
+                "X-Source": "live",
+                "X-Process-Time": f"{elapsed * 1000:.0f}ms",
+            },
+        )
+    except Exception as exc:
+        _weekly_digest_requests_total.labels(source="live", status="error").inc()
+        _weekly_digest_duration_seconds.observe(elapsed)
+        logger.error("[weekly_investor_digest] %s", exc)
+        return _err_resp(str(exc), request, 500, "Investor")
+
+
+# ── Deal Score (T-1493) ──────────────────────────────────────────────────────
+
+_deal_score_requests_total = _counter(
+    "deal_score_requests_total",
+    "Deal score requests by market and verdict",
+    ["market", "verdict"],
+)
+_deal_score_duration_seconds = _histogram(
+    "deal_score_duration_seconds",
+    "Deal score computation duration in seconds",
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 7.5, 10.0, 15.0),
+)
+_deal_score_log_errors_total = _counter(
+    "deal_score_log_errors_total",
+    "Deal score audit log insert failures",
+)
+_deal_score_cache_hits_total = _counter(
+    "deal_score_cache_hits_total",
+    "Deal score cache hit count",
+)
+
+_DEAL_SCORE_CACHE: dict[str, tuple[str, float]] = {}
+_DEAL_SCORE_CACHE_LOCK = threading.Lock()
+_DEAL_SCORE_CACHE_TTL = 300.0
+_DEAL_SCORE_CACHE_MAX = 100
+
+
+def _normalize_cache_key(canonical: str, cost: float, area: float) -> str:
+    """Normalize floats to fixed decimal to avoid key collision from repr differences."""
+    return f"{canonical}:{cost:.6f}:{area:.6f}"
+
+
+async def deal_score_endpoint(
+    request: Request,
+    market: str,
+    land_cost_cr: float,
+    area_acres: float,
+) -> JSONResponse:
+    """Shared logic for GET /api/v1/intel/deal-score.
+
+    Exposed as a separate function so MCP handler and tests can call it
+    without duplicating cache/logic. Rate-limited at the endpoint level.
+    """
+    t0 = time.time()
+    canonical = _resolve_market(market)
+    if not canonical:
+        _deal_score_requests_total.labels(market=market, verdict="invalid_market").inc()
+        return _err_resp(f"Unknown market: {market}", request, 400, "DealScore")
+
+    cache_key = _normalize_cache_key(canonical, land_cost_cr, area_acres)
+
+    with _DEAL_SCORE_CACHE_LOCK:
+        cached = _DEAL_SCORE_CACHE.get(cache_key)
+        if cached and time.time() - cached[1] < _DEAL_SCORE_CACHE_TTL:
+            _deal_score_cache_hits_total.inc()
+            _deal_score_requests_total.labels(market=canonical, verdict="cached").inc()
+            _deal_score_duration_seconds.observe(time.time() - t0)
+            return JSONResponse(
+                content=json.loads(cached[0]),
+                headers={
+                    "Cache-Control": "private, max-age=300",
+                    "X-Source": "cache",
+                    "X-Process-Time": f"{(time.time() - t0) * 1000:.0f}ms",
+                },
+            )
+
+    try:
+        from utils.deal_scorer import score_deal
+
+        result = score_deal(canonical, land_cost_cr, area_acres)
+        elapsed = time.time() - t0
+        _deal_score_duration_seconds.observe(elapsed)
+
+        # Audit log — non-blocking, best-effort
+        try:
+            with _get_sa_engine().begin() as conn:
+                conn.execute(
+                    _sa_text("""
+                        INSERT INTO deal_score_log
+                            (market, land_cost_cr, area_acres, overall_score, verdict,
+                             confidence, assembly_score, corridor_score, strr_score,
+                             irr_score, kill_criteria_score, reasoning)
+                        VALUES
+                            (:market, :land_cost_cr, :area_acres, :overall_score, :verdict,
+                             :confidence, :assembly_score, :corridor_score, :strr_score,
+                             :irr_score, :kill_criteria_score, :reasoning)
+                    """),
+                    {
+                        "market": canonical,
+                        "land_cost_cr": land_cost_cr,
+                        "area_acres": area_acres,
+                        "overall_score": result["overall_score"],
+                        "verdict": result["verdict"],
+                        "confidence": result["confidence"],
+                        "assembly_score": result["signals"].get("assembly"),
+                        "corridor_score": result["signals"].get("corridor"),
+                        "strr_score": result["signals"].get("strr"),
+                        "irr_score": result["signals"].get("irr"),
+                        "kill_criteria_score": result["signals"].get("kill_criteria"),
+                        "reasoning": result["reasoning"],
+                    },
+                )
+        except Exception as exc:
+            _deal_score_log_errors_total.inc()
+            logger.warning("[deal_score] log insert failed: %s", exc)
+
+        # Update cache
+        with _DEAL_SCORE_CACHE_LOCK:
+            _DEAL_SCORE_CACHE[cache_key] = (json.dumps(result), time.time())
+            if len(_DEAL_SCORE_CACHE) > _DEAL_SCORE_CACHE_MAX:
+                oldest = min(_DEAL_SCORE_CACHE.items(), key=lambda kv: kv[1][1])
+                _DEAL_SCORE_CACHE.pop(oldest[0], None)
+
+        _deal_score_requests_total.labels(market=canonical, verdict=result["verdict"]).inc()
+        return JSONResponse(
+            content=result,
+            headers={
+                "Cache-Control": "private, max-age=300",
+                "X-Process-Time": f"{elapsed * 1000:.0f}ms",
+            },
+        )
+    except ValueError as exc:
+        _deal_score_requests_total.labels(market=canonical, verdict="validation_error").inc()
+        return _err_resp(str(exc), request, 422, "DealScore")
+    except Exception as exc:
+        _deal_score_requests_total.labels(market=canonical, verdict="error").inc()
+        logger.error("[deal_score] market=%s err=%s", canonical, exc)
+        return _err_resp(str(exc), request, 500, "DealScore")
+
+
+@router.get(
+    "/intel/deal-score",
+    summary="Score a land deal across assembly, corridor, STRR, IRR, and kill-criteria signals",
+    tags=["Deal Score"],
+)
+@limiter.limit("20/minute")
+async def deal_score(
+    request: Request,
+    market: str = Query(..., min_length=2, description="Market name (Yelahanka/Devanahalli/Hebbal)"),
+    land_cost_cr: float = Query(..., ge=0.01, le=1_000_000, description="Land cost in crores INR (0.01–1,000,000)"),
+    area_acres: float = Query(..., ge=0.01, le=10_000, description="Land area in acres (0.01–10,000)"),
+):
+    """Score a land deal. Rate-limited: 20/minute. Returns 429 with Retry-After on throttle."""
+    return await deal_score_endpoint(request, market, land_cost_cr, area_acres)
+
+
+@router.get(
+    "/intel/deal-score/history",
+    summary="Past deal scores for a market",
+    tags=["Deal Score"],
+)
+@limiter.limit("20/minute")
+async def deal_score_history(
+    request: Request,
+    market: str = Query(..., min_length=2, description="Market name (Yelahanka/Devanahalli/Hebbal)"),
+    limit: int = Query(default=10, ge=1, le=50, description="Max entries to return"),
+):
+    canonical = _resolve_market(market)
+    if not canonical:
+        return _err_resp(f"Unknown market: {market}", request, 400, "DealScore")
+
+    t0 = time.time()
+    try:
+        with _get_sa_engine().connect() as conn:
+            rows = conn.execute(
+                _sa_text("""
+                    SELECT overall_score, verdict, confidence, assembly_score,
+                           corridor_score, strr_score, irr_score, kill_criteria_score,
+                           reasoning, scored_at, land_cost_cr, area_acres
+                    FROM deal_score_log
+                    WHERE market = :market
+                    ORDER BY scored_at DESC
+                    LIMIT :limit
+                """),
+                {"market": canonical, "limit": limit},
+            ).fetchall()
+
+        history = []
+        for row in rows:
+            history.append({
+                "overall_score": float(row[0]) if row[0] is not None else None,
+                "verdict": row[1],
+                "confidence": float(row[2]) if row[2] is not None else None,
+                "assembly_score": float(row[3]) if row[3] is not None else None,
+                "corridor_score": float(row[4]) if row[4] is not None else None,
+                "strr_score": float(row[5]) if row[5] is not None else None,
+                "irr_score": float(row[6]) if row[6] is not None else None,
+                "kill_criteria_score": float(row[7]) if row[7] is not None else None,
+                "reasoning": row[8],
+                "scored_at": row[9].isoformat() if row[9] else None,
+                "land_cost_cr": float(row[10]) if row[10] is not None else None,
+                "area_acres": float(row[11]) if row[11] is not None else None,
+            })
+
+        return JSONResponse(
+            content={
+                "market": canonical,
+                "history": history,
+                "count": len(history),
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            headers={
+                "Cache-Control": "private, max-age=60",
+                "X-Process-Time": f"{(time.time() - t0) * 1000:.0f}ms",
+            },
+        )
+    except Exception as exc:
+        logger.error("[deal_score_history] market=%s err=%s", canonical, exc)
+        return _err_resp(str(exc), request, 500, "DealScore")

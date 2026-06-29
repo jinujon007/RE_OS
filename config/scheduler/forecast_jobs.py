@@ -21,6 +21,7 @@ __all__ = [
     "run_update_actuals",
     "run_accuracy_threshold_review",
     "run_weekly_calibration",
+    "run_weekly_investor_digest",
     "register_jobs",
 ]
 
@@ -38,6 +39,8 @@ _JOB_RUNNING = False
 _JOB_LOCK_MSG = "[ForecastJobs] update_actuals already running, skipping concurrent invocation"
 _CALIBRATION_RUNNING = False
 _CALIBRATION_LOCK_MSG = "[ForecastJobs] calibration already running, skipping concurrent invocation"
+_INVESTOR_DIGEST_RUNNING = False
+_INVESTOR_DIGEST_LOCK_MSG = "[ForecastJobs] investor digest already running, skipping concurrent invocation"
 
 
 def run_update_actuals():
@@ -239,6 +242,176 @@ def _do_weekly_calibration():
             logger.warning("[ForecastJobs] calibration failed for {}: {}", market, exc)
 
 
+def run_weekly_investor_digest():
+    """Mon 01:30 UTC: generate multi-market investor digest markdown.
+
+    Combines PSF trend, BD verdict, corridor MAPE, STRR signal, assembly
+    signal count, and kill criteria status for all 3 markets into one
+    markdown doc. Exports to Obsidian + sends Telegram summary.
+    """
+    global _INVESTOR_DIGEST_RUNNING
+    if _INVESTOR_DIGEST_RUNNING:
+        logger.warning(_INVESTOR_DIGEST_LOCK_MSG)
+        return
+    _INVESTOR_DIGEST_RUNNING = True
+    try:
+        _do_investor_digest()
+    finally:
+        _INVESTOR_DIGEST_RUNNING = False
+
+
+def _do_investor_digest():
+    from datetime import datetime, timezone
+    from utils.db import get_engine
+    from sqlalchemy import text
+    from utils.investor_brief_generator import InvestorBriefGenerator
+    from utils.strr_overlay import STRROverlay
+    from utils.assembly_detector import AssemblyDetector
+    from utils.corridor_scorer import CorridorScorer
+    from utils.deed_progress import compute_throughput_projection
+    from utils.obsidian_sync import write_note
+    from utils.telegram_notifier import send_message as _tg_send
+
+    markets = [m.strip() for m in TARGET_MARKETS]
+    now = datetime.now(timezone.utc)
+    date_str = now.strftime("%Y-%m-%d")
+    digest_sections: list[str] = [
+        f"# RE_OS Weekly Investor Digest — {date_str}",
+        "",
+        f"**Generated:** {now.isoformat(timespec='seconds')} UTC",
+        f"**Markets covered:** {', '.join(markets)}",
+        "",
+        "---",
+        "",
+    ]
+    telegram_bullets: list[str] = []
+
+    gen = InvestorBriefGenerator()
+    strr = STRROverlay()
+    ad = AssemblyDetector()
+    cs = CorridorScorer()
+
+    for market in markets:
+        sec_lines: list[str] = [f"## {market}", ""]
+        section_bullets: list[str] = []
+
+        # (1) Investor brief — PSF avg + BD verdict
+        try:
+            brief = gen.generate(market)
+            mo = brief.market_overview or {}
+            bv = brief.board_verdict or {}
+            avg_psf = mo.get("avg_psf", "N/A")
+            bd_verdict = bv.get("decision_flag", bv.get("verdict", "NEUTRAL"))
+            sec_lines.append(f"- **Average PSF:** ₹{avg_psf:,.0f}" if isinstance(avg_psf, (int, float)) else f"- **Average PSF:** {avg_psf}")
+            sec_lines.append(f"- **Board Verdict:** {bd_verdict}")
+            section_bullets.append(f"{market}: PSF ₹{avg_psf:,.0f}" if isinstance(avg_psf, (int, float)) else f"{market}: PSF {avg_psf}")
+            section_bullets.append(f"Verdict: {bd_verdict}")
+        except Exception as exc:
+            sec_lines.append("- **Investor Brief:** unavailable")
+            logger.warning("[InvestorDigest] brief failed for {}: {}", market, exc)
+
+        # (2) STRR signal
+        try:
+            stations = strr.stations_near(market)
+            signal = STRROverlay.transit_signal(stations)
+            sec_lines.append(f"- **STRR Signal:** {signal}")
+            section_bullets.append(f"STRR: {signal}")
+        except Exception as exc:
+            sec_lines.append("- **STRR Signal:** unavailable")
+            logger.debug("[InvestorDigest] STRR failed for {}: {}", market, exc)
+
+        # (3) Assembly signal count
+        try:
+            clusters = ad.detect_clusters(market, window_months=6, min_parcels=2)
+            signal_count = len(clusters)
+            sec_lines.append(f"- **Assembly Signals:** {signal_count}")
+            section_bullets.append(f"Assembly: {signal_count}")
+        except Exception as exc:
+            sec_lines.append("- **Assembly Signals:** unavailable")
+            logger.debug("[InvestorDigest] assembly failed for {}: {}", market, exc)
+
+        # (4) Corridor MAPE
+        try:
+            bt = cs.backtest_psf_history(market, lookback_months=24)
+            valid_changes = [r for r in bt if r.get("actual_change_pct") is not None]
+            mape = round(sum(abs(r["actual_change_pct"]) for r in valid_changes) / len(valid_changes), 1) if len(valid_changes) >= 1 else None
+            sec_lines.append(f"- **Corridor MAPE:** {mape}%" if mape is not None else "- **Corridor MAPE:** N/A")
+            section_bullets.append(f"MAPE: {mape}%" if mape is not None else "MAPE: N/A")
+        except Exception as exc:
+            sec_lines.append("- **Corridor MAPE:** unavailable")
+            logger.debug("[InvestorDigest] corridor backtest failed for {}: {}", market, exc)
+
+        sec_lines.append("")
+        digest_sections.extend(sec_lines)
+        if section_bullets:
+            telegram_bullets.append(" • ".join(section_bullets))
+
+    # (5) Kill criteria status block
+    digest_sections.extend(["---", "", "## Kill Criteria Status", ""])
+    try:
+        kc = compute_throughput_projection()
+        kc_avg = kc.get("avg_4wk", "N/A")
+        kc_verdict = kc.get("projection_verdict", "unknown")
+        kc_weeks = kc.get("weeks_remaining", "?")
+        digest_sections.append(f"- **Deed Throughput:** {kc_avg}/week avg (target 50)")
+        digest_sections.append(f"- **Verdict:** {kc_verdict}")
+        digest_sections.append(f"- **Weeks to 2026-08-15:** {kc_weeks}")
+        telegram_bullets.append(f"Kill criteria: {kc_avg}/wk → {kc_verdict} ({kc_weeks}w remaining)")
+    except Exception as exc:
+        digest_sections.append("- **Kill Criteria:** unavailable")
+        logger.warning("[InvestorDigest] kill criteria failed: {}", exc)
+
+    full_md = "\n".join(digest_sections)
+
+    # Obsidian export
+    obsidian_ok = False
+    try:
+        rel = f"03 LLS/02 Projects/VEL/(AI) Weekly Investor Digest {date_str}.md"
+        result = write_note(rel, full_md)
+        if result:
+            logger.info("[InvestorDigest] Obsidian export OK: {}", result)
+            obsidian_ok = True
+        elif result == "":
+            logger.warning("[InvestorDigest] Obsidian write failed (I/O error)")
+        else:
+            logger.debug("[InvestorDigest] Obsidian vault not mounted — skipped")
+    except Exception as exc:
+        logger.warning("[InvestorDigest] Obsidian export error: {}", exc)
+
+    # Telegram summary: first 4 bullets
+    try:
+        summary_lines = telegram_bullets[:4]
+        summary = "\n".join(f"• {b}" for b in summary_lines) if summary_lines else "No data this week."
+        tg_msg = f"*Weekly Investor Digest — {date_str}*\n\n{summary}"
+        if obsidian_ok:
+            tg_msg += "\n\nFull digest → Obsidian VEL folder"
+        else:
+            lines = full_md.split("\n")
+            excerpt = "\n".join(lines[:10])
+            tg_msg += f"\n\n```\n{excerpt}\n```\n*(truncated — Obsidian unavailable)*"
+        _tg_send(tg_msg)
+    except Exception as exc:
+        logger.warning("[InvestorDigest] Telegram send failed: {}", exc)
+
+    # Log to agent_runs
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO agent_runs
+                        (agent_name, micro_market, event_type, status, notes, summary)
+                    VALUES ('investor_weekly_digest', 'system', 'investor_weekly_digest',
+                            'success', :notes, :summary)
+                """),
+                {
+                    "notes": f"digest generated for {len(markets)} markets",
+                    "summary": full_md[:5000],
+                },
+            )
+    except Exception as exc:
+        logger.debug("[InvestorDigest] agent_runs log failed: {}", exc)
+
+
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
     scheduler.add_job(
         lambda: safe_job(run_update_actuals, "update_actuals"),
@@ -259,5 +432,12 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         CronTrigger(day_of_week="fri", hour=23, minute=0),
         id="run_weekly_calibration",
         name="Weekly intelligence calibration — persist + alert on high MAPE (Fri 23:00 UTC)",
+        misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        lambda: safe_job(run_weekly_investor_digest, "run_weekly_investor_digest"),
+        CronTrigger(day_of_week="mon", hour=1, minute=30),
+        id="run_weekly_investor_digest",
+        name="Weekly multi-market investor digest — Obsidian export + Telegram (Mon 01:30 UTC)",
         misfire_grace_time=3600,
     )

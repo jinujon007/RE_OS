@@ -21,6 +21,7 @@ __all__ = [
     "run_alembic_health_check",
     "run_digest_quality_check",
     "run_dlq_drain_check",
+    "run_parcel_graph_materialize",
 ]
 
 _ALEMBIC_CWD = os.environ.get("ALEMBIC_PROJECT_DIR", "/app")
@@ -1484,6 +1485,136 @@ def run_digest_quality_check():
         _DIGEST_QUALITY_RUNNING = False
 
 
+_PARCEL_MATERIALIZE_RUNNING = False
+
+
+def run_parcel_graph_materialize():
+    """Weekly parcel graph materialization — Sunday 01:00 UTC (T-1482).
+
+    For each target market: queries priority villages, builds parcel graph,
+    upserts edges into parcel_graph_edges table.
+    Never raises — logs and skips per-village on error.
+    """
+    global _PARCEL_MATERIALIZE_RUNNING
+    if _PARCEL_MATERIALIZE_RUNNING:
+        logger.warning("[ParcelMaterialize] already running, skipping concurrent invocation")
+        return
+    _PARCEL_MATERIALIZE_RUNNING = True
+    try:
+        from utils.parcel_graph import ParcelGraph
+        from utils.deed_progress import get_priority_villages
+        from sqlalchemy import text as _st
+
+        pg = ParcelGraph()
+        engine = get_engine()
+        total_markets = 0
+        total_villages = 0
+        total_edges = 0
+        markets_processed: list[str] = []
+
+        for market in TARGET_MARKETS:
+            try:
+                villages = get_priority_villages(market, top_n=10)
+            except Exception as exc:
+                logger.warning("[ParcelMaterialize] get_priority_villages failed for %s: %s", market, exc)
+                continue
+
+            market_edges = 0
+            market_villages = 0
+            for v in villages:
+                village = v.get("village", "")
+                if not village:
+                    continue
+                try:
+                    result = pg.build(market, village)
+                    edges = result.get("edges", [])
+                    if not edges:
+                        continue
+                    with engine.begin() as conn:
+                        for i, e in enumerate(edges):
+                            sp_key = f"sp_pg_{i}"
+                            conn.execute(_st(f"SAVEPOINT {sp_key}"))
+                            try:
+                                conn.execute(
+                                    _st("""
+                                        INSERT INTO parcel_graph_edges
+                                            (market, village, survey_a, survey_b, shared_buyer,
+                                             transaction_count, edge_weight, computed_at)
+                                        VALUES (:m, :v, :a, :b, :sb, :tc, :ew, NOW())
+                                        ON CONFLICT (market, village, survey_a, survey_b)
+                                        DO UPDATE SET
+                                            edge_weight = EXCLUDED.edge_weight,
+                                            transaction_count = EXCLUDED.transaction_count,
+                                            computed_at = NOW()
+                                    """),
+                                    {
+                                        "m": market, "v": village,
+                                        "a": e["survey_a"], "b": e["survey_b"],
+                                        "sb": e.get("shared_buyer", False),
+                                        "tc": e.get("transaction_count", 1),
+                                        "ew": e.get("edge_weight", 0.1),
+                                    },
+                                )
+                                conn.execute(_st(f"RELEASE SAVEPOINT {sp_key}"))
+                            except Exception:
+                                conn.execute(_st(f"ROLLBACK TO SAVEPOINT {sp_key}"))
+                                conn.execute(_st(f"RELEASE SAVEPOINT {sp_key}"))
+                                logger.warning("[ParcelMaterialize] edge upsert failed for %s/%s: %s → %s (skipped)", market, village, e.get("survey_a"), e.get("survey_b"))
+                    logger.info("[ParcelMaterialize] %s/%s: %d edges upserted", market, village, len(edges))
+                    market_edges += len(edges)
+                    market_villages += 1
+                except Exception as exc:
+                    logger.warning("[ParcelMaterialize] build/upsert failed for %s/%s: %s", market, village, exc)
+
+            if market_villages > 0:
+                total_markets += 1
+                total_villages += market_villages
+                total_edges += market_edges
+                markets_processed.append(market)
+            logger.info("[ParcelMaterialize] %s: %d villages, %d edges", market, market_villages, market_edges)
+
+        logger.info(
+            "[ParcelMaterialize] run complete: %d markets (%s), %d villages, %d edges",
+            total_markets, ", ".join(markets_processed) or "none", total_villages, total_edges,
+        )
+
+        # Log to agent_runs for audit trail
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("""
+                        INSERT INTO agent_runs
+                            (agent_name, micro_market, event_type, status, records_inserted, notes)
+                        VALUES ('parcel_graph_materialize', 'system', 'parcel_graph_materialize',
+                                'success', :n, :notes)
+                    """),
+                    {
+                        "n": total_edges,
+                        "notes": f"{total_markets} markets ({', '.join(markets_processed) or 'none'}), "
+                                 f"{total_villages} villages, {total_edges} edges upserted",
+                    },
+                )
+        except Exception as exc:
+            logger.debug("[ParcelMaterialize] agent_runs log failed: %s", exc)
+    except Exception as exc:
+        logger.warning("[ParcelMaterialize] run failed: %s", exc)
+        try:
+            with get_engine().begin() as conn:
+                conn.execute(
+                    text("""
+                        INSERT INTO agent_runs
+                            (agent_name, micro_market, event_type, status, notes)
+                        VALUES ('parcel_graph_materialize', 'system', 'parcel_graph_materialize',
+                                'failed', :notes)
+                    """),
+                    {"notes": str(exc)[:500]},
+                )
+        except Exception:
+            pass
+    finally:
+        _PARCEL_MATERIALIZE_RUNNING = False
+
+
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
     """Register maintenance-related scheduler jobs."""
     from apscheduler.triggers.cron import CronTrigger
@@ -1740,5 +1871,14 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         id="digest_quality_check",
         name="Weekly Digest Quality Check (Sat 08:00 UTC — validates intel digest completeness)",
         misfire_grace_time=3600,
+        replace_existing=True,
+    )
+    # Weekly parcel graph materialization — Sunday 01:00 UTC (T-1482)
+    scheduler.add_job(
+        lambda: safe_job(run_parcel_graph_materialize, "parcel_graph_materialize"),
+        CronTrigger(day_of_week="sun", hour=1, minute=0, timezone="UTC"),
+        id="parcel_graph_materialize",
+        name="Weekly Parcel Graph Edge Materialization (Sun 01:00 UTC — builds parcel_graph_edges)",
+        misfire_grace_time=7200,
         replace_existing=True,
     )
