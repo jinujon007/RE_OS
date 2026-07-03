@@ -1559,6 +1559,22 @@ def projects_panel(request: Request):
     return templates.TemplateResponse(request, "projects.html")
 
 
+# ── VEL Intel Panel (GATE-171, T-1544) ─────────────────────────────────
+
+
+@router.get("/vel-intel", tags=["VEL"], summary="VEL Intelligence dashboard panel")
+def vel_intel_panel(request: Request):
+    return templates.TemplateResponse(request, "vel_intel.html")
+
+
+# ── System Health Panel (GATE-172, T-1549) ──────────────────────────────
+
+
+@router.get("/system-health", tags=["System"], summary="System Health dashboard panel")
+def system_health_panel(request: Request):
+    return templates.TemplateResponse(request, "system_health.html")
+
+
 # ── Investor Brief (GATE-143) ──────────────────────────────────────────
 
 # Prometheus metrics
@@ -2330,6 +2346,220 @@ async def vel_export_obsidian(
     except Exception as exc:
         logger.error("[vel_export_obsidian] %s", exc)
         return _err_resp(str(exc), request, 500, "VEL")
+
+
+# ── VEL Market Context (GATE-171, T-1541 / T-1543) ───────────────────
+# T-1543 (competitor tracker) is embedded within this endpoint.
+#
+# NOTE: Distance_km is not computed because rera_projects lacks lat/lon
+# columns. Competitors are filtered by market (Hebbal/Yelahanka) and
+# sorted by unit count as a proxy for importance.
+
+
+class VELMarketContextResponse(BaseModel):
+    psf_trend: dict
+    grade_a_competitors: list[dict]
+    strr_signal: str | None = None
+    assembly_activity: dict[str, int]
+    corridor_score: dict | None = None
+    recommended_psf_range: list[float | None]
+    generated_at: str
+
+
+_VEL_MARKET_CONTEXT_CACHE: dict[str, tuple[str, float]] = {}
+_VEL_MARKET_CONTEXT_CACHE_TTL = 120.0
+_VEL_MARKET_CONTEXT_CACHE_LOCK = threading.Lock()
+
+
+def _cached_vel_mc() -> str | None:
+    with _VEL_MARKET_CONTEXT_CACHE_LOCK:
+        entry = _VEL_MARKET_CONTEXT_CACHE.get("mc")
+        if entry and time.time() - entry[1] < _VEL_MARKET_CONTEXT_CACHE_TTL:
+            return entry[0]
+    return None
+
+
+def _set_cached_vel_mc(value: str) -> None:
+    with _VEL_MARKET_CONTEXT_CACHE_LOCK:
+        _VEL_MARKET_CONTEXT_CACHE["mc"] = (value, time.time())
+
+
+_vel_market_context_requests_total = _counter(
+    "vel_market_context_requests_total",
+    "VEL market context requests by status",
+    ["status"],
+)
+_vel_market_context_duration_seconds = _histogram(
+    "vel_market_context_duration_seconds",
+    "VEL market context query duration in seconds",
+    [],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+
+
+def _query_vel_market_context() -> dict:
+    """Execute VEL market context queries. Extracted for cache + timeout support."""
+    from utils.db import get_engine
+    from sqlalchemy import text
+
+    engine = _get_sa_engine()
+    avg_psf: float | None = None
+    grade_a_competitors: list[dict] = []
+    strr_signal: str | None = None
+    assembly_activity: dict[str, int] = {}
+    corridor_score: dict | None = None
+    psf_markets = ("Hebbal", "Yelahanka")
+
+    # (0) Resolve village names for Hebbal and Yelahanka from the priority view
+    target_villages: list[str] = []
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT DISTINCT village FROM v_deed_village_priority
+                    WHERE market IN (:m1, :m2)
+                """),
+                {"m1": "Hebbal", "m2": "Yelahanka"},
+            ).fetchall()
+            target_villages = [str(r[0]) for r in rows if r[0]]
+    except Exception as exc:
+        logger.debug("[vel_market_context] village resolution: %s", exc)
+
+    # (1) avg PSF from registered_transactions for Hebbal + Yelahanka villages
+    # Column is `psf` (not `price_psf`). No micro_market_id — filtered by village.
+    if target_villages:
+        try:
+            with engine.connect() as conn:
+                row = conn.execute(
+                    text("""
+                        SELECT AVG(rt.psf)
+                        FROM registered_transactions rt
+                        WHERE rt.village = ANY(:villages)
+                          AND rt.psf IS NOT NULL
+                          AND rt.psf > 1000
+                          AND rt.psf < 50000
+                    """),
+                    {"villages": target_villages},
+                ).scalar()
+                if row is not None:
+                    avg_psf = round(float(row), 0)
+        except Exception as exc:
+            logger.debug("[vel_market_context] avg PSF query: %s", exc)
+
+    # (2) Grade A competitors in Hebbal/Yelahanka markets (T-1543)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT rp.project_name, d.name AS developer_name,
+                           rp.total_units, rp.price_avg_psf, rp.project_status
+                    FROM rera_projects rp
+                    JOIN developers d ON d.id = rp.developer_id
+                    JOIN micro_markets mm ON mm.id = rp.micro_market_id
+                    WHERE mm.name IN (:m1, :m2)
+                      AND (d.grade = 'A' OR rp.total_units > 200)
+                    ORDER BY rp.total_units DESC
+                    LIMIT 10
+                """),
+                {"m1": "Hebbal", "m2": "Yelahanka"},
+            ).fetchall()
+        grade_a_competitors = [
+            {
+                "developer_name": str(r[1] or ""),
+                "project_name": str(r[0] or ""),
+                "units": int(r[2]) if r[2] is not None else 0,
+                "avg_psf": round(float(r[3]), 0) if r[3] is not None else None,
+                "status": str(r[4] or ""),
+            }
+            for r in rows
+        ]
+    except Exception as exc:
+        logger.debug("[vel_market_context] competitor query: %s", exc)
+
+    # (3) STRR signal for Hebbal
+    try:
+        from utils.strr_overlay import STRROverlay
+        overlay = STRROverlay()
+        stations = overlay.stations_near("Hebbal")
+        strr_signal = STRROverlay.transit_signal(stations)
+    except Exception as exc:
+        logger.debug("[vel_market_context] STRR signal: %s", exc)
+
+    # (4) Assembly cluster counts for Hebbal + Yelahanka
+    try:
+        from utils.assembly_detector import AssemblyDetector
+        detector = AssemblyDetector()
+        hebbal_clusters = detector.detect_clusters("Hebbal")
+        yelahanka_clusters = detector.detect_clusters("Yelahanka")
+        assembly_activity = {
+            "hebbal_clusters": len(hebbal_clusters),
+            "yelahanka_clusters": len(yelahanka_clusters),
+        }
+    except Exception as exc:
+        logger.debug("[vel_market_context] assembly query: %s", exc)
+
+    # (5) Corridor score — extract Hebbal composite
+    try:
+        from utils.corridor_scorer import CorridorScorer
+        scorer = CorridorScorer()
+        all_scores = scorer.score_all()
+        for c in all_scores:
+            if c.get("market", "").lower() == "hebbal":
+                corridor_score = c
+                break
+    except Exception as exc:
+        logger.debug("[vel_market_context] corridor score: %s", exc)
+
+    # recommended PSF range: -10% / +15% around market avg
+    recommended_psf_range: list[float | None] = [None, None]
+    if avg_psf is not None:
+        recommended_psf_range = [round(avg_psf * 0.9, 0), round(avg_psf * 1.15, 0)]
+
+    return {
+        "psf_trend": {"avg_psf": avg_psf, "markets": list(psf_markets)},
+        "grade_a_competitors": grade_a_competitors,
+        "strr_signal": strr_signal,
+        "assembly_activity": assembly_activity,
+        "corridor_score": corridor_score,
+        "recommended_psf_range": recommended_psf_range,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get(
+    "/intel/vel/market-context",
+    response_model=VELMarketContextResponse,
+    summary="VEL market context — PSF trend, competitors, STRR, assembly, corridor score",
+    tags=["VEL"],
+)
+@limiter.limit("30/minute")
+async def vel_market_context(request: Request):
+    t0 = time.time()
+    try:
+        cached = _cached_vel_mc()
+        if cached:
+            _vel_market_context_requests_total.labels(status="hit").inc()
+            return JSONResponse(
+                content=json.loads(cached),
+                headers={"Cache-Control": "private, max-age=120, stale-while-revalidate=60"},
+            )
+
+        data = _query_vel_market_context()
+        _set_cached_vel_mc(json.dumps(data))
+        _vel_market_context_duration_seconds.observe(time.time() - t0)
+        _vel_market_context_requests_total.labels(status="ok").inc()
+        return JSONResponse(
+            content=data,
+            headers={"Cache-Control": "private, max-age=120, stale-while-revalidate=60"},
+        )
+
+    except Exception as exc:
+        _vel_market_context_requests_total.labels(status="error").inc()
+        logger.error("[vel_market_context] %s", exc)
+        return _err_resp(str(exc), request, 500, "VEL")
+
+
+# ── Corridor Backtest Accuracy (T-1448) ──────────────────────────────
 
 
 # ── Corridor Backtest Accuracy (T-1448) ──────────────────────────────

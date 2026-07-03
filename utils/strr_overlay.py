@@ -44,6 +44,8 @@ _MARKET_COORDS: dict[str, tuple[float, float]] = {
     "yelahanka": (13.100, 77.594),
     "devanahalli": (13.248, 77.712),
     "hebbal": (13.058, 77.597),
+    "thanisandra": (13.047, 77.632),
+    "bagalur": (13.218, 77.728),
 }
 
 

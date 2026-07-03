@@ -55,6 +55,17 @@
     "status": "planned"
   },
   {
+    "id": "thanisandra_1",
+    "name": "Thanisandra STRR Halt",
+    "line": "STRR: Airport Line",
+    "type": "suburban",
+    "lat": 13.052,
+    "lon": 77.635,
+    "opening_year": 2028,
+    "opening_quarter": "Q3",
+    "status": "planned"
+  },
+  {
     "id": "bagalagunte-metro",
     "name": "Bagalagunte",
     "line": "Namma Metro: Yellow Line (Phase 3)",

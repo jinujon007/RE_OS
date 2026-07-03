@@ -8,6 +8,7 @@ tender scan functions extracted from monolithic scheduler.py.
 import json
 import threading
 from collections.abc import Callable
+from pathlib import Path
 from apscheduler.schedulers.blocking import BlockingScheduler
 from loguru import logger
 from sqlalchemy import text
@@ -16,6 +17,20 @@ from utils.prediction_ledger import compute_accuracy_summary as _compute_accurac
 from utils.discord_notifier import send_ops_alert as _send_ops_alert_accuracy
 
 _BHOOMI_DEDUP_PREFIX = "bhoomi_auto_survey:"
+_DEED_WEEKLY_TARGET = 50
+
+__all__ = [
+    "register_jobs",
+    "run_accuracy_degradation_check",
+    "run_bhoomi_auto_survey",
+    "run_deed_daily_status",
+    "run_kaveri_deeds_weekly",
+    "run_kaveri_registration_scan",
+    "run_kaveri_weekly_orchestration",
+    "run_la_notification_scan",
+    "run_ledger_check_weekly",
+    "run_tender_daily_scan",
+]
 
 
 def _bhoomi_already_ran(market: str, cooldown_hours: int = 12) -> bool:
@@ -488,6 +503,150 @@ def _compute_deed_weekly_avg(engine=None, weeks: int = 4) -> float:
     return float(row or 0.0)
 
 
+def run_deed_daily_status() -> None:
+    """Send daily Telegram status on deed throughput.
+
+    Queries registered_transactions for weekly count and inbox for PDF count.
+    Sends a Telegram message with the status summary.
+    Schedule: Mon-Fri 02:30 UTC (07:00 IST).
+    """
+    from datetime import datetime, timezone
+
+    from utils.deed_inbox_validator import validate_inbox_pdfs
+    from utils.telegram_notifier import send_message as _tg_send
+
+    try:
+        with get_engine().connect() as conn:
+            this_week_count = conn.execute(
+                text("SELECT COUNT(*) FROM registered_transactions WHERE created_at >= date_trunc('week', NOW())"),
+            ).scalar() or 0
+    except Exception as exc:
+        logger.warning("[DeedDailyStatus] DB query failed: {}", exc)
+        return
+
+    inbox_dir = Path("data/kaveri_deeds/inbox")
+    validation = validate_inbox_pdfs(inbox_dir)
+    inbox_count = validation["total"]
+    rejected_count = len(validation["invalid"])
+
+    today = datetime.now(timezone.utc)
+    day_of_week = today.isoweekday()
+    target_by_today = round(_DEED_WEEKLY_TARGET * min(day_of_week, 5) / 7)
+    on_track = this_week_count >= target_by_today
+    status_icon = "✅ On track" if on_track else "⚠️ At risk"
+
+    msg = (
+        f"📋 Deed status (week): {this_week_count}/{_DEED_WEEKLY_TARGET} target. "
+        f"Inbox: {inbox_count} PDFs ready ({rejected_count} rejected). "
+        f"{status_icon}."
+    )
+    try:
+        _tg_send(msg)
+    except Exception as exc:
+        logger.warning("[DeedDailyStatus] Telegram send failed: {}", exc)
+
+
+def run_kaveri_registration_scan() -> None:
+    """Scan priority villages for new deed registrations on Kaveri portal.
+
+    Queries v_deed_village_priority for top 10 villages, scans each via
+    KaveriRegistrationSearch, upserts new records into
+    kaveri_registration_metadata, and sends Telegram alert if new deeds found.
+    Schedule: Mon-Fri 00:30 UTC (06:00 IST).
+    """
+    from utils.telegram_notifier import send_message as _tg_send
+
+    try:
+        with get_engine().connect() as conn:
+            villages = conn.execute(
+                text("""
+                    SELECT village, taluk
+                    FROM v_deed_village_priority
+                    ORDER BY priority_score DESC NULLS LAST
+                    LIMIT 10
+                """),
+            ).fetchall()
+    except Exception as exc:
+        logger.warning("[KaveriRegScan] Failed to query priority villages: {}", exc)
+        return
+
+    if not villages:
+        logger.info("[KaveriRegScan] No priority villages found")
+        return
+
+    from scrapers.kaveri_registration_search import KaveriRegistrationSearch
+    searcher = KaveriRegistrationSearch()
+
+    total_new = 0
+    village_new_names: list[str] = []
+    doc_summaries: list[str] = []
+
+    for row in villages:
+        village = row[0]
+        taluk = row[1] or None
+        try:
+            records = searcher.scan_village(village, taluk, days_back=1)
+        except Exception as exc:
+            logger.warning("[KaveriRegScan] Scan failed for {}: {}", village, exc)
+            continue
+
+        if not records:
+            continue
+
+        try:
+            with get_engine().begin() as conn:
+                for rec in records:
+                    existing = conn.execute(
+                        text("SELECT id FROM kaveri_registration_metadata WHERE doc_no = :doc AND village = :v"),
+                        {"doc": rec["doc_no"], "v": rec["village"]},
+                    ).fetchone()
+                    if existing:
+                        continue
+                    conn.execute(
+                        text("""
+                            INSERT INTO kaveri_registration_metadata
+                                (doc_no, village, taluk, reg_date, seller, buyer,
+                                 survey_no, property_area, estimated_value, discovered_at)
+                            VALUES
+                                (:doc, :village, :taluk, :reg_date, :seller, :buyer,
+                                 :survey_no, :property_area, :estimated_value, NOW())
+                            ON CONFLICT (doc_no, village) DO NOTHING
+                        """),
+                        {
+                            "doc": rec["doc_no"],
+                            "village": rec["village"],
+                            "taluk": taluk,
+                            "reg_date": rec.get("reg_date"),
+                            "seller": rec.get("seller", ""),
+                            "buyer": rec.get("buyer", ""),
+                            "survey_no": rec.get("survey_no", ""),
+                            "property_area": rec.get("property_area", ""),
+                            "estimated_value": rec.get("estimated_value", ""),
+                        },
+                    )
+                    total_new += 1
+                    doc_summaries.append(f"{rec['doc_no']} ({rec.get('seller', '?')} → {rec.get('buyer', '?')})")
+                village_new_names.append(village)
+        except Exception as exc:
+            logger.warning("[KaveriRegScan] Upsert failed for {}: {}", village, exc)
+
+    if total_new > 0:
+        village_list = ", ".join(sorted(set(village_new_names)))
+        summary_text = "; ".join(doc_summaries[:5])
+        if len(doc_summaries) > 5:
+            summary_text += f" … and {len(doc_summaries) - 5} more"
+        msg = (
+            f"🔍 {total_new} new deed(s) in {village_list}: {summary_text}. "
+            f"Open discovery queue: /api/v1/deeds/discovery-queue"
+        )
+        try:
+            _tg_send(msg)
+        except Exception as exc:
+            logger.warning("[KaveriRegScan] Telegram send failed: {}", exc)
+    else:
+        logger.info("[KaveriRegScan] No new deeds found")
+
+
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
     """Register Kaveri-related scheduler jobs."""
     from apscheduler.triggers.cron import CronTrigger
@@ -546,5 +705,21 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         CronTrigger(day_of_week="thu", hour=4, minute=0, timezone="UTC"),
         id="accuracy_degradation_check",
         name="Weekly Prediction Ledger Accuracy Degradation Check (Thu 09:30 IST)",
+        misfire_grace_time=3600,
+    )
+    # Daily deed status Telegram — Mon-Fri 02:30 UTC = 07:00 IST (GATE-169, T-1533)
+    scheduler.add_job(
+        lambda: safe_job(run_deed_daily_status, "deed_daily_status"),
+        CronTrigger(day_of_week="mon-fri", hour=2, minute=30, timezone="UTC"),
+        id="deed_daily_status",
+        name="Daily Deed Status Telegram (Mon-Fri 07:00 IST)",
+        misfire_grace_time=3600,
+    )
+    # Daily Kaveri registration scan — Mon-Fri 00:30 UTC = 06:00 IST (GATE-173, T-1553)
+    scheduler.add_job(
+        lambda: safe_job(run_kaveri_registration_scan, "kaveri_registration_scan"),
+        CronTrigger(day_of_week="mon-fri", hour=0, minute=30, timezone="UTC"),
+        id="kaveri_registration_scan",
+        name="Daily Kaveri Registration Scan (Mon-Fri 06:00 IST)",
         misfire_grace_time=3600,
     )

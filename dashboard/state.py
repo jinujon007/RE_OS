@@ -755,7 +755,7 @@ def _validate_registry_payload(payload: dict) -> tuple[dict | None, str | None]:
 
 # ── Digest helpers (used by ops.py) ──────────────────────────────────────────
 
-VALID_MARKETS_DIGEST = frozenset({"Yelahanka", "Devanahalli", "Hebbal"})
+VALID_MARKETS_DIGEST = frozenset({"Yelahanka", "Devanahalli", "Hebbal", "Thanisandra", "Bagalur"})
 
 
 def _resolve_market(market: str | None) -> str | None:
@@ -765,6 +765,9 @@ def _resolve_market(market: str | None) -> str | None:
     for valid in VALID_MARKETS_DIGEST:
         if valid.lower() == canonical:
             return valid
+    from config.settings import MARKET_ALIASES
+    if canonical in MARKET_ALIASES:
+        return MARKET_ALIASES[canonical]
     return None
 
 
@@ -787,7 +790,7 @@ _REGISTRY_CACHE_TTL = 15
 
 # ── Valid board markets ──────────────────────────────────────────────────────
 
-_VALID_BOARD_MARKETS = {"Yelahanka", "Devanahalli", "Hebbal", ""}
+_VALID_BOARD_MARKETS = {"Yelahanka", "Devanahalli", "Hebbal", "Thanisandra", "Bagalur", ""}
 
 # ── Agent states access ──────────────────────────────────────────────────────
 

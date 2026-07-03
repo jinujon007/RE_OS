@@ -51,6 +51,44 @@ Tests using this mark will be skipped when Docker/Redis is not running.
 skip_no_redis = require_redis
 
 
+def _make_engine(conn: MagicMock) -> MagicMock:
+    """Build a mock SQLAlchemy engine that returns *conn* from both
+    ``.connect()`` and ``.begin()`` context managers.
+
+    Use in tests that exercise code paths calling either ``get_engine().connect()``
+    or ``_get_sa_engine().begin()``.
+    """
+    eng = MagicMock()
+    eng.connect.return_value.__enter__.return_value = conn
+    eng.begin.return_value.__enter__.return_value = conn
+    return eng
+
+
+def _make_execute_side_effect(rows: list):
+    """Return a ``side_effect`` list for ``MagicMock().execute``.
+
+    Each element in *rows* is a tuple used as the return value for
+    ``fetchone()``, ``scalar()``, and ``fetchall()`` on the mock result.
+
+    If an element is ``None`` all three methods return ``None`` (empty result).
+
+    This covers the three SQLAlchemy result patterns used across utils:
+      - ``conn.execute(sql).fetchone()``
+      - ``conn.execute(sql).scalar()``
+      - ``conn.execute(sql).fetchall()``
+
+    For ``fetchall()`` the tuple is wrapped in a list to simulate row iteration.
+    """
+    results = []
+    for r in rows:
+        mr = MagicMock()
+        mr.fetchone.return_value = r
+        mr.scalar.return_value = r[0] if r is not None else None
+        mr.fetchall.return_value = [r] if r is not None else []
+        results.append(mr)
+    return results
+
+
 @pytest.fixture(scope="module")
 def dashboard_client():
     """TestClient for FastAPI app with safe test env (memory:// rate limiter, empty API key allowed).

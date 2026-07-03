@@ -138,9 +138,15 @@ RERA_PLAYWRIGHT_LOCALITY_VALUES: dict[str, tuple[str, str]] = {
 # ── MARKETS ──────────────────────────────────────────────────────────────────
 TARGET_MARKETS = [
     m.strip()
-    for m in os.getenv("TARGET_MARKETS", "Yelahanka,Devanahalli,Hebbal").split(",")
+    for m in os.getenv("TARGET_MARKETS", "Yelahanka,Devanahalli,Hebbal,Thanisandra,Bagalur").split(",")
     if m.strip()
 ]
+
+MARKET_ALIASES: dict[str, str] = {
+    "thanisandra nagar": "Thanisandra",
+    "new bagalur": "Bagalur",
+    "bagaluru": "Bagalur",
+}
 
 # RERA Karnataka portal — confirmed live via browser inspection 2026-05-14
 # Form: POST https://rera.karnataka.gov.in/projectViewDetails
@@ -461,6 +467,10 @@ ASSEMBLY_ALERT_THRESHOLDS: dict[str, float] = {
 # ── STRR THRESHOLDS (GATE-160, T-1487) ─────────────────────────────────────────
 STRR_STRONG_KM: float = float(os.getenv("STRR_STRONG_KM", "1.0"))
 STRR_MODERATE_KM: float = float(os.getenv("STRR_MODERATE_KM", "3.0"))
+
+# ── VEL COORDINATES (GATE-171) ─────────────────────────────────────────────────
+VEL_LAT: float = float(os.getenv("VEL_LAT", "13.035"))
+VEL_LON: float = float(os.getenv("VEL_LON", "77.597"))
 
 # ── AGENT RUN STATUSES ────────────────────────────────────────────────────────
 AGENT_RUN_STATUSES = ["in_progress", "completed", "failed", "skipped"]

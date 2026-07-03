@@ -29,6 +29,8 @@ from config.scheduler.kaveri_jobs import (
     run_tender_daily_scan,
     run_ledger_check_weekly,
     run_accuracy_degradation_check,
+    run_deed_daily_status,
+    run_kaveri_registration_scan,
 )
 
 from config.scheduler.intel_jobs import (
@@ -52,6 +54,7 @@ from config.scheduler.intel_jobs import (
     run_govt_policy_daily_scan,
     run_govt_policy_weekly_digest,
     run_post_crew_optimizer_hook,
+    run_vel_weekly_market_update,
 )
 
 from config.scheduler.digest_jobs import (
@@ -65,6 +68,8 @@ from config.scheduler.digest_jobs import (
     weekly_process_audit,
     run_compliance_check,
     run_ledger_verdict_digest,
+    run_slo_burn_check,
+    run_deed_throughput_digest,
 )
 
 from config.scheduler.deed_jobs import (
@@ -72,10 +77,14 @@ from config.scheduler.deed_jobs import (
     run_weekly_deed_threshold_check,
     run_assembly_detection,
     run_weekly_kill_criteria_report,
+    run_kaveri_download_reminder,
 )
 
 from config.scheduler.forecast_jobs import (
     run_update_actuals,
+    run_accuracy_threshold_review,
+    run_weekly_calibration,
+    run_weekly_investor_digest,
 )
 
 from config.scheduler.maintenance_jobs import (
@@ -100,6 +109,12 @@ from config.scheduler.maintenance_jobs import (
     run_check_developer_price_moves,
     run_alembic_health_check,
     run_dlq_drain_check,
+    run_kill_criteria_check,
+    run_corridor_backtest_weekly,
+    run_form17_inbox_scan,
+    run_digest_quality_check,
+    run_parcel_graph_materialize,
+    run_weekly_health_report,
     _ops_already_alerted,
     _bd_already_alerted,
 )
@@ -110,7 +125,10 @@ __all__ = [
     "run_weekly_deed_threshold_check",
     "run_assembly_detection",
     "run_weekly_kill_criteria_report",
+    "run_kaveri_download_reminder",
     "run_kaveri_deeds_weekly",
+    "run_deed_daily_status",
+    "run_kaveri_registration_scan",
     "run_kaveri_weekly_orchestration",
     "run_bhoomi_auto_survey",
     "run_la_notification_scan",
@@ -137,6 +155,7 @@ __all__ = [
     "run_govt_policy_daily_scan",
     "run_govt_policy_weekly_digest",
     "run_post_crew_optimizer_hook",
+    "run_vel_weekly_market_update",
     "run_weekly_digest",
     "run_weekly_intel_digest",
     "run_monthly_intel_digest",
@@ -145,6 +164,8 @@ __all__ = [
     "weekly_process_audit",
     "run_compliance_check",
     "run_ledger_verdict_digest",
+    "run_slo_burn_check",
+    "run_deed_throughput_digest",
     "run_memory_decay",
     "run_confidence_decay_check",
     "run_seed_staleness_check",
@@ -162,11 +183,20 @@ __all__ = [
     "run_chromadb_maintenance",
     "run_corridor_backtest_monthly",
     "run_kill_criteria_reminder",
+    "run_kill_criteria_check",
+    "run_corridor_backtest_weekly",
+    "run_form17_inbox_scan",
+    "run_digest_quality_check",
+    "run_parcel_graph_materialize",
+    "run_weekly_health_report",
     "run_scraper_health_check",
     "run_check_developer_price_moves",
     "run_alembic_health_check",
     "run_dlq_drain_check",
     "run_update_actuals",
+    "run_accuracy_threshold_review",
+    "run_weekly_calibration",
+    "run_weekly_investor_digest",
     "start_scheduler",
 ]
 

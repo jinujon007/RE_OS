@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VEL Intelligence — LLS Operations Center</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/17.0.2/umd/react.production.min.js" crossorigin></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/17.0.2/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js" crossorigin></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0e1a; color: #c9d1d9; font-family: 'Courier New', Courier, monospace; font-size: 13px; min-height: 100vh; display: flex; flex-direction: column; }
+.header { background: #0f1520; border-bottom: 2px solid #2a3a55; padding: 12px 20px; display: flex; align-items: center; gap: 16px; flex-shrink: 0; flex-wrap: wrap; }
+.logo { font-family: 'Press Start 2P', cursive; color: #f0a020; font-size: 12px; letter-spacing: 1px; }
+.back-link { color: #58a6ff; font-size: 10px; text-decoration: none; font-family: 'Press Start 2P', cursive; font-size: 7px; }
+.back-link:hover { text-decoration: underline; }
+.last-updated { color: #8b949e; font-size: 9px; margin-left: auto; font-family: 'Courier New', monospace; }
+.container { padding: 20px; max-width: 1200px; margin: 0 auto; flex: 1; }
+.card { background: #0f1520; border: 1px solid #2a3a55; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.card h2 { color: #f0a020; font-family: 'Press Start 2P', cursive; font-size: 10px; margin-bottom: 12px; letter-spacing: 1px; }
+.stat-row { display: flex; gap: 16px; flex-wrap: wrap; }
+.stat-box { background: #131a28; border: 1px solid #1e2d45; border-radius: 6px; padding: 12px 16px; min-width: 140px; text-align: center; flex: 1; }
+.stat-box .label { color: #8b949e; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+.stat-box .value { color: #f0f0f0; font-size: 22px; font-weight: bold; margin-top: 4px; font-family: 'Press Start 2P', cursive; font-size: 14px; }
+.stat-box .value.positive { color: #3fb950; }
+.stat-box .value.warning { color: #f0a020; }
+.stat-box .value.negative { color: #f85149; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 11px; }
+.badge.STRONG { background: #1a3a1a; color: #3fb950; border: 1px solid #3fb950; }
+.badge.MODERATE { background: #3a2a1a; color: #f0a020; border: 1px solid #f0a020; }
+.badge.WEAK { background: #3a1a1a; color: #f85149; border: 1px solid #f85149; }
+.badge.unknown { background: #1a1a2a; color: #8b949e; border: 1px solid #8b949e; }
+table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+th { color: #8b949e; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; text-align: left; padding: 6px 8px; border-bottom: 1px solid #1e2d45; }
+td { padding: 6px 8px; border-bottom: 1px solid #131a28; font-size: 12px; }
+.error-banner { background: #3a1a1a; border: 1px solid #f85149; border-radius: 6px; padding: 16px; margin-bottom: 16px; color: #f85149; display: none; }
+.error-banner .retry-btn { background: #f85149; color: #fff; border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-family: 'Courier New', monospace; font-size: 11px; margin-left: 8px; }
+.error-banner .retry-btn:hover { background: #ff6b5a; }
+.skeleton { background: linear-gradient(90deg, #131a28 25%, #1a2540 50%, #131a28 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 4px; }
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.skeleton-box { height: 32px; width: 80%; margin: 8px auto; }
+.skeleton-table { height: 120px; width: 100%; margin-top: 8px; }
+.empty-state { color: #8b949e; padding: 20px; text-align: center; font-style: italic; }
+</style>
+</head>
+<body>
+<div class="header">
+  <span class="logo">VEL Intel</span>
+  <a href="/" class="back-link">⬅ BACK TO OPS</a>
+  <span class="last-updated" id="last-updated">Loading...</span>
+</div>
+<div class="container">
+  <div class="error-banner" id="error-banner">
+    <span id="error-text">Failed to load VEL intelligence data.</span>
+    <button class="retry-btn" onclick="loadVELData()">RETRY</button>
+  </div>
+
+  <div class="card" id="psf-card">
+    <h2>PSF Trend (Hebbal + Yelahanka)</h2>
+    <div class="skeleton skeleton-box" id="psf-skeleton"></div>
+    <div class="stat-row" id="psf-stats" style="display:none"></div>
+    <div id="chart-root" style="height:200px;margin-top:8px"></div>
+  </div>
+
+  <div class="stat-row" id="metrics-row">
+    <div class="stat-box" id="strr-box">
+      <div class="label">STRR Signal</div>
+      <div class="skeleton skeleton-box" id="strr-skeleton"></div>
+      <div class="value" id="strr-value" style="display:none"></div>
+    </div>
+    <div class="stat-box" id="assembly-box">
+      <div class="label">Assembly Clusters</div>
+      <div class="skeleton skeleton-box" id="assembly-skeleton"></div>
+      <div class="value" id="assembly-value" style="display:none"></div>
+    </div>
+    <div class="stat-box" id="pricing-box">
+      <div class="label">Recommended PSF Range</div>
+      <div class="skeleton skeleton-box" id="pricing-skeleton"></div>
+      <div class="value" id="pricing-value" style="display:none"></div>
+    </div>
+    <div class="stat-box" id="corridor-box">
+      <div class="label">Hebbal Corridor</div>
+      <div class="skeleton skeleton-box" id="corridor-skeleton"></div>
+      <div class="value" id="corridor-value" style="display:none"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Grade A Competitors (Hebbal / Yelahanka)</h2>
+    <div class="skeleton skeleton-table" id="comp-skeleton"></div>
+    <table id="competitors-table" style="display:none">
+      <thead>
+        <tr><th>Developer</th><th>Project</th><th>Units</th><th>Avg PSF</th><th>Status</th></tr>
+      </thead>
+      <tbody id="competitors-body"></tbody>
+    </table>
+  </div>
+</div>
+<script>
+(function() {
+  var MAX_RETRIES = 2;
+  var RETRY_DELAY_MS = 1500;
+  var retryCount = 0;
+
+  function showError(msg) {
+    var banner = document.getElementById('error-banner');
+    document.getElementById('error-text').textContent = msg || 'Failed to load VEL intelligence data.';
+    banner.style.display = 'block';
+  }
+
+  function hideError() {
+    document.getElementById('error-banner').style.display = 'none';
+  }
+
+  function showSkeletons(hide) {
+    var skeletons = document.querySelectorAll('.skeleton');
+    skeletons.forEach(function(s) { s.style.display = hide ? 'none' : ''; });
+  }
+
+  function updateStatText(id, text, className) {
+    var skeleton = document.getElementById(id.replace('value', 'skeleton'));
+    if (skeleton) skeleton.style.display = 'none';
+    var el = document.getElementById(id);
+    if (text instanceof Node) {
+      el.innerHTML = '';
+      el.appendChild(text);
+    } else {
+      el.textContent = text;
+    }
+    el.style.display = '';
+    if (className) el.className = 'value ' + className;
+  }
+
+  function formatINR(num) {
+    if (num == null) return 'N/A';
+    return '\u20B9' + Number(num).toLocaleString('en-IN');
+  }
+
+  function timeAgo(isoStr) {
+    if (!isoStr) return '';
+    var now = new Date();
+    var then = new Date(isoStr);
+    var diffSec = Math.floor((now - then) / 1000);
+    if (diffSec < 60) return 'just now';
+    if (diffSec < 3600) return Math.floor(diffSec / 60) + 'm ago';
+    if (diffSec < 86400) return Math.floor(diffSec / 3600) + 'h ago';
+    return Math.floor(diffSec / 86400) + 'd ago';
+  }
+
+  function renderChart(avgPsf) {
+    var root = document.getElementById('chart-root');
+    root.innerHTML = '';
+    if (avgPsf == null) {
+      root.innerHTML = '<div class="empty-state">No PSF data available</div>';
+      return;
+    }
+    var data = [
+      {name: 'Avg PSF', psf: avgPsf, fill: '#f0a020'},
+    ];
+    try {
+      var chart = React.createElement(Recharts.BarChart, {
+        width: root.clientWidth || 600, height: 180, data: data, margin: {top: 5, right: 20, bottom: 5, left: 20}
+      },
+        React.createElement(Recharts.CartesianGrid, { strokeDasharray: '3 3', stroke: '#1e2d45' }),
+        React.createElement(Recharts.XAxis, { dataKey: 'name', tick: { fill: '#8b949e', fontSize: 10 } }),
+        React.createElement(Recharts.YAxis, { tick: { fill: '#8b949e', fontSize: 10 }, tickFormatter: function(v) { return '\u20B9' + (v/1000).toFixed(0) + 'k'; } }),
+        React.createElement(Recharts.Tooltip, {
+          formatter: function(v) { return [formatINR(v), 'Avg PSF']; },
+          contentStyle: { background: '#0f1520', border: '1px solid #2a3a55', borderRadius: '4px', fontSize: '11px' }
+        }),
+        React.createElement(Recharts.Bar, { dataKey: 'psf', fill: '#f0a020', radius: [4, 4, 0, 0] })
+      );
+      ReactDOM.render(chart, root);
+    } catch(e) {
+      root.innerHTML = '<div class="empty-state">Chart render error: ' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function loadVELData() {
+    hideError();
+    showSkeletons(false);
+    var tables = ['competitors-table'];
+    tables.forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+
+    fetch('/api/v1/intel/vel/market-context')
+      .then(function(r) {
+        if (!r.ok) throw new Error(r.status === 429 ? 'Rate limited' : 'HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(data) {
+        hideError();
+        showSkeletons(true);
+        document.getElementById('last-updated').textContent = 'Updated ' + timeAgo(data.generated_at);
+
+        // PSF stat + chart
+        var avgPsf = data.psf_trend ? data.psf_trend.avg_psf : null;
+        if (avgPsf != null) {
+          document.getElementById('psf-stats').innerHTML = '<div class="stat-box"><div class="label">Avg PSF</div><div class="value positive">' + formatINR(avgPsf) + '</div></div>';
+          document.getElementById('psf-stats').style.display = '';
+          renderChart(avgPsf);
+        } else {
+          document.getElementById('psf-stats').innerHTML = '<div class="stat-box"><div class="label">Avg PSF</div><div class="value warning">N/A</div></div>';
+          document.getElementById('psf-stats').style.display = '';
+          renderChart(null);
+        }
+
+        // STRR badge
+        var signal = data.strr_signal || 'unknown';
+        var badge = document.createElement('span');
+        badge.className = 'badge ' + signal;
+        badge.textContent = signal;
+        updateStatText('strr-value', badge);
+
+        // Assembly count
+        var total = 0;
+        if (data.assembly_activity) {
+          total = (data.assembly_activity.hebbal_clusters || 0) + (data.assembly_activity.yelahanka_clusters || 0);
+        }
+        updateStatText('assembly-value', total, total > 0 ? 'positive' : '');
+
+        // Pricing range
+        var range = data.recommended_psf_range || [];
+        if (range[0] != null && range[1] != null) {
+          updateStatText('pricing-value', formatINR(range[0]) + ' - ' + formatINR(range[1]));
+        } else {
+          updateStatText('pricing-value', 'N/A', 'warning');
+        }
+
+        // Corridor score
+        var comp = (data.corridor_score && data.corridor_score.composite_score != null)
+          ? Number(data.corridor_score.composite_score).toFixed(2) : 'N/A';
+        updateStatText('corridor-value', comp);
+
+        // Competitors table
+        var tbody = document.getElementById('competitors-body');
+        tbody.innerHTML = '';
+        var comps = data.grade_a_competitors || [];
+        if (comps.length > 0) {
+          comps.forEach(function(c) {
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td>' + escapeHtml(c.developer_name || '') + '</td>'
+              + '<td>' + escapeHtml(c.project_name || '') + '</td>'
+              + '<td>' + (c.units || 0) + '</td>'
+              + '<td>' + (c.avg_psf ? formatINR(c.avg_psf) : 'N/A') + '</td>'
+              + '<td>' + escapeHtml(c.status || '') + '</td>';
+            tbody.appendChild(tr);
+          });
+        } else {
+          tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No grade-A competitors found in Hebbal/Yelahanka</td></tr>';
+        }
+        document.getElementById('competitors-table').style.display = '';
+        retryCount = 0;
+      })
+      .catch(function(err) {
+        showSkeletons(true);
+        if (retryCount < MAX_RETRIES) {
+          retryCount++;
+          setTimeout(loadVELData, RETRY_DELAY_MS * retryCount);
+          return;
+        }
+        showError(err.message || 'Unknown error loading VEL data');
+        // Show fallback values in stat boxes
+        updateStatText('strr-value', 'ERR', 'negative');
+        updateStatText('assembly-value', 'ERR', 'negative');
+        updateStatText('pricing-value', 'ERR', 'negative');
+        updateStatText('corridor-value', 'ERR', 'negative');
+        document.getElementById('competitors-table').style.display = '';
+        document.getElementById('competitors-body').innerHTML = '<tr><td colspan="5" class="error">' + escapeHtml(err.message || 'Failed to load') + '</td></tr>';
+      });
+  }
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    var d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+  }
+
+  // Expose for retry button
+  window.loadVELData = loadVELData;
+
+  // Debounced resize handler for chart
+  var resizeTimer;
+  window.addEventListener('resize', function() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function() {
+      var psfStats = document.getElementById('psf-stats');
+      if (psfStats.style.display !== 'none') {
+        var statBox = psfStats.querySelector('.stat-box');
+        if (statBox) {
+          var avgText = statBox.querySelector('.value');
+          if (avgText) {
+            var avgVal = parseFloat(avgText.textContent.replace(/[^\d.]/g, ''));
+            if (!isNaN(avgVal)) renderChart(avgVal);
+          }
+        }
+      }
+    }, 300);
+  });
+
+  loadVELData();
+})();
+</script>
+</body>
+</html>

@@ -19,9 +19,30 @@ from utils.alembic_check import run_alembic_check
 
 __all__ = [
     "run_alembic_health_check",
+    "run_backup_staleness_check",
+    "run_bertscore_evaluation",
+    "run_check_developer_price_moves",
+    "run_chromadb_maintenance",
+    "run_confidence_decay_check",
+    "run_corridor_backtest_monthly",
+    "run_corridor_backtest_weekly",
+    "run_data_floor_check",
+    "run_data_floor_refresh",
+    "run_db_backup",
     "run_digest_quality_check",
     "run_dlq_drain_check",
+    "run_dlq_purge",
+    "run_failed_record_retry",
+    "run_form17_inbox_scan",
+    "run_kill_criteria_check",
+    "run_kill_criteria_reminder",
+    "run_memory_decay",
+    "run_offsite_backup_weekly",
     "run_parcel_graph_materialize",
+    "run_scheduler_heartbeat",
+    "run_scraper_health_check",
+    "run_seed_staleness_check",
+    "run_weekly_health_report",
 ]
 
 _ALEMBIC_CWD = os.environ.get("ALEMBIC_PROJECT_DIR", "/app")
@@ -34,6 +55,11 @@ _DIGEST_QUALITY_SUPPRESSION_DAYS = 7
 
 _DIGEST_QUALITY_ALERT_TITLE = "DIGEST_QUALITY_FAIL"
 _DIGEST_QUALITY_JOB_NAME = "digest_quality_check"
+
+_HEALTH_REPORT_RUNNING = False
+_HEALTH_REPORT_LOCK_MSG = "[MaintenanceJobs] weekly_health_report already running, skipping concurrent invocation"
+_HEALTH_REPORT_ALERT_TITLE = "WEEKLY_HEALTH_REPORT"
+_DEED_WEEKLY_TARGET = 50
 
 try:
     from prometheus_client import Counter as _PromCounter
@@ -1615,6 +1641,125 @@ def run_parcel_graph_materialize():
         _PARCEL_MATERIALIZE_RUNNING = False
 
 
+def run_weekly_health_report():
+    """Weekly system health report — Sunday 02:30 UTC = 08:00 IST (GATE-172, T-1548).
+
+    Computes SystemHealthCalculator and sends to Discord + Obsidian.
+    Each destination is isolated — failure in one does not block the other.
+    Guarded by _HEALTH_REPORT_RUNNING flag to prevent concurrent execution.
+    """
+    global _HEALTH_REPORT_RUNNING
+    if _HEALTH_REPORT_RUNNING:
+        logger.warning(_HEALTH_REPORT_LOCK_MSG)
+        return
+    _HEALTH_REPORT_RUNNING = True
+
+    try:
+        try:
+            from prometheus_client import Counter as _PromCounter
+        except ImportError:
+            _PromCounter = None
+
+        _weekly_health_job_runs = None
+        if _PromCounter:
+            _weekly_health_job_runs = _PromCounter(
+                "weekly_health_job_runs_total", "Weekly health report job runs", ["status"],
+            )
+
+        from utils.system_health import SystemHealthCalculator
+        from utils.discord_notifier import send_ops_alert
+        from utils.obsidian_sync import write_note
+
+        result = None
+        job_status = "failed"
+
+        try:
+            result = SystemHealthCalculator().compute()
+            score = result["score"]
+            grade = result["grade"]
+            deed_count = result["deed_count"]
+            deed_on_track = result["deed_throughput_on_track"]
+
+            degraded = min(result["components"].items(), key=lambda kv: kv[1]["score"])
+            degraded_name = degraded[0]
+
+            msg = (
+                f"Score: {score}/100 ({grade})\n"
+                f"Deeds: {deed_count}/{50} this week | Track: {'YES' if deed_on_track else 'NO'}\n"
+                f"Top Degraded: {degraded_name}\n"
+                f"Generated: {result['generated_at'][:19]}"
+            )
+            send_ops_alert(_HEALTH_REPORT_ALERT_TITLE, msg)
+        except Exception as exc:
+            logger.warning("[HealthReport] Discord alert failed: {}", exc)
+
+        try:
+            date_str = result["generated_at"][:10] if result else "unknown"
+            lines = [
+                "---",
+                "type: wiki",
+                "area: lls",
+                "---",
+                "",
+                f"# Weekly Health Report — {date_str}",
+                "",
+            ]
+            if result:
+                lines.append(f"**Overall Score:** {result['score']}/100 ({result['grade']})")
+                lines.append("")
+                lines.append("## Component Breakdown")
+                lines.append("| Component | Score | Weight | Weighted |")
+                lines.append("|-----------|-------|--------|----------|")
+                for name, comp in sorted(result["components"].items()):
+                    lines.append(f"| {name} | {comp['score']:.0f} | {comp['weight']} | {comp['weighted']:.1f} |")
+                lines.append("")
+                lines.append(f"**Deed Count:** {result['deed_count']} / {_DEED_WEEKLY_TARGET}")
+                lines.append(f"**On Track:** {'YES' if result['deed_throughput_on_track'] else 'NO'}")
+            else:
+                lines.append("**Overall Score:** N/A")
+            write_note(path="03 LLS/02 Projects/RE_market/weekly_health.md", content="\n".join(lines))
+        except Exception as exc:
+            logger.warning("[HealthReport] Obsidian write failed: {}", exc)
+
+        job_status = "completed" if result is not None else "failed"
+        if _weekly_health_job_runs:
+            _weekly_health_job_runs.labels(status=job_status).inc()
+
+        try:
+            with get_engine().begin() as conn:
+                conn.execute(
+                    text("""
+                        INSERT INTO agent_runs
+                            (agent_name, micro_market, event_type, status, records_inserted, notes)
+                        VALUES ('weekly_health_report', 'system', 'health_report', :status, :records, :notes)
+                    """),
+                    {
+                        "status": job_status,
+                        "records": result["score"] if result else 0,
+                        "notes": f"score={result['score'] if result else 'N/A'}, grade={result['grade'] if result else 'N/A'}",
+                    },
+                )
+        except Exception as exc:
+            logger.debug("[HealthReport] agent_runs log failed: {}", exc)
+
+    except Exception as exc:
+        logger.warning("[HealthReport] run failed: {}", exc)
+        try:
+            with get_engine().begin() as conn:
+                conn.execute(
+                    text("""
+                        INSERT INTO agent_runs
+                            (agent_name, micro_market, event_type, status, notes)
+                        VALUES ('weekly_health_report', 'system', 'health_report', 'failed', :notes)
+                    """),
+                    {"notes": str(exc)[:500]},
+                )
+        except Exception:
+            pass
+    finally:
+        _HEALTH_REPORT_RUNNING = False
+
+
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
     """Register maintenance-related scheduler jobs."""
     from apscheduler.triggers.cron import CronTrigger
@@ -1879,6 +2024,15 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         CronTrigger(day_of_week="sun", hour=1, minute=0, timezone="UTC"),
         id="parcel_graph_materialize",
         name="Weekly Parcel Graph Edge Materialization (Sun 01:00 UTC — builds parcel_graph_edges)",
+        misfire_grace_time=7200,
+        replace_existing=True,
+    )
+    # Weekly system health report — Sunday 02:30 UTC = 08:00 IST (GATE-172, T-1548)
+    scheduler.add_job(
+        lambda: safe_job(run_weekly_health_report, "weekly_health_report"),
+        CronTrigger(day_of_week="sun", hour=2, minute=30, timezone="UTC"),
+        id="weekly_health_report",
+        name="Weekly System Health Report (Discord + Obsidian on Sun 08:00 IST)",
         misfire_grace_time=7200,
         replace_existing=True,
     )

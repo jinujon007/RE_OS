@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+<title>System Health — LLS Operations Center</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #0a0e1a; color: #c9d1d9; font-family: 'Courier New', Courier, monospace; font-size: 14px; min-height: 100vh; padding: 20px; }
+h1 { color: #58a6ff; font-size: 18px; margin-bottom: 4px; letter-spacing: 1px; }
+.subtitle { color: #6b7280; font-size: 11px; margin-bottom: 20px; }
+.panel { background: #0f1520; border: 1px solid #2a3a55; padding: 16px; margin-bottom: 16px; max-width: 900px; }
+.score-display { font-size: 64px; font-weight: bold; text-align: center; padding: 30px; font-family: 'Press Start 2P', cursive; }
+.score-A { color: #3fb950; }
+.score-B { color: #d29922; }
+.score-C { color: #d29922; }
+.score-D { color: #f85149; }
+table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #1e2d45; font-size: 12px; }
+th { color: #6b7280; font-weight: normal; text-transform: uppercase; letter-spacing: 0.5px; }
+.grade-badge { display: inline-block; padding: 2px 10px; border-radius: 4px; font-family: 'Press Start 2P', cursive; font-size: 10px; }
+.grade-A { background: #1a3a1a; color: #3fb950; border: 1px solid #3fb950; }
+.grade-B { background: #3a2a1a; color: #d29922; border: 1px solid #d29922; }
+.grade-C { background: #3a2a1a; color: #d29922; border: 1px solid #d29922; }
+.grade-D { background: #3a1a1a; color: #f85149; border: 1px solid #f85149; }
+.progress-bar { height: 20px; background: #1e2d45; border-radius: 4px; overflow: hidden; margin: 6px 0; }
+.progress-fill { height: 100%; transition: width 0.5s; border-radius: 4px; }
+.progress-green { background: #3fb950; }
+.progress-yellow { background: #d29922; }
+.progress-red { background: #f85149; }
+.status-green { color: #3fb950; }
+.status-red { color: #f85149; }
+.status-neutral { color: #6b7280; }
+.updated-at { color: #6b7280; font-size: 10px; margin-top: 8px; text-align: center; }
+.auto-refresh-note { color: #6b7280; font-size: 9px; text-align: center; margin-top: 4px; }
+.error-msg { color: #f85149; font-size: 12px; padding: 16px; text-align: center; }
+.error-msg button { background: #3a1a1a; border: 1px solid #f85149; color: #f85149; padding: 4px 12px; font-family: inherit; font-size: 11px; cursor: pointer; border-radius: 4px; margin-top: 8px; }
+.loading-timeout { color: #d29922; font-size: 10px; text-align: center; margin-top: 8px; }
+</style>
+</head>
+<body role="main" aria-label="System Health Dashboard">
+<h1>SYSTEM HEALTH</h1>
+<div class="subtitle" aria-live="polite">RE_OS — 5-dimension health score (0-100)</div>
+
+<div class="panel" id="score-panel" aria-label="Health score panel">
+  <div id="loading" role="status" aria-label="Loading health data" style="text-align:center;padding:40px;color:#6b7280;">Loading...</div>
+  <div id="loading-timeout" class="loading-timeout" style="display:none;" aria-live="assertive">Request taking longer than expected...</div>
+  <div id="score-content" style="display:none;" aria-live="polite">
+    <div class="score-display" id="score-value" role="status" aria-label="Health score"></div>
+    <div style="text-align:center;margin-bottom:16px;">
+      <span class="grade-badge" id="grade-badge" aria-label="Health grade"></span>
+      <span style="margin-left:12px;font-size:12px;" id="deed-track" aria-label="Deed throughput status"></span>
+    </div>
+    <div role="region" aria-label="Component breakdown">
+      <table>
+        <thead><tr><th>Component</th><th>Score</th><th>Weight</th><th>Weighted</th><th>Bar</th></tr></thead>
+        <tbody id="components-body"></tbody>
+      </table>
+    </div>
+    <div id="deed-bar" style="margin-top:16px;" role="region" aria-label="Deed throughput progress">
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:#6b7280;">
+        <span>Deed Throughput (target: 50/week)</span>
+        <span id="deed-pct"></span>
+      </div>
+      <div class="progress-bar" role="progressbar" id="deed-progress" aria-valuemin="0" aria-valuemax="100">
+        <div class="progress-fill" id="deed-fill"></div>
+      </div>
+    </div>
+    <div class="updated-at" id="updated-at" aria-live="polite"></div>
+    <div class="auto-refresh-note">Auto-refreshes every 60s</div>
+  </div>
+  <div class="error-msg" id="error-msg" style="display:none;" role="alert"></div>
+</div>
+
+<script>
+(function() {
+  var scoreValue = document.getElementById('score-value');
+  var gradeBadge = document.getElementById('grade-badge');
+  var deedTrack = document.getElementById('deed-track');
+  var deedProgress = document.getElementById('deed-progress');
+  var componentsBody = document.getElementById('components-body');
+  var deedPct = document.getElementById('deed-pct');
+  var deedFill = document.getElementById('deed-fill');
+  var updatedAt = document.getElementById('updated-at');
+  var loading = document.getElementById('loading');
+  var loadingTimeout = document.getElementById('loading-timeout');
+  var scoreContent = document.getElementById('score-content');
+  var errorMsg = document.getElementById('error-msg');
+
+  var retryCount = 0;
+  var refreshTimer = null;
+  var loadTimer = null;
+
+  function getComponentLabel(key) {
+    var labels = {
+      freshness: 'Data Freshness',
+      deed_throughput: 'Deed Throughput',
+      scheduler: 'Scheduler Health',
+      api_latency: 'API Latency',
+      scraper: 'Scraper Reliability'
+    };
+    return labels[key] || key.replace(/_/g, ' ');
+  }
+
+  function getScoreColor(score) {
+    return score >= 80 ? 'progress-green' : (score >= 50 ? 'progress-yellow' : 'progress-red');
+  }
+
+  function renderComponents(data) {
+    var html = '';
+    var compOrder = ['freshness', 'deed_throughput', 'scheduler', 'api_latency', 'scraper'];
+    compOrder.forEach(function(key) {
+      var c = data.components && data.components[key];
+      if (!c) {
+        html += '<tr><td>' + getComponentLabel(key) + '</td>'
+          + '<td colspan="4" style="color:#6b7280;">unavailable</td></tr>';
+        return;
+      }
+      var barColor = getScoreColor(c.score);
+      html += '<tr><td>' + getComponentLabel(key) + '</td>'
+        + '<td>' + c.score.toFixed(0) + '</td>'
+        + '<td>' + (c.weight * 100).toFixed(0) + '%</td>'
+        + '<td>' + c.weighted.toFixed(1) + '</td>'
+        + '<td><div class="progress-bar"><div class="progress-fill ' + barColor + '" style="width:' + Math.max(2, c.score) + '%"></div></div></td></tr>';
+    });
+    componentsBody.innerHTML = html;
+  }
+
+  function renderDeedBar(data) {
+    var deedScore = data.components && data.components.deed_throughput
+      ? data.components.deed_throughput.score : 0;
+    deedPct.textContent = deedScore.toFixed(0) + '%';
+    var barColor = getScoreColor(deedScore);
+    deedFill.className = 'progress-fill ' + barColor;
+    var width = Math.max(2, Math.min(100, deedScore));
+    deedFill.style.width = width + '%';
+    if (deedProgress) {
+      deedProgress.setAttribute('aria-valuenow', Math.round(deedScore));
+    }
+  }
+
+  function renderHealth(data) {
+    var score = data.score;
+    var grade = data.grade || 'D';
+
+    scoreValue.textContent = score;
+    scoreValue.className = 'score-display score-' + grade;
+    scoreValue.setAttribute('aria-label', 'Health score ' + score + ' out of 100, grade ' + grade);
+
+    gradeBadge.textContent = grade;
+    gradeBadge.className = 'grade-badge grade-' + grade;
+
+    if (data.deed_throughput_on_track !== undefined) {
+      deedTrack.textContent = data.deed_throughput_on_track ? 'ON TRACK' : 'BELOW TARGET';
+      deedTrack.className = data.deed_throughput_on_track ? 'status-green' : 'status-red';
+    } else {
+      deedTrack.textContent = 'N/A';
+      deedTrack.className = 'status-neutral';
+    }
+
+    renderComponents(data);
+    renderDeedBar(data);
+
+    updatedAt.textContent = data.generated_at
+      ? 'Last updated: ' + data.generated_at.slice(0, 19).replace('T', ' ')
+      : 'Last updated: N/A';
+  }
+
+  function showLoading() {
+    loading.style.display = 'block';
+    loadingTimeout.style.display = 'none';
+    scoreContent.style.display = 'none';
+    errorMsg.style.display = 'none';
+
+    if (loadTimer) clearTimeout(loadTimer);
+    loadTimer = setTimeout(function() {
+      loadingTimeout.style.display = 'block';
+    }, 15000);
+  }
+
+  function showContent() {
+    loading.style.display = 'none';
+    loadingTimeout.style.display = 'none';
+    scoreContent.style.display = 'block';
+    errorMsg.style.display = 'none';
+    if (loadTimer) {
+      clearTimeout(loadTimer);
+      loadTimer = null;
+    }
+  }
+
+  function showError(msg) {
+    loading.style.display = 'none';
+    loadingTimeout.style.display = 'none';
+    errorMsg.style.display = 'block';
+    errorMsg.innerHTML = msg + '<br><button onclick="window._forceLoad()">Retry</button>';
+    errorMsg.className = 'error-msg';
+    if (loadTimer) {
+      clearTimeout(loadTimer);
+      loadTimer = null;
+    }
+  }
+
+  function loadHealth() {
+    showLoading();
+
+    fetch('/api/v1/ops/system-health', { cache: 'no-cache' })
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(data) {
+        showContent();
+        renderHealth(data);
+        retryCount = 0;
+        scheduleRefresh();
+      })
+      .catch(function(err) {
+        retryCount++;
+        var delay = Math.min(30000, Math.pow(2, retryCount) * 1000);
+        showError('Failed to load health data (' + (err.message || 'unknown') + ')');
+        setTimeout(loadHealth, delay);
+      });
+  }
+
+  function scheduleRefresh() {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(function() {
+      loadHealth();
+    }, 60000);
+  }
+
+  window._forceLoad = function() {
+    retryCount = 0;
+    loadHealth();
+  };
+
+  loadHealth();
+})();
+</script>
+</body>
+</html>

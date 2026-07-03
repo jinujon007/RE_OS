@@ -23,7 +23,7 @@ from dashboard.state import (
     _resolve_market, _all_markets, VALID_MARKETS_DIGEST,
     _err_resp,
 )
-from config.metrics import db_query_duration_seconds, digest_runs_total
+from config.metrics import db_query_duration_seconds, digest_runs_total, _counter
 from utils.etag import compute_etag, check_etag, add_etag
 from utils.prediction_ledger import compute_accuracy_summary
 
@@ -2959,4 +2959,67 @@ async def ops_digest_quality(request: Request):
         )
     except Exception as exc:
         logger.error("[digest_quality] %s", exc)
+        return _err_resp(str(exc), request, 500, "Ops")
+
+
+# ── System Health (GATE-172, T-1547) ──────────────────────────────────────
+
+_HEALTH_CACHE: dict | None = None
+_HEALTH_CACHE_AT: float = 0.0
+_HEALTH_CACHE_TTL = 300
+_HEALTH_CACHE_LOCK = threading.Lock()
+
+_HEALTH_REQUESTS_TOTAL = _counter(
+    "system_health_requests_total", "System health requests by status", ["status"],
+)
+_HEALTH_CACHE_HITS_TOTAL = _counter(
+    "system_health_cache_hits_total", "System health cache hits", [],
+)
+
+
+@router.get(
+    "/ops/system-health",
+    summary="System health score (0-100) across 5 weighted dimensions",
+)
+@limiter.limit("10/minute")
+async def ops_system_health(request: Request):
+    global _HEALTH_CACHE, _HEALTH_CACHE_AT
+    now = time.time()
+
+    with _HEALTH_CACHE_LOCK:
+        if _HEALTH_CACHE is not None and now - _HEALTH_CACHE_AT < _HEALTH_CACHE_TTL:
+            _HEALTH_CACHE_HITS_TOTAL.inc()
+            _HEALTH_REQUESTS_TOTAL.labels(status="hit").inc()
+            cached = _HEALTH_CACHE
+            etag = compute_etag(cached)
+            _check = check_etag(request, etag)
+            if _check:
+                return _check
+            return JSONResponse(
+                content=cached,
+                headers={
+                    "Cache-Control": "private, max-age=300",
+                    "ETag": f'"{etag}"',
+                },
+            )
+
+    try:
+        from utils.system_health import SystemHealthCalculator
+
+        result = SystemHealthCalculator().compute()
+        with _HEALTH_CACHE_LOCK:
+            _HEALTH_CACHE = result
+            _HEALTH_CACHE_AT = now
+        _HEALTH_REQUESTS_TOTAL.labels(status="ok").inc()
+        etag = compute_etag(result)
+        return JSONResponse(
+            content=result,
+            headers={
+                "Cache-Control": "private, max-age=300",
+                "ETag": f'"{etag}"',
+            },
+        )
+    except Exception as exc:
+        _HEALTH_REQUESTS_TOTAL.labels(status="error").inc()
+        logger.error("[system_health] %s", exc)
         return _err_resp(str(exc), request, 500, "Ops")

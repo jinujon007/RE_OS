@@ -14,6 +14,17 @@ from config.settings import TARGET_MARKETS
 
 _sa_text = text  # alias for SLO functions (T-1284) — keep `text` for legacy consumers
 
+__all__ = [
+    "run_weekly_digest",
+    "run_weekly_intel_digest",
+    "run_monthly_intel_digest",
+    "run_compliance_check",
+    "run_ledger_verdict_digest",
+    "run_slo_burn_check",
+    "run_deed_throughput_digest",
+    "register_jobs",
+]
+
 
 def run_weekly_digest():
     """Weekly digest generation — Monday 04:00 IST (after conflict detection).

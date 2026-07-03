@@ -12,6 +12,11 @@ from loguru import logger
 from sqlalchemy import text
 from utils.db import get_engine
 
+__all__ = [
+    "run_single_market_rera",
+    "register_jobs",
+]
+
 
 def _send_rera_alert(market: str, job_start: datetime) -> None:
     """Query new RERA projects since job_start and send Discord alert."""

@@ -182,7 +182,8 @@ services:
       timeout: 15s
       retries: 3
       start_period: 60s
-    command: python -m config.scheduler
+    # config.scheduler has no __main__.py — python -m crash-loops (Incident 2026-06-12 class).
+    command: python config/run_scheduler.py
 
   # ── GRAFANA MCP BRIDGE ────────────────────────────────────────────────────
   # Bridges Claude Code → Grafana via MCP protocol.

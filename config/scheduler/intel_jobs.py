@@ -13,6 +13,30 @@ from config.settings import TARGET_MARKETS
 
 _ingest_running = threading.Event()
 
+__all__ = [
+    "run_intel_embedding_index",
+    "run_news_sentiment_scoring",
+    "run_market_snapshot",
+    "run_distressed_developer_scan",
+    "run_ingest_engine",
+    "run_vel_weekly_market_update",
+    "run_conflict_detection",
+    "run_opportunity_scoring",
+    "run_psf_forecast_update",
+    "run_locality_validation",
+    "run_finbert_sentiment_repair",
+    "run_portal_scout_canary_check",
+    "run_gv_freshness_check",
+    "run_gcc_daily_scan",
+    "run_gcc_weekly_digest",
+    "run_gcc_hiring_snapshot",
+    "run_dc_conversion_scan",
+    "run_govt_policy_daily_scan",
+    "run_govt_policy_weekly_digest",
+    "run_post_crew_optimizer_hook",
+    "register_jobs",
+]
+
 
 def run_intel_embedding_index():
     """
@@ -1098,6 +1122,196 @@ def run_post_crew_optimizer_hook():
         logger.error("[Scheduler] Post-crew optimizer hook failed: {}", exc)
 
 
+# ── VEL Weekly Market Update (GATE-171, T-1542) ───────────────────────
+
+_VEL_WEEKLY_RUNNING = threading.Event()
+
+
+def run_vel_weekly_market_update() -> None:
+    """Weekly VEL market intelligence update → Obsidian note.
+
+    Gathers PSF trend, competitor data, STRR signal, assembly activity,
+    and corridor score for the VEL project. Writes to Obsidian.
+    Scheduled Mon 01:30 UTC (07:00 IST).
+    Skips if previous run is still in progress.
+    """
+    if not _VEL_WEEKLY_RUNNING.set():
+        logger.info("[VEL Weekly] Previous run still in progress — skipping")
+        return
+    try:
+        _run_vel_weekly_market_update_impl()
+    finally:
+        _VEL_WEEKLY_RUNNING.clear()
+
+
+def _run_vel_weekly_market_update_impl() -> None:
+    from datetime import date
+    from utils.db import get_engine
+    from utils.obsidian_sync import write_note
+
+    engine = get_engine()
+    today = date.today().isoformat()
+
+    avg_psf: float | None = None
+    competitors: list[dict] = []
+    strr_signal: str | None = None
+    assembly_count: int = 0
+    corridor_name: str | None = None
+    corridor_composite: float | None = None
+
+    # (0) Resolve villages for Hebbal and Yelahanka
+    target_villages: list[str] = []
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(text("""
+                SELECT DISTINCT village FROM v_deed_village_priority
+                WHERE market IN ('Hebbal', 'Yelahanka')
+            """)).fetchall()
+            target_villages = [str(r[0]) for r in rows if r[0]]
+    except Exception as exc:
+        logger.warning("[VEL Weekly] village resolution failed: {}", exc)
+
+    # (1) avg PSF for Hebbal + Yelahanka villages
+    if target_villages:
+        try:
+            with engine.begin() as conn:
+                row = conn.execute(text("""
+                    SELECT AVG(rt.psf)
+                    FROM registered_transactions rt
+                    WHERE rt.village = ANY(:villages)
+                      AND rt.psf IS NOT NULL
+                      AND rt.psf > 1000
+                      AND rt.psf < 50000
+                """), {"villages": target_villages}).scalar()
+                if row is not None:
+                    avg_psf = round(float(row), 0)
+        except Exception as exc:
+            logger.warning("[VEL Weekly] avg PSF query failed: {}", exc)
+
+    # (2) Competitors in Hebbal/Yelahanka markets (T-1543)
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(text("""
+                SELECT rp.project_name, d.name AS developer_name,
+                       rp.total_units, rp.price_avg_psf, rp.project_status
+                FROM rera_projects rp
+                JOIN developers d ON d.id = rp.developer_id
+                JOIN micro_markets mm ON mm.id = rp.micro_market_id
+                WHERE mm.name IN ('Hebbal', 'Yelahanka')
+                  AND (d.grade = 'A' OR rp.total_units > 200)
+                ORDER BY rp.total_units DESC
+                LIMIT 10
+            """)).fetchall()
+        competitors = [
+            {
+                "name": str(r[0] or ""),
+                "developer": str(r[1] or ""),
+                "units": int(r[2]) if r[2] else 0,
+                "avg_psf": round(float(r[3]), 0) if r[3] else None,
+                "status": str(r[4] or ""),
+            }
+            for r in rows
+        ]
+    except Exception as exc:
+        logger.warning("[VEL Weekly] competitor query failed: {}", exc)
+
+    # (3) STRR signal
+    try:
+        from utils.strr_overlay import STRROverlay
+        overlay = STRROverlay()
+        stations = overlay.stations_near("Hebbal")
+        strr_signal = STRROverlay.transit_signal(stations)
+    except Exception as exc:
+        logger.warning("[VEL Weekly] STRR signal failed: {}", exc)
+
+    # (4) Assembly clusters
+    try:
+        from utils.assembly_detector import AssemblyDetector
+        detector = AssemblyDetector()
+        hc = detector.detect_clusters("Hebbal")
+        yc = detector.detect_clusters("Yelahanka")
+        assembly_count = len(hc) + len(yc)
+    except Exception as exc:
+        logger.warning("[VEL Weekly] assembly query failed: {}", exc)
+
+    # (5) Corridor score
+    try:
+        from utils.corridor_scorer import CorridorScorer
+        scorer = CorridorScorer()
+        scores = scorer.score_all()
+        for s in scores:
+            if s.get("market", "").lower() == "hebbal":
+                corridor_name = s.get("corridor", "")
+                corridor_composite = s.get("composite_score")
+                break
+    except Exception as exc:
+        logger.warning("[VEL Weekly] corridor score failed: {}", exc)
+
+    # Build Obsidian note
+    psf_line = f"**Avg PSF:** ₹{avg_psf:,.0f}" if avg_psf else "**Avg PSF:** N/A"
+    comp_lines = "\n".join(
+        f"| {c['name']} | {c['developer']} | {c['units']} | ₹{c['avg_psf']:,.0f} | {c['status']} |"
+        for c in competitors if c.get("avg_psf")
+    )
+    comp_header = "### Competitors Within Hebbal/Yelahanka\n| Project | Developer | Units | PSF | Status |\n|---|---|---|---|---|"
+    comp_section = f"{comp_header}\n{comp_lines}" if comp_lines else f"{comp_header}\nNo competitor data available."
+    strr_line = f"**STRR Signal:** {strr_signal}" if strr_signal else "**STRR Signal:** N/A"
+    assembly_line = f"**Assembly Clusters:** {assembly_count} (Hebbal + Yelahanka)"
+    corridor_line = f"**Hebbal Corridor:** {corridor_name} (composite={corridor_composite})" if corridor_name else "**Hebbal Corridor:** N/A"
+
+    recommended_lo = round(avg_psf * 0.9, 0) if avg_psf else "N/A"
+    recommended_hi = round(avg_psf * 1.15, 0) if avg_psf else "N/A"
+    pricing_line = f"**Recommended PSF Range:** ₹{recommended_lo} – ₹{recommended_hi}"
+
+    content = f"""---
+type: wiki
+area: lls
+project: VEL
+ai_generated: true
+last_confirmed: {today}
+---
+
+# VEL Weekly Market Update — {today}
+
+{psf_line}
+
+{strr_line}
+
+{assembly_line}
+
+{corridor_line}
+
+{pricing_line}
+
+---
+
+{comp_section}
+"""
+    # Vault rule: AI-generated files outside 01 Wiki/ carry the (CAI) prefix.
+    path = "03 LLS/02 Projects/VEL/(CAI) weekly_intel.md"
+    result = write_note(path, content)
+    if result:
+        logger.info("[VEL Weekly] Obsidian note written: {}", result)
+    else:
+        logger.warning("[VEL Weekly] Obsidian write returned empty/false")
+
+    # Log to agent_runs
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO agent_runs (agent_name, event_type, status, micro_market, summary)
+                VALUES (:agent, :event, :status, :market, :summary)
+            """), {
+                "agent": "vel_weekly",
+                "event": "vel_weekly_market_update",
+                "status": "completed",
+                "market": "VEL",
+                "summary": f"VEL weekly update written. PSF={avg_psf}, competitors={len(competitors)}, STRR={strr_signal}",
+            })
+    except Exception as exc:
+        logger.warning("[VEL Weekly] agent_runs log failed: {}", exc)
+
+
 def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object]) -> None:
     """Register intelligence-related scheduler jobs."""
     from apscheduler.triggers.cron import CronTrigger
@@ -1259,5 +1473,13 @@ def register_jobs(scheduler: BlockingScheduler, safe_job: Callable[..., object])
         CronTrigger(hour=4, minute=0),
         id="post_crew_optimizer_hook",
         name="Post-Crew Optimizer Hook (daily fallback)",
+        misfire_grace_time=3600,
+    )
+
+    scheduler.add_job(
+        lambda: safe_job(run_vel_weekly_market_update, "vel_weekly_market_update"),
+        CronTrigger(day_of_week="mon", hour=1, minute=30, timezone="UTC"),
+        id="vel_weekly_market_update",
+        name="VEL Weekly Market Update → Obsidian (Mon 07:00 IST)",
         misfire_grace_time=3600,
     )
