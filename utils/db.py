@@ -13,6 +13,10 @@ _engine = None
 _lock = threading.Lock()
 _pool_exhaustion_lock = threading.Lock()
 _pool_is_exhausted = False
+# Reentrancy guard: AlertSuppressor.suppress() opens its own DB connection,
+# which fires the checkout event again on the same thread — without this flag
+# that re-entry self-deadlocks on _pool_exhaustion_lock (non-reentrant).
+_exhaustion_local = threading.local()
 
 # ── DB connection pool Prometheus gauges (T-1248) ────────────────────────────
 # Metrics updated via pool event listeners — no polling, no health endpoint
@@ -58,13 +62,20 @@ def _check_pool_exhaustion(engine_ref):
     global _pool_is_exhausted
     if _pool_is_exhausted:
         return
+    if getattr(_exhaustion_local, "active", False):
+        return
     pool = engine_ref.pool
-    max_connections = pool.size() + pool.overflow()
+    # Capacity = pool_size + max_overflow (a constant, e.g. 10+5=15).
+    # pool.overflow() is the CURRENT overflow counter, which starts at
+    # -pool_size — using it here made capacity 1 on the first checkout and
+    # flagged a brand-new pool as exhausted (boot deadlock, 2026-07-03).
+    max_connections = pool.size() + getattr(pool, "_max_overflow", 0)
     checked_out = pool.checkedout()
     if checked_out >= max_connections and max_connections > 0:
         with _pool_exhaustion_lock:
             if _pool_is_exhausted:
                 return
+            _exhaustion_local.active = True
             try:
                 from utils.discord_notifier import AlertSuppressor, send_ops_alert
                 if not AlertSuppressor.suppress("db_pool_exhausted", cooldown_hours=4):
@@ -79,6 +90,8 @@ def _check_pool_exhaustion(engine_ref):
                     "Pool exhausted (%d/%d) but Discord alert failed",
                     checked_out, max_connections,
                 )
+            finally:
+                _exhaustion_local.active = False
     else:
         _pool_is_exhausted = False
 
