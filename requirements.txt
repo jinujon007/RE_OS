@@ -23,7 +23,7 @@ httpx[http2]==0.28.1
 # Scrapling: TLS fingerprint spoofing (Fetcher) + stealth Playwright (DynamicFetcher)
 # Replaces plain requests for bot-protected portals. No scrapling install needed —
 # DynamicFetcher reuses the Playwright Chromium already at PLAYWRIGHT_BROWSERS_PATH.
-scrapling[fetchers]>=0.4.0,<1.0.0
+scrapling[fetchers]>=0.4.12,<1.0.0
 
 # Task queue
 redis==7.4.0
