@@ -62,7 +62,7 @@ folium>=0.16.0
 # Unpinned — litellm 1.88 requires pydantic>=2.10.0 and python-dotenv>=1.0.0
 python-dotenv>=1.0.0,<2.0.0
 pydantic>=2.10.0,<3.0.0
-loguru==0.7.2
+loguru==0.7.3
 tenacity>=8.1.0
 
 # Terminal output — capped by embedchain transitive dep (rich<14.0.0)
