@@ -128,5 +128,5 @@ datasets>=2.18.0,<4.0.0  # eval harness
 
 # Testing
 pytest>=9.0.3
-pytest-mock>=3.0
+pytest-mock>=3.15.1
 pytest-cov>=4.0
