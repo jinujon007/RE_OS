@@ -98,7 +98,7 @@ slowapi>=0.1.9
 
 # Scout utilities (portal + news extraction)
 price-parser>=0.3.4
-dateparser>=1.2.0
+dateparser>=1.4.3
 
 # PDF extraction (MIT — machine-readable RERA PDFs, sale deeds, encumbrance certs)
 pdfplumber>=0.11.0
