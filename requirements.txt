@@ -60,7 +60,7 @@ folium>=0.16.0
 
 # Utilities
 # Unpinned — litellm 1.88 requires pydantic>=2.10.0 and python-dotenv>=1.0.0
-python-dotenv>=1.0.0,<2.0.0
+python-dotenv>=1.2.3,<2.0.0
 pydantic>=2.10.0,<3.0.0
 loguru==0.7.2
 tenacity>=8.1.0
