@@ -88,7 +88,7 @@ alembic>=1.13.0
 prometheus-client>=0.21.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
-slowapi>=0.1.9
+slowapi>=0.1.10
 
 # MCP Server — RE_OS intelligence tools as MCP for Claude Code
 # RE_OS MCP implements the protocol via Starlette directly (no mcp SDK needed).
