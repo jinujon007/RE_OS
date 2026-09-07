@@ -1,5 +1,5 @@
 # Multi-agent orchestration
-crewai==0.80.0
+crewai==0.203.2
 crewai-tools==0.17.0
 
 # LLM integrations — CrewAI 0.80+ uses LiteLLM internally (no LangChain needed)
