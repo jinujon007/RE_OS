@@ -63,7 +63,7 @@ folium>=0.16.0
 python-dotenv>=1.0.0,<2.0.0
 pydantic>=2.10.0,<3.0.0
 loguru==0.7.2
-tenacity>=8.1.0
+tenacity>=9.1.4
 
 # Terminal output — capped by embedchain transitive dep (rich<14.0.0)
 rich>=13.7.0,<14.0.0
