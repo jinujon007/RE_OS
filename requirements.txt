@@ -5,7 +5,7 @@ crewai-tools==0.17.0
 # LLM integrations — CrewAI 0.80+ uses LiteLLM internally (no LangChain needed)
 # litellm is used directly (success_callback, completion) — pin to avoid silent breaking changes
 # litellm 1.83.7+ requires openai>=2.20.0 — must keep in sync
-litellm==1.88.0
+litellm==1.103.2
 openai>=2.20.0,<3.0.0
 groq>=0.11.0
 
