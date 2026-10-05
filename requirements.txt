@@ -111,7 +111,7 @@ markitdown>=0.1.0,<1.0.0
 rouge-score>=0.1.2,<1.0.0
 
 # HF embeddings + reranking + evaluation (Sprints 32–37)
-sentence-transformers>=2.7.0,<4.0.0  # semantic dedup + cross-encoder reranker
+sentence-transformers>=6.1.0,<7.0.0  # semantic dedup + cross-encoder reranker
 evaluate>=0.4.0,<2.0.0  # BERTScore weekly eval
 
 # ── Sprint 36 — HF RERA Extractor (QLoRA Fine-Tune) ──────────────────────────
